@@ -268,7 +268,7 @@
       "tags": ["ps4", "action-adventure"],
       "source": "https://github.com/Supermedo/bloodborne_pc",
       "folder": "bloodborne_pc",
-      "instructions": "Point it at your dump folder or fake PKG and at a destination folder (the default on Windows is %LocalAppData%\\Programs\\P.T. PC Port). It copies the three game archives it needs (chunk1.psarc, texture.qar, pathid_list_ps4.bin) next to the port and makes a shortcut if you want one. The eboot, modules and system files are not used.",
+      "instructions": "Required files: You need your own decrypted dump of Bloodborne (CUSA03173). Version 1.09 is needed for the community patches (60/90/unlocked FPS, resolution, effects); other versions run at 30 FPS.",
       "image": "https://cdn2.steamgriddb.com/grid/021399af062379408df9c358a1a83cdb.png",
       "icon": "https://cdn2.steamgriddb.com/icon/361403e93afd3ea12b30729831e352ef.png"
     },{
@@ -359,6 +359,16 @@
       "image": "https://cdn2.steamgriddb.com/grid/9e30406afccf16ae8fce4865dd865063.png",
       "icon": "https://cdn2.steamgriddb.com/icon/148c2ad42607c372038edd48cad30120.png",
       "save": "saves"
+    },{
+      "-name": "Call of Duty 2 (??)",
+      "tags": ["360", "fps", "android_only"],
+      "android_source": "",
+      "android_package": "",
+      "image": "https://cdn2.steamgriddb.com/grid/8a563489dff3761a5f856d56d8937c95.jpg",
+      "icon": "https://cdn2.steamgriddb.com/icon/91ce5b36b20d9cf27bc678e3ce515765.png",
+      "save": {
+        "android": ""
+      }
     },{
       "name": "Castlevania: Legacy of Darkness (cvlod_recomp)",
       "tags": ["n64", "action-adventure"],
@@ -1152,6 +1162,14 @@
       "image": "https://cdn2.steamgriddb.com/grid/20bc9c1cba852406a058a4eb94aa2db4.png",
       "icon": "https://cdn2.steamgriddb.com/icon/2689e302dff9ebabba26b0a2e6b89d68/32/256x256.png",
       "save": "saves"
+    },{
+      "name": "God of War III Remastered (gow3_pc)",
+      "tags": ["ps4", "action-adventure"],
+      "source": "https://github.com/FelipePrado0/gow3_pc",
+      "folder": "gow3_pc",
+      "instructions": "Your own copy of God of War III Remastered: CUSA01623 with the 01.02 update,",
+      "image": "https://cdn2.steamgriddb.com/grid/bc6a17604012da6895c1bacd28cdb9fa.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/6de138653a359bbbc1d392d52fa333e6.png"
     },{
       "name": "Goemon's Great Adventure (Goemon64Recomp)",
       "tags": ["n64", "platformer"],
@@ -2230,6 +2248,14 @@
         "linux": "~/.local/state/rage-racer/bu00"
       }
     },{
+      "name": "Ridge Racer 6 (RidgeRacer6-Recompilation)",
+      "tags": ["360", "racing"],
+      "source": "https://github.com/Sirhalo23/RidgeRacer6-Recompilation",
+      "folder": "RidgeRacer6-Recompilation",
+      "instructions": "Required files: Ridge Racer 6 for the Xbox 360 (USA disc, title ID 4E4D07D3)",
+      "image": "https://cdn2.steamgriddb.com/grid/84c485ba11ce25e2d72b48d865b4a7d2.jpg",
+      "icon": "https://cdn2.steamgriddb.com/icon/a73903647a7370584e0f57535af05fb6.png"
+    },{
       "name": "Rival Schools: Evolution Disc (rival-schools-evolution-recomp)",
       "tags": ["ps1", "alexbeav"],
       "source": "https://github.com/Alexbeav/rival-schools-evolution-recomp",
@@ -2643,6 +2669,14 @@
       "instructions": "Required files: Star Wars: X-Wing Special Edition on GOG\n\nLanguages: English.",
       "image": "https://cdn2.steamgriddb.com/grid/1505e04a5567a8584c7f15331e2e3db2.png",
       "icon": "https://cdn2.steamgriddb.com/icon/01b89008144733a570aa96ab859bfb09/32/256x256.png"
+    },{
+      "-name": "StarCraft 64 (StarCraft64-recomp)",
+      "tags": ["n64", "strategy"],
+      "source": "https://github.com/n0madic/StarCraft64-recomp",
+      "folder": "StarCraft64-recomp",
+      "instructions": "Required files: StarCraft 64 (USA).z64 (CRC32: 4E4C7EC9)",
+      "image": "https://cdn2.steamgriddb.com/grid/ef160f5acc8dff9d8799bc504b32ae68.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/874652a830c04985d23bef8ea1c584c1/32/256x256.png"
     },{
       "name": "Stardew Valley (Cinderbox)",
       "tags": ["strategy", "android_only"],
@@ -3501,6 +3535,15 @@
       "instructions": "https://xonotic.org/\n\nLanguages: English.",
       "image": "https://cdn2.steamgriddb.com/grid/3a78cc37cec7abf6057c0a5ab20cff72.png",
       "icon": "https://cdn2.steamgriddb.com/icon/6ea1301c76a2752155f93ff51443ad01.png"
+    },{
+      "name": "Yoshi's Story (dinotale)",
+      "tags": ["n64", "platformer"],
+      "source": "https://github.com/wootbeer/dinotale",
+      "folder": "dinotale",
+      "instructions": "Required files: Yoshi's Story (USA) (En,Ja).z64 (CRC32: A1453E0D)",
+      "image": "https://cdn2.steamgriddb.com/grid/98332a5df4d09a1390746ee7dbdb7982.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/818d7d2cdff6df969894d2fdcd9b48ca/32/256x256.png",
+      "save": "%LOCALAPPDATA%\\DinoTale"
     },{
       "name": "Yu-Gi-Oh! Forbidden Memories (YuGiOhForbiddenMemoriesRecomp)",
       "tags": ["ps1", "tcg", "rpg"],
