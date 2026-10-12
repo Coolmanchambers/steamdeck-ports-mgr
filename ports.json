@@ -1,6 +1,14 @@
 {
   "ports": [
     {
+      "-name": "007: Nightfire (??)",
+      "tags": ["gc", "fps", "multiplayer"],
+      "source": "",
+      "folder": "",
+      "instructions": "Required files: ",
+      "image": "https://cdn2.steamgriddb.com/grid/29ec03bb2d04702c0e22fba276bf9a3e.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/a4cd9bc071c923daab48132b0bb2e4f3.png"
+    },{
       "name": "3D Pinball for Windows: Space Cadet (SpaceCadetPinball)",
       "tags": ["pc", "pinball"],
       "source": "https://github.com/k4zmu2a/SpaceCadetPinball",
@@ -408,25 +416,27 @@
       "icon": "https://cdn2.steamgriddb.com/icon/c1f22f4c38899f51f1ed3ce20120bbd9.png",
       "save": "%LOCALAPPDATA%\\ChameleonTwistRecompiled"
     },{
-      "-name": "Colin McRae Rally (Colin-McRae-Rally-Recomp)",
-      "tags": ["ps1", "racing"],
-      "source": "https://github.com/WeAnitTommyBruh/Colin-McRae-Rally-Recomp",
-      "website": "https://alexbeav.github.io/psxrecomp-ports/",
-      "folder": "Colin-McRae-Rally-Recomp",
-      "instructions": "Required files: Colin McRae Rally (USA).bin/cue",
-      "image": "https://cdn2.steamgriddb.com/grid/acc03e596d708380d36cf3f7a1e621c4.png",
-      "icon": "https://cdn2.steamgriddb.com/icon/f4a6335c9441a5eeb7cac7d709dfc21e.png",
-      "save": "saves"
-    },{
       "name": "Colin McRae Rally 2.0 (colin-mcrae-rally-2-0-recomp)",
       "tags": ["ps1", "alexbeav"],
       "source": "https://github.com/Alexbeav/colin-mcrae-rally-2-0-recomp",
       "website": "https://alexbeav.github.io/psxrecomp-ports/",
       "folder": "colin-mcrae-rally-2-0-recomp",
       "instructions": "Required files: SLUS-01222. BIOS: Regional SCPH",
-      "image": "https://cdn2.steamgriddb.com/grid/7a8b4fa11fb36025971a7fa8661563e9.png",
-      "icon": "https://cdn2.steamgriddb.com/icon/689015a79b8cc0455971e7b1ec66252c.png",
+      "image": "https://cdn2.steamgriddb.com/grid/c36cb3c94d5287e827fbed88960c0c76.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/07aa91ac1cec23a080b4a394dc52e183/32/256x256.png",
       "save": "saves"
+    },{
+      "-name": "Colin McRae Rally 2.0 (OpenCMR2)",
+      "tags": ["pc", "racing"],
+      "source": "https://github.com/pablocpas/OpenCMR2",
+      "folder": "OpenCMR2",
+      "instructions": "Required files: Original PC version of Colin McRae Rally 2.0",
+      "image": "https://cdn2.steamgriddb.com/grid/c36cb3c94d5287e827fbed88960c0c76.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/07aa91ac1cec23a080b4a394dc52e183/32/256x256.png",
+      "save": {
+        "windows": "%APPDATA%\\OpenCMR2",
+        "linux": "~/.local/share/OpenCMR2/"
+      }
     },{
       "name": "Colony Wars (colony-wars-recomp)",
       "tags": ["ps1", "alexbeav"],
@@ -504,7 +514,7 @@
       "save": "saves"
     },{
       "name": "Crash Team Racing (ctr-native)",
-      "tags": ["quality", "ps1", "racing", "multiplayer"],
+      "tags": ["ps1", "racing", "multiplayer"],
       "source": "https://github.com/CTR-tools/ctr-native",
       "android_source": "https://github.com/igawa6/ctr-native-android",
       "android_package": "com.ctrnative",
@@ -518,6 +528,14 @@
         "linux": "memcards",
         "android": "/storage/emulated/0/Android/data/com.ctrnative/files/memcards"
       }
+    },{
+      "name": "Crash Team Racing: Nitro-Fueled (CTR-NitroFueled-PC)",
+      "tags": ["ps4", "racing", "multiplayer"],
+      "source": "https://github.com/GetLostIn/CTR-NitroFueled-PC",
+      "folder": "CTR-NitroFueled-PC",
+      "instructions": "Required files: Crash Team Racing: Nitro-Fueled (PS4, CUSA13795 v1.21)",
+      "image": "https://cdn2.steamgriddb.com/grid/a0637e79c5b79afe6dd9bcabdb94040e.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/946fe5c21087bcb5ed3f73eace856a61.png"
     },{
       "name": "Dante's Inferno (hells-gate-recomp)",
       "tags": ["360", "beat them all"],
@@ -872,6 +890,16 @@
       "image": "https://cdn2.steamgriddb.com/grid/3ec1585f3300499603b65a8a29846e87.jpg",
       "icon": "https://cdn2.steamgriddb.com/icon/46d55a927002038e5cd3137272fb6de7.png",
       "save": "saves"
+    },{
+      "name": "Dragon Ball: Raging Blast 2 (RB2-Android)",
+      "tags": ["360", "fighting", "android_only"],
+      "android_source": "https://github.com/moddedrounds/RB2-Android",
+      "android_package": "org.rb2recomp.android",
+      "image": "https://cdn2.steamgriddb.com/grid/69bf9cd653bc84c1cbadac3ccf277e78.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/e646e2fec7dcbe33111f4481a96523af.png",
+      "save": {
+        "android": ""
+      }
     },{
       "name": "Driver (driver-recomp)",
       "tags": ["ps1", "alexbeav"],
