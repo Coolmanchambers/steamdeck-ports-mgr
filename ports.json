@@ -582,6 +582,15 @@
       "icon": "https://cdn2.steamgriddb.com/icon/3d77a08e1ebeed6c152242a2cb616d6f.png",
       "save": "%USERPROFILE%\\Documents\\deadlyprem"
     },{
+      "name": "Def Jam Vendetta (def-jam-vendetta-recomp)",
+      "tags": ["ps2", "fighting"],
+      "source": "https://github.com/jcsix694/def-jam-vendetta-recomp",
+      "folder": "def-jam-vendetta-recomp",
+      "instructions": "Required files: Def Jam Vendetta (PlayStation 2, USA, SLUS-20639)",
+      "image": "https://cdn2.steamgriddb.com/grid/e3a99cdf45ff252739861cc95ca8a9e7.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/06f2e099b4f87109d52e15d7c05f0084.png",
+      "save": "files"
+    },{
       "name": "Destruction Derby 2 (destruction-derby-2-recomp)",
       "tags": ["ps1", "alexbeav"],
       "source": "https://github.com/Alexbeav/destruction-derby-2-recomp",
@@ -972,6 +981,14 @@
         "windows": "overclocked\\saves",
         "linux": "overclocked/saves"
       }
+    },{
+      "name": "Dune II (dunedynasty)",
+      "tags": ["pc", "strategy"],
+      "source": "https://github.com/gameflorist/dunedynasty",
+      "folder": "dunedynasty",
+      "instructions": "Required files: Original Dune II game data files\n\nPortable mode: If you place dunedynasty.cfg in the same directory as the dunedynasty executable, Dune Dynasty will operate in portable mode - keeping everything (e.g. savegames) inside the install directory.",
+      "image": "https://cdn2.steamgriddb.com/grid/c685621259d9159ef463a7e1c8b142c3.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/527d10c49a0e170c47b750c5c9dd850a.png"
     },{
       "name": "Dungeon Keeper (keeperfx)",
       "tags": ["pc", "strategy"],
@@ -1805,6 +1822,14 @@
       "icon": "https://cdn2.steamgriddb.com/icon/73c415581357651d534a25384d9315d3.png",
       "save": "%APPDATA%\\MetroidPrimeHuntersRecomp"
     },{
+      "name": "Mickey & Donald Collection (MickeyAndDonaldCollection)",
+      "tags": ["smd", "platformer", "emucomp", "illusion", "quackshot"],
+      "source": "https://github.com/Darhkfox/MickeyAndDonaldCollection",
+      "folder": "MickeyAndDonaldCollection",
+      "instructions": "Required files: Treasure (USA).md (CRC32: A26D3AE0)",
+      "image": "https://cdn2.steamgriddb.com/grid/dbbd93eaf25225110ca26eb66da77328.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/8bc730370592fe61cf359900a6f03c66.png"
+    },{
       "name": "Minecraft Java (Amethyst-Android)",
       "tags": ["fps", "android_only"],
       "android_source": "https://github.com/AngelAuraMC/Amethyst-Android",
@@ -1939,6 +1964,17 @@
       "image": "https://cdn2.steamgriddb.com/grid/8e4374a54f3a61fa403d8d70c99bca08.png",
       "icon": "https://cdn2.steamgriddb.com/icon/868a4b62023a2d9d38276152d8c5b8f9.png"
     },{
+      "name": "NetHack (NetHack-Android)",
+      "tags": ["puzzle", "android_only"],
+      "android_source": "https://github.com/gurrhack/NetHack-Android",
+      "android_package": "com.tbd.NetHack",
+      "instructions": "Untested",
+      "image": "https://cdn2.steamgriddb.com/grid/815e49f5c35ed6d0c401931492a9229b.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/8484665c6ae3b6ace2e827e3355da2dd.png",
+      "save": {
+        "android": ""
+      }
+    },{
       "name": "Nightmare Creatures (nightmare-creatures-recomp)",
       "tags": ["ps1", "alexbeav"],
       "source": "https://github.com/Alexbeav/nightmare-creatures-recomp",
@@ -1967,10 +2003,10 @@
       "image": "https://cdn2.steamgriddb.com/grid/952316a1c27f03d5b6cd9d6d530d1ee2.png",
       "icon": "https://cdn2.steamgriddb.com/icon/a952ddeda0b7e2c20744e52e728e5594.png"
     },{
-      "-name": "Ninja Gaiden Black (??)",
+      "-name": "Ninja Gaiden Black (xrevive)",
       "tags": ["xbox", "beat them all", "multilingual"],
-      "source": "",
-      "folder": "",
+      "source": "https://github.com/Teraflopping/xrevive",
+      "folder": "xrevive",
       "instructions": "Required files: \n\nLanguages: Multilingual.",
       "image": "https://cdn2.steamgriddb.com/grid/dbbb8884f3d67a074c2c0ed5c0fec7e3.png",
       "icon": "https://cdn2.steamgriddb.com/icon/1662d1307aaa81230b651ecf00d27180.png"
@@ -2209,6 +2245,22 @@
       "icon": "https://cdn2.steamgriddb.com/icon/436db71e03605b5aea1e08078f29f7f2.png",
       "save": "saves"
     },{
+      "name": "Quake II (yquake2)",
+      "tags": ["pc", "fps"],
+      "source": "https://github.com/yquake2/yquake2",
+      "folder": "yquake2",
+      "instructions": "Required files: Untested",
+      "image": "https://cdn2.steamgriddb.com/grid/5e26badb3867ac7f26d3624ca39a9df4.jpg",
+      "icon": "https://cdn2.steamgriddb.com/icon/436db71e03605b5aea1e08078f29f7f2.png"
+    },{
+      "name": "Quake II Remaster (yquake2remaster)",
+      "tags": ["pc", "fps"],
+      "source": "https://github.com/yquake2/yquake2remaster",
+      "folder": "yquake2remaster",
+      "instructions": "Required files: Untested",
+      "image": "https://cdn2.steamgriddb.com/grid/5e26badb3867ac7f26d3624ca39a9df4.jpg",
+      "icon": "https://cdn2.steamgriddb.com/icon/436db71e03605b5aea1e08078f29f7f2.png"
+    },{
       "name": "Quest 64 (Quest64-Recomp)",
       "tags": ["n64", "rpg"],
       "source": "https://github.com/Rainchus/Quest64-Recomp",
@@ -2271,14 +2323,32 @@
       "icon": "https://cdn2.steamgriddb.com/icon/7a929f4daff7b2f6571944c250232a18.png",
       "save": "saves"
     },{
+      "-name": "Resident Evil 2 (Project-RE-Visited-RE2)",
+      "tags": ["ps1", "survival horror"],
+      "source": "https://github.com/BrazilianHobbyist/Project-RE-Visited-RE2",
+      "folder": "Project-RE-Visited-RE2",
+      "instructions": "Required files: Resident Evil 2 USA",
+      "image": "https://cdn2.steamgriddb.com/grid/774e04f6693cf4322eaa645a58282fa7.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/07aa0cadbb9e040746c1710144c18d83.png",
+      "save": "saves"
+    },{
+      "name": "Resident Evil 3: Nemesis (Project-RE-Visited-RE3)",
+      "tags": ["ps1", "survival horror"],
+      "source": "https://github.com/BrazilianHobbyist/Project-RE-Visited-RE3",
+      "folder": "Project-RE-Visited-RE3",
+      "instructions": "Required files: Resident Evil 3 USA / SLUS_009.23",
+      "image": "https://cdn2.steamgriddb.com/grid/ad539ad730faa3ecb315e0ebc9a97dbc.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/ebbdb149c3329546b73b6f0d714f74ae.png",
+      "save": "saves"
+    },{
       "name": "Resident Evil 3: Nemesis (resident-evil-3-recomp)",
       "tags": ["ps1", "alexbeav", "survival horror"],
       "source": "https://github.com/Alexbeav/resident-evil-3-recomp",
       "website": "https://alexbeav.github.io/psxrecomp-ports/",
       "folder": "resident-evil-3-recomp",
       "instructions": "Required files: SLES-02529. BIOS: SCPH-5552. Known issues: Wave 3 validation limits apply. Use the complete matching Redump CUE/BIN set and the required SCPH-5552 BIOS. Supply the matching owned SBI file for this protected European disc.",
-      "image": "https://cdn2.steamgriddb.com/grid/39e1dd25e194367c68f7d040750f184b.png",
-      "icon": "https://cdn2.steamgriddb.com/icon/1844bd1b6d59ab61b41e110f72b4ef61.png",
+      "image": "https://cdn2.steamgriddb.com/grid/ad539ad730faa3ecb315e0ebc9a97dbc.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/ebbdb149c3329546b73b6f0d714f74ae.png",
       "save": "saves"
     },{
       "-name": "Resident Evil 5 (??)",
@@ -2400,6 +2470,14 @@
       "instructions": "Required files: Sexy Parodius (Japan), SLPM-86009\n\nLanguages: Japanese",
       "image": "https://cdn2.steamgriddb.com/grid/fce9aab4452e8fea5143174d1208b107.jpg",
       "icon": "https://cdn2.steamgriddb.com/icon/6dcfff8e663175895d6f2bf3a6d848b3.png"
+    },{
+      "name": "Shadow of the Colossus (ShadowOfTheColossus-PC)",
+      "tags": ["ps4", "action-adventure"],
+      "source": "https://github.com/AjncSystem/ShadowOfTheColossus-PC",
+      "folder": "ShadowOfTheColossus-PC",
+      "instructions": "Required files: Shadow of the Colossus PS4 (Bluepoint, 2018, CUSA08809",
+      "image": "https://cdn2.steamgriddb.com/grid/c85bd019483ea2c17032bf940015d8c6.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/c13ce2ce7cd12830d03b9d996bc05388.png"
     },{
       "name": "Silent Bomber (silent-bomber-recomp)",
       "tags": ["ps1", "alexbeav"],
@@ -3239,6 +3317,14 @@
       "image": "https://cdn2.steamgriddb.com/grid/e66160e598192a253a015cb90ab371dc.png",
       "icon": "https://cdn2.steamgriddb.com/icon/e622b94cb147f49c7f7d6730764eec6c.png"
     },{
+      "-name": "The Legend of Zelda: Skyward Sword HD (??)",
+      "tags": ["wiiu", "action-adventure", "multilingual"],
+      "source": "",
+      "folder": "",
+      "instructions": "Required Files:",
+      "image": "https://cdn2.steamgriddb.com/grid/f87071ceae93f0318c385b13218fc5c8.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/3370ed268c7bc0d259b20a5ac3615332.png"
+    },{
       "name": "The Legend of Zelda: The Minish Cap (tmc)",
       "tags": ["gba", "action-adventure"],
       "source": "https://github.com/zeldaret/tmc",
@@ -3252,22 +3338,22 @@
         "android": "Android/data/dev.picori.tmc/files"
       }
     },{
-      "name": "The Legend of Zelda: The Wind Waker HD (ZeldaWWHDRecomp)",
-      "tags": ["gc", "action-adventure", "multilingual"],
-      "source": "https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp",
-      "folder": "ZeldaWWHDRecomp",
-      "instructions": "Languages: Multilingual.",
-      "image": "https://cdn2.steamgriddb.com/grid/8d5c0500d7ec1c04842c4b33673d0f43.png",
-      "icon": "https://cdn2.steamgriddb.com/icon/cfcbb2d417d79731884441ea21044165/32/256x256.png",
-      "save": "."
-    },{
-      "name": "The Legend of Zelda: The Wind Waker HD (ZeldaWWHDRecomp)",
+      "name": "The Legend of Zelda: The Wind Waker HD (WindWakerHD-Android-Plus)",
       "tags": ["gc", "action-adventure", "multilingual", "android_only"],
       "android_source": "https://github.com/Nycolazs/WindWakerHD-Android-Plus",
       "android_package": "org.wwhdrecomp.app",
       "instructions": "Languages: Multilingual.",
       "image": "https://cdn2.steamgriddb.com/grid/8d5c0500d7ec1c04842c4b33673d0f43.png",
       "icon": "https://cdn2.steamgriddb.com/icon/cfcbb2d417d79731884441ea21044165/32/256x256.png"
+    },{
+      "name": "The Legend of Zelda: The Wind Waker HD (ZeldaWWHDRecomp)",
+      "tags": ["wiiu", "action-adventure", "multilingual"],
+      "source": "https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp",
+      "folder": "ZeldaWWHDRecomp",
+      "instructions": "Required Files: The Legend of Zelda: The Wind Waker HD USA or EU\nLanguages: Multilingual.",
+      "image": "https://cdn2.steamgriddb.com/grid/8d5c0500d7ec1c04842c4b33673d0f43.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/cfcbb2d417d79731884441ea21044165/32/256x256.png",
+      "save": "."
     },{
       "name": "The Legend of Zelda: Twilight Princess (dusklight)",
       "tags": ["quality", "gc", "action-adventure", "multilingual"],
@@ -3445,6 +3531,14 @@
         "windows": "",
         "android": ""
       }
+    },{
+      "name": "Uncharted: The Nathan Drake Collection (uncharted_pc)",
+      "tags": ["ps4", "action-adventure", "multilingual"],
+      "source": "https://github.com/Supermedo/uncharted_pc",
+      "folder": "uncharted_pc",
+      "instructions": "Required files: (PS4, CUSA02343, CUSA02320)",
+      "image": "https://cdn2.steamgriddb.com/grid/6374abaaafb1a4c0832a34ffa29b15b0.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/6798acf8da0458e3299ad2a1f4e7c2bf.png"
     },{
       "name": "Valkyrie Profile (valkyrie-profile-recomp)",
       "tags": ["ps1", "alexbeav"],
