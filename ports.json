@@ -258,7 +258,22 @@
       "tags": ["n64", "action", "multiplayer", "online"],
       "source": "https://github.com/TheGh0stShip/BattleTanx-Global-Assault-PC-Port",
       "folder": "BattleTanx-Global-Assault-PC-Port",
-      "instructions": "Required files: BattleTanx - Global Assault (USA).z64 (SHA-1: 805248FB0A0EE694CAD8D7DC927B631D860DD8CF)\n\nPut the required file in the port folder."
+      "instructions": "Required files: BattleTanx - Global Assault (USA).z64 (SHA-1: 805248FB0A0EE694CAD8D7DC927B631D860DD8CF)\n\nPut the required file in the port folder.\nPortable saves : portable.txt in root folder.",
+      "image": "https://cdn2.steamgriddb.com/grid/dd9b3c422d830f2d03f296f81239a156.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/918e3e308b85e78502c7232a9c304f40.png",
+      "save": {
+        "windows": "%LOCALAPPDATA%\\BattleTanxGA",
+        "linux": "~/.local/share/BattleTanxGA"
+      },
+      "save2": "userdata"
+    },{
+      "-name": "Bayonetta 2 (??)",
+      "tags": ["switch", "beat them all"],
+      "source": "??",
+      "folder": "??",
+      "instructions": "Required files: ",
+      "image": "https://cdn2.steamgriddb.com/grid/db76ba9f1aadf1434c1d08a590f41fde.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/403ea2e851b9ab04a996beab4a480a30.png"
     },{
       "name": "Beetle Adventure Racing (beetle-adventure-racing-recomp)",
       "tags": ["n64", "racing"],
@@ -712,6 +727,18 @@
       "image": "https://cdn2.steamgriddb.com/grid/77436531532db0c84d1c3b773de5314c.png",
       "save": "saves"
     },{
+      "name": "Dig Dug (digdug-native)",
+      "tags": ["arcade", "action"],
+      "source": "https://github.com/TekRantGaming/digdug-native",
+      "folder": "digdug-native",
+      "instructions": "Required files: https://github.com/TekRantGaming/digdug-native#getting-the-roms",
+      "image": "https://cdn2.steamgriddb.com/grid/1836593bd10614fe92922ef60de5be55.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/7a99ddd64872e5a6b4084867dd14ef4a/32/256x256.png",
+      "save": {
+        "windows": "%APPDATA%\\DigDugNative",
+        "linux": "~/.config/DigDugNative"
+      }
+    },{
       "-name": "Digimon World (??)",
       "tags": ["ps1", "rpg"],
       "source": "??",
@@ -943,6 +970,15 @@
       "save": {
         "android": ""
       }
+    },{
+      "name": "DriveClub (Driveclub-pc-wrapper)",
+      "tags": ["ps4", "racing"],
+      "source": "https://github.com/ondrejeder/Driveclub-pc-wrapper",
+      "folder": "Driveclub-pc-wrapper",
+      "instructions": "Required files: Driveclub (CUSA00093, v1.28)",
+      "image": "https://cdn2.steamgriddb.com/grid/bf46e30b7a16df770b7cfb9a6478a502.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/80418728f131ff0a2b48614529fbf9f3.png",
+      "save": "user"
     },{
       "name": "Driver (driver-recomp)",
       "tags": ["ps1", "alexbeav"],
@@ -1184,6 +1220,15 @@
       "instructions": "",
       "image": "https://cdn2.steamgriddb.com/grid/c43043335d711ee1590cfcba87ed0009.png",
       "icon": "https://cdn2.steamgriddb.com/icon/c554942ee622a853af81e6448a2833a6.png"
+    },{
+      "-name": "Forza Motorsport 5 (RaceOneHub)",
+      "tags": ["xone", "racing"],
+      "source": "https://github.com/LoZazaMastro/RaceOneHub",
+      "folder": "RaceOneHub",
+      "instructions": "Required files: Forza Motorsport 5, version 1.0.0.20",
+      "image": "https://cdn2.steamgriddb.com/grid/5ab754415b19d7115705bfbb09957881.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/bd6c07a61581fd939a71f0d2c99dd8a8.png",
+      "save": "%LOCALAPPDATA%\\RaceOneHub"
     },{
       "name": "Future Cop: L.A.P.D. (future-cop-lapd-recomp)",
       "tags": ["ps1", "alexbeav"],
@@ -1456,6 +1501,14 @@
       "icon": "https://cdn2.steamgriddb.com/icon/7a20fd764fa23d34b52bd85bf5cb49a6.png",
       "save": "%APPDATA%\\OpenGOAL",
       "extra": "https://raw.githubusercontent.com/Nyaldee/Ports-Launcher/main/extra/jak-project/OpenGOAL_Launcher.bat"
+    },{
+      "name": "Jet Force Gemini (JetForceGemini-Recomp)",
+      "tags": ["n64", "action-adventure"],
+      "source": "https://github.com/TK22-26/JetForceGemini-Recomp",
+      "folder": "JetForceGemini-Recomp",
+      "instructions": "Required files: Jet Force Gemini (USA).z64 (CRC32: 6753D5A3)",
+      "image": "https://cdn2.steamgriddb.com/grid/f1e8c820e19848bdf8b7cc2979884c94.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/cf14c5c1af0c784e0053724c82cb7276.png"
     },{
       "-name": "Jet Moto / 2 / 3 (Jet-Moto-Anthology)",
       "abandonned": "Too many issues according to its developer. Use this: https://jetmotocentral.neocities.org/jmceditionmod",
@@ -1963,6 +2016,19 @@
       "image": "https://cdn2.steamgriddb.com/grid/6852aa253d45b3902baff6a8c08d0c1c.png",
       "icon": "https://cdn2.steamgriddb.com/icon/76d90b75c6cfb51ac5f82f265b06a6d7.png",
       "save": "saves"
+    },{
+      "name": "Mother 3 (Mother3Recomp)",
+      "tags": ["gba", "rpg"],
+      "source": "https://github.com/josiahg2502-glitch/Mother3Recomp",
+      "android_package": "com.ylports.mother3recomp.en.dev",
+      "folder": "Mother3Recomp",
+      "instructions": "Required files: Mother 3 (Japan).gba + GBA BIOS (CRC32: 42AC9CB9/81977335)",
+      "image": "https://cdn2.steamgriddb.com/grid/b95268897d16c109b82c59d16bc010bd.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/eb67b990e0f77ca7ce23542656bc886b/32/768x768.png",
+      "save": {
+        "windows": "",
+        "android": ""
+      }
     },{
       "name": "Namco System 22 (namco22-decompile)",
       "tags": ["arcade"],
@@ -2540,6 +2606,15 @@
       "instructions": "Required files: Sega Superstars Tennis .iso\n\nLanguages: English.\n\nPlace the .bin file in the assets folder at the root of the port folder.",
       "image": "https://cdn2.steamgriddb.com/grid/cc4e7c9bb2d268a78876927c0343ac5c.png",
       "icon": "https://cdn2.steamgriddb.com/icon/ef5495c586679c353c85c0595e23239b.png"
+    },{
+      "name": "Serial Experiments Lain (lain-psx-decompiled)",
+      "tags": ["ps1", "visual novel"],
+      "source": "https://github.com/Y0oshi/lain-psx-decompiled",
+      "folder": "lain-psx-decompiled",
+      "instructions": "Required files: SLPS-01603/SLPS-01604\n\nLanguages: English.",
+      "image": "https://cdn2.steamgriddb.com/grid/7fedb77c020997acb6b006a75debea77.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/07d34e2419c61216a85a2156b2cf8ae4.png",
+      "save": "save"
     },{
       "name": "Serious Sam: Next Encounter (Silly-ReEncounter)",
       "tags": ["gc", "fps"],
@@ -3481,6 +3556,15 @@
       "icon": "https://cdn2.steamgriddb.com/icon/76eac68b8d2923713428270133e03d3f.png",
       "save": "saves"
     },{
+      "name": "The Order: 1886 (The-Order-1886_pc)",
+      "tags": ["ps4", "action-adventure"],
+      "source": "https://github.com/JulioCacko/The-Order-1886_pc",
+      "folder": "The-Order-1886_pc",
+      "instructions": "Required files: The Order: 1886 (CUSA00076 )",
+      "image": "https://cdn2.steamgriddb.com/grid/f1fcc354fa9c5cd9397b28822f9b2fb2.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/12113a40d01f2935f595440de44921a5/32/256x256.png",
+      "save": "user"
+    },{
       "name": "The Simpsons Game (TheSimpsonsGameRecomp)",
       "tags": ["360", "action-adventure"],
       "source": "https://github.com/YesterMester/TheSimpsonsGameRecomp",
@@ -3708,7 +3792,7 @@
       "source": "https://github.com/mstan/WarioWareTwistedRecomp",
       "android_package": "com.mstan.wariowaretwisted",
       "folder": "WarioWareTwistedRecomp",
-      "instructions": "Required WarioWare - Twisted! (USA, Australia).gba + GBA BIOS (CRC32: CB4E844B/81977335)",
+      "instructions": "Required files: WarioWare - Twisted! (USA, Australia).gba + GBA BIOS (CRC32: CB4E844B/81977335)",
       "image": "https://cdn2.steamgriddb.com/grid/7380b662b51be38da3aeee98ccfa4d55.png",
       "icon": "https://cdn2.steamgriddb.com/icon/ebfe4a43d46c01d811b34c14a3356904.png",
       "save": {
@@ -3720,16 +3804,16 @@
       "tags": ["n64", "racing"],
       "source": "https://github.com/DomazinUS/RaceWave46",
       "folder": "RaceWave46",
-      "instructions": "Required files: Wave Race 64 - Kawasaki Jet Ski (USA) (Rev 1) (CRC32: 394948C4)",
+      "instructions": "Required files: Wave Race 64 - Kawasaki Jet Ski (USA) (Rev 1).z64 (CRC32: 394948C4)",
       "image": "https://cdn2.steamgriddb.com/grid/8865522a87f300bac8a03a4ddcbc784b.png",
       "icon": "https://cdn2.steamgriddb.com/icon/65c2dd61d53e765e7c7363dbfe10cdd9.png",
       "save": ".runtime"
     },{
       "name": "Wave Race 64 (wave-race-64-recomp)",
       "tags": ["n64", "racing"],
-      "source": "https://github.com/elliotttate/wave-race-64-recomp/",
+      "source": "https://github.com/elliotttate/wave-race-64-recomp",
       "folder": "wave-race-64-recomp",
-      "instructions": "Required files: Wave Race 64 - Kawasaki Jet Ski (USA) (Rev 1) (CRC32: 394948C4)",
+      "instructions": "Required files: Wave Race 64 - Kawasaki Jet Ski (USA) (Rev 1).z64 (CRC32: 394948C4)",
       "image": "https://cdn2.steamgriddb.com/grid/8865522a87f300bac8a03a4ddcbc784b.png",
       "icon": "https://cdn2.steamgriddb.com/icon/65c2dd61d53e765e7c7363dbfe10cdd9.png",
       "save": "%LOCALAPPDATA%\\WaveRace64Recomp"
