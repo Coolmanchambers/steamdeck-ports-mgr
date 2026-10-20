@@ -6,7 +6,7 @@ name: Upstream sync
 # - A merge conflict, or upstream history that shares nothing with ours, fails the run with a summary,
 #   so GitHub emails the owner. (A partial upstream rebase still merges or conflicts; it is not detected.)
 # - An open sync PR that already contains the latest upstream commit is left alone, so fix-ups pushed to
-#   it are not overwritten.
+#   it are not overwritten. Without an open PR the branch is rebuilt, so a failed PR gets retried.
 # - PRs need Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
 # - Pushes and PRs made with GITHUB_TOKEN do not trigger CI, so the test result lives in the PR body and run.
 
@@ -46,7 +46,7 @@ jobs:
       base: ${{ steps.merge.outputs.base }}
       sync_branch: ${{ steps.merge.outputs.sync_branch }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.base_branch || 'main' }}
           fetch-depth: 0
@@ -55,6 +55,7 @@ jobs:
         id: merge
         env:
           BASE: ${{ inputs.base_branch || 'main' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$BASE" = "main" ]; then sync="upstream-sync"; else sync="upstream-sync-$BASE"; fi
@@ -81,8 +82,10 @@ jobs:
             exit 0
           fi
 
-          if git fetch --no-tags origin "$sync" 2>/dev/null && git merge-base --is-ancestor "$up" FETCH_HEAD; then
-            echo "$sync already carries upstream ${up:0:7}; leaving it and its PR alone."
+          # Only an open PR protects the branch; a failed or closed one is rebuilt and retried.
+          open_pr=$(gh pr list --head "$sync" --base "$BASE" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$open_pr" ] && git fetch --no-tags origin "$sync" 2>/dev/null && git merge-base --is-ancestor "$up" FETCH_HEAD; then
+            echo "PR #$open_pr on $sync already carries upstream ${up:0:7}; leaving it alone."
             echo "status=already-proposed" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -116,7 +119,7 @@ jobs:
           fi
 
       - name: Keep the file lists for the next job
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: upstream-sync-lists
           path: lists/
@@ -145,12 +148,12 @@ jobs:
       SYNC: ${{ needs.merge.outputs.sync_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.merge.outputs.base }}
           fetch-depth: 0
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: upstream-sync-lists
           path: lists

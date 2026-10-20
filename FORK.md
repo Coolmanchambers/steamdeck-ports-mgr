@@ -52,7 +52,8 @@ Notes:
 - Pushes and PRs made by the workflow do not trigger CI on their own. The test result is in the PR
   body and the run summary.
 - While a sync PR is open and already has the newest upstream commit, the workflow leaves its
-  branch alone. If upstream moves again, the branch is rebuilt, so put fix-ups on a separate branch.
+  branch alone. If upstream moves again, or no PR is open, the branch is rebuilt, so put fix-ups on
+  a separate branch.
 - To test without touching `main`, start it by hand with `base_branch` set to a scratch branch.
 
 ## Builds
