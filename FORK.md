@@ -15,6 +15,7 @@ to a file that came from upstream is listed here with its date.
 |---|---|---|
 | 2026-10-20 | `src/core/config.rs` | Added tests that pin how local entries with a GitHub or GitLab source load |
 | 2026-10-20 | `src/core/version.rs` | Self-update check and project links point at this fork instead of upstream |
+| 2026-10-20 | `README.md` | Note at the top crediting Nyaldee and listing what this fork adds |
 
 Files added by this fork:
 

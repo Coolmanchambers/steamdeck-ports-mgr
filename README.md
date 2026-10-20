@@ -1,5 +1,24 @@
 # Ports Launcher
 
+> [!NOTE]
+> **steamdeck-ports-mgr is a fork, for testing and validation.** Ports Launcher is written and
+> maintained by **[Nyaldee](https://github.com/Nyaldee)**; the original project is
+> **[Nyaldee/Ports-Launcher](https://github.com/Nyaldee/Ports-Launcher)**, and it is the one to use
+> day to day. This fork adds the 8 Steam Deck items below so they can be tested and validated.
+> Everything after this note is upstream's README, unchanged. Same license (GPL-3.0-or-later);
+> every change from upstream is logged in [FORK.md](FORK.md).
+>
+> | # | Item added by this fork | Status |
+> |---|---|---|
+> | 1 | Linux / Steam Deck builds and tests on every push | Done |
+> | 2 | Daily sync with upstream | Done |
+> | 3 | Controller and Game Mode checks on the Steam Deck | Testing |
+> | 4 | Adopt ports already installed on the Deck | Planned |
+> | 5 | Add ports to Steam with artwork | Planned |
+> | 6 | Save backups before every update | Planned |
+> | 7 | Connect ports to your own game files folder | Planned |
+> | 8 | A list of Deck-ready ports | Planned |
+
 <p align="center">
   <img src="Ports Launcher.webp" alt="Ports Launcher screenshot">
 </p>
