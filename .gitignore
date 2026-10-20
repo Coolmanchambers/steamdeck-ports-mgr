@@ -1,0 +1,44 @@
+# Build output
+/target/
+/dist/
+
+# Runtime data the launcher writes next to its executable
+/Library/
+/Saves Backup/
+/state.json
+/image_cache/
+
+# Game files, keys and firmware must never be committed.
+*.o2r
+*.otr
+*.z64
+*.n64
+*.v64
+*.iso
+*.gcm
+*.gcz
+*.rvz
+*.wbfs
+*.wad
+*.nsp
+*.xci
+*.nca
+*.nso
+*.cue
+*.bin
+*.chd
+*.pbp
+*.ecm
+*.img
+*.mdf
+*.mds
+*.keys
+prod.keys
+title.keys
+firmware/
+**/romfs/
+**/exefs/
+
+# Secrets
+.env
+*.token

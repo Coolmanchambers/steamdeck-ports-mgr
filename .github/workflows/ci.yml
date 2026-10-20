@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (defaults to the triggering commit)
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x86_64 tests and build
+    # 22.04 keeps the glibc requirement low so the binary runs on SteamOS and older desktops.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: System libraries for Slint, winit and gilrs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfontconfig1-dev libfreetype-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libudev-dev libdbus-1-dev libgl1-mesa-dev libegl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Release build
+        run: cargo build --release --locked
+
+      - name: Show the newest glibc symbol the binary needs
+        run: |
+          objdump -T target/release/ports_launcher | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+
+      - name: Package
+        run: |
+          pkg=steamdeck-ports-mgr
+          mkdir -p "dist/$pkg"
+          install -m 755 target/release/ports_launcher "dist/$pkg/ports_launcher"
+          install -m 755 7zzs "dist/$pkg/7zzs"
+          # The upstream updater script is left out on purpose: it would replace this build with upstream's release.
+          tar -C dist -czf "dist/$pkg-linux-x86_64.tar.gz" "$pkg"
+          tar -tzvf "dist/$pkg-linux-x86_64.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steamdeck-ports-mgr-linux-x86_64
+          path: dist/steamdeck-ports-mgr-linux-x86_64.tar.gz
+          retention-days: 30
+          if-no-files-found: error

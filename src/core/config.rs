@@ -154,6 +154,41 @@ mod tests {
     }
 
     #[test]
+    fn load_local_config_entree_avec_source_github_garde_le_depot() {
+        let path = write_temp("local_github", r#"{"ports":[{"name":"Local Port","folder":"local-port","source":"https://github.com/owner/repo"}]}"#);
+        let ports = load_local_config(&path);
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].source_type, super::super::models::SourceType::Github);
+        assert_eq!(ports[0].repo.as_deref(), Some("owner/repo"));
+        assert_eq!(ports[0].key(), "owner/repo");
+        assert!(ports[0].user_managed);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_local_config_entree_avec_source_gitlab_garde_le_depot() {
+        let path = write_temp("local_gitlab", r#"{"ports":[{"name":"Local Port","folder":"local-port","source":"https://gitlab.com/group/project"}]}"#);
+        let ports = load_local_config(&path);
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].source_type, super::super::models::SourceType::Gitlab);
+        assert_eq!(ports[0].repo.as_deref(), Some("group/project"));
+        assert!(ports[0].user_managed);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn merge_local_catalog_une_entree_locale_avec_source_remplace_le_principal_et_garde_sa_source() {
+        let main = vec![port_from_value(&serde_json::json!({"name": "Official", "folder": "a", "source": "https://github.com/official/a"})).unwrap()];
+        let path = write_temp("local_override", r#"{"ports":[{"name":"Customized","folder":"a","source":"https://github.com/fork/a"}]}"#);
+        let merged = merge_local_catalog(main, load_local_config(&path));
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].name, "Customized");
+        assert_eq!(merged[0].repo.as_deref(), Some("fork/a"));
+        assert!(merged[0].user_managed);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn load_config_entree_sans_source_nest_pas_user_managed() {
         let path = write_temp("main_no_source", r#"{"ports":[{"name":"Website Game","folder":"website-game","website":"https://example.com"}]}"#);
         let ports = load_config(&path).unwrap();

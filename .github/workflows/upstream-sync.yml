@@ -1,0 +1,214 @@
+name: Upstream sync
+
+# Keeps this fork in step with Nyaldee/Ports-Launcher.
+# - Upstream changes confined to DATA_ONLY_PATHS land on the base branch once tests pass.
+# - Anything else (code, build files) opens or refreshes a pull request for review.
+# - A merge conflict or rewritten upstream history fails the run with a summary, so GitHub emails the owner.
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+    inputs:
+      base_branch:
+        description: Branch to sync into (point it at a scratch branch to test this workflow)
+        type: string
+        required: false
+        default: main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: Nyaldee/Ports-Launcher
+  UPSTREAM_BRANCH: main
+  # A trailing slash means anything under that folder.
+  DATA_ONLY_PATHS: "ports.json themes.json lang/"
+
+jobs:
+  merge:
+    name: Merge upstream into the sync branch
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.merge.outputs.status }}
+      data_only: ${{ steps.merge.outputs.data_only }}
+      upstream_sha: ${{ steps.merge.outputs.upstream_sha }}
+      base: ${{ steps.merge.outputs.base }}
+      sync_branch: ${{ steps.merge.outputs.sync_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch || 'main' }}
+          fetch-depth: 0
+
+      - name: Merge
+        id: merge
+        env:
+          BASE: ${{ inputs.base_branch || 'main' }}
+        run: |
+          set -euo pipefail
+          if [ "$BASE" = "main" ]; then sync="upstream-sync"; else sync="upstream-sync-$BASE"; fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "sync_branch=$sync" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+          up=$(git rev-parse FETCH_HEAD)
+          echo "upstream_sha=$up" >> "$GITHUB_OUTPUT"
+          mkdir -p lists
+          touch lists/upstream-changed.txt lists/fork-changed.txt lists/conflicts.txt
+
+          if git merge-base --is-ancestor "$up" HEAD; then
+            echo "$BASE already contains upstream ${up:0:7}."
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! mb=$(git merge-base HEAD "$up"); then
+            echo "No shared history with upstream: it was probably rewritten."
+            echo "status=rewritten" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --name-only "$mb" "$up" > lists/upstream-changed.txt
+          git diff --name-only "$mb" HEAD > lists/fork-changed.txt
+          git log --oneline --no-merges "$mb..$up" > lists/upstream-commits.txt
+
+          data_only=true
+          while IFS= read -r f; do
+            ok=false
+            for p in $DATA_ONLY_PATHS; do
+              case "$p" in
+                */) case "$f" in "$p"*) ok=true ;; esac ;;
+                *) if [ "$f" = "$p" ]; then ok=true; fi ;;
+              esac
+            done
+            if [ "$ok" = false ]; then data_only=false; fi
+          done < lists/upstream-changed.txt
+          echo "data_only=$data_only" >> "$GITHUB_OUTPUT"
+
+          git switch -C "$sync"
+          if git merge --no-ff --no-edit -m "Merge upstream $UPSTREAM_REPO@${up:0:7}" "$up"; then
+            git push --force origin "$sync"
+            echo "status=merged" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > lists/conflicts.txt
+            git merge --abort
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Keep the file lists for the next job
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-lists
+          path: lists/
+          retention-days: 14
+
+  test:
+    name: Test the merged branch
+    needs: merge
+    if: needs.merge.outputs.status == 'merged'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.merge.outputs.sync_branch }}
+
+  land:
+    name: Land, open a PR, or report a conflict
+    needs: [merge, test]
+    if: always() && needs.merge.result == 'success' && needs.merge.outputs.status != 'up-to-date'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATUS: ${{ needs.merge.outputs.status }}
+      DATA_ONLY: ${{ needs.merge.outputs.data_only }}
+      TESTS: ${{ needs.test.result }}
+      UP: ${{ needs.merge.outputs.upstream_sha }}
+      BASE: ${{ needs.merge.outputs.base }}
+      SYNC: ${{ needs.merge.outputs.sync_branch }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.merge.outputs.base }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: upstream-sync-lists
+          path: lists
+
+      - name: Decide and act
+        run: |
+          set -euo pipefail
+          short="${UP:0:7}"
+          as_list() { if [ -s "$1" ]; then sed 's/^/- `/; s/$/`/' "$1"; else echo "- (none)"; fi; }
+          grep -Fxf lists/fork-changed.txt lists/upstream-changed.txt > lists/overlap.txt || true
+
+          case "$STATUS" in
+            merged)
+              reason=""
+              if [ "$TESTS" != "success" ]; then reason="Tests on the merged branch did not pass ($TESTS)."; fi
+              if [ "$DATA_ONLY" != "true" ]; then reason="${reason:+$reason }Upstream changed code or build files, not just the catalog."; fi
+
+              if [ -z "$reason" ]; then
+                git fetch origin "$SYNC"
+                # A plain push only fast-forwards; it is rejected if $BASE moved since the merge.
+                if git push origin "FETCH_HEAD:refs/heads/$BASE"; then
+                  for n in $(gh pr list --head "$SYNC" --state open --json number --jq '.[].number'); do
+                    gh pr close "$n" --comment "Landed directly on $BASE in $RUN_URL" --delete-branch
+                  done
+                  git push origin --delete "$SYNC" 2>/dev/null || true
+                  {
+                    echo "### Landed upstream $short on \`$BASE\`"
+                    echo "Catalog or data changes only, tests passed."
+                    echo; echo "#### Upstream commits"; as_list lists/upstream-commits.txt
+                  } >> "$GITHUB_STEP_SUMMARY"
+                  exit 0
+                fi
+                reason="$BASE moved while this run was testing, so it could not fast-forward."
+              fi
+
+              title="Upstream sync: $UPSTREAM_REPO@$short"
+              {
+                echo "Automated merge of \`$UPSTREAM_REPO\` at \`$short\` into \`$BASE\`."
+                echo
+                echo "**Tests on the merged branch:** $TESTS"
+                echo
+                echo "**Why this needs a review:** $reason"
+                echo
+                echo "### Also changed in this fork (check these first)"; as_list lists/overlap.txt
+                echo; echo "### Upstream commits"; as_list lists/upstream-commits.txt
+                echo; echo "### Files changed upstream"; as_list lists/upstream-changed.txt
+                echo; echo "Run: $RUN_URL"
+              } > body.md
+              existing=$(gh pr list --head "$SYNC" --base "$BASE" --state open --json number --jq '.[0].number // empty')
+              if [ -n "$existing" ]; then
+                gh pr edit "$existing" --title "$title" --body-file body.md
+              else
+                gh pr create --head "$SYNC" --base "$BASE" --title "$title" --body-file body.md
+              fi
+              cat body.md >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            conflict)
+              {
+                echo "### Upstream $short conflicts with \`$BASE\`"
+                echo "Merge by hand: fetch upstream, merge into a branch, resolve, open a PR."
+                echo; echo "#### Conflicting files"; as_list lists/conflicts.txt
+                echo; echo "#### Upstream commits"; as_list lists/upstream-commits.txt
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::Upstream sync hit a merge conflict. See the run summary."
+              exit 1
+              ;;
+            rewritten)
+              echo "### Upstream $short shares no history with \`$BASE\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "Upstream history looks rewritten. Sync needs a manual decision." >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::Upstream history was rewritten. See the run summary."
+              exit 1
+              ;;
+          esac
