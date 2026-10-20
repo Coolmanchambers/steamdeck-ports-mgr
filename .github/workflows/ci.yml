@@ -68,7 +68,9 @@ jobs:
           install -m 755 7zzs "dist/$pkg/7zzs"
           # Starter catalog for an offline first launch; the app refreshes both from upstream.
           install -m 644 ports.json themes.json "dist/$pkg/"
-          # The upstream updater script is left out on purpose: it would replace this build with upstream's release.
+          # The fork's own updater, under the name the app looks for. Upstream's script is left out:
+          # it would replace this build with upstream's release.
+          install -m 755 tools/fork-updater.sh "dist/$pkg/ports_launcher_updater.sh"
           tar -C dist -czf "dist/$pkg-linux-x86_64.tar.gz" "$pkg"
           tar -tzvf "dist/$pkg-linux-x86_64.tar.gz"
 
@@ -78,3 +80,42 @@ jobs:
           path: dist/steamdeck-ports-mgr-linux-x86_64.tar.gz
           retention-days: 30
           if-no-files-found: error
+
+  release:
+    name: Publish the rolling release
+    needs: linux
+    # Only a real push to main. When upstream-sync calls this file, inputs.ref is set and the event is
+    # the caller's, so an unmerged sync branch can never be published.
+    if: ${{ !inputs.ref && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: steamdeck-ports-mgr-linux-x86_64
+          path: dist
+
+      - name: Replace the "rolling" release with this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd dist
+          asset=steamdeck-ports-mgr-linux-x86_64.tar.gz
+          sha256sum "$asset" > "$asset.sha256"
+          cat "$asset.sha256"
+          {
+            echo "Rolling build of \`main\` at ${GITHUB_SHA::7}, built $(date -u '+%Y-%m-%d %H:%M') UTC."
+            echo
+            echo "Source for this build: https://github.com/$GH_REPO/tree/$GITHUB_SHA"
+            echo
+            echo "A testing and validation fork of [Nyaldee/Ports-Launcher](https://github.com/Nyaldee/Ports-Launcher)."
+            echo "Install and test steps: [STEAM_DECK.md](https://github.com/$GH_REPO/blob/main/STEAM_DECK.md)."
+          } > notes.md
+          # Full release (not pre-release): the updater downloads from releases/latest.
+          gh release delete rolling --yes --cleanup-tag 2>/dev/null || true
+          gh release create rolling "$asset" "$asset.sha256" --target "$GITHUB_SHA" \
+            --title "Rolling build (main)" --notes-file notes.md --latest
+          gh release view rolling --json tagName,isLatest,assets --jq '"\(.tagName) latest=\(.isLatest) assets=\([.assets[].name] | join(", "))"'

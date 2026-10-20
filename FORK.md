@@ -27,14 +27,14 @@ Files added by this fork:
 | 2026-10-20 | `FORK.md` | This file |
 | 2026-10-20 | `STEAM_DECK.md` | How to install and test this fork on a Steam Deck |
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
+| 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 
 ## What still comes from upstream at runtime
 
 - **The catalog.** The app downloads `ports.json` and `themes.json` from upstream's repository about
   every 12 hours (`src/core/catalog_sync.rs`), so the catalog on a device matches upstream's, not
   this repo's copy. Personal entries belong in `ports.local.json` next to the executable.
-- **Self-update** now checks this fork's releases. The fork publishes no releases yet, so the app
-  never offers an update. "Force update" shows an error because the updater script is not shipped.
+- **Self-update** checks this fork's releases, not upstream's, and installs this fork's builds.
 
 ## Staying in step with upstream
 
@@ -62,5 +62,15 @@ Notes:
 ## Builds
 
 Every push builds `steamdeck-ports-mgr-linux-x86_64.tar.gz`, available as an artifact on the Actions
-run. It holds the program, `7zzs`, and a starter `ports.json` and `themes.json`. Upstream's
-`ports_launcher_updater.sh` is left out on purpose: it downloads upstream's release.
+run. It holds the program, `7zzs`, a starter `ports.json` and `themes.json`, and the fork's updater.
+
+Each push to `main` that passes CI also replaces the **`rolling`** release (a full release, so
+`releases/latest` points at it) with that build plus a `.sha256` file. The release notes name the
+exact source commit. Pushes made by workflows, such as catalog-only upstream syncs, do not trigger
+CI, so they do not produce a new release.
+
+The updater (`tools/fork-updater.sh`, shipped under upstream's file name so the app's Update and
+Force update buttons run it) downloads the rolling release, refuses it unless the SHA-256 matches,
+keeps the previous program files in `.previous/`, replaces only `ports_launcher`, `7zzs` and itself,
+restarts the app, and logs to `updater.log`. Upstream's `ports_launcher_updater.sh` stays in the repo
+unchanged but is not shipped, because it installs upstream's release.

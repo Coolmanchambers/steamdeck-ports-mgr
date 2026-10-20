@@ -4,7 +4,7 @@
 > **steamdeck-ports-mgr is a fork, for testing and validation.** Ports Launcher is written and
 > maintained by **[Nyaldee](https://github.com/Nyaldee)**; the original project is
 > **[Nyaldee/Ports-Launcher](https://github.com/Nyaldee/Ports-Launcher)**, and it is the one to use
-> day to day. This fork adds the 8 Steam Deck items below so they can be tested and validated.
+> day to day. This fork adds the 9 Steam Deck items below so they can be tested and validated.
 > Everything after this note is upstream's README, unchanged. Same license (GPL-3.0-or-later);
 > every change from upstream is logged in [FORK.md](FORK.md).
 >
@@ -20,6 +20,7 @@
 > | 6 | Save backups before every update | Planned |
 > | 7 | Connect ports to your own game files folder | Planned |
 > | 8 | A list of Deck-ready ports | Planned |
+> | 9 | Self-update from this fork's own releases | Testing |
 
 <p align="center">
   <img src="Ports Launcher.webp" alt="Ports Launcher screenshot">
