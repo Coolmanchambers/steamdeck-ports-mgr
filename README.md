@@ -8,6 +8,8 @@
 > Everything after this note is upstream's README, unchanged. Same license (GPL-3.0-or-later);
 > every change from upstream is logged in [FORK.md](FORK.md).
 >
+> **Install and test on a Steam Deck:** see [STEAM_DECK.md](STEAM_DECK.md).
+>
 > | # | Item added by this fork | Status |
 > |---|---|---|
 > | 1 | Linux / Steam Deck builds and tests on every push | Done |

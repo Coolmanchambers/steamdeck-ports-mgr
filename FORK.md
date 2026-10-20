@@ -25,6 +25,7 @@ Files added by this fork:
 | 2026-10-20 | `.github/workflows/ci.yml` | Builds the Linux x86_64 release and runs the tests on every push |
 | 2026-10-20 | `.github/workflows/upstream-sync.yml` | Daily merge of upstream changes (see below) |
 | 2026-10-20 | `FORK.md` | This file |
+| 2026-10-20 | `STEAM_DECK.md` | How to install and test this fork on a Steam Deck |
 
 ## What still comes from upstream at runtime
 
