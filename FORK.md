@@ -26,6 +26,7 @@ Files added by this fork:
 | 2026-10-20 | `.github/workflows/upstream-sync.yml` | Daily merge of upstream changes (see below) |
 | 2026-10-20 | `FORK.md` | This file |
 | 2026-10-20 | `STEAM_DECK.md` | How to install and test this fork on a Steam Deck |
+| 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 
 ## What still comes from upstream at runtime
 
