@@ -56,6 +56,8 @@ jobs:
         env:
           BASE: ${{ inputs.base_branch || 'main' }}
           GH_TOKEN: ${{ github.token }}
+          # Without this, gh prefers the "upstream" remote and would look for PRs in Nyaldee's repo.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ "$BASE" = "main" ]; then sync="upstream-sync"; else sync="upstream-sync-$BASE"; fi
@@ -140,6 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       STATUS: ${{ needs.merge.outputs.status }}
       DATA_ONLY: ${{ needs.merge.outputs.data_only }}
       TESTS: ${{ needs.test.result }}
