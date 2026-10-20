@@ -6,9 +6,29 @@
 /Library/
 /Saves Backup/
 /state.json
-/image_cache/
+/cache/
 
 # Game files, keys and firmware must never be committed.
+# Patterns cannot catch everything (Genesis .md, for one), so check new files before adding them.
+*.sfc
+*.smc
+*.nes
+*.gb
+*.gbc
+*.gba
+*.nds
+*.3ds
+*.cia
+*.gdi
+*.cdi
+*.cso
+*.wud
+*.wux
+*.wua
+*.rpx
+*.dol
+*.sav
+*.srm
 *.o2r
 *.otr
 *.z64

@@ -1,8 +1,8 @@
 
 pub const APP_VERSION: &str = env!("APP_BUILD_DATE");
 
-pub const SELF_REPO: &str = "Nyaldee/Ports-Launcher";
-pub const PROJECT_URL: &str = "https://github.com/Nyaldee/Ports-Launcher";
+pub const SELF_REPO: &str = "Coolmanchambers/steamdeck-ports-mgr";
+pub const PROJECT_URL: &str = "https://github.com/Coolmanchambers/steamdeck-ports-mgr";
 
 pub fn is_newer_date(latest: &str, current: &str) -> bool {
     latest.get(..10).unwrap_or(latest) > current

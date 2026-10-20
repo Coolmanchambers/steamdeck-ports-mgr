@@ -16,15 +16,22 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux:
     name: Linux x86_64 tests and build
     # 22.04 keeps the glibc requirement low so the binary runs on SteamOS and older desktops.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commit SHAs (the comment shows the tag) because the sync workflow
+      # calls this file with write permissions.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
       - name: System libraries for Slint, winit and gilrs
         run: |
@@ -32,12 +39,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libfontconfig1-dev libfreetype-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
-            libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev libxi-dev \
-            libudev-dev libdbus-1-dev libgl1-mesa-dev libegl1-mesa-dev
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libudev-dev libgl1-mesa-dev libegl1-mesa-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          # Upstream code built by the sync workflow must not seed the cache that main restores.
+          save-if: ${{ !inputs.ref }}
 
       - name: Tests
         run: cargo test --locked
@@ -45,9 +55,10 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
 
-      - name: Show the newest glibc symbol the binary needs
+      - name: Show runtime requirements (newest glibc symbol, shared libraries)
         run: |
           objdump -T target/release/ports_launcher | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+          ldd target/release/ports_launcher
 
       - name: Package
         run: |
@@ -55,11 +66,13 @@ jobs:
           mkdir -p "dist/$pkg"
           install -m 755 target/release/ports_launcher "dist/$pkg/ports_launcher"
           install -m 755 7zzs "dist/$pkg/7zzs"
+          # Starter catalog for an offline first launch; the app refreshes both from upstream.
+          install -m 644 ports.json themes.json "dist/$pkg/"
           # The upstream updater script is left out on purpose: it would replace this build with upstream's release.
           tar -C dist -czf "dist/$pkg-linux-x86_64.tar.gz" "$pkg"
           tar -tzvf "dist/$pkg-linux-x86_64.tar.gz"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: steamdeck-ports-mgr-linux-x86_64
           path: dist/steamdeck-ports-mgr-linux-x86_64.tar.gz

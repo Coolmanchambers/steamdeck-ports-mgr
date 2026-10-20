@@ -3,7 +3,12 @@ name: Upstream sync
 # Keeps this fork in step with Nyaldee/Ports-Launcher.
 # - Upstream changes confined to DATA_ONLY_PATHS land on the base branch once tests pass.
 # - Anything else (code, build files) opens or refreshes a pull request for review.
-# - A merge conflict or rewritten upstream history fails the run with a summary, so GitHub emails the owner.
+# - A merge conflict, or upstream history that shares nothing with ours, fails the run with a summary,
+#   so GitHub emails the owner. (A partial upstream rebase still merges or conflicts; it is not detected.)
+# - An open sync PR that already contains the latest upstream commit is left alone, so fix-ups pushed to
+#   it are not overwritten.
+# - PRs need Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
+# - Pushes and PRs made with GITHUB_TOKEN do not trigger CI, so the test result lives in the PR body and run.
 
 on:
   schedule:
@@ -41,7 +46,7 @@ jobs:
       base: ${{ steps.merge.outputs.base }}
       sync_branch: ${{ steps.merge.outputs.sync_branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.base_branch || 'main' }}
           fetch-depth: 0
@@ -76,8 +81,15 @@ jobs:
             exit 0
           fi
 
-          git diff --name-only "$mb" "$up" > lists/upstream-changed.txt
-          git diff --name-only "$mb" HEAD > lists/fork-changed.txt
+          if git fetch --no-tags origin "$sync" 2>/dev/null && git merge-base --is-ancestor "$up" FETCH_HEAD; then
+            echo "$sync already carries upstream ${up:0:7}; leaving it and its PR alone."
+            echo "status=already-proposed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # --no-renames lists both sides of a rename, so moving code into lang/ is not "data only".
+          git -c core.quotePath=false diff --no-renames --name-only "$mb" "$up" > lists/upstream-changed.txt
+          git -c core.quotePath=false diff --no-renames --name-only "$mb" HEAD > lists/fork-changed.txt
           git log --oneline --no-merges "$mb..$up" > lists/upstream-commits.txt
 
           data_only=true
@@ -104,7 +116,7 @@ jobs:
           fi
 
       - name: Keep the file lists for the next job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: upstream-sync-lists
           path: lists/
@@ -121,7 +133,7 @@ jobs:
   land:
     name: Land, open a PR, or report a conflict
     needs: [merge, test]
-    if: always() && needs.merge.result == 'success' && needs.merge.outputs.status != 'up-to-date'
+    if: always() && needs.merge.result == 'success' && contains(fromJSON('["merged","conflict","rewritten"]'), needs.merge.outputs.status)
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -133,12 +145,12 @@ jobs:
       SYNC: ${{ needs.merge.outputs.sync_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.merge.outputs.base }}
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: upstream-sync-lists
           path: lists
@@ -159,7 +171,7 @@ jobs:
               if [ -z "$reason" ]; then
                 git fetch origin "$SYNC"
                 # A plain push only fast-forwards; it is rejected if $BASE moved since the merge.
-                if git push origin "FETCH_HEAD:refs/heads/$BASE"; then
+                if git push origin "FETCH_HEAD:refs/heads/$BASE" 2> push-error.txt; then
                   for n in $(gh pr list --head "$SYNC" --state open --json number --jq '.[].number'); do
                     gh pr close "$n" --comment "Landed directly on $BASE in $RUN_URL" --delete-branch
                   done
@@ -171,7 +183,7 @@ jobs:
                   } >> "$GITHUB_STEP_SUMMARY"
                   exit 0
                 fi
-                reason="$BASE moved while this run was testing, so it could not fast-forward."
+                reason="Could not fast-forward $BASE (usually because it moved while this run was testing). Git said: $(tr '\n' ' ' < push-error.txt)"
               fi
 
               title="Upstream sync: $UPSTREAM_REPO@$short"
