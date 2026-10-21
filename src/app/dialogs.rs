@@ -163,7 +163,7 @@ pub(crate) enum DialogSlot {
 }
 
 impl DialogSlot {
-    fn window(&self) -> Option<&slint::Window> {
+    pub(crate) fn window(&self) -> Option<&slint::Window> {
         match self {
             DialogSlot::None => None,
             DialogSlot::Message(d) => Some(d.window()),

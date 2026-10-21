@@ -116,53 +116,73 @@ fn x11_foreground_is_ours() -> Option<bool> {
         let active = reply.value32()?.next()?;
         let pid_atom = cached_atom(&s.conn, "_NET_WM_PID")?;
         let reply = s.conn.get_property(false, active, pid_atom, AtomEnum::CARDINAL, 0, 1).ok()?.reply().ok()?;
-        let pid = reply.value32()?.next();
-        Some(pid == Some(std::process::id()))
+        // An active window with no _NET_WM_PID is "don't know", not "someone else".
+        let pid = reply.value32()?.next()?;
+        Some(pid == std::process::id())
     })
     .flatten()
 }
 
 // Fork: upstream only asked X11 who is in front, so a native Wayland window (or a gamescope session
 // with no `_NET_ACTIVE_WINDOW`) never got controller input. Fall back to winit's focus there.
-pub fn gamepad_input_allowed(window: &slint::Window) -> bool {
+// `windows` is the main window first, then any open dialog: each dialog is its own top-level window
+// and takes the focus from the main one on Wayland.
+pub fn gamepad_input_allowed(windows: &[&slint::Window]) -> bool {
     use slint::winit_030::WinitWindowAccessor;
-    let x11_answer = match native_window(window) {
-        // XWayland can still answer for some other X client; it knows nothing about our window.
+    let Some(main) = windows.first() else { return false };
+    let x11_answer = x11_answer_for(native_window(main), x11_foreground_is_ours);
+    decide_gamepad_input(x11_answer, || windows.iter().map(|w| w.with_winit_window(|w| w.has_focus())))
+}
+
+fn x11_answer_for(main: Option<NativeWindow>, ask_x11: impl FnOnce() -> Option<bool>) -> Option<bool> {
+    match main {
+        // XWayland can still answer for some other X client; it knows nothing about our windows.
         Some(NativeWindow::Wayland) => None,
-        _ => x11_foreground_is_ours(),
-    };
-    decide_gamepad_input(x11_answer, || window.with_winit_window(|w| w.has_focus()))
+        // The X11 check is per process, so it already covers dialogs.
+        _ => ask_x11(),
+    }
 }
 
-fn decide_gamepad_input(x11_answer: Option<bool>, winit_focus: impl FnOnce() -> Option<bool>) -> bool {
-    x11_answer.or_else(winit_focus).unwrap_or(false)
+fn decide_gamepad_input<I: Iterator<Item = Option<bool>>>(x11_answer: Option<bool>, window_focus: impl FnOnce() -> I) -> bool {
+    match x11_answer {
+        Some(ours) => ours,
+        None => window_focus().any(|focused| focused == Some(true)),
+    }
 }
 
-// Fork: Game Mode has no tray host, so a window hidden "to the tray" can never come back. Callers
-// skip the tray (and quit on Close) when this is false.
+// Fork: Game Mode has no tray host, so a window hidden "to the tray" can never come back. Slint
+// can't tell us: a tray that fails to start only logs a line, and `show()` still returns Ok. So we
+// look for the host ourselves; callers skip the tray (and quit on Close) when this is false.
 pub fn tray_host_available() -> bool {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
     decide_tray_host(desktop.as_deref(), status_notifier_watcher_running)
 }
 
 fn decide_tray_host(current_desktop: Option<&str>, watcher_running: impl FnOnce() -> Option<bool>) -> bool {
-    if current_desktop.is_some_and(|d| d.to_ascii_lowercase().contains("gamescope")) {
+    let desktop = current_desktop.filter(|d| !d.is_empty());
+    if desktop.is_some_and(|d| d.to_ascii_lowercase().contains("gamescope")) {
         return false;
     }
-    // Unknown (no busctl) keeps upstream's behavior of assuming a tray.
-    watcher_running().unwrap_or(true)
+    // When busctl can't answer, a named desktop keeps upstream's assumption of a tray; no desktop
+    // at all means a bare session, where hiding the window would lose it.
+    watcher_running().unwrap_or(desktop.is_some())
 }
 
 fn status_notifier_watcher_running() -> Option<bool> {
     use std::process::{Command, Stdio};
-    let status = Command::new("busctl")
-        .args(["--user", "--no-pager", "--timeout=2", "status", "org.kde.StatusNotifierWatcher"])
+    // Runs on the UI thread at startup; `timeout` caps it even if the session bus never answers.
+    let status = Command::new("timeout")
+        .args(["3", "busctl", "--user", "--no-pager", "--timeout=2", "status", "org.kde.StatusNotifierWatcher"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .ok()?;
-    Some(status.success())
+    match status.code() {
+        // 124: timed out, 126/127: busctl missing or not runnable. None of those says "no tray".
+        Some(124 | 126 | 127) | None => None,
+        Some(code) => Some(code == 0),
+    }
 }
 
 pub fn show_startup_error(message: &str) {
@@ -378,17 +398,30 @@ mod tests {
         assert_eq!(desktop_exec_arg("/a$b/100%/c\"d"), "\"/a\\$b/100%%/c\\\"d\"");
     }
 
+    fn focus(windows: &[Option<bool>]) -> impl FnOnce() -> std::vec::IntoIter<Option<bool>> {
+        let windows = windows.to_vec();
+        move || windows.into_iter()
+    }
+
     #[test]
     fn gamepad_input_follows_x11_when_it_answers() {
-        assert!(decide_gamepad_input(Some(true), || Some(false)));
-        assert!(!decide_gamepad_input(Some(false), || Some(true)));
+        assert!(decide_gamepad_input(Some(true), focus(&[Some(false)])));
+        assert!(!decide_gamepad_input(Some(false), focus(&[Some(true)])));
     }
 
     #[test]
     fn gamepad_input_falls_back_to_window_focus_without_x11() {
-        assert!(decide_gamepad_input(None, || Some(true)));
-        assert!(!decide_gamepad_input(None, || Some(false)));
-        assert!(!decide_gamepad_input(None, || None));
+        assert!(decide_gamepad_input(None, focus(&[Some(true)])));
+        assert!(!decide_gamepad_input(None, focus(&[Some(false)])));
+        assert!(!decide_gamepad_input(None, focus(&[None])));
+        assert!(!decide_gamepad_input(None, focus(&[])));
+    }
+
+    #[test]
+    fn a_focused_dialog_keeps_the_controller_working_on_wayland() {
+        // Main window lost focus to its dialog: the dialog's focus is enough.
+        assert!(decide_gamepad_input(None, focus(&[Some(false), Some(true)])));
+        assert!(!decide_gamepad_input(None, focus(&[Some(false), Some(false)])));
     }
 
     #[test]
@@ -402,6 +435,21 @@ mod tests {
         assert!(decide_tray_host(Some("KDE"), || Some(true)));
         assert!(!decide_tray_host(Some("KDE"), || Some(false)));
         assert!(!decide_tray_host(None, || Some(false)));
-        assert!(decide_tray_host(None, || None));
+        assert!(decide_tray_host(None, || Some(true)));
+    }
+
+    #[test]
+    fn without_busctl_only_a_named_desktop_gets_a_tray() {
+        assert!(decide_tray_host(Some("KDE"), || None));
+        assert!(!decide_tray_host(None, || None));
+        assert!(!decide_tray_host(Some(""), || None));
+    }
+
+    #[test]
+    fn wayland_window_ignores_what_xwayland_says() {
+        assert_eq!(x11_answer_for(Some(NativeWindow::Wayland), || Some(false)), None);
+        assert_eq!(x11_answer_for(Some(NativeWindow::Wayland), || Some(true)), None);
+        assert_eq!(x11_answer_for(Some(NativeWindow::X11(7)), || Some(false)), Some(false));
+        assert_eq!(x11_answer_for(None, || Some(true)), Some(true));
     }
 }

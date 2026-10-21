@@ -52,10 +52,10 @@ impl GamepadPoller {
     }
 }
 
-/// A button is down if it is down on any pad; each stick axis takes the value furthest from centre.
-/// `None` when no pad is connected, as before.
+/// A button is down if it is down on any pad; each stick axis takes the value furthest from centre
+/// (the earlier pad on a tie; a non-finite reading never wins). `None` when no pad is connected.
 fn merge_states(states: impl Iterator<Item = GamepadState>) -> Option<GamepadState> {
-    let further = |a: f32, b: f32| if b.abs() > a.abs() { b } else { a };
+    let further = |a: f32, b: f32| if b.is_finite() && (!a.is_finite() || b.abs() > a.abs()) { b } else { a };
     states.reduce(|a, b| GamepadState {
         dpad_up: a.dpad_up || b.dpad_up,
         dpad_down: a.dpad_down || b.dpad_down,
@@ -110,5 +110,14 @@ mod tests {
         let b = GamepadState { stick_x: -0.7, stick_y: 0.1, ..Default::default() };
         let merged = merge_states([a, b].into_iter()).unwrap();
         assert_eq!((merged.stick_x, merged.stick_y), (-0.7, -0.95));
+    }
+
+    #[test]
+    fn stick_ties_and_bad_readings() {
+        let x = |v: f32| GamepadState { stick_x: v, ..Default::default() };
+        assert_eq!(merge_states([x(0.5), x(-0.5)].into_iter()).unwrap().stick_x, 0.5);
+        assert_eq!(merge_states([x(f32::NAN), x(0.3)].into_iter()).unwrap().stick_x, 0.3);
+        assert_eq!(merge_states([x(0.3), x(f32::NAN)].into_iter()).unwrap().stick_x, 0.3);
+        assert_eq!(merge_states([x(0.1), x(f32::INFINITY)].into_iter()).unwrap().stick_x, 0.1);
     }
 }

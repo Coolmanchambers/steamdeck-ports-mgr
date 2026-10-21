@@ -55,7 +55,8 @@ closes silently.
 
 ## Play from Game Mode
 
-1. Quit the app from its tray icon (closing the window only hides it).
+1. Quit the app from its tray icon (in Desktop Mode, closing the window only hides it; in Game Mode
+   there is no tray and the X button quits).
 2. In Desktop Mode, open Steam > Games > Add a Non-Steam Game > Browse, set the file type to
    All Files, and pick `~/Applications/steamdeck-ports-mgr/ports_launcher`.
 3. Optional, for a log you can read later: in the shortcut's Properties, set Launch Options to
@@ -72,6 +73,9 @@ closes silently.
 | Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |
 | Controller | D-pad moves, A activates, B closes, X opens Info, Y opens Settings |
 | Game Mode | Starts from Steam, the controller works, a port launches and the app returns after |
+| Controller in dialogs | D-pad and A/B work inside Info, Settings and confirm dialogs, in both modes |
+| Close in Game Mode | The X button quits and Steam returns to the Library with no "running" badge |
+| Close in Desktop Mode | The X button hides the window; the tray icon brings it back |
 | Force update | App closes and reopens on the newest build; `updater.log` ends with `=== done` |
 | Force update offline | App reopens on the old build; `update-failed.txt` says why |
 | Force update in Game Mode | The app comes back in Game Mode and Steam still shows it running |
@@ -82,7 +86,7 @@ closes silently.
 | Issue | What you'd see | Try this |
 |---|---|---|
 | Controller ignored | Touch and mouse work, buttons don't. Fixed for native Wayland and gamescope in current builds, not yet confirmed on a Deck | Send the log, then try Launch Options `env -u WAYLAND_DISPLAY %command%` |
-| No tray in Game Mode | Expected: the app runs without a tray icon there, and its X button quits instead of hiding | If it closes at start instead, send the log |
+| No tray in Game Mode | Expected: the app runs without a tray icon there, and its X button quits instead of hiding | If it closes at start, or X hides it and Steam keeps showing it running, send the log: it says whether a tray was expected |
 | Desktop Mode copy still open | Game Mode launch returns to Steam at once | Quit from the tray in Desktop Mode first |
 | Force update in Game Mode untested | Steam may close the updater with the app, so nothing changes and the app doesn't return | Check `updater.log`; update from Desktop Mode until this is confirmed |
 | Update not offered | Footer stays "GitHub" | Same UTC day, under 24 h since the last check, or no relaunch: use Force update |
@@ -92,4 +96,4 @@ closes silently.
 Note the step, what you expected and what happened. Include the exact text of any dialog, a
 screenshot, `/home/deck/ports_launcher.log` if you set it up, the app's `state.json`,
 `updater.log`, `update-failed.txt` and `BUILD_INFO` if present, and the output of
-`echo $XDG_SESSION_TYPE` from Konsole.
+`echo $XDG_SESSION_TYPE $XDG_CURRENT_DESKTOP` from Konsole.

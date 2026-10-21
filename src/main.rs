@@ -219,17 +219,21 @@ fn main() {
     start_catalog_sync(&app);
     start_themes_sync(&app);
 
-    // Fork: no tray (Game Mode, no tray host, or creation failed) is not fatal; Close then quits.
+    // Fork: with no tray host (Game Mode) the tray is skipped and Close quits instead of hiding.
     let _tray = start_tray(&app, &router);
 
     let gamepad_available = router.borrow().is_available();
     let _gamepad_timer = gamepad_available.then(|| {
         router.borrow_mut().push_target(Rc::new(AppGamepadTarget { app: app.clone(), router: router.clone() }));
-        let router = router.clone();
-        let weak = window.as_weak();
+        let (app, router) = (app.clone(), router.clone());
         repeat(Duration::from_millis(ui::gamepad_router::POLL_INTERVAL_MS), move || {
             let result = router.borrow_mut().poll();
-            let allowed = || weak.upgrade().is_some_and(|w| chrome::gamepad_input_allowed(w.window()));
+            let allowed = || {
+                let Some(main) = app.window.upgrade() else { return false };
+                let dialogs = app.dialog_nav.dialogs.borrow();
+                let windows: Vec<&slint::Window> = std::iter::once(main.window()).chain(dialogs.window()).collect();
+                chrome::gamepad_input_allowed(&windows)
+            };
             if let Some(result) = result.filter(|_| allowed()) {
                 ui::gamepad_router::dispatch(result);
             }
@@ -273,11 +277,14 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
         }
     }));
     window.on_close_requested(with!(app => move || {
-        // Fork: hide to the tray only when one is shown; otherwise the window could never come back.
-        if app.tray.borrow().as_ref().and_then(slint::Weak::upgrade).is_some() {
-            let _ = app.window().hide();
-        } else {
-            let _ = slint::quit_event_loop();
+        // Fork: hide to the tray only when there is one; otherwise the window could never come back.
+        match close_action(app.tray.borrow().as_ref().and_then(slint::Weak::upgrade).is_some()) {
+            CloseAction::HideToTray => {
+                let _ = app.window().hide();
+            }
+            CloseAction::Quit => {
+                let _ = slint::quit_event_loop();
+            }
         }
     }));
 
@@ -359,6 +366,18 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     }));
 }
 
+#[derive(Debug, PartialEq)]
+enum CloseAction {
+    HideToTray,
+    Quit,
+}
+
+fn close_action(tray_shown: bool) -> CloseAction {
+    if tray_shown { CloseAction::HideToTray } else { CloseAction::Quit }
+}
+
+// Slint never reports a tray that failed to start (it logs "Failed to create system tray icon" and
+// carries on), so whether to have one is decided up front by `tray_host_available`.
 fn start_tray(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>) -> Option<AppTray> {
     if !chrome::tray_host_available() {
         eprintln!("no system tray here; closing the window quits");
@@ -371,17 +390,17 @@ fn start_tray(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>) -> Option
             return None;
         }
     };
-    if let Err(e) = wire_tray(&tray, app, router) {
-        eprintln!("couldn't show the tray icon ({e}); closing the window quits");
-        return None;
-    }
+    wire_tray(&tray, app, router);
+    eprintln!("tray icon requested (tray host found); closing the window hides it to the tray");
     Some(tray)
 }
 
-fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>) -> Result<(), slint::PlatformError> {
+fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>) {
+    *app.tray.borrow_mut() = Some(tray.as_weak());
     if let Some((rgba, width, height)) = chrome::extract_app_icon_rgba() {
         tray.set_tray_icon(slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(&rgba, width, height)));
     }
+    app.refresh_tray_recent_games();
     {
         let (app, router) = (app.clone(), router.clone());
         tray.on_game_activated(move |key| {
@@ -401,9 +420,16 @@ fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRout
     tray.on_quit_requested(|| {
         let _ = slint::quit_event_loop();
     });
-    tray.show()?;
-    // Recorded only once shown, so Close never hides the window behind a tray that isn't there.
-    *app.tray.borrow_mut() = Some(tray.as_weak());
-    app.refresh_tray_recent_games();
-    Ok(())
+    let _ = tray.show();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn close_hides_only_when_a_tray_is_shown() {
+        assert_eq!(close_action(true), CloseAction::HideToTray);
+        assert_eq!(close_action(false), CloseAction::Quit);
+    }
 }

@@ -1,43 +1,76 @@
 #!/usr/bin/env bash
-# Startup smoke test: runs the real Linux build on a virtual display (Xvfb) with no tray host and no
-# desktop session, the way a bare Game Mode launch might look, and checks it is still running after
-# STARTUP_SECONDS. Saves a screenshot and the app's output. Needs xvfb and imagemagick.
+# Startup smoke test: runs the packaged Linux build on a virtual display (Xvfb) with no tray host
+# and no desktop session, the way a bare Game Mode launch looks, then checks that:
+#   - it is still running after STARTUP_SECONDS, with no panic;
+#   - it skipped the tray (no tray host here) instead of letting Slint try and fail;
+#   - its window is mapped and the screenshot is not blank;
+#   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
+# Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
 #   bash tools/smoke-test.sh <folder with ports_launcher and 7zzs> [output folder]
+# Exit 0 = pass, 1 = the app failed a check, 2 = the test setup failed (not the app's fault).
 set -u
 BIN_DIR="$(readlink -f "${1:?folder with ports_launcher}")"
 OUT="$(readlink -f "${2:-smoke-out}")"
 STARTUP_SECONDS="${STARTUP_SECONDS:-15}"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
+export DISPLAY=":$DISPLAY_NUM"
 
-mkdir -p "$OUT"
-APP_DIR="$(mktemp -d)"
-cp "$BIN_DIR/ports_launcher" "$BIN_DIR/7zzs" "$APP_DIR/"
+setup_fail() { echo "SETUP FAILED: $1"; exit 2; }
+for tool in Xvfb xdpyinfo xwininfo xdotool import identify; do
+    command -v "$tool" >/dev/null || setup_fail "$tool is not installed"
+done
+
+mkdir -p "$OUT" || setup_fail "can't create $OUT"
+APP_DIR="$(mktemp -d)" || setup_fail "mktemp"
+cp "$BIN_DIR/ports_launcher" "$BIN_DIR/7zzs" "$APP_DIR/" || setup_fail "ports_launcher or 7zzs missing in $BIN_DIR"
 for f in ports.json themes.json; do [ -f "$BIN_DIR/$f" ] && cp "$BIN_DIR/$f" "$APP_DIR/"; done
 
-Xvfb ":$DISPLAY_NUM" -screen 0 1280x800x24 -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
+Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
 XVFB=$!
 APP=""
 cleanup() { kill $APP "$XVFB" 2>/dev/null; rm -rf "$APP_DIR"; }
 trap cleanup EXIT
-sleep 2
+for _ in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
+kill -0 "$XVFB" 2>/dev/null && xdpyinfo >/dev/null 2>&1 || { cat "$OUT/xvfb.log"; setup_fail "Xvfb $DISPLAY did not come up"; }
 
-# A bare session: no D-Bus session bus (so no tray host), no Wayland, only the virtual X display.
-env -i HOME="$HOME" PATH="$PATH" DISPLAY=":$DISPLAY_NUM" XDG_RUNTIME_DIR="$APP_DIR" RUST_BACKTRACE=1 \
+# A bare session: no D-Bus session bus (so no tray host), no Wayland, no desktop name.
+env -i HOME="$HOME" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$APP_DIR" RUST_BACKTRACE=1 \
     "$APP_DIR/ports_launcher" >"$OUT/app.log" 2>&1 &
 APP=$!
 
 sleep "$STARTUP_SECONDS"
-alive=no
-kill -0 "$APP" 2>/dev/null && alive=yes
-DISPLAY=":$DISPLAY_NUM" import -window root "$OUT/screenshot.png" 2>/dev/null
-
-echo "app alive after ${STARTUP_SECONDS}s: $alive"
-echo "--- app output (last 20 lines) ---"; tail -20 "$OUT/app.log"
 fail=0
-[ "$alive" = yes ] || { echo "FAIL: the app exited during startup"; fail=1; }
-if grep -q "panicked" "$OUT/app.log"; then echo "FAIL: the app panicked"; fail=1; fi
-[ -f "$APP_DIR/state.json" ] && echo "state.json created" || { echo "FAIL: no state.json"; fail=1; }
-[ -s "$OUT/screenshot.png" ] && echo "screenshot saved" || echo "note: no screenshot"
+check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; fi; }
+
+alive=no; kill -0 "$APP" 2>/dev/null && alive=yes
+import -window root "$OUT/screenshot.png" 2>/dev/null
+xwininfo -root -tree >"$OUT/windows.txt" 2>&1
+colors=$(identify -format '%k' "$OUT/screenshot.png" 2>/dev/null || echo 0)
+
+check "still running after ${STARTUP_SECONDS}s" '[ "$alive" = yes ]'
+check "no panic" '! grep -q "panicked" "$OUT/app.log"'
+check "skipped the tray (no tray host)" 'grep -q "no system tray here; closing the window quits" "$OUT/app.log"'
+check "Slint was not asked for a tray" '! grep -q "Failed to create system tray icon" "$OUT/app.log"'
+check "window mapped" 'grep -q "\"Ports Launcher\"" "$OUT/windows.txt"'
+check "screenshot not blank ($colors colours)" '[ "${colors:-0}" -ge 32 ]'
+
+if [ "$alive" = yes ]; then
+    # No window manager here, so focus the window directly, then press Escape (Close in windowed view).
+    win=$(xdotool search --name "^Ports Launcher$" 2>/dev/null | head -1)
+    if [ -n "$win" ]; then
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.5; xdotool key Escape
+    fi
+    for _ in $(seq 1 25); do kill -0 "$APP" 2>/dev/null || break; sleep 0.2; done
+    if kill -0 "$APP" 2>/dev/null; then
+        check "Close quits when there is no tray" 'false'
+    else
+        wait "$APP"; code=$?
+        check "Close quits when there is no tray (exit code $code)" '[ "$code" -eq 0 ]'
+    fi
+    APP=""
+fi
+
+echo "--- app output (last 20 lines) ---"; tail -20 "$OUT/app.log"
 [ "$fail" -eq 0 ] && echo "SMOKE TEST: PASS" || echo "SMOKE TEST: FAIL"
 exit "$fail"

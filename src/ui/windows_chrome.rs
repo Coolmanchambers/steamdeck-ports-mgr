@@ -125,7 +125,7 @@ pub fn foreground_window_belongs_to_us() -> bool {
 }
 
 // Fork: shared signatures with linux_chrome (see FORK.md).
-pub fn gamepad_input_allowed(_window: &slint::Window) -> bool {
+pub fn gamepad_input_allowed(_windows: &[&slint::Window]) -> bool {
     foreground_window_belongs_to_us()
 }
 

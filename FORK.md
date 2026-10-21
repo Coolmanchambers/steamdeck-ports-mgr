@@ -17,8 +17,9 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-20 | `src/core/version.rs` | Self-update check and project links point at this fork instead of upstream |
 | 2026-10-20 | `README.md` | Note at the top crediting Nyaldee and listing what this fork adds |
 | 2026-10-20 | `README.md` | Item 8 (Deck-ready list) set to "In progress" |
-| 2026-10-20 | `src/main.rs` | The tray is optional: skipped when there is no tray host (Game Mode) or it fails to start, and Close then quits instead of hiding the window. Controller input is allowed by `gamepad_input_allowed` |
-| 2026-10-20 | `src/ui/linux_chrome.rs` | `gamepad_input_allowed` replaces `foreground_window_belongs_to_us` and falls back to the window's own focus when X11 can't say who is in front (native Wayland, gamescope); `tray_host_available` checks for a StatusNotifier host; tests for both |
+| 2026-10-20 | `src/main.rs` | The tray is skipped when `tray_host_available` says there is no tray host (Game Mode), and Close then quits instead of hiding the window behind a tray that isn't there (`close_action`, tested). Slint itself never reports a tray that failed to start, so the check is ours. Controller input is allowed by `gamepad_input_allowed`, asked for the main window and any open dialog. A login autostart that beats the tray host now gets no tray, and Close quits |
+| 2026-10-20 | `src/app/dialogs.rs` | `DialogSlot::window` made `pub(crate)` so the controller check can see the open dialog |
+| 2026-10-20 | `src/ui/linux_chrome.rs` | `gamepad_input_allowed` replaces `foreground_window_belongs_to_us`; when X11 can't say who is in front (native Wayland, gamescope, an active window with no PID) it allows input if any of our windows has focus. `tray_host_available` returns false under gamescope, else asks `busctl` (capped by `timeout 3`) for a StatusNotifier host; with no answer, only a named desktop gets a tray. Tests for each decision |
 | 2026-10-20 | `src/ui/windows_chrome.rs` | Same two functions, keeping upstream's Windows behavior |
 | 2026-10-20 | `src/core/gamepad.rs` | Reads every connected controller and merges their state, instead of only the first; tests |
 
@@ -34,7 +35,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
-| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session and checks it is still running after 15 s; CI runs it and blocks the release on failure |
+| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |

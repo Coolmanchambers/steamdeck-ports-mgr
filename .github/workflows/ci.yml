@@ -91,7 +91,7 @@ jobs:
       # here also blocks the release job). Mesa's software GL stands in for the Deck's GPU.
       - name: Startup smoke test (virtual display, no tray)
         run: |
-          sudo apt-get install -y --no-install-recommends xvfb imagemagick libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends xvfb x11-utils xdotool imagemagick libgl1-mesa-dri
           bash tools/smoke-test.sh dist/steamdeck-ports-mgr smoke-out
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
