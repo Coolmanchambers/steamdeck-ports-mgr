@@ -607,6 +607,7 @@ enum SettingsEntry {
     Library,
     AddToSteam,
     AdoptPorts,
+    GameFiles,
     BackupSaves,
     CheckUpdates,
     ForceUpdate,
@@ -614,13 +615,14 @@ enum SettingsEntry {
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 11] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 12] = [
     SettingsEntry::Themes,
     SettingsEntry::Language,
     SettingsEntry::Files,
     SettingsEntry::Library,
     SettingsEntry::AddToSteam,
     SettingsEntry::AdoptPorts,
+    SettingsEntry::GameFiles,
     SettingsEntry::BackupSaves,
     SettingsEntry::CheckUpdates,
     SettingsEntry::ForceUpdate,
@@ -641,6 +643,7 @@ fn settings_labels(app: &AppState) -> Vec<String> {
             SettingsEntry::Library => tr.invoke_label_library(),
             SettingsEntry::AddToSteam => "Add to Steam...".into(),
             SettingsEntry::AdoptPorts => "Adopt installed ports...".into(),
+            SettingsEntry::GameFiles => "Game files...".into(),
             SettingsEntry::BackupSaves => tr.invoke_label_backup_saves(),
             SettingsEntry::CheckUpdates if state.release_sync => tr.invoke_label_check_updates_on(),
             SettingsEntry::CheckUpdates => tr.invoke_label_check_updates_off(),
@@ -682,6 +685,7 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                         SettingsEntry::Library => open_folder(&app.paths.library_dir),
                         SettingsEntry::AddToSteam => super::steam_screens::open_steam_screen(&app, &router),
                         SettingsEntry::AdoptPorts => super::steam_screens::open_adopt_screen(&app, &router),
+                        SettingsEntry::GameFiles => super::rom_screens::open_game_files(&app, &router),
                         SettingsEntry::BackupSaves => start_save_backup(&app, &router),
                         SettingsEntry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
                         _ => launch_self_update(&app, &router),

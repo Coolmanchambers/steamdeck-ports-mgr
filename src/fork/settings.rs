@@ -16,6 +16,7 @@ pub const FILE_NAME: &str = "fork-settings.json";
 const KEY_STEAM_ACCOUNT: &str = "steam_account_id";
 const KEY_ADOPT_FOLDERS: &str = "adopt_folders";
 const KEY_BACKUPS_KEEP: &str = "steam_backups_keep";
+const KEY_ROM_PROMPTED: &str = "rom_prompted_ports";
 
 #[derive(Debug)]
 pub struct ForkSettings {
@@ -70,6 +71,22 @@ impl ForkSettings {
             .map_or(super::backups::DEFAULT_KEEP, |n| usize::try_from(n).unwrap_or(usize::MAX).max(1))
     }
 
+    /// Ports the "connect your game files" offer was already made for, so it is made once per port.
+    pub fn rom_prompted(&self, port_key: &str) -> bool {
+        self.map.get(KEY_ROM_PROMPTED).and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v.as_str() == Some(port_key)))
+    }
+
+    pub fn mark_rom_prompted(&mut self, port_key: &str) -> io::Result<()> {
+        if self.rom_prompted(port_key) {
+            return Ok(());
+        }
+        let entry = self.map.entry(KEY_ROM_PROMPTED).or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(list) = entry {
+            list.push(Value::from(port_key));
+        }
+        self.save()
+    }
+
     /// Writes the file with the keys it has, plus an empty `adopt_folders` list so the user finds the
     /// place to add folders.
     pub fn save(&mut self) -> io::Result<()> {
@@ -121,6 +138,21 @@ mod tests {
         assert_eq!(again.steam_account(), Some(39_734_274));
         assert_eq!(again.adopt_folders().len(), 2);
         assert!(fs::read_to_string(&path).unwrap().contains("rom_folder"));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_game_files_offer_is_remembered_per_port_and_other_keys_survive() {
+        let path = temp_path("romprompt");
+        fs::write(&path, r#"{"steam_backups_keep": 4}"#).unwrap();
+        let mut s = ForkSettings::load(&path);
+        assert!(!s.rom_prompted("a/b"));
+        s.mark_rom_prompted("a/b").unwrap();
+        s.mark_rom_prompted("a/b").unwrap();
+        let again = ForkSettings::load(&path);
+        assert!(again.rom_prompted("a/b") && !again.rom_prompted("c"));
+        assert_eq!(again.backups_keep(), 4);
+        assert_eq!(fs::read_to_string(&path).unwrap().matches("a/b").count(), 1);
         let _ = fs::remove_file(&path);
     }
 

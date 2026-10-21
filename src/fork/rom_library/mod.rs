@@ -25,7 +25,7 @@ pub mod store;
 pub mod system;
 
 #[cfg(test)]
-mod testutil;
+pub(crate) mod testutil;
 
 #[allow(unused_imports)]
 pub use connect::{apply, apply_set, check_mapping, plan_connect, plan_connect_set, Access, ApplyError, Approval, ConnectPlan, ConnectRequest, Health, Mapping, Method, PlanAction, PlanError};

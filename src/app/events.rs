@@ -94,6 +94,9 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                     if let Some(port) = port {
                         launch_flow(app, router, &port);
                     }
+                } else {
+                    // Fork: offer to connect the port's game files (once per port).
+                    super::rom_screens::offer_after_install(app, router, &key);
                 }
             }
             AppEvent::InstallAssetAmbiguous { key, assets, release_override } => {
