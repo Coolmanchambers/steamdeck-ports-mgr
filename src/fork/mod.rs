@@ -9,6 +9,9 @@
 pub mod app_id;
 pub mod art;
 pub mod artwork;
+pub mod backups;
+pub mod settings;
 pub mod shortcuts;
+pub mod steam_user;
 pub mod store;
 pub mod vdf;
