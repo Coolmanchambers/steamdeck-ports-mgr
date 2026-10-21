@@ -17,6 +17,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-20 | `src/core/version.rs` | Self-update check and project links point at this fork instead of upstream |
 | 2026-10-20 | `README.md` | Note at the top crediting Nyaldee and listing what this fork adds |
 | 2026-10-20 | `README.md` | Item 8 (Deck-ready list) set to "In progress" |
+| 2026-10-20 | `src/main.rs` | The tray is optional: skipped when there is no tray host (Game Mode) or it fails to start, and Close then quits instead of hiding the window. Controller input is allowed by `gamepad_input_allowed` |
+| 2026-10-20 | `src/ui/linux_chrome.rs` | `gamepad_input_allowed` replaces `foreground_window_belongs_to_us` and falls back to the window's own focus when X11 can't say who is in front (native Wayland, gamescope); `tray_host_available` checks for a StatusNotifier host; tests for both |
+| 2026-10-20 | `src/ui/windows_chrome.rs` | Same two functions, keeping upstream's Windows behavior |
+| 2026-10-20 | `src/core/gamepad.rs` | Reads every connected controller and merges their state, instead of only the first; tests |
 
 Files added by this fork:
 
@@ -30,6 +34,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
+| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session and checks it is still running after 15 s; CI runs it and blocks the release on failure |
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |

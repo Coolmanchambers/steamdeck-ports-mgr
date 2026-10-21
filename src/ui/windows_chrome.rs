@@ -124,6 +124,15 @@ pub fn foreground_window_belongs_to_us() -> bool {
     }
 }
 
+// Fork: shared signatures with linux_chrome (see FORK.md).
+pub fn gamepad_input_allowed(_window: &slint::Window) -> bool {
+    foreground_window_belongs_to_us()
+}
+
+pub fn tray_host_available() -> bool {
+    true
+}
+
 pub fn show_startup_error(message: &str) {
     let title = to_wide("Ports Launcher");
     let text = to_wide(message);

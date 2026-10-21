@@ -219,16 +219,18 @@ fn main() {
     start_catalog_sync(&app);
     start_themes_sync(&app);
 
-    let tray = AppTray::new().expect("failed to create the tray icon");
-    wire_tray(&tray, &app, &router);
+    // Fork: no tray (Game Mode, no tray host, or creation failed) is not fatal; Close then quits.
+    let _tray = start_tray(&app, &router);
 
     let gamepad_available = router.borrow().is_available();
     let _gamepad_timer = gamepad_available.then(|| {
         router.borrow_mut().push_target(Rc::new(AppGamepadTarget { app: app.clone(), router: router.clone() }));
         let router = router.clone();
+        let weak = window.as_weak();
         repeat(Duration::from_millis(ui::gamepad_router::POLL_INTERVAL_MS), move || {
             let result = router.borrow_mut().poll();
-            if let Some(result) = result.filter(|_| chrome::foreground_window_belongs_to_us()) {
+            let allowed = || weak.upgrade().is_some_and(|w| chrome::gamepad_input_allowed(w.window()));
+            if let Some(result) = result.filter(|_| allowed()) {
                 ui::gamepad_router::dispatch(result);
             }
         })
@@ -271,7 +273,12 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
         }
     }));
     window.on_close_requested(with!(app => move || {
-        let _ = app.window().hide();
+        // Fork: hide to the tray only when one is shown; otherwise the window could never come back.
+        if app.tray.borrow().as_ref().and_then(slint::Weak::upgrade).is_some() {
+            let _ = app.window().hide();
+        } else {
+            let _ = slint::quit_event_loop();
+        }
     }));
 
     window.on_card_activated(with!(app, router => move |row, col| {
@@ -352,12 +359,29 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     }));
 }
 
-fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>) {
-    *app.tray.borrow_mut() = Some(tray.as_weak());
+fn start_tray(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>) -> Option<AppTray> {
+    if !chrome::tray_host_available() {
+        eprintln!("no system tray here; closing the window quits");
+        return None;
+    }
+    let tray = match AppTray::new() {
+        Ok(tray) => tray,
+        Err(e) => {
+            eprintln!("couldn't create the tray icon ({e}); closing the window quits");
+            return None;
+        }
+    };
+    if let Err(e) = wire_tray(&tray, app, router) {
+        eprintln!("couldn't show the tray icon ({e}); closing the window quits");
+        return None;
+    }
+    Some(tray)
+}
+
+fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>) -> Result<(), slint::PlatformError> {
     if let Some((rgba, width, height)) = chrome::extract_app_icon_rgba() {
         tray.set_tray_icon(slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(&rgba, width, height)));
     }
-    app.refresh_tray_recent_games();
     {
         let (app, router) = (app.clone(), router.clone());
         tray.on_game_activated(move |key| {
@@ -377,5 +401,9 @@ fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRout
     tray.on_quit_requested(|| {
         let _ = slint::quit_event_loop();
     });
-    let _ = tray.show();
+    tray.show()?;
+    // Recorded only once shown, so Close never hides the window behind a tray that isn't there.
+    *app.tray.borrow_mut() = Some(tray.as_weak());
+    app.refresh_tray_recent_games();
+    Ok(())
 }

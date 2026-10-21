@@ -81,8 +81,8 @@ closes silently.
 
 | Issue | What you'd see | Try this |
 |---|---|---|
-| Controller ignored under Wayland | Touch and mouse work, buttons don't | Launch Options `env -u WAYLAND_DISPLAY %command%` |
-| No tray icon in Game Mode | The app may close at start, or vanish when you press its X | Use Steam menu > Exit Game; send the log |
+| Controller ignored | Touch and mouse work, buttons don't. Fixed for native Wayland and gamescope in current builds, not yet confirmed on a Deck | Send the log, then try Launch Options `env -u WAYLAND_DISPLAY %command%` |
+| No tray in Game Mode | Expected: the app runs without a tray icon there, and its X button quits instead of hiding | If it closes at start instead, send the log |
 | Desktop Mode copy still open | Game Mode launch returns to Steam at once | Quit from the tray in Desktop Mode first |
 | Force update in Game Mode untested | Steam may close the updater with the app, so nothing changes and the app doesn't return | Check `updater.log`; update from Desktop Mode until this is confirmed |
 | Update not offered | Footer stays "GitHub" | Same UTC day, under 24 h since the last check, or no relaunch: use Force update |
