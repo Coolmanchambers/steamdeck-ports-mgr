@@ -206,8 +206,9 @@ when the change is reverted.
   are files are not backed up; "Install extras" is not backed up.
 - **Catalog and themes ETag check (304).** With the pinned ureq 3.4.2 a `304 Not Modified` comes back
   as an `Ok` response, not an error, so upstream's check read the empty body, failed the catalog
-  validation, and treated the check as failed. The check time and ETag were never saved, so once the
-  12 hours had passed the app downloaded `ports.json` and `themes.json` in full at every start. The
+  validation, and treated the check as failed. The check time was never saved, so once the 12 hours
+  had passed the app repeated the conditional request for `ports.json` and `themes.json` at every
+  start (headers only, no catalog bytes while upstream was unchanged). The
   status is now read first: 304 means unchanged, any other non-2xx is an error. Test that fails on
   the old code: `cargo test -- --ignored live_etag` (needs the network; also covers the Deck-ready
   list).
