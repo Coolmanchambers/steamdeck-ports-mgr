@@ -78,9 +78,30 @@ class Merge(unittest.TestCase):
         self.assertNotIn("missing_since", out[0])
         self.assertEqual(len(ch["revived"]), 1)
 
+    def test_renamed_repo_matches_old_entry_by_github_id(self):
+        old = [proj("github:old/name", github_id=7, first_seen="2026-01-05")]
+        out, ch = self.merge([proj("github:new/name", github_id=7)], old)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["first_seen"], "2026-01-05")
+        self.assertEqual((len(ch["added"]), len(ch["newly_missing"])), (0, 0))
+        self.assertEqual(ch["changed"][0][1], ["id", "repo"])
+
     def test_output_sorted_by_name(self):
         out, _ = self.merge([proj("github:a/z", "Zed"), proj("github:a/a", "alpha")], [])
         self.assertEqual([p["name"] for p in out], ["alpha", "Zed"])
+
+
+class Catalog(unittest.TestCase):
+    def test_placeholder_source_is_not_a_source(self):
+        import json, tempfile
+        data = {"ports": [{"name": "A", "folder": "a", "source": "??", "tags": []},
+                          {"name": "B", "folder": "b", "source": "https://github.com/x/y", "tags": []}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ports.json"
+            f.write_text(json.dumps(data), encoding="utf-8")
+            cands = {}
+            d.collect_catalog(cands, f)
+        self.assertEqual(sorted(cands), ["catalog:a", "github:x/y"])
 
 
 class Candidates(unittest.TestCase):

@@ -65,6 +65,7 @@ jobs:
           git commit -m "Refresh Deck-ready index"
           for attempt in 1 2 3; do
             git pull --rebase origin "$BRANCH" && git push origin "HEAD:$BRANCH" && exit 0
+            git rebase --abort 2>/dev/null || true
             sleep 5
           done
           echo "::error::could not push the refreshed index to $BRANCH"

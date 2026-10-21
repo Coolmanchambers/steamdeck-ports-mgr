@@ -66,13 +66,14 @@ TOOL_RE = re.compile(
     r"\b(tool|tools|toolkit|library|framework|toolchain|decompiler|disassembler|sdk|plugin|ghidra|ida pro|"
     r"binary ninja|emulator|compiler|linker|assembler|utility|utilities|template|boilerplate|runtime)\b", re.I)
 
-OUTPUT_FIELDS = ("id", "name", "system", "repo", "repo_url", "host", "catalog_folder", "catalog_disabled",
+OUTPUT_FIELDS = ("id", "github_id", "name", "system", "repo", "repo_url", "host", "catalog_folder", "catalog_disabled",
                  "kind", "deck_rating", "readme_mentions_deck", "archived", "sources", "evidence",
                  "recomp_json", "first_seen")
 ABOUT = ("Projects with a Deck or Linux x86_64 build in a recent release. Sources: Ports Launcher catalog, "
          "maintainers' .recomp.json files, GitHub topics. Ratings come from release asset names and are not "
          "hand-checked; a test launch on the Deck is the proof. Entries with missing_since were not found in "
-         "the latest refresh and are removed after one more cycle.")
+         "the latest refresh and are removed after one more cycle. `generated` is the date the list last "
+         "changed, not the date it was last checked.")
 
 
 def log(msg):
@@ -142,6 +143,8 @@ def collect_catalog(cands, catalog_path):
         src = p.get("source")
         linux_url = src.get("linux") if isinstance(src, dict) else None
         url = linux_url or (src if isinstance(src, str) else next(iter(src.values()), None) if isinstance(src, dict) else None)
+        if url and not re.match(r"https?://", url):
+            url = None  # placeholders such as "??" are not sources
         meta = {"name": name, "catalog_folder": folder, "catalog_disabled": disabled, "catalog_tags": tags,
                 "sources": ["catalog"]}
         if github_slug(url):
@@ -155,16 +158,23 @@ def collect_catalog(cands, catalog_path):
             add(cands, "catalog:" + (folder or name or "?").lower(), host="none", **meta)
 
 
-def search_pages(query, kind, delay):
-    """Yield every result item of a GitHub search, page by page (the API caps at 1000)."""
+def search_pages(query, kind, delay, sort=None):
+    """Yield every result item of a GitHub search, page by page (the API caps at 1000).
+
+    Repository searches are sorted by stars so that a topic past the 1000 cap loses its least-starred
+    tail instead of reshuffling week to week.
+    """
+    extra = ["-f", f"sort={sort}", "-f", "order=desc"] if sort else []
     for page in range(1, 11):
         for attempt in range(3):
             res = gh_api(["-X", "GET", f"search/{kind}", "-f", f"q={query}", "-f", "per_page=100",
-                          "-f", f"page={page}"])
+                          "-f", f"page={page}", *extra])
             if not res.get("incomplete_results"):
                 break
             log(f"  incomplete search results, retrying page {page}")
             time.sleep(10)
+        else:
+            raise RuntimeError(f"search {kind} {query!r} page {page} stayed incomplete")
         items = res.get("items", [])
         yield from items
         if len(items) < 100:
@@ -188,7 +198,7 @@ def collect_recomp_json(cands):
 def collect_topics(cands):
     for topic in TOPICS:
         n = 0
-        for it in search_pages(f"topic:{topic} fork:false", "repositories", 2.5):
+        for it in search_pages(f"topic:{topic} fork:false", "repositories", 2.5, sort="stars"):
             add(cands, "github:" + it["full_name"].lower(), host="github", repo=it["full_name"],
                 sources=[f"topic:{topic}"])
             n += 1
@@ -199,7 +209,7 @@ def collect_topics(cands):
 
 
 REPO_FIELDS = """
-  nameWithOwner url isArchived isFork description stargazerCount
+  databaseId nameWithOwner url isArchived isFork description stargazerCount
   repositoryTopics(first: 20) { nodes { topic { name } } }
   releases(first: 5, orderBy: {field: CREATED_AT, direction: DESC}) {
     nodes { tagName publishedAt isDraft isPrerelease releaseAssets(first: 60) { nodes { name } } }
@@ -210,7 +220,12 @@ REPO_FIELDS = """
 
 
 def graphql_batch(batch):
-    """Read one batch of repos. Returns {repo: node or None (not found)}; raises if a batch keeps failing."""
+    """Read one batch of repos. Returns {repo: (node or None, status)}; raises if a batch keeps failing.
+
+    A repo that GitHub reports as not found, or that has any other error scoped to it (takedown,
+    forbidden), gets node None and a status instead of failing the run. A missing node with no error
+    at all means a bad response, so the batch is retried.
+    """
     parts = []
     for j, repo in enumerate(batch):
         owner, name = repo.split("/", 1)
@@ -219,15 +234,24 @@ def graphql_batch(batch):
     for attempt in range(API_ATTEMPTS):
         res = gh_api(["graphql", "--input", "-"], body=json.dumps({"query": query}))
         data = res.get("data") or {}
-        not_found = {e["path"][0] for e in res.get("errors", [])
-                     if e.get("type") == "NOT_FOUND" and e.get("path")}
+        errors = {}
+        for e in res.get("errors", []):
+            path = e.get("path") or []
+            if len(path) == 1:
+                errors[path[0]] = e.get("type") or "error"
+            else:
+                log(f"  graphql error below repo level: {json.dumps(e)[:200]}")
         out, ok = {}, True
         for j, repo in enumerate(batch):
             node = data.get(f"r{j}")
-            if node is None and f"r{j}" not in not_found:
+            if node is not None:
+                out[repo] = (node, "ok")
+            elif f"r{j}" in errors:
+                kind = errors[f"r{j}"]
+                out[repo] = (None, "not_found" if kind == "NOT_FOUND" else f"error:{kind}")
+            else:
                 ok = False
                 break
-            out[repo] = node
         if ok:
             log(f"  rate remaining: {(data.get('rateLimit') or {}).get('remaining')}")
             return out
@@ -249,11 +273,11 @@ def fetch_github(repos, cache):
     log(f"github repos: {len(repos)}, to fetch: {len(todo)}")
     for i in range(0, len(todo), GRAPHQL_BATCH):
         batch = todo[i:i + GRAPHQL_BATCH]
-        for repo, node in graphql_batch(batch).items():
+        for repo, (node, status) in graphql_batch(batch).items():
             if node:
                 readme = ((node.pop("readme") or {}).get("text") or "")
                 node["readme_mentions_deck"] = bool(re.search(r"steam\s*deck|steamos", readme, re.I))
-            fetched[repo] = {"status": "ok" if node else "not_found", "node": node}
+            fetched[repo] = {"status": status, "node": node}
             if cache:
                 cache.mkdir(parents=True, exist_ok=True)
                 (cache / (repo.replace("/", "__") + ".json")).write_text(json.dumps(fetched[repo]), encoding="utf-8")
@@ -324,6 +348,7 @@ def build_entry(c, gh, gl):
         e["check"] = cached["status"]
         if node:
             e["repo"] = node["nameWithOwner"]
+            e["github_id"] = node.get("databaseId")
             e["repo_url"] = node["url"]
             e["archived"] = node["isArchived"]
             e["description"] = node.get("description")
@@ -405,11 +430,15 @@ def ready_projects(cands, gh, gl):
 def merge_with_previous(new_ready, old_projects, today, grace_days=GRACE_DAYS):
     """Combine a fresh list with the committed one. Returns (projects, changes)."""
     old_by_id = {p["id"]: p for p in old_projects}
-    new_ids = {p["id"] for p in new_ready}
+    old_by_gid = {p["github_id"]: p for p in old_projects if p.get("github_id")}
+    matched = set()
     changes = {"added": [], "changed": [], "revived": [], "newly_missing": [], "still_missing": [], "removed": []}
     result = []
     for p in new_ready:
-        old = old_by_id.get(p["id"])
+        # A renamed GitHub repo keeps its numeric id, so it stays the same project.
+        old = old_by_id.get(p["id"]) or old_by_gid.get(p.get("github_id"))
+        if old is not None:
+            matched.add(old["id"])
         if old is None:
             p["first_seen"] = today
             changes["added"].append(p)
@@ -422,7 +451,7 @@ def merge_with_previous(new_ready, old_projects, today, grace_days=GRACE_DAYS):
                 changes["changed"].append((p, diff))
         result.append(p)
     for old in old_projects:
-        if old["id"] in new_ids:
+        if old["id"] in matched:
             continue
         since = old.get("missing_since")
         if since is None:
@@ -507,14 +536,13 @@ def main():
     active = sum(1 for p in projects if "missing_since" not in p)
     old_active = sum(1 for p in old_projects if "missing_since" not in p)
     log(f"on the list: {active} (previous {old_active})")
-    if old_active >= 50 and active < old_active * MIN_KEPT_RATIO and not args.allow_shrink:
-        raise SystemExit(f"list shrank from {old_active} to {active}; a source probably failed. "
-                         "Check the logs, then rerun with --allow-shrink if the drop is real.")
-
     summary = render_summary(changes, len(projects), active)
     print(summary)
     if args.summary:
         Path(args.summary).write_text(summary, encoding="utf-8")
+    if old_active >= 50 and active < old_active * MIN_KEPT_RATIO and not args.allow_shrink:
+        raise SystemExit(f"list shrank from {old_active} to {active}; a source probably failed. "
+                         "Check the logs, then rerun with --allow-shrink if the drop is real.")
 
     if projects == old_projects:
         log("no changes; file left as is")
