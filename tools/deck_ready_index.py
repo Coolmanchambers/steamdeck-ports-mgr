@@ -46,7 +46,7 @@ API_ATTEMPTS = 5
 DECK_RE = re.compile(r"steam[-_ .]?deck|(?<![a-z])deck(?![a-z])|steamos", re.I)
 LINUX_RE = re.compile(r"linux|appimage|flatpak|ubuntu|(?<![a-z])lin(?:64)?(?![a-z])|\.deb$|\.rpm$", re.I)
 ARM_RE = re.compile(r"aarch64|arm64|armv\d|armhf|(?<![a-z])arm(?![a-z])", re.I)
-WIN_RE = re.compile(r"win(?:dows|32|64)?(?![a-z])|\.exe$|\.msi$|msvc", re.I)
+WIN_RE = re.compile(r"(?<![a-z])win(?:dows|32|64)?(?![a-z])|\.exe$|\.msi$|msvc", re.I)
 JUNK_RE = re.compile(r"\.(sha\d*|sig|asc|md5|txt|sbom|json|pdb|dsym|apk|ipa|dmg)$|checksum|sha256|debug-sym", re.I)
 
 CONSOLE_RE = re.compile(
@@ -64,16 +64,41 @@ CATALOG_SYSTEM_TAGS = {"n64": "N64", "ps1": "PS1", "ps2": "PS2", "ps4": "PS4", "
                        "pc": "PC", "macos": "Mac"}
 TOOL_RE = re.compile(
     r"\b(tool|tools|toolkit|library|framework|toolchain|decompiler|disassembler|sdk|plugin|ghidra|ida pro|"
-    r"binary ninja|emulator|compiler|linker|assembler|utility|utilities|template|boilerplate|runtime)\b", re.I)
+    r"binary ninja|emulator|compiler|linker|assembler|utility|utilities|template|boilerplate|runtime|"
+    r"editor|ide|converter|launcher|manager|workspace)\b", re.I)
 
 OUTPUT_FIELDS = ("id", "github_id", "name", "system", "repo", "repo_url", "host", "catalog_folder", "catalog_disabled",
-                 "kind", "deck_rating", "readme_mentions_deck", "archived", "sources", "evidence",
+                 "website", "kind", "deck_rating", "readme_mentions_deck", "archived", "sources", "evidence",
                  "recomp_json", "first_seen")
-ABOUT = ("Projects with a Deck or Linux x86_64 build in a recent release. Sources: Ports Launcher catalog, "
+ABOUT = ("Projects whose latest release has a Steam Deck build or a non-ARM Linux build. Sources: Ports Launcher catalog, "
          "maintainers' .recomp.json files, GitHub topics. Ratings come from release asset names and are not "
-         "hand-checked; a test launch on the Deck is the proof. Entries with missing_since were not found in "
+         "hand-checked; a test launch on the Deck is the proof. Show kind 'game' by default and 'likely_game' "
+         "(found by topic only, may include tools) behind a toggle. catalog_disabled means upstream's catalog "
+         "disables the entry. archived, catalog_disabled and readme_mentions_deck can be null when unknown. "
+         "Key on id, not name. Entries with missing_since were not found in "
          "the latest refresh and are removed after one more cycle. `generated` is the date the list last "
          "changed, not the date it was last checked.")
+
+
+SYSTEM_NAMES = {
+    "n64": "N64", "nintendo 64": "N64", "nintendo64": "N64", "game cube": "GameCube", "gamecube": "GameCube",
+    "wii u": "Wii U", "wiiu": "Wii U", "wii": "Wii", "ps1": "PS1", "psx": "PS1", "ps2": "PS2", "ps3": "PS3",
+    "psp": "PSP", "playstation": "PlayStation", "xbox 360": "Xbox 360", "xbox360": "Xbox 360", "xbox": "Xbox",
+    "dreamcast": "Dreamcast", "saturn": "Saturn", "snes": "SNES", "super nintendo": "SNES",
+    "genesis": "Genesis", "mega drive": "Genesis", "megadrive": "Genesis", "game boy": "Game Boy",
+    "gameboy": "Game Boy", "gba": "GBA", "gbc": "Game Boy Color", "nds": "NDS", "nintendo ds": "NDS",
+    "3ds": "3DS", "neo geo": "Neo Geo", "neogeo": "Neo Geo", "arcade": "Arcade", "ms-dos": "DOS",
+    "msdos": "DOS", "dos": "DOS", "dos game": "DOS", "pc (dos)": "DOS", "pc": "PC", "pc port": "PC",
+    "pc (windows)": "PC", "native port": "PC",
+}
+
+
+def normalize_system(raw):
+    """Map free-text system names onto one spelling each; unknown names pass through trimmed."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    raw = raw.strip()
+    return SYSTEM_NAMES.get(raw.lower(), raw)
 
 
 def log(msg):
@@ -145,7 +170,9 @@ def collect_catalog(cands, catalog_path):
         url = linux_url or (src if isinstance(src, str) else next(iter(src.values()), None) if isinstance(src, dict) else None)
         if url and not re.match(r"https?://", url):
             url = None  # placeholders such as "??" are not sources
+        site = p.get("website")
         meta = {"name": name, "catalog_folder": folder, "catalog_disabled": disabled, "catalog_tags": tags,
+                "website": site if isinstance(site, str) and site.startswith("http") else None,
                 "sources": ["catalog"]}
         if github_slug(url):
             add(cands, "github:" + github_slug(url).lower(), host="github", repo=github_slug(url), **meta)
@@ -177,6 +204,8 @@ def search_pages(query, kind, delay, sort=None):
             raise RuntimeError(f"search {kind} {query!r} page {page} stayed incomplete")
         items = res.get("items", [])
         yield from items
+        if page == 10 and len(items) == 100:
+            log(f"::warning::search {query!r} hit GitHub's 1000 result cap; the tail is cut")
         if len(items) < 100:
             return
         time.sleep(delay)
@@ -211,7 +240,8 @@ def collect_topics(cands):
 REPO_FIELDS = """
   databaseId nameWithOwner url isArchived isFork description stargazerCount
   repositoryTopics(first: 20) { nodes { topic { name } } }
-  releases(first: 5, orderBy: {field: CREATED_AT, direction: DESC}) {
+  latestRelease { tagName publishedAt isDraft isPrerelease releaseAssets(first: 60) { nodes { name } } }
+  releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC}) {
     nodes { tagName publishedAt isDraft isPrerelease releaseAssets(first: 60) { nodes { name } } }
   }
   recomp: object(expression: "HEAD:.recomp.json") { ... on Blob { text } }
@@ -320,8 +350,15 @@ def rate(names, deck, linux, win):
     return "other_assets"
 
 
-def pick_release(nodes):
-    """Newest stable release with assets, else newest pre-release with assets."""
+def pick_release(nodes, latest=None):
+    """GitHub's latest stable release if it has files, else the newest stable with files in the window,
+    else the newest pre-release with files.
+
+    `latest` matters for projects that publish many nightlies: their last stable release can fall out of
+    the release window.
+    """
+    if latest and not latest.get("isDraft") and (latest.get("releaseAssets") or {}).get("nodes"):
+        return latest
     usable = [n for n in nodes if not n.get("isDraft") and (n.get("releaseAssets") or {}).get("nodes")]
     stable = [n for n in usable if not n.get("isPrerelease")]
     return (stable or usable or [None])[0]
@@ -364,7 +401,7 @@ def build_entry(c, gh, gl):
                     e["name"] = rj["game"]
                 if "recomp_json" not in e["sources"]:
                     e["sources"].append("recomp_json")
-            rel = pick_release((node.get("releases") or {}).get("nodes", []))
+            rel = pick_release((node.get("releases") or {}).get("nodes", []), node.get("latestRelease"))
             assets = [a["name"] for a in (rel or {}).get("releaseAssets", {}).get("nodes", [])]
             release = {"tag": rel["tagName"], "date": rel["publishedAt"], "prerelease": rel["isPrerelease"]} if rel else None
         else:
@@ -395,8 +432,9 @@ def build_entry(c, gh, gl):
     if not e.get("name"):
         e["name"] = (e.get("repo") or c["key"]).split("/")[-1]
     tag_system = next((CATALOG_SYSTEM_TAGS[t] for t in e.get("catalog_tags", []) if t in CATALOG_SYSTEM_TAGS), None)
-    e["system"] = (e.get("recomp_json") or {}).get("system") or tag_system or \
-        next((m.group(0) for m in [CONSOLE_RE.search(f"{e.get('description') or ''} {e['name']}")] if m), None)
+    e["system"] = normalize_system((e.get("recomp_json") or {}).get("system") or tag_system or
+                                   next((m.group(0) for m in [CONSOLE_RE.search(
+                                       f"{e.get('description') or ''} {e['name']}")] if m), None))
     e["kind"] = kind_of(e, node)
     return e
 
@@ -436,7 +474,15 @@ def merge_with_previous(new_ready, old_projects, today, grace_days=GRACE_DAYS):
     result = []
     for p in new_ready:
         # A renamed GitHub repo keeps its numeric id, so it stays the same project.
-        old = old_by_id.get(p["id"]) or old_by_gid.get(p.get("github_id"))
+        gid = p.get("github_id")
+        if gid and gid in old_by_gid:
+            old = old_by_gid[gid]
+        elif gid and (old_by_id.get(p["id"]) or {}).get("github_id"):
+            old = None  # the slug now belongs to a different repo than before
+        else:
+            old = old_by_id.get(p["id"])
+        if old is not None and old["id"] in matched:
+            old = None
         if old is not None:
             matched.add(old["id"])
         if old is None:

@@ -33,7 +33,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
-| 2026-10-20 | `index/deck-ready.json` | The published Deck-ready list, written only by that workflow |
+| 2026-10-20 | `index/deck-ready.json` | The published Deck-ready list. Created by that workflow on its first run, written only by it |
 
 ## What still comes from upstream at runtime
 
@@ -75,8 +75,13 @@ Notes:
 - **Ratings** come from release file names, not test launches. Treat them as a starting point.
 - **Changes:** new projects are added and changed ones updated. A project that stops qualifying
   stays for one more cycle with a `missing_since` date, then is removed.
-- The workflow commits to `main` only when the file changed and lists what changed in the run
+- The workflow commits to the branch it was started on (`main` for the weekly schedule) only when the file changed and lists what changed in the run
   summary. The builder refuses to publish a list that shrank by more than 30 percent.
+- **Reading the file:** key entries on `id` (names are not unique). `kind: game` is safe to show;
+  `likely_game` came from topics alone and may include tools, so show it behind a toggle.
+  `catalog_disabled` means upstream's catalog disables that entry. `archived`, `catalog_disabled`
+  and `readme_mentions_deck` can be null when unknown. `generated` is the date the list last
+  changed, not the date it was last checked.
 - The app does not read this file yet.
 
 ## Builds
