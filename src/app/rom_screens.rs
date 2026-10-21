@@ -37,7 +37,7 @@ type Back = Rc<dyn Fn(&Rc<AppState>, &Router)>;
 
 const TITLE: &str = "Game files";
 const STORE_FILE: &str = "rom_library.json";
-const NOTE_READ_ONLY: &str = "Your game files are only read here. They are never moved, renamed or deleted.";
+const NOTE_READ_ONLY: &str = "Your game files are only read, never moved or deleted.";
 
 /// What to do once a scan has finished.
 #[derive(Clone)]
@@ -250,9 +250,13 @@ fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
     });
 }
 
+fn browser_title(browser: &FolderBrowser) -> String {
+    format!("Folder: {}", ellipsize(&browser.current.to_string_lossy(), 48))
+}
+
 fn show_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FolderBrowser>>, then: Then) {
     let labels = browser.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, "Choose your game files folder", &labels) else { return };
+    let Some(dialog) = build_picker_dialog(app, router, &browser_title(&browser.borrow()), &labels) else { return };
     {
         let (app, router, weak) = (app.clone(), router.clone(), dialog.as_weak());
         dialog.on_item_selected(move |index| {
@@ -273,6 +277,7 @@ fn show_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FolderB
             }
             if let Some(d) = weak.upgrade() {
                 set_picker_items(&d, &browser.borrow().labels());
+                d.set_dialog_title(browser_title(&browser.borrow()).into());
                 app.dialog_nav.picker_index.set(0);
                 d.set_selected_index(0);
                 d.set_scroll_trigger(!d.get_scroll_trigger());
@@ -355,13 +360,10 @@ fn show_systems(app: &Rc<AppState>, router: &Router, report: Rc<Report>) {
     // Systems with ports first, then the ones that only have files nobody uses.
     let mut order: Vec<usize> = (0..report.groups.len()).collect();
     order.sort_by_key(|i| report.groups[*i].ports.is_empty());
-    let mut labels = vec![format!(
-        "{} game files in {}. {} not used by any port, {} other files ignored.",
-        report.total_files,
-        ellipsize(&report.root.to_string_lossy(), 40),
-        report.unused_files,
-        report.ignored_files
-    )];
+    let mut labels = vec![
+        format!("{} game files in {}", report.total_files, ellipsize(&report.root.to_string_lossy(), 40)),
+        format!("{} not used by any port, {} other files ignored", report.unused_files, report.ignored_files),
+    ];
     if report.problems > 0 {
         labels.push(format!("{} folders could not be read and were skipped.", report.problems));
     }

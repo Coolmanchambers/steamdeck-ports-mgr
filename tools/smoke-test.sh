@@ -5,6 +5,7 @@
 #   - it skipped the tray (no tray host here) instead of letting Slint try and fail;
 #   - its window is mapped and the screenshot is not blank;
 #   - Tab opens the Deck-ready list without a crash (whether it downloads is only reported), Tab returns;
+#   - Settings > Game files... opens without a crash;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
@@ -68,6 +69,16 @@ if [ "$alive" = yes ]; then
         check "Deck-ready list opens and the app keeps running" '[ "$dr_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log"'
         if [ -f "$APP_DIR/cache/deck-ready.json" ]; then echo "info: Deck-ready list downloaded and saved"; else echo "info: Deck-ready list not saved (no network here?)"; fi
         xdotool key Tab; sleep 1
+        # Settings (gear in the title bar) > Game files... opens without a crash. Dialogs get no keyboard
+        # focus without a window manager, so this clicks, relative to the main window.
+        eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
+        if [ -n "${X:-}" ] && [ -n "${Y:-}" ]; then
+            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
+            xdotool mousemove $((X + 71)) $((Y + 310)) click 1; sleep 2
+            import -window root "$OUT/game-files.png" 2>/dev/null
+            gf_alive=no; kill -0 "$APP" 2>/dev/null && gf_alive=yes
+            check "Game files screen opens and the app keeps running" '[ "$gf_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$(xdotool search --name "^Game files$" 2>/dev/null)" ]'
+        fi
         # Escape is Close in the windowed view.
         xdotool key Escape
     fi

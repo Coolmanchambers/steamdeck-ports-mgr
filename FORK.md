@@ -53,6 +53,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/asset_select.rs` | With `preferred_asset`, checksum and update files (`.sha256`, `.zsync`...) beside the match are dropped before deciding it is ambiguous; `.zsync` joins the non-archive list; 1 test |
 | 2026-10-21 | `src/ui/font_metrics.rs` | Linux `wrapped_text_height` counts each line break as a new line (as Windows' `DrawTextW` does). It split the whole text on whitespace, so every multi-line message was measured as one paragraph and its dialog cut off the last lines; 1 test |
 | 2026-10-21 | `README.md` | Item 8 (Deck-ready list) set to "Testing" |
+| 2026-10-22 | `src/app/dialogs.rs` | One Settings entry, "Game files..." (list, labels and the menu match; English text) |
+| 2026-10-22 | `src/app/events.rs` | After an install that is not followed by a launch, one call to `rom_screens::offer_after_install` (the once-per-port offer to connect game files) |
+| 2026-10-22 | `src/app/mod.rs` | One line registering `rom_screens` |
+| 2026-10-22 | `README.md` | Item 7 (game files folder) set to "Testing" |
 
 Files added by this fork:
 
@@ -89,6 +93,8 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
+| 2026-10-22 | `src/fork/rom_screens/` | The logic of the game-files screens (R2): folder browser, background job runner, scan and report, results by system, Connect step, connected ports, the after-install offer; tested without UI |
+| 2026-10-22 | `src/app/rom_screens.rs` | The screens themselves: list dialogs, a timer that polls the worker thread |
 | 2026-10-21 | `src/fork/deck_ready/index.rs` | Reads `index/deck-ready.json` (schema 1); unusable entries are skipped, an unusable file is refused |
 | 2026-10-21 | `src/fork/deck_ready/sync.rs` | Fetches the list from this repo with an ETag, at most every 12 hours, and keeps the saved copy in `cache/` |
 | 2026-10-21 | `src/fork/deck_ready/view.rs` | Rows, filters, sorting, matching to ports the app already has, and the Info and confirm text; tested without UI |
@@ -148,7 +154,7 @@ The library underneath the Add to Steam screen. Rules it enforces so a later fea
 
 ## ROM library (`src/fork/rom_library/`)
 
-Library only; no UI and no caller yet. Rules it enforces:
+The library (R1). The screens that use it are described in "Game files screens" below. Rules it enforces:
 
 - Originals are only ever opened for reading: never moved, renamed, deleted or modified.
 - Nothing already in a port folder is overwritten. A different file at the destination refuses the plan;
@@ -180,6 +186,41 @@ as partial; the BIOS and serial checks are by name only. A ZIP is hashed as a fi
 (SNES copier headers, iNES) hash differently from headerless No-Intro lists and show as "wrong version";
 Switch dumps that are folders are not scanned; `rom_access` for Ship of Harkinian and 2 Ship 2 Harkinian
 ("use original") comes from the findings document and is not yet confirmed on a Deck.
+
+## Game files screens (`src/fork/rom_screens/`, `src/app/rom_screens.rs`)
+
+Settings > **Game files...** (stage R2). Every screen is a list in the picker dialog the other fork screens use, so the
+controller (D-pad, A, B), keyboard and mouse work in a window and fullscreen; B closes the whole flow, like the Steam
+screens. The text is English only.
+
+- **Folder:** one setting. The first list offers places that exist (an SD card's or home's `ROMs`, `Roms`, `roms`,
+  `Emulation/roms`, `Games`...), "Browse from your home folder" and "Browse from the top"; the browser walks down folder by
+  folder (hidden folders skipped, 400 shown at most) and "Use this folder" saves it and starts a scan.
+- **Scan:** on a worker thread. A list shows files checked, data read and the current file, with Cancel; B cancels too. A
+  cancelled scan changes nothing and saves nothing. The result is saved (`rom_scan_cache.json`) and reused: a rescan hashes only
+  new or changed files, and "Results by system" opens from the saved scan after a restart without touching the folder.
+- **Results:** grouped by system. Per system: files and how many ports are connected / found / to pick / wrong or partial /
+  missing. Per port: Found, Several matches, Partly found, Wrong version, Missing, Cannot be checked, Connected, with
+  "(check this)" for name-only matches and the expected versus found file in the detail. A port shows when something real was
+  found for it or when it is installed and missing its files, so uninstalled catalog entries do not bury the result. The system
+  of a port with no match comes from its catalog tags (n64, ps1, gc...).
+- **Connect game files:** per found file the method (Use original, Link, Copy) limited by the port's access level
+  (`rom_access`), the default being the cheapest allowed; an ambiguous slot needs a file picked first; "(+size)" and
+  an "Extra disk space" line for copies. **Connect now** plans on the worker thread (nothing is written), then:
+  links and use-in-place apply at once; a copy first shows a confirm with the files, the size and the free space of the drive and
+  is refused if less than size + 1 GB would be left (`df`; unknown space does not block). The copy runs on the worker thread and
+  cannot be cancelled once started. A disc is connected as one set, all or nothing. Originals are never touched; the recorded
+  connection is saved in `rom_library.json`.
+- **Connected ports:** each recorded connection with its health (OK, game file missing, game file changed, link or copy gone).
+  Choosing one offers "Forget": only the record goes, never a file.
+- **After an install:** once per port, when the port names files it cannot run without, one confirm offers to connect them
+  (the answer is final; `rom_prompted_ports` in `fork-settings.json`). Not offered when the install is followed by Play.
+  It sets the folder first if none is set, rescans, then opens the Connect step.
+- **Not done:** no button in the Info dialog (its 5+5 button grid is fixed; the offer and Settings cover it); the BIOS folder
+  setting and N64 byte-order conversion of R1's backlog; a startup health check of recorded connections (the list shows health
+  when opened); "Use original" does not pass the path to the port, it only records it and says where the file is.
+- **Not verified on a Deck:** fullscreen layout, controller input through Steam Input, SD card start points
+  (`/run/media/...`), exFAT link refusal, copy speed on the SD card.
 
 ## Fixes to upstream behavior
 

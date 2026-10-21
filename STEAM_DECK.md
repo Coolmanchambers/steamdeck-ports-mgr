@@ -134,6 +134,25 @@ the `ports.local.json.bak-...` from just before the add back over it. Its files 
 Before deleting that folder, look inside it for a save folder and copy that out: many ports keep their
 saves there.
 
+## Connect ports to your game files
+
+Settings > **Game files...** is where the app finds your ROMs and connects them to the ports that need them. It only reads
+your game folder: nothing in it is ever moved, renamed, changed or deleted.
+
+1. **Game files folder** > choose your ROM folder. The list offers the usual places (SD card, `~/Emulation/roms`...); "Browse"
+   walks down folder by folder and **Use this folder** saves it and scans. The scan shows its progress and has Cancel (or B).
+   A big folder takes a while the first time; later scans only read new or changed files.
+2. **Results by system** lists, per console, which ports have their files (Found, Several matches, Wrong version, Missing...).
+   "(check this)" means a file was matched by name only. Open a port to see exactly what was found and what it wants.
+3. **Connect game files...** (from a port's page, or offered once right after it installs): pick how each file reaches the port.
+   **Use original** writes nothing, **Link** puts a pointer in the port's folder (no extra space), **Copy** makes a second
+   copy and asks first, showing its size. Then **Connect now**.
+4. **Connected ports** shows what is connected and whether it still holds. **Forget** removes only the record.
+
+Links need a Linux file system: an SD card formatted by SteamOS can hold them, an exFAT card cannot (the app then says so
+and offers a copy). To undo a Link or Copy, delete that file inside the port's folder yourself, then Forget the connection;
+the app never deletes game files.
+
 ## What to test
 
 | Area | Pass looks like |
@@ -155,6 +174,8 @@ saves there.
 | Add to Steam, Steam open | Settings > Add to Steam > Review shows the close-Steam message (no Apply button) and changes nothing |
 | Add to Steam, Steam closed | "Added N", a `shortcuts.vdf.bak-...` next to `shortcuts.vdf`, shortcuts appear after Steam restarts |
 | Adopt | An outside install shows as installed with Play and Open folder; your folder is untouched |
+| Game files scan | Settings > Game files > pick the ROM folder: progress with Cancel, then results by system; a second scan is quick |
+| Game files connect | Connect a port: Link adds a pointer in its folder, Copy asks first with the size; your ROM folder is unchanged |
 | Update offered | After a later-dated build and a relaunch 24 h past the last check, the footer says Update |
 
 ## Known issues being tested

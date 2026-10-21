@@ -2,7 +2,6 @@
 //! drives. Start points are the places game files usually live (an SD card, an EmuDeck folder), then
 //! the user walks down folder by folder and says "use this folder".
 
-use super::util::ellipsize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -130,7 +129,7 @@ impl FolderBrowser {
         self.lines()
             .into_iter()
             .map(|line| match line {
-                Line::UseThis => format!("Use this folder: {}", ellipsize(&self.current.to_string_lossy(), 60)),
+                Line::UseThis => "Use this folder".to_string(),
                 Line::Up => ".. (up one level)".to_string(),
                 Line::Folder(i) => format!("{}/", self.folders[i].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
                 Line::More => format!("... and {} more folders not shown", self.hidden_count),
