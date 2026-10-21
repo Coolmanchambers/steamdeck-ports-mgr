@@ -32,6 +32,9 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/save_backup.rs` | New `backup_before_update` (zip of the save folders under `Update Backups`), reusing the existing copy and zip helpers |
 | 2026-10-21 | `.gitattributes` | `*.sh text eol=lf` and `*.py text eol=lf`, so these scripts get Unix line endings in a fresh Windows checkout too (a CRLF `#!/bin/sh` line fails to run on Linux). The repository's stored files are unchanged. An existing checkout keeps its CRLF copies until they are checked out again (delete them, then `git checkout -- .`) |
 | 2026-10-21 | `src/app/events.rs` | After an install finishes, a favorite executable that was an AppImage follows the new file (8 lines); a failed install no longer leaves the Play-launch pending and launches the installed game (6 lines) |
+| 2026-10-21 | `src/app/dialogs.rs` | `finish_dialog_open`, `open_confirm_dialog`, `set_picker_items` and `build_picker_dialog` made `pub(crate)` for the new screens; two Settings entries ("Add to Steam...", "Adopt installed ports...") added to the list and its menu match (English text, not in the translation tables) |
+| 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
+| 2026-10-21 | `README.md` | Item 4 (adopt) set to "Testing", item 5 (Steam shortcuts) to "In progress" |
 
 Files added by this fork:
 
@@ -51,7 +54,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
 | 2026-10-20 | `index/deck-ready.json` | The published Deck-ready list. Seeded by a local run of the same builder, then refreshed only by that workflow |
-| 2026-10-21 | `src/fork/mod.rs` | Module root for code this fork adds (the Steam shortcuts library, the `src/fork/` files). Nothing in the app calls it yet |
+| 2026-10-21 | `src/fork/mod.rs` | Module root for code this fork adds (the Steam shortcuts library, the `src/fork/` files). The Settings screens call it |
 | 2026-10-21 | `src/fork/vdf.rs` | Lossless codec for Steam's binary KeyValues format (`shortcuts.vdf`) |
 | 2026-10-21 | `src/fork/app_id.rs` | CRC-32, non-Steam shortcut app IDs, 64-bit grid IDs, signed/unsigned forms |
 | 2026-10-21 | `src/fork/shortcuts.rs` | List, add and update-in-place (app ID kept) shortcuts in a parsed file |
@@ -60,10 +63,44 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/art/fit.rs` | Fits any image into a Steam art slot: portrait 600x900 (contain over a blurred copy), wide 920x430 and hero 1920x620 (cover-crop), logo inside 1280x720 (alpha kept), icon 512x512; refuses sources needing more than 1.5x enlargement |
 | 2026-10-21 | `src/fork/art/grid.rs` | Writes slot images into `config/grid/` through `place_artwork`; provenance manifest `.dpm-art-manifest.json`; never overwrites art the user chose; writes the logo position file once |
 | 2026-10-21 | `src/fork/art/catalog.rs` | Turns a catalog entry's cached `image` and `icon` into the portrait and icon slots |
+| 2026-10-21 | `src/fork/steam_user.rs` | Reads `config/loginusers.vdf` (text KeyValues), lists the accounts that have a `userdata` folder and picks the saved one, else `MostRecent`, else the only one |
+| 2026-10-21 | `src/fork/backups.rs` | Prunes `shortcuts.vdf.bak-<stamp>` files: newest N kept (at least 1), nothing under an hour old, nothing else in the folder |
+| 2026-10-21 | `src/fork/settings.rs` | `fork-settings.json` (next to `state.json`): chosen Steam account, extra adopt scan folders, backups to keep. Other keys survive a save |
+| 2026-10-21 | `src/fork/adopt.rs` | Finds ports installed outside `Library/` and registers them (see "Adopting installed ports") |
+| 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
+| 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
+| 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
+
+## Add to Steam and adopting (Settings menu)
+
+- **Add to Steam** writes one shortcut per selected installed port to the chosen account's
+  `shortcuts.vdf`, from Desktop Mode with Steam closed. It goes through the library's safe save
+  (refuse while Steam runs, verified backup, atomic write, read-back), then prunes old backups. The
+  Steam route decision (Desktop Mode write or a Decky plugin) is still open; this is the Desktop Mode
+  route and the library underneath serves either.
+- **Matching:** an existing shortcut is the port's when it has the same program, else the same name
+  (ignoring case). It is updated in place, so its app ID stays. Two matches, or an entry with no stored
+  app ID that needs a change, are blocked and shown as skipped, never guessed.
+- **Not done:** artwork (one marked hook, `art_hook` in `screens.rs`, waits for `src/fork/art/`), the
+  collection, Game Mode queueing, repointing a moved port's shortcut on its own, Windows (no `/proc`
+  check: it refuses).
+- **Screen text is English only**, built from the upstream picker dialog.
+
+## Adopting installed ports
+
+Registering an install found outside `Library/` changes two things of ours and nothing in the install:
+`Library/<catalog folder>` becomes a symlink to it (the app finds, launches and opens every port as
+`Library/<folder>`), and a `user_managed` entry is added to `ports.local.json` (existing file backed
+up first). The entry copies the catalog entry's name, image, tags and save paths but drops `source`
+(and `extra`, `preferred_asset`): with a source the app would install and update through the link,
+writing into the user's folder. Consequences: an adopted port is not checked for updates, and its state
+key is its folder name instead of `owner/repo`. A failure halfway removes the link it made. Needs
+Linux (symlinks) and a Library folder on a filesystem that allows them. Loose files (an AppImage with no
+folder) are not adopted; only folders one level inside a scan folder.
 
 ## Steam shortcuts library (`src/fork/`)
 
-Library only; no UI and no caller yet. Rules it enforces so a later feature cannot break Steam:
+The library underneath the Add to Steam screen. Rules it enforces so a later feature cannot break Steam:
 
 - Saving `shortcuts.vdf` is refused while a Steam process (`steam`, `steam.sh`, `steamwebhelper`) exists, and when
   that check cannot run. Steam rewrites the file when it exits, so a write while it runs is lost.
@@ -74,7 +111,7 @@ Library only; no UI and no caller yet. Rules it enforces so a later feature cann
 - An entry's stored app ID is never recomputed. The CRC formula (the one Steam ROM Manager uses) is only
   used for new entries. Newer Steam builds may assign other IDs to shortcuts added in the Steam UI.
 - Code in `src/fork/` uses English names and module docs; upstream's own tests are in French.
-- Backups (`shortcuts.vdf.bak-<local time>`) are never pruned by the library; a later UI stage decides retention.
+- Backups (`shortcuts.vdf.bak-<local time>`) are pruned only by `backups::prune_backups`, which Add to Steam calls after a write (newest 10, never anything under an hour old).
 
 ## Fixes to upstream behavior
 

@@ -64,6 +64,38 @@ closes silently.
    until the next launch from Steam.
 4. Switch to Game Mode and launch it from the Library. Press View to switch to the fullscreen grid.
 
+## Add ports to Steam, one per port (Desktop Mode)
+
+Settings > **Add to Steam...** lists every installed port with what would happen to it:
+`[x] Dusklight: will add`, `[x] Ship of Harkinian: will update (program)` (a shortcut you made by
+hand, matched by program or name, keeps its play time, art and controller layout), `already in Steam`,
+or `skipped, <reason>` (no single program found, program not marked executable, and so on).
+Choosing a row switches it on or off; **Review N changes...** shows the list and asks before writing.
+
+- **Close Steam first.** Steam rewrites its shortcut list when it exits, so the app only writes while
+  Steam is closed. If Steam is running you get a message and nothing changes. Steam cannot be closed
+  in Game Mode: switch to Desktop Mode, Steam menu > Exit, then apply.
+- **Backup:** every write first copies `shortcuts.vdf` to `shortcuts.vdf.bak-<date>-<time>` in the
+  same folder (`userdata/<id>/config/`). The newest 10 are kept (set `steam_backups_keep` in
+  `fork-settings.json`); anything from the last hour is never removed.
+- **Account:** the Steam account that signed in last is used. With several accounts the first row
+  asks which one; the choice is remembered in `fork-settings.json`.
+- After it says "Added ...", start Steam again. The shortcuts are under Non-Steam games. Artwork is
+  not placed yet.
+
+To undo, close Steam and copy the newest `shortcuts.vdf.bak-...` over `shortcuts.vdf`.
+
+## Adopt ports you installed elsewhere (Desktop Mode)
+
+Settings > **Adopt installed ports...** looks one level deep in `~/Applications`, `~/Games` and
+`~/Ports`, plus any folders you list under `adopt_folders` in `fork-settings.json` (the last row
+creates that file and opens it). A folder is offered when its name, or a program inside it, matches a
+catalog port. Adopting does not move, copy or change your folder: it adds a link `Library/<port>`
+pointing at it and an entry in `ports.local.json` (backed up first). The port then shows as
+installed, Play and Info work, and Uninstall is replaced by Open folder. Adopted ports are not
+checked for updates. To undo: delete the link in `Library/` (the original stays) and the entry in
+`ports.local.json`.
+
 ## What to test
 
 | Area | Pass looks like |
@@ -79,6 +111,9 @@ closes silently.
 | Force update | App closes and reopens on the newest build; `updater.log` ends with `=== done` |
 | Force update offline | App reopens on the old build; `update-failed.txt` says why |
 | Force update in Game Mode | The app comes back in Game Mode and Steam still shows it running |
+| Add to Steam, Steam open | Settings > Add to Steam > Review > Apply shows the close-Steam message and changes nothing |
+| Add to Steam, Steam closed | "Added N", a `shortcuts.vdf.bak-...` next to `shortcuts.vdf`, shortcuts appear after Steam restarts |
+| Adopt | An outside install shows as installed with Play and Open folder; your folder is untouched |
 | Update offered | After a later-dated build and a relaunch 24 h past the last check, the footer says Update |
 
 ## Known issues being tested

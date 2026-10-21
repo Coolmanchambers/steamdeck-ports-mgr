@@ -15,8 +15,8 @@
 > | 1 | Linux / Steam Deck builds and tests on every push | Done |
 > | 2 | Daily sync with upstream | Done |
 > | 3 | Controller and Game Mode checks on the Steam Deck | Testing |
-> | 4 | Adopt ports already installed on the Deck | Planned |
-> | 5 | Add ports to Steam with artwork | Planned |
+> | 4 | Adopt ports already installed on the Deck | Testing |
+> | 5 | Add ports to Steam with artwork | In progress |
 > | 6 | Save backups before every update | Testing |
 > | 7 | Connect ports to your own game files folder | Planned |
 > | 8 | A list of Deck-ready ports | In progress |
