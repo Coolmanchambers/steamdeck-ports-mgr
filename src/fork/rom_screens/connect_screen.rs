@@ -119,7 +119,7 @@ impl ConnectScreen {
         self.lines()
             .into_iter()
             .map(|line| match line {
-                Line::Intro => format!("Pick how each file reaches {}. Nothing is written until you choose Connect now.", self.port_name),
+                Line::Intro => format!("Pick how each file reaches {}. Nothing is written yet.", self.port_name),
                 Line::Slot(i) => self.slot_label(i),
                 Line::Space => match self.copy_bytes() {
                     0 => "Extra disk space: none".to_string(),
@@ -137,7 +137,7 @@ impl ConnectScreen {
         let name = ellipsize(&slot.result.label, 40);
         let optional = if slot.result.optional { " (optional)" } else { "" };
         if let Some(method) = slot.connected {
-            let file = slot.candidates.first().map(|f| file_name(&f.path)).unwrap_or_default();
+            let file = slot.candidates.first().map(|f| ellipsize(&file_name(&f.path), 40)).unwrap_or_default();
             return format!("{name}{optional}: {file} - already connected ({})", method.label());
         }
         if slot.candidates.is_empty() {
@@ -151,7 +151,7 @@ impl ConnectScreen {
             return format!("{name}{optional}: {} files match, choose one", slot.candidates.len());
         };
         let f = &slot.candidates[c];
-        let mut text = format!("{name}{optional}: {} - {}", file_name(&f.path), slot.method.label());
+        let mut text = format!("{name}{optional}: {} - {}", ellipsize(&file_name(&f.path), 40), slot.method.label());
         if slot.method == Method::Copy {
             text.push_str(&format!(" (+{})", human_bytes(self.slot_bytes(i))));
         }
@@ -344,7 +344,6 @@ mod tests {
     use super::super::report::{build_report, tests_support::*};
     use super::*;
     use crate::fork::rom_library::testutil::*;
-    use crate::fork::rom_library::{Access, ApplyError};
     use std::fs;
 
     struct Fixture {
@@ -422,6 +421,7 @@ mod tests {
         assert!(!f.store_path.exists(), "nothing recorded without approval");
     }
 
+    #[cfg(unix)]
     #[test]
     fn link_connects_records_and_survives_a_reload_and_originals_stay_byte_identical() {
         let (f, row) = fixture("link");
@@ -474,9 +474,9 @@ mod tests {
         assert!(matches!(screen.picks(0)[0], Pick::File(0)));
         screen.choose(0, Pick::File(1));
         assert_eq!(screen.requests().unwrap().len(), 1);
-        let _ = (Access::Link, ApplyError::NeedsConfirmation);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_missing_slot_cannot_be_connected_and_a_broken_connection_is_offered_again() {
         let (f, row) = fixture("link");

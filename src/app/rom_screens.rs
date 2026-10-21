@@ -57,6 +57,18 @@ fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
     open_message_dialog(app, router, title, &padded(text));
 }
 
+/// A list that stays open (cursor where it was) when an information row is chosen. Rows that lead
+/// somewhere replace it by opening the next dialog, which closes this one.
+fn open_list(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) {
+    let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
+    {
+        let (app, router) = (app.clone(), router.clone());
+        dialog.on_item_selected(move |index| on_select(&app, &router, index as usize));
+    }
+    let _ = dialog.show();
+    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+}
+
 fn home_dir() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v)).map(PathBuf::from).filter(|p| p.is_absolute())
 }
@@ -121,7 +133,7 @@ fn run_job<T: Send + 'static>(
     done: impl FnOnce(&Rc<AppState>, &Router, Result<T, String>) + 'static,
 ) {
     if JOB_RUNNING.with(Cell::get) {
-        return;
+        return message(app, router, TITLE, "Another game files task is still running. Wait for it to finish, then try again.");
     }
     let job = Rc::new(Background::spawn(work));
     JOB_RUNNING.with(|r| r.set(true));
@@ -133,7 +145,7 @@ fn run_job<T: Send + 'static>(
             true
         }
         JobUi::Cancellable { title } => {
-            if let Some(dialog) = build_picker_dialog(app, router, title, &cancel_labels("", false)) {
+            if let Some(dialog) = build_picker_dialog(app, router, title, &cancel_labels("Checked 99999 files, 999.9 GB read\nA long game file name that keeps going and going.iso", false)) {
                 let (job, cancelling) = (job.clone(), cancelling.clone());
                 let weak = dialog.as_weak();
                 dialog.on_item_selected(move |index| {
@@ -156,23 +168,34 @@ fn run_job<T: Send + 'static>(
     let done: RefCell<Option<Box<dyn FnOnce(&Rc<AppState>, &Router, Result<T, String>)>>> = RefCell::new(Some(Box::new(done)));
     let (app, router) = (app.clone(), router.clone());
     let last = RefCell::new(String::new());
+    let abandoned = Cell::new(false);
     JOB_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
+            if let Some(weak) = &picker {
+                // The user closed the list with B: stop the work and drop its result. The timer keeps
+                // running until the worker has really stopped, so a new job cannot overlap it.
+                if !abandoned.get() && !weak.upgrade().is_some_and(|d| d.window().is_visible()) {
+                    job.cancel();
+                    abandoned.set(true);
+                }
+            }
             if let Some(result) = job.take() {
                 stop_job_timer();
-                close_current_dialog(&app, &router);
+                if abandoned.get() {
+                    return;
+                }
+                // Only close what this job opened: the user may have closed it and opened something else.
+                let own_dialog = !progress_mode || matches!(&*app.dialog_nav.dialogs.borrow(), DialogSlot::Progress(_));
+                if own_dialog {
+                    close_current_dialog(&app, &router);
+                }
                 if let Some(done) = done.borrow_mut().take() {
                     done(&app, &router, result);
                 }
                 return;
             }
-            if let Some(weak) = &picker {
-                // The user closed the list with B: stop the work and drop its result.
-                if !weak.upgrade().is_some_and(|d| d.window().is_visible()) {
-                    job.cancel();
-                    stop_job_timer();
-                    return;
-                }
+            if abandoned.get() {
+                return;
             }
             let text = job.progress();
             if text.is_empty() || text == *last.borrow() {
@@ -214,7 +237,7 @@ fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
         format!("Results by system ({scanned})"),
         format!("Connected ports ({})", connection_count(&store)),
     ];
-    open_picker_dialog(app, router, TITLE, labels, move |app, router, index| match index {
+    open_list(app, router, TITLE, labels, move |app, router, index| match index {
         1 => choose_folder(app, router, Then::Results),
         2 => match store.rom_dir() {
             Some(_) => start_scan(app, router, Then::Results),
@@ -222,7 +245,7 @@ fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
         },
         3 => show_saved_results(app, router),
         4 => show_connections(app, router),
-        _ => show_menu(app, router, store.clone()),
+        _ => {}
     });
 }
 
@@ -238,7 +261,11 @@ fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
     let mut labels: Vec<String> = points.iter().map(|(label, path)| format!("{label}  ({})", ellipsize(&path.to_string_lossy(), 46))).collect();
     labels.push("Browse from your home folder".into());
     labels.push("Browse from the top of the drive".into());
+    labels.push("Back".into());
     open_picker_dialog(app, router, "Where are your game files?", labels, move |app, router, index| {
+        if index == points.len() + 2 {
+            return open_game_files(app, router);
+        }
         let dir = if let Some((_, path)) = points.get(index) {
             path.clone()
         } else if index == points.len() {
@@ -258,7 +285,7 @@ fn show_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FolderB
     let labels = browser.borrow().labels();
     let Some(dialog) = build_picker_dialog(app, router, &browser_title(&browser.borrow()), &labels) else { return };
     {
-        let (app, router, weak) = (app.clone(), router.clone(), dialog.as_weak());
+        let (app, router) = (app.clone(), router.clone());
         dialog.on_item_selected(move |index| {
             let line = browser.borrow().lines().get(index as usize).copied();
             match line {
@@ -273,15 +300,10 @@ fn show_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FolderB
                 }
                 Some(browse::Line::Up) => browser.borrow_mut().up(),
                 Some(browse::Line::Folder(i)) => browser.borrow_mut().enter(i),
+                Some(browse::Line::Cancel) => return open_game_files(&app, &router),
                 Some(browse::Line::More) | None => return,
             }
-            if let Some(d) = weak.upgrade() {
-                set_picker_items(&d, &browser.borrow().labels());
-                d.set_dialog_title(browser_title(&browser.borrow()).into());
-                app.dialog_nav.picker_index.set(0);
-                d.set_selected_index(0);
-                d.set_scroll_trigger(!d.get_scroll_trigger());
-            }
+            show_browser(&app, &router, browser.clone(), then.clone());
         });
     }
     let _ = dialog.show();
@@ -308,37 +330,31 @@ fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
 }
 
 fn after_scan(app: &Rc<AppState>, router: &Router, out: ScanOutput, then: Then) {
-    if let Some(err) = &out.cache_error {
-        message(app, router, TITLE, &format!("The scan worked, but its result could not be saved ({err}), so it will run again next time."));
-    }
     if out.scan.files.is_empty() {
-        if out.cache_error.is_none() {
-            message(
-                app,
-                router,
-                TITLE,
-                &format!(
-                    "No game files were found in {}.\n\n{} other files were ignored. Game files are looked for up to 6 folders deep, with folder names like n64, snes or gc helping to tell the console.",
-                    out.report.root.display(),
-                    out.report.ignored_files
-                ),
-            );
-        }
+        message(
+            app,
+            router,
+            TITLE,
+            &format!(
+                "No game files were found in {}.\n\n{} other files were ignored. Game files are looked for up to 6 folders deep, with folder names like n64, snes or gc helping to tell the console.",
+                out.report.root.display(),
+                out.report.ignored_files
+            ),
+        );
         return;
     }
-    if out.cache_error.is_some() {
-        return;
-    }
+    let mut report = out.report;
+    report.note = out.cache_error.map(|err| format!("This scan could not be saved ({}), so it will run again next time.", ellipsize(&err, 50)));
     match then {
-        Then::Results => show_systems(app, router, Rc::new(out.report)),
-        Then::Connect(key) => connect_from_report(app, router, &Rc::new(out.report), &key),
+        Then::Results => show_systems(app, router, Rc::new(report)),
+        Then::Connect(key) => connect_from_report(app, router, &Rc::new(report), &key),
     }
 }
 
 fn show_saved_results(app: &Rc<AppState>, router: &Router) {
     let Some(store) = load_store(app, router) else { return };
     let Some(root) = store.rom_dir().map(Path::to_path_buf) else { return choose_folder(app, router, Then::Results) };
-    if !store.scan_cache_path().exists() {
+    if !store.load_scan_cache().is_some_and(|c| c.root == root) {
         return start_scan(app, router, Then::Results);
     }
     let input = report_input(app, &store);
@@ -367,20 +383,24 @@ fn show_systems(app: &Rc<AppState>, router: &Router, report: Rc<Report>) {
     if report.problems > 0 {
         labels.push(format!("{} folders could not be read and were skipped.", report.problems));
     }
+    if let Some(note) = &report.note {
+        labels.push(note.clone());
+    }
     let first_group = labels.len();
     labels.extend(order.iter().map(|i| format!("{}: {}", report.groups[*i].system.label(), report.groups[*i].summary())));
     let (rescan, connected) = (labels.len(), labels.len() + 1);
     labels.push("Scan the folder again".into());
     labels.push("Connected ports".into());
-    open_picker_dialog(app, router, "What's in your game folders", labels, move |app, router, index| {
+    labels.push("Back".into());
+    open_list(app, router, "What's in your game folders", labels, move |app, router, index| {
         if index >= first_group && index < rescan {
             show_system(app, router, report.clone(), order[index - first_group]);
         } else if index == rescan {
             start_scan(app, router, Then::Results);
         } else if index == connected {
             show_connections(app, router);
-        } else {
-            show_systems(app, router, report.clone());
+        } else if index == connected + 1 {
+            open_game_files(app, router);
         }
     });
 }
@@ -394,13 +414,11 @@ fn show_system(app: &Rc<AppState>, router: &Router, report: Rc<Report>, group: u
     }));
     let back_index = labels.len();
     labels.push("Back".into());
-    open_picker_dialog(app, router, g.system.label(), labels, move |app, router, index| {
+    open_list(app, router, g.system.label(), labels, move |app, router, index| {
         if index >= 1 && index < back_index {
             show_port(app, router, report.clone(), group, index - 1);
         } else if index == back_index {
             show_systems(app, router, report.clone());
-        } else {
-            show_system(app, router, report.clone(), group);
         }
     });
 }
@@ -421,7 +439,7 @@ fn show_port(app: &Rc<AppState>, router: &Router, report: Rc<Report>, group: usi
     labels.push("Back".into());
     let can_connect = row.can_connect();
     let title = row.port.display_name().to_string();
-    open_picker_dialog(app, router, &title, labels, move |app, router, index| {
+    open_list(app, router, &title, labels, move |app, router, index| {
         if index == connect_index && can_connect {
             let back: Back = {
                 let report = report.clone();
@@ -430,8 +448,6 @@ fn show_port(app: &Rc<AppState>, router: &Router, report: Rc<Report>, group: usi
             open_connect(app, router, &report.groups[group].ports[port], back);
         } else if index == back_index {
             show_system(app, router, report.clone(), group);
-        } else {
-            show_port(app, router, report.clone(), group, port);
         }
     });
 }
@@ -469,12 +485,13 @@ fn show_connect(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectS
     let labels = screen.borrow().labels();
     let Some(dialog) = build_picker_dialog(app, router, &title, &labels) else { return };
     {
-        let (app, router, weak) = (app.clone(), router.clone(), dialog.as_weak());
+        let (app, router) = (app.clone(), router.clone());
         dialog.on_item_selected(move |index| {
             let line = screen.borrow().lines().get(index as usize).copied();
             match line {
                 Some(ConnectLine::Slot(i)) if screen.borrow().is_editable(i) => {
-                    let (labels, picks) = (screen.borrow().pick_labels(i), screen.borrow().picks(i));
+                    let (mut labels, picks) = (screen.borrow().pick_labels(i), screen.borrow().picks(i));
+                    labels.push("Keep as it is".into());
                     let (screen, back) = (screen.clone(), back.clone());
                     open_picker_dialog(&app, &router, "Change this file", labels, move |app, router, choice| {
                         if let Some(pick) = picks.get(choice) {
@@ -487,9 +504,6 @@ fn show_connect(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectS
                 Some(ConnectLine::Connect) => return connect_now(&app, &router, screen.clone()),
                 Some(ConnectLine::Back) => return back(&app, &router),
                 _ => {}
-            }
-            if let Some(d) = weak.upgrade() {
-                set_picker_items(&d, &screen.borrow().labels());
             }
         });
     }
@@ -559,7 +573,7 @@ fn show_connections(app: &Rc<AppState>, router: &Router) {
     }
     let back_index = labels.len();
     labels.push("Back".into());
-    open_picker_dialog(app, router, "Connected ports", labels, move |app, router, index| {
+    open_list(app, router, "Connected ports", labels, move |app, router, index| {
         if let Some(group) = groups.get(index) {
             let (key, slot) = (group.port_key.clone(), group.slot.clone());
             let text = format!(
@@ -576,8 +590,6 @@ fn show_connections(app: &Rc<AppState>, router: &Router) {
             });
         } else if index == back_index {
             open_game_files(app, router);
-        } else {
-            show_connections(app, router);
         }
     });
 }
@@ -604,7 +616,6 @@ pub(crate) fn offer_after_install(app: &Rc<AppState>, router: &Router, key: &str
     if !needs_game_files(&spec) {
         return;
     }
-    let _ = settings.mark_rom_prompted(key);
     let key = key.to_string();
     open_confirm_dialog(
         app,
@@ -612,8 +623,15 @@ pub(crate) fn offer_after_install(app: &Rc<AppState>, router: &Router, key: &str
         format!("Game files for {}", port.display_name()).into(),
         padded(&offer_text(port.display_name(), &spec)).into(),
         "Connect".into(),
-        move |app, router| connect_port(app, router, &key),
+        {
+            let key = key.clone();
+            move |app, router| connect_port(app, router, &key)
+        },
     );
+    // Marked only once the dialog is really up, so a failure to open it does not use up the offer.
+    if dialog_is_open(app) {
+        let _ = settings.mark_rom_prompted(&key);
+    }
 }
 
 fn connect_port(app: &Rc<AppState>, router: &Router, key: &str) {

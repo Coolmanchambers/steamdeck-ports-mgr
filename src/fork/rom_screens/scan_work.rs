@@ -21,7 +21,7 @@ pub fn run_scan(ctl: &Ctl, store: &RomLibraryStore, root: &Path, input: &ReportI
     let scan = scan_folder(root, &ScanOptions::default(), prior.as_ref(), ctl.flag(), &mut |p| {
         ctl.set_progress(format!("Checked {} files, {} read\n{}", p.files_done, human_bytes(p.bytes_hashed), file_name(p.current)));
     })
-    .map_err(|e| format!("Could not read {}: {e}", root.display()))?;
+    .map_err(|e| format!("Could not read {}: {e}\n\nIs the drive or card plugged in? Plug it in, or choose another folder in Settings > Game files.", root.display()))?;
     if scan.cancelled || ctl.cancelled() {
         return Ok(None);
     }

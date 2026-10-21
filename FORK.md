@@ -209,13 +209,17 @@ screens. The text is English only.
   an "Extra disk space" line for copies. **Connect now** plans on the worker thread (nothing is written), then:
   links and use-in-place apply at once; a copy first shows a confirm with the files, the size and the free space of the drive and
   is refused if less than size + 1 GB would be left (`df`; unknown space does not block). The copy runs on the worker thread and
-  cannot be cancelled once started. A disc is connected as one set, all or nothing. Originals are never touched; the recorded
+  cannot be cancelled once started (an app exit mid-copy can leave a `.<name>.dpm-copy-...` temporary file in the port folder; it is never used). A disc is connected as one set, all or nothing. Originals are never touched; the recorded
   connection is saved in `rom_library.json`.
 - **Connected ports:** each recorded connection with its health (OK, game file missing, game file changed, link or copy gone).
   Choosing one offers "Forget": only the record goes, never a file.
 - **After an install:** once per port, when the port names files it cannot run without, one confirm offers to connect them
   (the answer is final; `rom_prompted_ports` in `fork-settings.json`). Not offered when the install is followed by Play.
   It sets the folder first if none is set, rescans, then opens the Connect step.
+- **Known limits:** B closes the whole flow from any list (each deeper list has a Back or Cancel row; the copy confirm's Cancel
+  returns to the main window); an abandoned scan (B) stops within a second and a new job is refused until it has; a disc whose
+  `.cue` lists a track that is missing is still reported Found (the cue's `FILE` lines are not read); declining the after-install
+  offer is final for that port.
 - **Not done:** no button in the Info dialog (its 5+5 button grid is fixed; the offer and Settings cover it); the BIOS folder
   setting and N64 byte-order conversion of R1's backlog; a startup health check of recorded connections (the list shows health
   when opened); "Use original" does not pass the path to the port, it only records it and says where the file is.

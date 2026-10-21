@@ -2,6 +2,7 @@
 //! drives. Start points are the places game files usually live (an SD card, an EmuDeck folder), then
 //! the user walks down folder by folder and says "use this folder".
 
+use super::util::ellipsize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -73,6 +74,7 @@ pub enum Line {
     Up,
     Folder(usize),
     More,
+    Cancel,
 }
 
 pub struct FolderBrowser {
@@ -122,6 +124,7 @@ impl FolderBrowser {
         if self.hidden_count > 0 {
             lines.push(Line::More);
         }
+        lines.push(Line::Cancel);
         lines
     }
 
@@ -131,7 +134,8 @@ impl FolderBrowser {
             .map(|line| match line {
                 Line::UseThis => "Use this folder".to_string(),
                 Line::Up => ".. (up one level)".to_string(),
-                Line::Folder(i) => format!("{}/", self.folders[i].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+                Line::Folder(i) => format!("{}/", ellipsize(&self.folders[i].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), 60)),
+                Line::Cancel => "Cancel (back to Game files)".to_string(),
                 Line::More => format!("... and {} more folders not shown", self.hidden_count),
             })
             .chain(self.error.clone())
@@ -186,7 +190,8 @@ mod tests {
         assert_eq!(b.lines()[0], Line::UseThis);
         assert_eq!(b.lines()[1], Line::Up);
         let labels = b.labels();
-        assert_eq!(&labels[2..], ["alpha/", "Beta/", "Zeta/"]);
+        assert_eq!(&labels[2..5], ["alpha/", "Beta/", "Zeta/"]);
+        assert_eq!(labels.last().unwrap(), "Cancel (back to Game files)");
         b.enter(1);
         assert_eq!(b.current, tmp.path().join("Beta"));
         b.up();
@@ -197,7 +202,7 @@ mod tests {
     fn an_unreadable_folder_says_so_instead_of_crashing() {
         let b = FolderBrowser::open(Path::new("/definitely/not/here"));
         assert!(b.error.is_some());
-        assert!(b.labels().last().unwrap().starts_with("Could not open"));
+        assert!(b.labels().iter().any(|l| l.starts_with("Could not open")));
     }
 
     #[test]

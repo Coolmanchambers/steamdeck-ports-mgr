@@ -144,13 +144,14 @@ your game folder: nothing in it is ever moved, renamed, changed or deleted.
    A big folder takes a while the first time; later scans only read new or changed files.
 2. **Results by system** lists, per console, which ports have their files (Found, Several matches, Wrong version, Missing...).
    "(check this)" means a file was matched by name only. Open a port to see exactly what was found and what it wants.
-3. **Connect game files...** (from a port's page, or offered once right after it installs): pick how each file reaches the port.
+3. **Connect game files...** (from the port's row under Results by system, or offered once right after it installs): pick how each file reaches the port.
    **Use original** writes nothing, **Link** puts a pointer in the port's folder (no extra space), **Copy** makes a second
    copy and asks first, showing its size. Then **Connect now**.
 4. **Connected ports** shows what is connected and whether it still holds. **Forget** removes only the record.
 
-Links need a Linux file system: an SD card formatted by SteamOS can hold them, an exFAT card cannot (the app then says so
-and offers a copy). To undo a Link or Copy, delete that file inside the port's folder yourself, then Forget the connection;
+A Link is made inside the port's folder in `Library/`, so the drive the app is installed on needs a Linux file system (ext4);
+your ROM folder can be on any file system. If the app sits on an exFAT card, it says that drive does not support links and
+creates nothing: open Connect again and pick Copy. To undo a Link or Copy, delete that file inside the port's folder yourself, then Forget the connection;
 the app never deletes game files.
 
 ## What to test

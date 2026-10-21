@@ -87,6 +87,10 @@ fn expected(slot: &SlotResult) -> String {
     slot.alternatives.first().map(|a| a.display.clone()).filter(|d| !d.is_empty()).unwrap_or_else(|| slot.label.clone())
 }
 
+fn short_name(path: &Path) -> String {
+    ellipsize(&file_name(path), 36)
+}
+
 fn slot_line(slot: &SlotResult) -> String {
     let optional = if slot.optional { " (optional)" } else { "" };
     let bios = if slot.kind == SlotKind::Bios { "BIOS " } else { "" };
@@ -94,20 +98,20 @@ fn slot_line(slot: &SlotResult) -> String {
         SlotStatus::Found(f) => {
             let how = if f.is_low_confidence() { "matched by file name only, check this" } else { "checked by checksum" };
             let order = if f.needs_byte_order_conversion() { ", N64 byte order differs" } else { "" };
-            format!("{bios}Found: {} ({how}{order})", file_name(&f.path))
+            format!("{bios}Found: {} ({how}{order})", short_name(&f.path))
         }
         SlotStatus::Ambiguous(c) => {
-            let names: Vec<String> = c.iter().take(3).map(|f| file_name(&f.path)).collect();
+            let names: Vec<String> = c.iter().take(3).map(|f| short_name(&f.path)).collect();
             let more = if c.len() > 3 { format!(" and {} more", c.len() - 3) } else { String::new() };
             format!("{bios}{} files match, pick one: {}{more}", c.len(), names.join(", "))
         }
         SlotStatus::WrongVersion(c) => {
-            let names: Vec<String> = c.iter().take(2).map(|f| file_name(&f.path)).collect();
-            format!("{bios}Wrong version: you have {}, this port wants {}", names.join(", "), expected(slot))
+            let names: Vec<String> = c.iter().take(2).map(|f| short_name(&f.path)).collect();
+            format!("{bios}Wrong version: you have {}, this port wants {}", names.join(", "), ellipsize(&expected(slot), 40))
         }
-        SlotStatus::Missing => format!("{bios}Missing: {}", expected(slot)),
+        SlotStatus::Missing => format!("{bios}Missing: {}", ellipsize(&expected(slot), 40)),
     };
-    ellipsize(&format!("{text}{optional}"), 110)
+    ellipsize(&format!("{text}{optional}"), 120)
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +163,8 @@ pub struct Report {
     pub problems: usize,
     /// Files no port in the list uses.
     pub unused_files: usize,
+    /// Something the user should know next to the results (the scan could not be saved).
+    pub note: Option<String>,
     pub groups: Vec<SystemGroup>,
 }
 
@@ -243,22 +249,16 @@ pub fn build_report(input: &ReportInput, scan: &ScanResult) -> Report {
         ignored_files: scan.ignored_files,
         problems: scan.issues.len(),
         unused_files: scan.files.iter().filter(|f| !used.contains(&f.path)).count(),
+        note: None,
         groups,
     }
 }
 
-/// Group label for a system, "Other" for files no folder or extension could place.
-pub fn system_label(system: System) -> &'static str {
-    system.label()
-}
-
 /// When the saved scan was written, for "last scanned".
 pub fn scan_time(store: &RomLibraryStore) -> Option<SystemTime> {
+    // Only a scan of the folder that is set now counts, not a leftover from an earlier choice.
+    store.load_scan_cache().filter(|c| Some(c.root.as_path()) == store.rom_dir())?;
     std::fs::metadata(store.scan_cache_path()).and_then(|m| m.modified()).ok()
-}
-
-pub fn files_of(scan: &ScanResult) -> &[RomFile] {
-    &scan.files
 }
 
 #[cfg(test)]
@@ -283,7 +283,7 @@ mod tests {
     use super::tests_support::*;
     use super::*;
     use crate::fork::rom_library::testutil::*;
-    use crate::fork::rom_library::{Access, ApplyError, Approval, ConnectRequest, Method};
+    use crate::fork::rom_library::{Access, Approval, ConnectRequest, Method};
 
     fn crc_text(data: &[u8]) -> String {
         format!("{:08X}", digests_of(data).crc32)
@@ -357,6 +357,7 @@ mod tests {
         assert_eq!(n64.summary(), "2 files; 1 found, 1 wrong or partial");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_healthy_recorded_connection_reads_connected_and_a_broken_one_does_not() {
         let w = world();
@@ -386,7 +387,6 @@ mod tests {
         std::fs::remove_file(&found.path).unwrap();
         let broken = build_report(&input(&w, &["ZeldaPort"], vec![mapping]), &scan);
         assert!(!broken.groups.iter().flat_map(|g| &g.ports).find(|r| r.port.name == "Zelda Port").unwrap().connected);
-        let _ = ApplyError::NeedsConfirmation;
     }
 
     #[test]
