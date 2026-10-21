@@ -2,6 +2,7 @@
 
 mod app;
 mod core;
+mod fork;
 mod ui;
 
 use app::dialogs::{apply_theme, dialog_is_open, open_info_dialog, open_settings_dialog, open_uninstall_confirm_dialog, DialogSlot};
