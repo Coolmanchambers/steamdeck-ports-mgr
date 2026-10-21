@@ -6,6 +6,7 @@
 // No callers until the Steam stage wires it into the app; the tests exercise all of it.
 #![allow(dead_code)]
 
+pub mod adopt;
 pub mod app_id;
 pub mod art;
 pub mod artwork;
