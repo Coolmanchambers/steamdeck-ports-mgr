@@ -28,7 +28,7 @@ Files added by this fork:
 | 2026-10-20 | `STEAM_DECK.md` | How to install and test this fork on a Steam Deck |
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
-| 2026-10-21 | `tools/test-fork-updater.sh` | 20 checks of the updater against fake installs and releases; CI runs it |
+| 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
 
 ## What still comes from upstream at runtime
 

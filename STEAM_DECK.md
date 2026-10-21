@@ -74,6 +74,7 @@ closes silently.
 | Game Mode | Starts from Steam, the controller works, a port launches and the app returns after |
 | Force update | App closes and reopens on the newest build; `updater.log` ends with `=== done` |
 | Force update offline | App reopens on the old build; `update-failed.txt` says why |
+| Force update in Game Mode | The app comes back in Game Mode and Steam still shows it running |
 | Update offered | After a later-dated build and a relaunch 24 h past the last check, the footer says Update |
 
 ## Known issues being tested
@@ -83,6 +84,7 @@ closes silently.
 | Controller ignored under Wayland | Touch and mouse work, buttons don't | Launch Options `env -u WAYLAND_DISPLAY %command%` |
 | No tray icon in Game Mode | The app may close at start, or vanish when you press its X | Use Steam menu > Exit Game; send the log |
 | Desktop Mode copy still open | Game Mode launch returns to Steam at once | Quit from the tray in Desktop Mode first |
+| Force update in Game Mode untested | Steam may close the updater with the app, so nothing changes and the app doesn't return | Check `updater.log`; update from Desktop Mode until this is confirmed |
 | Update not offered | Footer stays "GitHub" | Same UTC day, under 24 h since the last check, or no relaunch: use Force update |
 
 ## Reporting a result

@@ -18,8 +18,9 @@ permissions:
 
 concurrency:
   group: ci-${{ inputs.ref || github.ref }}
-  # Pushes to main queue instead of cancelling, so a release is never cut off halfway.
-  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+  # Runs on main (pushes, manual runs, sync tests from main) queue instead of cancelling, so a release
+  # is never cut off halfway.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   linux:

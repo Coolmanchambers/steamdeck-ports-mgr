@@ -20,7 +20,10 @@ build_fakes() {
   mkdir -p "$T/bin"
   printf '#include <unistd.h>\nint main(void){for(;;)pause();}\n' > "$T/bin/old.c"
   printf '#include <stdio.h>\n#include <unistd.h>\nint main(void){FILE*f=fopen("new-started","w");if(f)fclose(f);for(;;)pause();}\n' > "$T/bin/new.c"
-  gcc -O0 -o "$T/bin/old" "$T/bin/old.c" && gcc -O0 -o "$T/bin/new" "$T/bin/new.c"
+  # Like the real app after Force update: still closing when the updater starts, gone 2 s later.
+  # Only the first start (marked by quit-once) does this; a restart keeps running.
+  printf '#include <unistd.h>\nint main(void){if(access("quit-once",F_OK)==0){unlink("quit-once");sleep(2);return 0;}for(;;)pause();}\n' > "$T/bin/slow.c"
+  gcc -O0 -o "$T/bin/old" "$T/bin/old.c" && gcc -O0 -o "$T/bin/new" "$T/bin/new.c" && gcc -O0 -o "$T/bin/slow" "$T/bin/slow.c"
 }
 
 make_app() {  # $1 = running | quit (the real app quits itself before the updater runs)
@@ -47,7 +50,7 @@ make_release() {  # $1 = good | badsum | missing
   [ "$1" = missing ] && rm "$PKG/7zzs"
   tar -czf "$T/rel/$ASSET" "$PKG"
   (cd "$T/rel" && sha256sum "$ASSET" > "$ASSET.sha256")
-  [ "$1" = badsum ] && sed -i 's/^./0/' "$T/rel/$ASSET.sha256"
+  [ "$1" = badsum ] && sed -i 's/^0/X/; s/^[^X]/0/; s/^X/1/' "$T/rel/$ASSET.sha256"  # always changes the first hex digit
 }
 
 run_updater() { (cd "$T/app" && DPM_RELEASE_BASE="file://$T/rel" sh ./ports_launcher_updater.sh); sleep 3; }
@@ -88,7 +91,14 @@ make_app quit; rm -rf "$T/rel"; mkdir -p "$T/rel"; run_updater
 check "old version reopened" '[ "$(count_app)" = 1 ]'
 check "update-failed.txt explains" 'grep -q "download failed" "$T/app/update-failed.txt"'
 
-echo "== last log lines (case 4)"; tail -2 "$T/app/updater.log"
+echo "== 5. download fails instantly while the app is still closing"
+make_app quit; cp "$T/bin/slow" "$T/app/ports_launcher"; touch "$T/app/quit-once"
+( cd "$T/app" && ./ports_launcher >/dev/null 2>&1 & ); sleep 0.3
+rm -rf "$T/rel"; mkdir -p "$T/rel"; run_updater
+check "app reopened once it had finished closing" '[ "$(count_app)" = 1 ]'
+check "update-failed.txt explains" 'grep -q "download failed" "$T/app/update-failed.txt"'
+
+echo "== last log lines (case 5)"; tail -2 "$T/app/updater.log"
 stop_all; rm -rf "$T"
 echo "RESULT: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

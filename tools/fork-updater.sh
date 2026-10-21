@@ -33,6 +33,9 @@ our_pids() {
     done
 }
 restart_app() {
+    # A fast failure can land while the app is still closing; let it finish before deciding.
+    i=0
+    while [ -n "$(our_pids)" ] && [ "$i" -lt 10 ]; do sleep 1; i=$((i + 1)); done
     if [ -x "$APP" ] && [ -z "$(our_pids)" ]; then
         nohup "$APP" >/dev/null 2>&1 &
         echo "started the program"
@@ -74,7 +77,7 @@ if [ -n "$pids" ]; then
     pids="$(our_pids)"
     [ -n "$pids" ] && kill -9 $pids 2>/dev/null && sleep 1
 fi
-[ -z "$(our_pids)" ] || { echo "FAILED: the program would not stop, nothing was changed"; exit 1; }
+[ -z "$(our_pids)" ] || fail "the program would not stop, nothing was changed"
 
 mkdir -p .previous || fail "could not create .previous, nothing was changed"
 for f in ports_launcher 7zzs; do
