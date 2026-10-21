@@ -56,6 +56,9 @@ jobs:
       - name: Tests
         run: cargo test --locked
 
+      - name: Updater tests
+        run: bash tools/test-fork-updater.sh
+
       - name: Release build
         run: cargo build --release --locked
 
