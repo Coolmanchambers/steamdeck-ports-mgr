@@ -31,7 +31,7 @@
 //! * A slot image must have its slot's size (`Fitted::fits_slot`), or the writer fails that slot.
 //!   `Slot::size()` is a bounding box for the logo, not an exact size.
 //! * Limits worth surfacing to the user: sources over 4096 px a side are refused (as `Decode`),
-//!   EXIF rotation is ignored, and a logo under 64 px or a portrait source wider than about 4:1 is
+//!   EXIF rotation is ignored, and a logo under 64 px or a portrait source wider than about 3:1 is
 //!   refused.
 //! * The app does not cache catalog icons yet; pass the bytes straight to `catalog::catalog_art`.
 //!

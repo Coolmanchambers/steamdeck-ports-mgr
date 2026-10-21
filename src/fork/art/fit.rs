@@ -112,6 +112,9 @@ impl fmt::Display for FitError {
             FitError::Read(e) => write!(f, "could not read the image: {e}"),
             FitError::Decode(e) => write!(f, "could not decode the image: {e}"),
             FitError::Empty => write!(f, "the image has no pixels"),
+            FitError::TooSmall { slot: Slot::Logo, width, height, .. } => {
+                write!(f, "{width}x{height} is too small for a logo (the longer side must be at least {LOGO_MIN_SIDE} px)")
+            }
             FitError::TooSmall { slot, width, height, scale } => write!(
                 f,
                 "{width}x{height} is too small for the {} slot (would need {scale:.2}x enlargement, limit {MAX_UPSCALE}x)",
@@ -443,10 +446,11 @@ mod tests {
         }
         let wide = fit(Slot::Wide, &src).unwrap().image;
         assert_eq!(*wide.get_pixel(460, 215), Rgba([0, 255, 0, 255]));
-        // Scaled to 518 rows the middle band spans rows 110..407; a centered 430-row crop starts at row 44,
-        // so red shows above and blue below. A top- or bottom-anchored crop would not.
-        assert!(wide.get_pixel(460, 10)[0] > 200, "top of the wide crop should still be the red band");
-        assert!(wide.get_pixel(460, 420)[2] > 200, "bottom of the wide crop should still be the blue band");
+        // Scaled to 518 rows the red/green boundary is at row ~110; a centered 430-row crop starts at row 44,
+        // so the boundary sits at output row ~66. A top-anchored crop puts it at 110, a bottom-anchored one
+        // at 22, so rows 55 and 80 tell the three apart.
+        assert!(wide.get_pixel(460, 55)[0] > 200, "row 55 should still be the red band");
+        assert!(wide.get_pixel(460, 80)[1] > 200, "row 80 should already be the green band");
     }
 
     #[test]

@@ -121,10 +121,10 @@ Library only; nothing calls it yet and nothing here downloads anything. Document
   never touched. Unverified on a real Deck (research report: one community bug report).
 - **Manifest limits:** a file is renamed into place and recorded afterwards. If the record cannot be saved the
   report carries `manifest_error` and the file counts as the user's from then on; a crash in that window does the
-  same, with no repair step. One `write_art` runs at a time inside the process; another process writing the same
+  same, with no repair step. A hard crash can also leave a `.dpm-art-XXXXXX` staging folder in `config/grid` that nothing sweeps (harmless). One `write_art` runs at a time inside the process; another process writing the same
   folder is not guarded against. `place_artwork` re-lists the folder before it removes other extensions of our own
   art, so a file Steam writes in that millisecond window could be removed.
-- **Refused sources:** over 4096 px a side (reported as `Decode`), a portrait source wider than about 4:1, a logo
+- **Refused sources:** over 4096 px a side (reported as `Decode`), a portrait source wider than about 3:1, a logo
   under 64 px, anything needing more than 1.5x enlargement. EXIF rotation is not applied. The writer also fails a
   slot whose image is not the slot's size.
 - **Not verified:** that Steam shows the art on a Deck (and whether it needs a restart), that Steam's `icon` field
