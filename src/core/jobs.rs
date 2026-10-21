@@ -98,6 +98,7 @@ mod tests {
         assert!(update_decision(None, "2026-01-01T00:00:00Z", "v1.0", Some("2026-02-01T00:00:00Z")));
     }
 
+    #[cfg(target_os = "linux")]
     fn severed_chains() -> Port {
         crate::core::models::port_from_value(&serde_json::json!({
             "name": "The Legend of Dragoon (Severed-Chains)",
@@ -108,6 +109,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(target_os = "linux")]
     fn severed_chains_releases(linux_updated_at: &str) -> Vec<Value> {
         let current = |linux_updated_at: &str| {
             serde_json::json!([
@@ -124,6 +126,7 @@ mod tests {
         ]
     }
 
+    #[cfg(target_os = "linux")]
     fn check(port: &Port, releases: &[Value]) -> bool {
         update_available(port, Some("release-3.0.0"), "2026-10-18T00:00:00Z", |preferred| github_api::latest_tag_and_date(releases.to_vec(), preferred))
     }

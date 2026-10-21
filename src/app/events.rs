@@ -1,5 +1,5 @@
 
-use super::dialogs::{apply_theme, close_current_dialog, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
+use super::dialogs::{apply_theme, close_current_dialog, dialog_is_open, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
 use super::install_launch::{launch_flow, start_install};
 use super::playtime::{any_process_running, checkpoint_playtime, refresh_live_playtime_display};
 use super::state::AppState;
@@ -96,10 +96,14 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             }
             AppEvent::InstallAssetAmbiguous { key, assets, release_override } => {
                 finish_operation(app, router, &key);
+                let was_play = app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key);
                 if let Some(port) = app.find_port(&key) {
                     let labels = json_field_labels(&assets, "name");
                     open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_file(), labels, move |app, router, idx| {
                         if let Some(chosen) = assets.get(idx) {
+                            if was_play {
+                                app.install_runtime.pending_launch_after_install.borrow_mut().insert(port.key().to_string());
+                            }
                             start_install(app, router, port.clone(), Some(chosen.clone()), release_override.clone());
                         }
                     });
@@ -128,7 +132,10 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                         launch_flow(app, router, &port);
                     }
                 }
-                open_message_dialog(app, router, &tr!(app).invoke_dialog_title_installation_error(), &message);
+                // launch_flow may have opened its own dialog (executable picker); the launch matters more than this message.
+                if !dialog_is_open(app) {
+                    open_message_dialog(app, router, &tr!(app).invoke_dialog_title_installation_error(), &message);
+                }
             }
             AppEvent::ExtraInstallDone { key, result } => {
                 finish_operation(app, router, &key);
