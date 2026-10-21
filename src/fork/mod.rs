@@ -12,6 +12,7 @@ pub mod app_id;
 pub mod art;
 pub mod artwork;
 pub mod backups;
+pub mod rom_library;
 pub mod screens;
 pub mod settings;
 pub mod shortcuts;

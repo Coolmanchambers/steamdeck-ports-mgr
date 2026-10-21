@@ -71,6 +71,7 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
 | 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
+| 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
 
 ## Add to Steam and adopting (Settings menu)
 
@@ -121,6 +122,32 @@ The library underneath the Add to Steam screen. Rules it enforces so a later fea
   used for new entries. Newer Steam builds may assign other IDs to shortcuts added in the Steam UI.
 - Code in `src/fork/` uses English names and module docs; upstream's own tests are in French.
 - Backups (`shortcuts.vdf.bak-<local time>`) are pruned only by `backups::prune_backups`, which Add to Steam calls after a write (newest 10, never anything under an hour old).
+
+## ROM library (`src/fork/rom_library/`)
+
+Library only; no UI and no caller yet. Rules it enforces:
+
+- Originals are only ever opened for reading: never moved, renamed, deleted or modified.
+- Nothing already in a port folder is overwritten. A different file at the destination refuses the plan;
+  an identical file (or a link already pointing at the original) is accepted as connected and left alone.
+  A copy is written under a temporary name, verified, and published with `hard_link` (which cannot
+  replace anything), then the temporary file is removed.
+- A copy is a planned action that reports its size and is refused by `apply` without `Approval::CopyAllowed`.
+  A link that the file system refuses (exFAT) fails with `SymlinkUnsupported`; the fallback is a new,
+  confirmed copy plan.
+- Link and copy destinations are confined to the port folder (`safe_join`, plain file names only).
+- Forgetting a connection removes the record and no files.
+- State lives in `rom_library.json` and `rom_scan_cache.json` beside `state.json`, not in `state.json`:
+  `StateManager::save` rewrites that file from a fixed field list, so a key added to it would be dropped.
+- Matching: CRC-32 of the file as stored or, for N64, converted to big-endian (the form checksum lists use);
+  then name (low-confidence flag); a name match whose checksum differs from the catalog's is "wrong version".
+- Local entries can state requirements explicitly (`rom_files`, `rom_access`, `rom_dest`); the app's own
+  parser drops unknown fields, so the library reads those from the raw `ports.local.json`.
+
+Known limits: a ZIP is hashed as a file (a CRC of a ROM inside an archive is not matched); headered dumps
+(SNES copier headers, iNES) hash differently from headerless No-Intro lists and show as "wrong version";
+Switch dumps that are folders are not scanned; `rom_access` for Ship of Harkinian and 2 Ship 2 Harkinian
+("use original") comes from the findings document and is not yet confirmed on a Deck.
 
 ## Fixes to upstream behavior
 
