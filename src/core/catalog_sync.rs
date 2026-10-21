@@ -52,7 +52,7 @@ fn fetch_if_changed(url: &str, known_etag: &str, validate: impl FnOnce(&str) -> 
             interpret(status, !known_etag.is_empty(), &etag, || resp.body_mut().read_to_string().map_err(|e| e.to_string()), validate)
         }
         // Not reached with ureq 3 (a 304 is an `Ok` response); kept in case the agent is ever set to treat 3xx as errors.
-        Err(ureq::Error::StatusCode(304)) => Ok(CatalogUpdate::NotModified),
+        Err(ureq::Error::StatusCode(304)) if !known_etag.is_empty() => Ok(CatalogUpdate::NotModified),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -114,10 +114,10 @@ mod tests {
 
     #[test]
     fn a_200_is_validated_and_carries_its_etag_or_none() {
-        let good = r#"{"ports": []}"#;
-        let Ok(CatalogUpdate::Updated { text, etag }) = interpret(200, true, "\"e1\"", body(good), |_| Ok(())) else { panic!("expected an update") };
-        assert_eq!((text.as_str(), etag.as_str()), (good, "\"e1\""));
-        let Ok(CatalogUpdate::Updated { etag, .. }) = interpret(200, false, "", body(good), |_| Ok(())) else { panic!("expected an update") };
+        let any_body = "anything the validator accepts";
+        let Ok(CatalogUpdate::Updated { text, etag }) = interpret(200, true, "\"e1\"", body(any_body), |_| Ok(())) else { panic!("expected an update") };
+        assert_eq!((text.as_str(), etag.as_str()), (any_body, "\"e1\""));
+        let Ok(CatalogUpdate::Updated { etag, .. }) = interpret(200, false, "", body(any_body), |_| Ok(())) else { panic!("expected an update") };
         assert_eq!(etag, "", "no ETag header: nothing to remember, so the next request is unconditional");
         assert!(interpret(200, true, "\"e1\"", body("junk"), validate_ports).is_err());
         assert!(interpret(500, true, "", never_read, validate_ports).is_err());

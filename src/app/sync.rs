@@ -55,20 +55,22 @@ pub(crate) fn start_catalog_sync(app: &AppState) {
         state.last_catalog_etag.clone()
     };
     let ports_json_path = app.paths.config_dir.join("ports.json");
-    let known_etag = catalog_sync::etag_for_saved_copy(&known_etag, &ports_json_path, catalog_sync::validate_ports);
     let ports_local_json_path = app.paths.config_dir.join("ports.local.json");
     let events = app.events.clone();
-    std::thread::spawn(move || match catalog_sync::fetch_ports_if_changed(&known_etag) {
-        Ok(CatalogUpdate::NotModified) => lock(&events).push(AppEvent::PortsCheckDone { etag: known_etag }),
-        Ok(CatalogUpdate::Updated { text, etag }) => {
-            let Ok(remote_ports) = crate::core::config::parse_catalog(&text) else { return };
-            let ports = crate::core::config::merge_local_catalog(remote_ports, crate::core::config::load_local_config(&ports_local_json_path));
-            let saved = crate::core::files::write_atomic(&ports_json_path, text.as_bytes()).is_ok();
-            let mut events = lock(&events);
-            events.push(AppEvent::PortsCheckDone { etag: catalog_sync::etag_to_record(saved, etag, known_etag) });
-            events.push(AppEvent::RemoteCatalogFetched(ports));
+    std::thread::spawn(move || {
+        let known_etag = catalog_sync::etag_for_saved_copy(&known_etag, &ports_json_path, catalog_sync::validate_ports);
+        match catalog_sync::fetch_ports_if_changed(&known_etag) {
+            Ok(CatalogUpdate::NotModified) => lock(&events).push(AppEvent::PortsCheckDone { etag: known_etag }),
+            Ok(CatalogUpdate::Updated { text, etag }) => {
+                let Ok(remote_ports) = crate::core::config::parse_catalog(&text) else { return };
+                let ports = crate::core::config::merge_local_catalog(remote_ports, crate::core::config::load_local_config(&ports_local_json_path));
+                let saved = crate::core::files::write_atomic(&ports_json_path, text.as_bytes()).is_ok();
+                let mut events = lock(&events);
+                events.push(AppEvent::PortsCheckDone { etag: catalog_sync::etag_to_record(saved, etag, known_etag) });
+                events.push(AppEvent::RemoteCatalogFetched(ports));
+            }
+            Err(_) => {}
         }
-        Err(_) => {}
     });
 }
 
@@ -81,16 +83,20 @@ pub(crate) fn start_themes_sync(app: &AppState) {
         state.last_themes_etag.clone()
     };
     let themes_path = app.paths.themes_path.clone();
-    let known_etag = catalog_sync::etag_for_saved_copy(&known_etag, &themes_path, catalog_sync::validate_themes);
     let events = app.events.clone();
-    std::thread::spawn(move || match catalog_sync::fetch_themes_if_changed(&known_etag) {
-        Ok(CatalogUpdate::NotModified) => lock(&events).push(AppEvent::ThemesCheckDone { etag: known_etag }),
-        Ok(CatalogUpdate::Updated { text, etag }) => {
-            let saved = crate::core::files::write_atomic(&themes_path, text.as_bytes()).is_ok();
-            let mut events = lock(&events);
-            events.push(AppEvent::ThemesCheckDone { etag: catalog_sync::etag_to_record(saved, etag, known_etag) });
-            events.push(AppEvent::RemoteThemesFetched);
+    std::thread::spawn(move || {
+        let known_etag = catalog_sync::etag_for_saved_copy(&known_etag, &themes_path, catalog_sync::validate_themes);
+        match catalog_sync::fetch_themes_if_changed(&known_etag) {
+            Ok(CatalogUpdate::NotModified) => lock(&events).push(AppEvent::ThemesCheckDone { etag: known_etag }),
+            Ok(CatalogUpdate::Updated { text, etag }) => {
+                let saved = crate::core::files::write_atomic(&themes_path, text.as_bytes()).is_ok();
+                let mut events = lock(&events);
+                events.push(AppEvent::ThemesCheckDone { etag: catalog_sync::etag_to_record(saved, etag, known_etag) });
+                if saved {
+                    events.push(AppEvent::RemoteThemesFetched);
+                }
+            }
+            Err(_) => {}
         }
-        Err(_) => {}
     });
 }
