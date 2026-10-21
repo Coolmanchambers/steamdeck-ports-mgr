@@ -23,6 +23,14 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-20 | `src/ui/windows_chrome.rs` | Same two functions, keeping upstream's Windows behavior |
 | 2026-10-20 | `src/core/gamepad.rs` | Reads every connected controller and merges their state, instead of only the first; tests |
 | 2026-10-21 | `src/main.rs` | One line, `mod fork;`, to include the fork's own modules (`src/fork/`) |
+| 2026-10-21 | `README.md` | Item 6 (save backups before every update) set to "Testing" |
+| 2026-10-21 | `src/core/mod.rs` | One line registering the test-only module `contract_tests` |
+| 2026-10-21 | `src/core/jobs.rs` | The update check passes the port's `preferred_asset` to the release lookup (`update_available`); 3 tests |
+| 2026-10-21 | `src/core/github_api.rs`, `src/core/gitlab_api.rs` | New `fetch_latest_tag_and_date_preferring`; the old function now calls it with no preference. GitHub also gets the pure `latest_tag_and_date` |
+| 2026-10-21 | `src/core/platform_resolve.rs` | A leading `~` in a path expands to the home folder (`HOME`, `USERPROFILE` on Windows); 5 tests |
+| 2026-10-21 | `src/core/installer.rs` | After an install, older AppImage files of the same product are removed; `follow_favorite_exe`; `apply_archive` backs up saves before extracting; tests |
+| 2026-10-21 | `src/core/save_backup.rs` | New `backup_before_update` (zip of the save folders under `Update Backups`), reusing the existing copy and zip helpers |
+| 2026-10-21 | `src/app/events.rs` | After an install finishes, a favorite executable that was an AppImage follows the new file (8 lines) |
 
 Files added by this fork:
 
@@ -32,6 +40,7 @@ Files added by this fork:
 | 2026-10-20 | `.github/workflows/ci.yml` | Builds the Linux x86_64 release and runs the tests on every push; publishes the rolling release from `main` |
 | 2026-10-20 | `.github/workflows/upstream-sync.yml` | Daily merge of upstream changes (see below) |
 | 2026-10-20 | `FORK.md` | This file |
+| 2026-10-21 | `src/core/contract_tests.rs` | Test-only module that pins the upstream behavior our features rely on (asset choice for our ports' real release names, update decision with a recycled tag, local-entry merge, `state.json` keys) |
 | 2026-10-20 | `STEAM_DECK.md` | How to install and test this fork on a Steam Deck |
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
@@ -62,6 +71,28 @@ Library only; no UI and no caller yet. Rules it enforces so a later feature cann
   used for new entries. Newer Steam builds may assign other IDs to shortcuts added in the Steam UI.
 - Code in `src/fork/` uses English names and module docs; upstream's own tests are in French.
 - Backups (`shortcuts.vdf.bak-<local time>`) are never pruned by the library; a later UI stage decides retention.
+
+## Fixes to upstream behavior
+
+Four small changes fix gaps found while validating Tim's catalog entries. Each has tests that fail
+when the change is reverted.
+
+- **Update check and `preferred_asset`.** Upstream's daily check ignored a port's `preferred_asset`
+  and looked at whichever asset the default rules pick, so a port like Severed Chains (the Steam Deck
+  tarball has no "linux" in its name) was compared against an old release and offered an update every
+  day. The check now looks at the same asset the installer picks.
+- **`~` in save paths.** `~/.local/share/x` used to be joined onto the game folder. A leading `~` now
+  means the home folder. `%HOME%` keeps working.
+- **Old AppImages.** An AppImage is installed as a plain versioned file, so each update left the old
+  one next to the new one, and a favorite executable kept launching the old file. After an install,
+  AppImages in the port's top folder whose name differs from the new file only by version numbers are
+  removed (a different name pattern, such as another architecture, is left alone), and a favorite that
+  pointed at a removed file moves to the new one. Saves are never touched.
+- **Saves backed up before every install.** Before an install writes into a port that has `save` or
+  `save2` folders, those folders are zipped to
+  `<Saves Backup>/Update Backups/<port folder>/<YYYY-MM-DD_HH-MM-SS>.zip` (a second one in the same
+  second gets `-2`). If the backup cannot be made, the install stops and changes nothing. Backups
+  are not pruned yet.
 
 ## What still comes from upstream at runtime
 

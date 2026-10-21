@@ -198,6 +198,57 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
+fn is_appimage(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".appimage")
+}
+
+// Two AppImage names are one product when only their version numbers differ ("Game-v2.0.2-x86_64" and "Game-v2.0.3-x86_64").
+fn appimage_family(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut in_number = false;
+    for c in name.to_lowercase().chars() {
+        let number_char = c.is_ascii_digit() || (c == '.' && in_number);
+        if number_char {
+            if !in_number {
+                out.push('#');
+            }
+        } else {
+            out.push(c);
+        }
+        in_number = number_char;
+    }
+    out
+}
+
+fn top_level_appimages(dir: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| is_appimage(name))
+        .collect()
+}
+
+// An AppImage is installed as a plain versioned file, so an update would leave the old one beside the new one.
+fn remove_superseded_appimages(dest_dir: &Path, installed: &[String]) {
+    let families: Vec<String> = installed.iter().map(|name| appimage_family(name)).collect();
+    for old in top_level_appimages(dest_dir) {
+        if !installed.contains(&old) && families.contains(&appimage_family(&old)) {
+            let _ = fs::remove_file(dest_dir.join(&old));
+        }
+    }
+}
+
+pub fn follow_favorite_exe(game_dir: &Path, favorite: &str) -> Option<String> {
+    if !is_appimage(favorite) || favorite.contains(['/', '\\']) || fs::symlink_metadata(game_dir.join(favorite)).is_ok() {
+        return None;
+    }
+    let family = appimage_family(favorite);
+    let mut successors: Vec<String> = top_level_appimages(game_dir).into_iter().filter(|name| appimage_family(name) == family).collect();
+    if successors.len() == 1 { successors.pop() } else { None }
+}
+
 #[cfg(target_os = "windows")]
 const SEVENZIP_NAME: &str = "7z.exe";
 #[cfg(target_os = "linux")]
@@ -339,7 +390,10 @@ fn extract(archive: &Path, dest_dir: &Path, library_dir: &Path, exe_is_archive: 
     on_progress("Extracting...");
     let staging = with_path(tempfile::Builder::new().prefix("_staging_").tempdir_in(library_dir), library_dir).install_err()?;
     let merge_root = extract_to_staging(archive, staging.path(), exe_is_archive)?;
-    merge_into(&merge_root, dest_dir).install_err()
+    let installed_appimages = top_level_appimages(&merge_root);
+    merge_into(&merge_root, dest_dir).install_err()?;
+    remove_superseded_appimages(dest_dir, &installed_appimages);
+    Ok(())
 }
 
 fn temp_dir_in(library_dir: &Path, prefix: &str) -> Result<tempfile::TempDir, InstallError> {
@@ -467,10 +521,26 @@ pub fn install_port(
         SourceType::None => return Err(InstallError::Message("This port has nothing to download.".to_string())),
     };
 
-    extract(&archive_path, &dest_dir, library_dir, port.exe_is_archive.as_deref(), on_progress)?;
-    save_backup::restore_all_after_install(port, saves_backup_dir, &dest_dir);
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    apply_archive(port, paths, &archive_path, &dest_dir, &stamp, on_progress)?;
     on_progress("Done.");
     Ok(installed_tag)
+}
+
+fn apply_archive(
+    port: &Port,
+    paths: InstallPaths,
+    archive_path: &Path,
+    dest_dir: &Path,
+    stamp: &str,
+    on_progress: &mut dyn FnMut(&str),
+) -> Result<(), InstallError> {
+    let InstallPaths { library_dir, saves_backup_dir } = paths;
+    save_backup::backup_before_update(port, saves_backup_dir, dest_dir, stamp, on_progress)
+        .map_err(|e| InstallError::Message(format!("Couldn't back up the saves before installing ({e}) -- nothing was changed.")))?;
+    extract(archive_path, dest_dir, library_dir, port.exe_is_archive.as_deref(), on_progress)?;
+    save_backup::restore_all_after_install(port, saves_backup_dir, dest_dir);
+    Ok(())
 }
 
 pub fn uninstall_port(port: &Port, library_dir: &Path, saves_backup_dir: &Path) -> Result<(), String> {
@@ -828,6 +898,232 @@ mod tests {
 
         assert_eq!(fs::read_to_string(dest.join("data").join("a.bin")).unwrap(), "a");
         assert_eq!(fs::read_to_string(dest.join("config")).unwrap(), "file");
+    }
+
+    fn put(path: &Path, content: &[u8]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn appimage_family_ignore_seulement_les_numeros_de_version() {
+        assert_eq!(appimage_family("Dusklight-v2.0.2-linux-x86_64.AppImage"), appimage_family("Dusklight-v2.0.13-linux-x86_64.AppImage"));
+        assert_ne!(appimage_family("Dusklight-v2.0.2-linux-x86_64.AppImage"), appimage_family("Dusklight-v2.0.2-linux-arm64.AppImage"));
+        assert_ne!(appimage_family("Dusklight-v2.0.2-linux-x86_64.AppImage"), appimage_family("Other-v2.0.2-linux-x86_64.AppImage"));
+        assert_ne!(appimage_family("Game-v2.0.AppImage"), appimage_family("Game-v2.0-rc1.AppImage"));
+    }
+
+    #[test]
+    fn extract_remplace_l_ancien_appimage_et_laisse_le_reste_intact() {
+        let dir = temp_dir("appimage_update");
+        let dest_dir = dir.join("dusklight");
+        put(&dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage"), b"old");
+        put(&dest_dir.join("Dusklight-v2.0.2-linux-arm64.AppImage"), b"other architecture");
+        put(&dest_dir.join("Mine.AppImage"), b"not a Dusklight build");
+        put(&dest_dir.join("saves").join("slot1.dat"), b"precious");
+        put(&dest_dir.join("notes.txt"), b"mine");
+        let archive_path = dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage");
+        fs::write(&archive_path, b"new").unwrap();
+
+        extract(&archive_path, &dest_dir, &dir, None, &mut no_progress).unwrap();
+
+        assert!(!dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage").exists());
+        assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage")).unwrap(), b"new");
+        assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.2-linux-arm64.AppImage")).unwrap(), b"other architecture");
+        assert_eq!(fs::read(dest_dir.join("Mine.AppImage")).unwrap(), b"not a Dusklight build");
+        assert_eq!(fs::read(dest_dir.join("saves").join("slot1.dat")).unwrap(), b"precious");
+        assert_eq!(fs::read(dest_dir.join("notes.txt")).unwrap(), b"mine");
+    }
+
+    #[test]
+    fn extract_garde_les_appimages_quand_l_archive_n_en_contient_pas() {
+        let dir = temp_dir("appimage_kept");
+        let dest_dir = dir.join("game");
+        put(&dest_dir.join("Game-v1.0-linux-x86_64.AppImage"), b"old");
+        let archive_path = dir.join("update.zip");
+        build_archive("zip", &[("data.bin", b"new data".as_slice())], &archive_path);
+
+        extract(&archive_path, &dest_dir, &dir, None, &mut no_progress).unwrap();
+
+        assert_eq!(fs::read(dest_dir.join("Game-v1.0-linux-x86_64.AppImage")).unwrap(), b"old");
+        assert_eq!(fs::read(dest_dir.join("data.bin")).unwrap(), b"new data");
+    }
+
+    #[test]
+    fn follow_favorite_exe_suit_le_nouvel_appimage_de_la_meme_famille() {
+        let dir = temp_dir("favorite_follows");
+        put(&dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage"), b"new");
+        put(&dir.join("Dusklight-v2.0.3-linux-arm64.AppImage"), b"other architecture");
+        let moved = follow_favorite_exe(&dir, "Dusklight-v2.0.2-linux-x86_64.AppImage");
+        assert_eq!(moved.as_deref(), Some("Dusklight-v2.0.3-linux-x86_64.AppImage"));
+    }
+
+    #[test]
+    fn follow_favorite_exe_ne_change_rien_si_le_favori_existe_encore_ou_est_ambigu() {
+        let dir = temp_dir("favorite_stays");
+        put(&dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage"), b"new");
+        assert_eq!(follow_favorite_exe(&dir, "Dusklight-v2.0.3-linux-x86_64.AppImage"), None);
+        assert_eq!(follow_favorite_exe(&dir, "launch"), None);
+        assert_eq!(follow_favorite_exe(&dir, "sub/Dusklight-v2.0.2-linux-x86_64.AppImage"), None);
+        assert_eq!(follow_favorite_exe(&dir, "Other-v1-linux-x86_64.AppImage"), None);
+        put(&dir.join("Dusklight-v2.0.4-linux-x86_64.AppImage"), b"newer");
+        assert_eq!(follow_favorite_exe(&dir, "Dusklight-v2.0.2-linux-x86_64.AppImage"), None);
+    }
+
+    fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        collect_files(dir, &mut files).unwrap();
+        files.sort();
+        files.into_iter().map(|path| (path.strip_prefix(dir).unwrap().to_path_buf(), fs::read(&path).unwrap())).collect()
+    }
+
+    fn unzip(zip_path: &Path) -> PathBuf {
+        let out_dir = zip_path.with_extension("unzipped");
+        let _ = fs::remove_dir_all(&out_dir);
+        let tool = sevenzip_exe_path().expect("7-Zip introuvable, requis par les tests");
+        let output = std::process::Command::new(&tool).arg("x").arg(zip_path).arg(format!("-o{}", out_dir.display())).arg("-y").output().unwrap();
+        assert!(output.status.success(), "échec d'extraction du zip : {}", String::from_utf8_lossy(&output.stdout));
+        out_dir
+    }
+
+    fn two_saves_port(external_save: &Path) -> Port {
+        let value = serde_json::json!({"name": "n", "folder": "MyGame", "source": "https://example.com/x.zip", "save": "saves", "save2": external_save.to_str().unwrap()});
+        super::super::models::port_from_value(&value).unwrap()
+    }
+
+    struct UpdateFixture {
+        dir: PathBuf,
+        library_dir: PathBuf,
+        saves_backup_dir: PathBuf,
+        dest_dir: PathBuf,
+        external_save: PathBuf,
+        port: Port,
+    }
+
+    fn update_fixture(name: &str) -> UpdateFixture {
+        let dir = temp_dir(name);
+        let library_dir = dir.join("Library");
+        let dest_dir = library_dir.join("MyGame");
+        let external_save = dir.join("home").join(".local").join("share").join("MyGame");
+        put(&dest_dir.join("game.exe"), b"old-version");
+        put(&dest_dir.join("saves").join("slot1.dat"), b"slot one");
+        put(&dest_dir.join("saves").join("sub").join("slot2.dat"), b"slot two");
+        put(&external_save.join("memcard.raw"), b"\x00\x01\x02 memory card");
+        let port = two_saves_port(&external_save);
+        UpdateFixture { saves_backup_dir: dir.join("Saves Backup"), dir, library_dir, dest_dir, external_save, port }
+    }
+
+    impl UpdateFixture {
+        fn paths(&self) -> InstallPaths<'_> {
+            InstallPaths { library_dir: &self.library_dir, saves_backup_dir: &self.saves_backup_dir }
+        }
+
+        fn saves(&self) -> (Vec<(PathBuf, Vec<u8>)>, Vec<(PathBuf, Vec<u8>)>) {
+            (snapshot(&self.dest_dir.join("saves")), snapshot(&self.external_save))
+        }
+
+        fn backup_zip(&self, stamp: &str) -> PathBuf {
+            self.saves_backup_dir.join("Update Backups").join("MyGame").join(format!("{stamp}.zip"))
+        }
+    }
+
+    #[test]
+    fn apply_archive_sauvegarde_les_saves_avant_la_maj_et_les_laisse_identiques() {
+        let f = update_fixture("update_round_trip");
+        let archive_path = f.dir.join("update.zip");
+        build_archive("zip", &[("game.exe", b"new-version".as_slice()), ("data/new.bin", b"new data".as_slice())], &archive_path);
+        let saves_before = f.saves();
+
+        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+
+        assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"new-version");
+        assert_eq!(f.saves(), saves_before, "saves must be byte-identical after the update");
+        let unzipped = unzip(&f.backup_zip("2026-10-20_12-00-00"));
+        assert_eq!(snapshot(&unzipped.join("save_folder")), saves_before.0);
+        assert_eq!(snapshot(&unzipped.join("save_folder2")), saves_before.1);
+    }
+
+    #[test]
+    fn apply_archive_la_sauvegarde_existe_meme_si_l_installation_echoue() {
+        let f = update_fixture("update_fails_after_backup");
+        let archive_path = f.dir.join("broken.zip");
+        fs::write(&archive_path, b"not a real zip").unwrap();
+        let saves_before = f.saves();
+
+        assert!(apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).is_err());
+
+        assert!(f.backup_zip("2026-10-20_12-00-00").is_file(), "the backup is made before the install touches anything");
+        assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"old-version");
+        assert_eq!(f.saves(), saves_before);
+    }
+
+    #[test]
+    fn apply_archive_n_installe_rien_si_la_sauvegarde_echoue() {
+        let f = update_fixture("update_backup_fails");
+        fs::write(&f.saves_backup_dir, b"blocks Saves Backup from being a directory").unwrap();
+        let archive_path = f.dir.join("update.zip");
+        build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
+        let saves_before = f.saves();
+
+        let error = apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap_err();
+
+        assert!(matches!(&error, InstallError::Message(m) if m.contains("nothing was changed")), "{error:?}");
+        assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"old-version");
+        assert_eq!(f.saves(), saves_before);
+    }
+
+    #[test]
+    fn apply_archive_deux_maj_au_meme_instant_gardent_les_deux_sauvegardes() {
+        let f = update_fixture("update_same_stamp");
+        let archive_path = f.dir.join("update.zip");
+        build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
+
+        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+
+        assert!(f.backup_zip("2026-10-20_12-00-00").is_file());
+        assert!(f.backup_zip("2026-10-20_12-00-00-2").is_file());
+    }
+
+    #[test]
+    fn apply_archive_sans_sauvegarde_a_faire_ne_cree_pas_de_dossier_de_backup() {
+        let dir = temp_dir("update_no_saves");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let port = port_with_save("MyGame", Some("saves"));
+        let dest_dir = library_dir.join("MyGame");
+        put(&dest_dir.join("game.exe"), b"old-version");
+        let archive_path = dir.join("update.zip");
+        build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
+
+        apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+
+        assert_eq!(fs::read(dest_dir.join("game.exe")).unwrap(), b"new-version");
+        assert!(!saves_backup_dir.exists());
+    }
+
+    #[test]
+    fn apply_archive_maj_d_un_appimage_sauvegarde_nettoie_et_laisse_les_saves_identiques() {
+        let dir = temp_dir("update_appimage");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let dest_dir = library_dir.join("dusklight");
+        let external_save = dir.join("home").join(".local").join("share").join("TwilitRealm");
+        put(&dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage"), b"old");
+        put(&external_save.join("Dusklight").join("card1.raw"), b"memory card");
+        let value = serde_json::json!({"name": "d", "folder": "dusklight", "source": "https://github.com/TwilitRealm/dusklight", "save": external_save.to_str().unwrap()});
+        let port = super::super::models::port_from_value(&value).unwrap();
+        let archive_path = dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage");
+        fs::write(&archive_path, b"new").unwrap();
+        let save_before = snapshot(&external_save);
+
+        apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+
+        assert!(!dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage").exists());
+        assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage")).unwrap(), b"new");
+        assert_eq!(snapshot(&external_save), save_before);
+        let backup = saves_backup_dir.join("Update Backups").join("dusklight").join("2026-10-20_12-00-00.zip");
+        assert_eq!(snapshot(&unzip(&backup).join("save_folder")), save_before);
     }
 
     #[test]

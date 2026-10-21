@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 const PENDING_RESTORE_DIR: &str = "Pending Restore";
 const GLOBAL_BACKUPS_DIR: &str = "Global Backups";
+const UPDATE_BACKUPS_DIR: &str = "Update Backups";
 
 fn save_fields(port: &Port) -> [(Option<&Value>, &'static str); 2] {
     [(port.save.as_ref(), "save_folder"), (port.save2.as_ref(), "save_folder2")]
@@ -77,6 +78,46 @@ pub fn restore_all_after_install(port: &Port, saves_backup_dir: &Path, dest_dir:
     for (save_folder, field) in save_fields(port) {
         restore_after_install(save_folder, saves_backup_dir, dest_dir, &port.folder, field);
     }
+}
+
+fn unused_zip_path(dir: &Path, stamp: &str) -> Result<PathBuf, String> {
+    let first = dir.join(format!("{stamp}.zip"));
+    if !first.exists() {
+        return Ok(first);
+    }
+    (2..100).map(|n| dir.join(format!("{stamp}-{n}.zip"))).find(|path| !path.exists()).ok_or_else(|| format!("too many backups named {stamp}"))
+}
+
+// Zips the port's save folders into "Update Backups/<folder>/<stamp>.zip" before an install writes into the game folder.
+// Ok(None) means there was nothing to back up. An error means no backup exists, and the caller must not install.
+pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Path, stamp: &str, on_progress: &mut dyn FnMut(&str)) -> Result<Option<PathBuf>, String> {
+    let sources: Vec<(PathBuf, &str)> = save_fields(port)
+        .into_iter()
+        .filter_map(|(save_folder, field)| {
+            let src = save_folder.and_then(|v| resolve_save_folder(v, game_dir)).filter(|src| src.is_dir())?;
+            Some((src, field))
+        })
+        .collect();
+    if sources.is_empty() {
+        return Ok(None);
+    }
+    let backups_dir = safe_join(&saves_backup_dir.join(UPDATE_BACKUPS_DIR), &port.folder)?;
+    on_progress("Backing up saves...");
+    fs::create_dir_all(saves_backup_dir).map_err(|e| e.to_string())?;
+    let staging = tempfile::Builder::new().prefix("_update_backup_").tempdir_in(saves_backup_dir).map_err(|e| e.to_string())?;
+    let mut copied_any = false;
+    for (src, field) in &sources {
+        copied_any |= copy_non_empty(src, &staging.path().join(field)).map_err(|e| format!("{e} -- {}", src.display()))?;
+    }
+    if !copied_any {
+        return Ok(None);
+    }
+    let zip_path = unused_zip_path(&backups_dir, stamp)?;
+    zip_staging_dir(staging.path(), &zip_path)?;
+    if fs::metadata(&zip_path).map_or(true, |m| m.len() == 0) {
+        return Err(format!("the backup file is missing -- {}", zip_path.display()));
+    }
+    Ok(Some(zip_path))
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
