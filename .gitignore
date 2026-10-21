@@ -7,6 +7,10 @@
 /Saves Backup/
 /state.json
 /cache/
+/.previous/
+/updater.log
+/update-failed.txt
+/BUILD_INFO
 
 # Game files, keys and firmware must never be committed.
 # Patterns cannot catch everything (Genesis .md, for one), so check new files before adding them.

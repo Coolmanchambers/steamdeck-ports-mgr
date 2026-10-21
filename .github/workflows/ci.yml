@@ -18,7 +18,8 @@ permissions:
 
 concurrency:
   group: ci-${{ inputs.ref || github.ref }}
-  cancel-in-progress: true
+  # Pushes to main queue instead of cancelling, so a release is never cut off halfway.
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
 jobs:
   linux:
@@ -32,6 +33,9 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
+
+      - name: Fix the build date (build.rs embeds it; the release job checks it)
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
 
       - name: System libraries for Slint, winit and gilrs
         run: |
@@ -71,6 +75,11 @@ jobs:
           # The fork's own updater, under the name the app looks for. Upstream's script is left out:
           # it would replace this build with upstream's release.
           install -m 755 tools/fork-updater.sh "dist/$pkg/ports_launcher_updater.sh"
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "build_date=$BUILD_DATE"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "dist/$pkg/BUILD_INFO"
           tar -C dist -czf "dist/$pkg-linux-x86_64.tar.gz" "$pkg"
           tar -tzvf "dist/$pkg-linux-x86_64.tar.gz"
 
@@ -90,13 +99,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: rolling-release
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: steamdeck-ports-mgr-linux-x86_64
           path: dist
 
-      - name: Replace the "rolling" release with this build
+      - name: Update the "rolling" release in place with this build
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -104,6 +116,14 @@ jobs:
           set -euo pipefail
           cd dist
           asset=steamdeck-ports-mgr-linux-x86_64.tar.gz
+          tar -xzOf "$asset" steamdeck-ports-mgr/BUILD_INFO | tee BUILD_INFO
+          build_date=$(sed -n 's/^build_date=//p' BUILD_INFO)
+          # The app compares the asset's upload date with its own build date. A build compiled before
+          # midnight UTC and uploaded after it would offer itself as an update every day, so skip it.
+          if [ "$build_date" != "$(date -u +%Y-%m-%d)" ]; then
+            echo "::warning::Build date $build_date is not today (UTC); not publishing. The next push to main will."
+            exit 0
+          fi
           sha256sum "$asset" > "$asset.sha256"
           cat "$asset.sha256"
           {
@@ -115,7 +135,15 @@ jobs:
             echo "Install and test steps: [STEAM_DECK.md](https://github.com/$GH_REPO/blob/main/STEAM_DECK.md)."
           } > notes.md
           # Full release (not pre-release): the updater downloads from releases/latest.
-          gh release delete rolling --yes --cleanup-tag 2>/dev/null || true
-          gh release create rolling "$asset" "$asset.sha256" --target "$GITHUB_SHA" \
-            --title "Rolling build (main)" --notes-file notes.md --latest
+          # Updated in place (tag moved, assets replaced) so there is never a moment with no release.
+          # Between the two uploads the pair can mismatch for a few seconds; the updater then refuses.
+          if gh release view rolling >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/rolling" -f sha="$GITHUB_SHA" -F force=true --jq .object.sha
+            gh release upload rolling "$asset" "$asset.sha256" --clobber
+            gh release edit rolling --title "Rolling build (main)" --notes-file notes.md --latest
+          else
+            gh release create rolling "$asset" "$asset.sha256" --target "$GITHUB_SHA" \
+              --title "Rolling build (main)" --notes-file notes.md --latest
+          fi
           gh release view rolling --json tagName,isLatest,assets --jq '"\(.tagName) latest=\(.isLatest) assets=\([.assets[].name] | join(", "))"'
+          test "$(gh api "repos/$GH_REPO/git/ref/tags/rolling" --jq .object.sha)" = "$GITHUB_SHA"
