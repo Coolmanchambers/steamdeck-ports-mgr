@@ -36,7 +36,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
 | 2026-10-21 | `src/core/installer.rs` | `refuse_adopted`: `install_port` and `install_extra` stop with a message when `Library/<folder>` is a symlink (an adopted port), whatever the catalog says, so a bad edit of `ports.local.json` cannot make the installer write into the user's own folder; 1 test |
 | 2026-10-21 | `README.md` | Item 4 (adopt) set to "Testing", item 5 (Steam shortcuts) to "In progress" |
-| 2026-10-21 | `ui/app-window.slint` | The Deck-ready list: imports `ui/fork/deck-ready.slint`, `deck-ready-*` properties and callbacks, the list shown instead of the port list or card grid while `deck-ready-mode` is on, a "Deck-ready" / "All ports" footer button, the title and search placeholder for that list, Tab switches lists and Escape leaves it |
+| 2026-10-21 | `ui/app-window.slint` | The Deck-ready list: imports `ui/fork/deck-ready.slint`, `deck-ready-*` properties and callbacks, the list shown instead of the port list or card grid while `deck-ready-mode` is on, a "Deck-ready" / "All ports" footer button, the title and search placeholder for that list, an "L1 / R1  Deck-ready list" hint in the fullscreen title, Tab switches lists and Escape leaves it |
 | 2026-10-21 | `src/app/state.rs` | `deck_ready` field; `refresh_current_view`, `move_selection` and `current_selected_port` hand over to the Deck-ready list while it is shown (3 guards) |
 | 2026-10-21 | `src/app/install_launch.rs` | `activate_port` made `pub(crate)`; `activate_selection` and `show_info_for_current_selection` hand over to the Deck-ready list while it is shown |
 | 2026-10-21 | `src/app/events.rs` | `AppEvent::DeckReadyFetched` and its one-line handler |
@@ -307,8 +307,8 @@ A installs or plays, X opens Info, Y opens its Filters and B (or Escape) goes ba
   a confirm dialog as the user's own entry in `ports.local.json` (backed up first, like adopting):
   `source` is the repository, so the normal installer downloads it and the normal update check follows
   it (but a Linux build whose release has several Linux files needs the file picker at install and is then
-  not updated on its own; Deck builds avoid this through `preferred_asset`); Uninstall is replaced by Open
-  folder. For a Deck build, `preferred_asset` is the Deck marker of
+  not updated on its own; Deck builds avoid this through `preferred_asset`, unless the release has two Deck
+  files, which also go through the picker); Uninstall is replaced by Open folder. For a Deck build, `preferred_asset` is the Deck marker of
   the file name (`steamdeck`, `steamos`...), so next version's file still matches. The folder is the
   catalog's folder name or the repository name, with the owner added when that is taken.
 - **Not installable from here:** an entry missing from the latest refresh (`missing_since`), and one
