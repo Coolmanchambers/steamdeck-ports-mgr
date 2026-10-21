@@ -7,4 +7,5 @@ pub mod install_launch;
 pub mod cheats;
 pub mod playtime;
 pub mod state;
+pub mod steam_screens;
 pub mod sync;

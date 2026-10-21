@@ -226,7 +226,7 @@ pub(crate) fn close_current_dialog(app: &Rc<AppState>, router: &Router) {
     main.set_refocus_trigger(!main.get_refocus_trigger());
 }
 
-fn finish_dialog_open(app: &Rc<AppState>, router: &Router, slot: DialogSlot) {
+pub(crate) fn finish_dialog_open(app: &Rc<AppState>, router: &Router, slot: DialogSlot) {
     if let Some(window) = slot.window() {
         let (app, router) = (app.clone(), router.clone());
         window.on_close_requested(move || {
@@ -329,7 +329,7 @@ pub(crate) fn open_error_dialog(app: &Rc<AppState>, router: &Router, port: Port)
     finish_dialog_open(app, router, DialogSlot::Error(dialog));
 }
 
-fn open_confirm_dialog(
+pub(crate) fn open_confirm_dialog(
     app: &Rc<AppState>,
     router: &Router,
     title: slint::SharedString,
@@ -526,12 +526,12 @@ pub(crate) fn open_update_toggle_dialog(app: &Rc<AppState>, router: &Router, por
     });
 }
 
-fn set_picker_items<'a>(dialog: &ListPickerDialog, labels: impl IntoIterator<Item = &'a String>) {
+pub(crate) fn set_picker_items<'a>(dialog: &ListPickerDialog, labels: impl IntoIterator<Item = &'a String>) {
     let items: Vec<PickerItem> = labels.into_iter().map(|label| PickerItem { label: label.into() }).collect();
     dialog.set_items(slint::ModelRc::new(slint::VecModel::from(items)));
 }
 
-fn build_picker_dialog(app: &Rc<AppState>, router: &Router, title: &str, labels: &[String]) -> Option<ListPickerDialog> {
+pub(crate) fn build_picker_dialog(app: &Rc<AppState>, router: &Router, title: &str, labels: &[String]) -> Option<ListPickerDialog> {
     close_current_dialog(app, router);
     let big_mode = app.window().get_big_mode();
     let (fonts, family, work_w, work_h) = dialog_context(app);
@@ -588,6 +588,8 @@ enum SettingsEntry {
     Language,
     Files,
     Library,
+    AddToSteam,
+    AdoptPorts,
     BackupSaves,
     CheckUpdates,
     ForceUpdate,
@@ -595,11 +597,13 @@ enum SettingsEntry {
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 9] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 11] = [
     SettingsEntry::Themes,
     SettingsEntry::Language,
     SettingsEntry::Files,
     SettingsEntry::Library,
+    SettingsEntry::AddToSteam,
+    SettingsEntry::AdoptPorts,
     SettingsEntry::BackupSaves,
     SettingsEntry::CheckUpdates,
     SettingsEntry::ForceUpdate,
@@ -618,6 +622,8 @@ fn settings_labels(app: &AppState) -> Vec<String> {
             SettingsEntry::Language => tr.invoke_label_language(),
             SettingsEntry::Files => tr.invoke_label_files(),
             SettingsEntry::Library => tr.invoke_label_library(),
+            SettingsEntry::AddToSteam => "Add to Steam...".into(),
+            SettingsEntry::AdoptPorts => "Adopt installed ports...".into(),
             SettingsEntry::BackupSaves => tr.invoke_label_backup_saves(),
             SettingsEntry::CheckUpdates if state.release_sync => tr.invoke_label_check_updates_on(),
             SettingsEntry::CheckUpdates => tr.invoke_label_check_updates_off(),
@@ -657,6 +663,8 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                         SettingsEntry::Language => open_language_picker(&app, &router),
                         SettingsEntry::Files => open_files_picker(&app, &router),
                         SettingsEntry::Library => open_folder(&app.paths.library_dir),
+                        SettingsEntry::AddToSteam => super::steam_screens::open_steam_screen(&app, &router),
+                        SettingsEntry::AdoptPorts => super::steam_screens::open_adopt_screen(&app, &router),
                         SettingsEntry::BackupSaves => start_save_backup(&app, &router),
                         SettingsEntry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
                         _ => launch_self_update(&app, &router),
