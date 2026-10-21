@@ -6,7 +6,10 @@
 //! Ports the app already has go through the normal install and launch flow; an entry it doesn't have is
 //! first added to `ports.local.json` as the user's own entry. The text is English only.
 
-use super::dialogs::{build_deck_ready_info_dialog, build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot};
+use super::dialogs::{
+    build_deck_ready_info_dialog, build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog,
+    set_picker_items, DialogSlot,
+};
 use super::events::{lock, AppEvent};
 use super::install_launch::{activate_port, start_install};
 use super::state::AppState;
@@ -131,7 +134,6 @@ fn known_ports(app: &AppState) -> Vec<KnownPort> {
     app.catalog
         .borrow()
         .iter()
-        .filter(|p| !p.is_android_only())
         .map(|p| KnownPort {
             key: p.key().to_string(),
             folder: p.folder.clone(),
@@ -167,8 +169,9 @@ fn status_text(ui: &DeckReadyUi, count: usize) -> String {
         return if ui.fetching.get() { "Loading the Deck-ready list...".to_string() } else { String::new() };
     };
     let changed = view::date_long(&index.generated).unwrap_or_else(|| "unknown".to_string());
-    if error.is_some() {
-        return format!("{shown}  ·  showing the saved list from {changed}; GitHub could not be reached");
+    if let Some(e) = error.as_ref() {
+        let why = if e.contains("not usable") { "the new download was not usable" } else { "GitHub could not be reached" };
+        return format!("{shown}  ·  showing the saved list from {changed}; {why}");
     }
     let checked = view::checked_label(&ui.meta.borrow().checked_at, &chrono::Local::now());
     let checking = if ui.fetching.get() { "  ·  checking for a newer list" } else { "" };
@@ -180,7 +183,7 @@ fn empty_text(ui: &DeckReadyUi) -> String {
         return "Nothing matches. Press Y to change the filters, or clear the search.".to_string();
     }
     match (ui.fetching.get(), ui.error.borrow().as_ref()) {
-        (true, _) => "Loading the Deck-ready list...".to_string(),
+        (true, _) => String::new(),
         (false, Some(e)) => format!("Can't load the Deck-ready list yet ({e}). Check your connection, then press A to try again."),
         (false, None) => "The Deck-ready list isn't loaded yet. Press A to load it.".to_string(),
     }
@@ -190,12 +193,12 @@ fn empty_text(ui: &DeckReadyUi) -> String {
 /// keeping the selection on the same entry when it is still shown.
 pub(crate) fn rebuild(app: &AppState) {
     let ui = &app.deck_ready;
-    let previous = ui.rows.borrow().get(ui.selected.get()).map(|r| r.entry);
+    let previous = ui.rows.borrow().get(ui.selected.get()).map(|r| r.id.clone());
     let rows = match ui.index.borrow().as_ref() {
         Some(index) => view::rows(index, &known_ports(app), &ui.filters.borrow(), &app.windowed_nav.search_query.borrow()),
         None => Vec::new(),
     };
-    let selected = previous.and_then(|e| rows.iter().position(|r| r.entry == e)).unwrap_or(0).min(rows.len().saturating_sub(1));
+    let selected = previous.and_then(|id| rows.iter().position(|r| r.id == id)).unwrap_or(0).min(rows.len().saturating_sub(1));
     let items: Vec<DeckReadyRow> =
         rows.iter().map(|r| DeckReadyRow { name: r.name.clone().into(), sub: r.sub.clone().into(), deck: r.deck, tags: tag_model(r), button: r.button.into() }).collect();
     let window = app.window();
@@ -265,29 +268,31 @@ fn run_action(app: &Rc<AppState>, router: &Router, row: &Row) {
                 activate_port(app, router, &port);
             }
         }
-        Action::AddAndInstall => confirm_add(app, router, row.entry),
+        Action::AddAndInstall => confirm_add(app, router, &row.id),
         Action::InfoOnly => show_info(app, router),
     }
 }
 
 fn folder_taken(app: &AppState, folder: &str) -> bool {
-    app.catalog.borrow().iter().any(|p| p.folder.eq_ignore_ascii_case(folder))
-        || crate::core::path_safety::safe_join(&app.paths.library_dir, folder).map_or(true, |p| std::fs::symlink_metadata(p).is_ok())
+    let catalog = app.catalog.borrow();
+    entry::folder_taken(&app.paths.library_dir, catalog.iter().map(|p| p.folder.as_str()), folder)
 }
 
-fn confirm_add(app: &Rc<AppState>, router: &Router, entry_index: usize) {
-    let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.entries.get(entry_index)).map(|e| (e.clone(), view::display_name(e))) else { return };
+fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
+    let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).map(|e| (e.clone(), view::display_name(e))) else { return };
     let Some(folder) = entry::folder_for(&entry, |f| folder_taken(app, f)) else {
         return open_message_dialog(app, router, &name, "There is no free folder name for this port in Library, so nothing was added.\n");
     };
     let text = format!("{}\n", view::confirm_text(&entry, &folder));
     open_confirm_dialog(app, router, format!("Add {name}?").into(), text.into(), "Add and install".into(), move |app, router| {
-        let Some(value) = entry::local_entry(&entry, &name, &folder) else { return };
+        // Built and checked before anything is written, so a failure leaves ports.local.json alone.
+        let Some((value, mut port)) = entry::local_entry(&entry, &name, &folder).and_then(|v| crate::core::models::port_from_value(&v).ok().map(|p| (v, p))) else {
+            return open_message_dialog(app, router, &name, "Nothing was added: the entry could not be built from the list.\n");
+        };
         let local_json = app.paths.config_dir.join("ports.local.json");
-        if let Err(e) = entry::add_to_local_file(&local_json, value.clone(), &crate::fork::store::backup_stamp()) {
+        if let Err(e) = entry::add_to_local_file(&local_json, value, &crate::fork::store::backup_stamp()) {
             return open_message_dialog(app, router, &name, &format!("Nothing was added: {e}.\n"));
         }
-        let Ok(mut port) = crate::core::models::port_from_value(&value) else { return };
         port.user_managed = true;
         {
             let mut catalog = app.catalog.borrow_mut();
@@ -314,7 +319,7 @@ pub(crate) fn show_info(app: &Rc<AppState>, router: &Router) {
     }
     let Some(row) = selected_row(app) else { return };
     let ui = &app.deck_ready;
-    let Some((entry, generated)) = ui.index.borrow().as_ref().and_then(|i| i.entries.get(row.entry).map(|e| (e.clone(), i.generated.clone()))) else { return };
+    let Some((entry, generated)) = ui.index.borrow().as_ref().and_then(|i| i.get(&row.id).map(|e| (e.clone(), i.generated.clone()))) else { return };
     let checked = view::checked_label(&ui.meta.borrow().checked_at, &chrono::Local::now());
     let body = view::info_text(&entry, row.standing, &generated, &checked);
     let project = entry.website.clone().or_else(|| entry::source_url(&entry)).or_else(|| entry.repo_url.clone());
@@ -372,6 +377,20 @@ pub(crate) fn info_activate(d: &DeckReadyInfoDialog, index: i32) {
     }
 }
 
+/// System is chosen from its own list (about 25 systems), then Filters reopens.
+fn open_system_picker(app: &Rc<AppState>, router: &Router) {
+    let ui = &app.deck_ready;
+    let community = ui.filters.borrow().community;
+    let systems = ui.index.borrow().as_ref().map(|i| view::systems(i, community)).unwrap_or_default();
+    let labels = std::iter::once("All systems".to_string()).chain(systems.iter().cloned()).collect();
+    open_picker_dialog(app, router, "System", labels, move |app, router, choice| {
+        app.deck_ready.filters.borrow_mut().system = choice.checked_sub(1).and_then(|i| systems.get(i)).cloned();
+        app.deck_ready.selected.set(0);
+        rebuild(app);
+        open_filters(app, router);
+    });
+}
+
 /// Y: Filters. Choosing a row changes its value at once (the list behind updates); Done or B closes.
 pub(crate) fn open_filters(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
@@ -388,8 +407,8 @@ pub(crate) fn open_filters(app: &Rc<AppState>, router: &Router) {
                 match index {
                     0 => filters.build = view::next_build(filters.build),
                     1 => {
-                        let systems = ui.index.borrow().as_ref().map(|i| view::systems(i, filters.community)).unwrap_or_default();
-                        filters.system = view::next_system(filters.system.as_deref(), &systems);
+                        drop(filters);
+                        return open_system_picker(&app, &router);
                     }
                     2 => filters.community = !filters.community,
                     _ => {

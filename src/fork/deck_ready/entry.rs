@@ -53,6 +53,13 @@ pub fn folder_for(entry: &Entry, taken: impl Fn(&str) -> bool) -> Option<String>
     candidates.into_iter().find(|c| !c.is_empty() && c != "-" && !c.starts_with('-') && !taken(c))
 }
 
+/// Whether `folder` can't be used for a new entry: a port the app knows already uses it (any case),
+/// something already exists at `Library/<folder>` (a file, a folder or a link), or it isn't a plain name.
+pub fn folder_taken<'a>(library_dir: &Path, known_folders: impl IntoIterator<Item = &'a str>, folder: &str) -> bool {
+    known_folders.into_iter().any(|f| f.eq_ignore_ascii_case(folder))
+        || crate::core::path_safety::safe_join(library_dir, folder).map_or(true, |p| std::fs::symlink_metadata(p).is_ok())
+}
+
 /// The JSON entry written to `ports.local.json`.
 pub fn local_entry(entry: &Entry, display_name: &str, folder: &str) -> Option<Value> {
     let source = source_url(entry)?;
@@ -70,7 +77,8 @@ pub fn local_entry(entry: &Entry, display_name: &str, folder: &str) -> Option<Va
     );
     if entry.rating == Rating::DeckBuild {
         if let Some(marker) = entry.deck_assets.iter().find_map(|f| deck_marker(f)) {
-            obj.insert("preferred_asset".into(), json!({ "linux": marker }));
+            // An empty Windows value lets a Windows build pick its own file instead of the Deck one.
+            obj.insert("preferred_asset".into(), json!({ "linux": marker, "windows": "" }));
         }
     }
     Some(Value::Object(obj))
@@ -166,7 +174,11 @@ mod tests {
         assert_eq!(port.repo.as_deref(), Some("owner/cw"));
         assert_eq!(port.folder, "cw");
         assert_eq!(port.tags_lower, vec!["xbox 360"]);
-        assert_eq!(value["preferred_asset"], json!({"linux": "steamdeck"}));
+        assert_eq!(value["preferred_asset"], json!({"linux": "steamdeck", "windows": ""}));
+        #[cfg(target_os = "linux")]
+        assert_eq!(crate::core::platform_resolve::resolve_preferred_asset(&value["preferred_asset"]).as_deref(), Some("steamdeck"));
+        #[cfg(target_os = "windows")]
+        assert_eq!(crate::core::platform_resolve::resolve_preferred_asset(&value["preferred_asset"]), None);
         assert!(port.instructions_link().is_some_and(|l| l == "https://github.com/owner/cw"));
     }
 
@@ -197,6 +209,51 @@ mod tests {
         assert!(ports.iter().all(|p| p.user_managed));
         assert!(matches!(add_to_local_file(&local, local_entry(&e, "Again", "a").unwrap(), "STAMP"), Err(AdoptError::AlreadyRegistered(_))));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_is_taken_by_a_known_port_or_anything_on_disk() {
+        let dir = temp_dir("taken");
+        fs::create_dir_all(dir.join("Existing")).unwrap();
+        fs::write(dir.join("loose-file"), "x").unwrap();
+        let known = ["Catalog-Port"];
+        assert!(folder_taken(&dir, known, "catalog-port"), "catalog folders match in any case");
+        assert!(folder_taken(&dir, known, "Existing"));
+        assert!(folder_taken(&dir, known, "loose-file"));
+        assert!(folder_taken(&dir, known, "../escape"), "a name that is not plain is never usable");
+        assert!(!folder_taken(&dir, known, "Free-Name"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("nowhere"), dir.join("dangling")).unwrap();
+            assert!(folder_taken(&dir, known, "dangling"), "a link counts even when it points nowhere");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// For every Deck build in the published list, the marker written as `preferred_asset` must let the
+    /// installer find exactly one file, unless the list itself names several Deck files.
+    #[test]
+    fn published_deck_builds_resolve_to_one_file() {
+        let index = parse(include_str!("../../../index/deck-ready.json")).unwrap();
+        let mut checked = 0;
+        for e in index.entries.iter().filter(|e| e.rating == Rating::DeckBuild) {
+            let marker = e.deck_assets.iter().find_map(|f| deck_marker(f)).unwrap_or_else(|| panic!("{}: no marker in {:?}", e.id, e.deck_assets));
+            // The index lists a Deck file under Linux too; a release has each name once.
+            let mut names: Vec<&String> = Vec::new();
+            for n in e.deck_assets.iter().chain(&e.linux_assets).chain(&e.windows_assets) {
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+            let assets: Vec<Value> = names.into_iter().map(|n| json!({ "name": n })).collect();
+            match crate::core::asset_select::pick_asset(&assets, Some(marker)) {
+                Ok(_) => {}
+                Err(crate::core::asset_select::AssetSelectionError::Ambiguous(_)) if e.deck_assets.len() > 1 => {}
+                Err(err) => panic!("{}: marker {marker:?} over {:?}: {}", e.id, assets, err.message()),
+            }
+            checked += 1;
+        }
+        assert!(checked >= 10, "only {checked} Deck builds checked");
     }
 
     #[test]

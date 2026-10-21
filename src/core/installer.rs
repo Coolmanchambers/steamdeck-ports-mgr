@@ -93,7 +93,7 @@ fn rename_dest(dest: &Path, filename: &str) -> PathBuf {
 
 fn has_known_archive_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
-    [".zip", ".tar.gz", ".tgz", ".tar", ".7z", ".rar", ".exe"].iter().any(|ext| lower.ends_with(ext))
+    [".zip", ".tar.gz", ".tgz", ".tar", ".7z", ".rar", ".exe", ".tar.xz", ".txz", ".tar.zst", ".tzst"].iter().any(|ext| lower.ends_with(ext))
 }
 
 fn content_disposition_filename(header: &str) -> Option<String> {
@@ -307,7 +307,8 @@ fn extract_archive_via_7z(archive: &Path, staging: &Path, max_uncompressed_size:
     let nsis_exclusion = kind.eq_ignore_ascii_case("Nsis").then_some("-x!$PLUGINSDIR\\*");
     run_extract(archive, nsis_exclusion)?;
 
-    if kind.eq_ignore_ascii_case("gzip") {
+    // Fork: xz and zstd tarballs (Deck builds use them) unpack in two steps like gzip ones.
+    if ["gzip", "xz", "zstd"].iter().any(|k| kind.eq_ignore_ascii_case(k)) {
         if let Some(inner) = fs::read_dir(staging).install_err()?.filter_map(|e| e.ok()).map(|e| e.path()).next() {
             run_extract(&inner, None)?;
             with_path(retry_transient(|| fs::remove_file(&inner)), &inner).install_err()?;
@@ -368,7 +369,7 @@ fn clear_readonly_recursive(path: &Path) -> io::Result<()> {
 fn extract_to_staging(archive: &Path, staging: &Path, exe_is_archive: Option<&str>) -> Result<PathBuf, InstallError> {
     let name_lower = archive.to_string_lossy().to_lowercase();
     let is_archive = (name_lower.ends_with(".exe") && exe_is_archive.is_some())
-        || [".zip", ".tar.gz", ".tgz", ".tar", ".7z", ".rar"].iter().any(|ext| name_lower.ends_with(ext));
+        || [".zip", ".tar.gz", ".tgz", ".tar", ".7z", ".rar", ".tar.xz", ".txz", ".tar.zst", ".tzst"].iter().any(|ext| name_lower.ends_with(ext));
 
     if !is_archive {
         let dest = staging.join(archive.file_name().unwrap_or_default());
@@ -699,10 +700,14 @@ mod tests {
     }
 
     fn build_tar_gz_archive(files: &[(&str, &[u8])], archive_path: &Path) {
+        build_compressed_tar("gzip", files, archive_path);
+    }
+
+    fn build_compressed_tar(kind: &str, files: &[(&str, &[u8])], archive_path: &Path) {
         let tar_path = archive_path.with_extension("");
         build_archive("tar", files, &tar_path);
         let tool = sevenzip_exe_path().unwrap();
-        let output = std::process::Command::new(&tool).arg("a").arg("-tgzip").arg(archive_path).arg(&tar_path).output().unwrap();
+        let output = std::process::Command::new(&tool).arg("a").arg(format!("-t{kind}")).arg(archive_path).arg(&tar_path).output().unwrap();
         assert!(output.status.success());
         fs::remove_file(&tar_path).unwrap();
     }
@@ -737,6 +742,18 @@ mod tests {
         fs::create_dir_all(&staging).unwrap();
         extract_archive_via_7z(&archive_path, &staging, MAX_UNCOMPRESSED_SIZE).unwrap();
         assert_eq!(fs::read_to_string(staging.join("sub").join("a.txt")).unwrap(), "hello world");
+    }
+
+    #[test]
+    fn extract_to_staging_deballe_un_tar_xz() {
+        let dir = temp_dir("tarxz");
+        let archive_path = dir.join("Game-steamos-x86_64.tar.xz");
+        build_compressed_tar("xz", &[("Game/run.sh", b"#!/bin/sh")], &archive_path);
+        let staging = dir.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        let root = extract_to_staging(&archive_path, &staging, None).unwrap();
+        assert_eq!(fs::read_to_string(root.join("run.sh")).unwrap(), "#!/bin/sh");
+        assert!(!root.join("Game-steamos-x86_64.tar").exists() && !root.join("Game-steamos-x86_64.tar.xz").exists());
     }
 
     #[test]

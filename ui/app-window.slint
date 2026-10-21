@@ -200,7 +200,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : "Ports Launcher";
+                        text: root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : (root.big-mode ? "Ports Launcher      L1 / R1  Deck-ready list" : "Ports Launcher");
                         color: Theme.list-text;
                         vertical-alignment: center;
                         font-weight: 700;

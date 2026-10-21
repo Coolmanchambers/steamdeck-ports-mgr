@@ -47,6 +47,8 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/gamepad.rs` | Reads L1 and R1 (`button_lb`, `button_rb`), merged across controllers like the other buttons |
 | 2026-10-21 | `src/ui/gamepad_router.rs` | L1 and R1 map to a new `SwitchList` action (`GamepadTarget::switch_list`, no-op by default); tests |
 | 2026-10-21 | `src/ui/slint_layout_lint.rs` | The new Slint file is linted too |
+| 2026-10-21 | `src/core/installer.rs` | `.tar.xz`, `.txz`, `.tar.zst` and `.tzst` count as archives and unpack in two steps like `.tar.gz` (7-Zip reads xz and zstd); 1 test |
+| 2026-10-21 | `src/core/asset_select.rs` | With `preferred_asset`, checksum and update files (`.sha256`, `.zsync`...) beside the match are dropped before deciding it is ambiguous; `.zsync` joins the non-archive list; 1 test |
 | 2026-10-21 | `src/ui/font_metrics.rs` | Linux `wrapped_text_height` counts each line break as a new line (as Windows' `DrawTextW` does). It split the whole text on whitespace, so every multi-line message was measured as one paragraph and its dialog cut off the last lines; 1 test |
 | 2026-10-21 | `README.md` | Item 8 (Deck-ready list) set to "Testing" |
 
@@ -304,13 +306,25 @@ A installs or plays, X opens Info, Y opens its Filters and B (or Escape) goes ba
 - **Adding a new one:** an entry with no match (including ones the catalog turned off) is added after
   a confirm dialog as the user's own entry in `ports.local.json` (backed up first, like adopting):
   `source` is the repository, so the normal installer downloads it and the normal update check follows
-  it; Uninstall is replaced by Open folder. For a Deck build, `preferred_asset` is the Deck marker of
+  it (but a Linux build whose release has several Linux files needs the file picker at install and is then
+  not updated on its own; Deck builds avoid this through `preferred_asset`); Uninstall is replaced by Open
+  folder. For a Deck build, `preferred_asset` is the Deck marker of
   the file name (`steamdeck`, `steamos`...), so next version's file still matches. The folder is the
   catalog's folder name or the repository name, with the owner added when that is taken.
 - **Not installable from here:** an entry missing from the latest refresh (`missing_since`), and one
   that is not on GitHub or GitLab (unless the catalog has it).
+- **Saves:** an added entry has no `save` folders (the list doesn't know them), so the save backup
+  before an update does not cover it. The confirm dialog says so.
+- **Entries are found by `id`**, not by position, so a refresh that lands while Info is open can't
+  point Install at another project.
 - **Limits:** English only. `ports.local.json` backups are never pruned. The ratings are file-name
-  ratings; nothing here records whether a port ran on the Deck.
+  ratings; nothing here records whether a port ran on the Deck. If the catalog later adds a port the
+  user already added under another folder name, both stay in All ports and the Deck-ready row follows
+  the catalog's. A failed check is not remembered, so offline every opening of the list tries again
+  (30 s timeout, in the background). Switching lists clears the search box.
+- **Upstream fixes made for this list:** `.tar.xz` and `.tar.zst` releases now unpack (several Deck
+  builds ship only those), and a checksum or `.zsync` file beside the wanted one no longer makes
+  `preferred_asset` ask which file to use.
 
 ## Builds
 

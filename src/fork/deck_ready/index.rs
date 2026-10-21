@@ -77,6 +77,12 @@ pub struct Index {
     pub entries: Vec<Entry>,
 }
 
+impl Index {
+    pub fn get(&self, id: &str) -> Option<&Entry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
+}
+
 const SCHEMA: u64 = 1;
 
 fn text(obj: &serde_json::Map<String, Value>, key: &str) -> Option<String> {

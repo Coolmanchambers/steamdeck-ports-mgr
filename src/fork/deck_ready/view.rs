@@ -69,8 +69,10 @@ pub enum Standing {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
-    /// Position in `Index::entries`.
+    /// Position in `Index::entries` of the index these rows were built from; only valid for that index.
     pub entry: usize,
+    /// The entry's `id`. Use this to find the entry again later: a refresh can replace the index.
+    pub id: String,
     pub name: String,
     pub sub: String,
     pub deck: bool,
@@ -162,7 +164,7 @@ fn row(index: usize, entry: &Entry, known: &[KnownPort]) -> Row {
     if let Some(release) = &entry.release {
         sub.extend([Some(release.tag.clone()).filter(|t| !t.is_empty()), date_short(&release.date)].into_iter().flatten());
     }
-    Row { entry: index, name: display_name(entry), sub: sub.join("  ·  "), deck: entry.rating == Rating::DeckBuild, tags, standing, action, button }
+    Row { entry: index, id: entry.id.clone(), name: display_name(entry), sub: sub.join("  ·  "), deck: entry.rating == Rating::DeckBuild, tags, standing, action, button }
 }
 
 fn shown(entry: &Entry, filters: &Filters) -> bool {
@@ -407,7 +409,7 @@ pub fn confirm_text(entry: &Entry, folder: &str) -> String {
         format!("Goes into: Library/{folder}"),
         "Your entry: saved in ports.local.json (the old file is backed up). Its button says Open folder, not Uninstall.".to_string(),
         "Game files: not included. Info shows the project page, which says what it needs.".to_string(),
-        "Saves: never touched.".to_string(),
+        "Saves: adding and installing never touch saves. The app doesn't know where this port keeps them, so its updates are not backed up first: copy its save folder yourself before an update.".to_string(),
     ];
     if entry.catalog_disabled {
         lines.push(String::new());

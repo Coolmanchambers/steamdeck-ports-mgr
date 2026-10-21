@@ -99,6 +99,16 @@ pub fn refresh(cache_dir: &Path, now: chrono::DateTime<chrono::Utc>, fetch: impl
     }
 }
 
+/// What a response status means. ureq hands back a 304 as an `Ok` response (only 4xx and 5xx are
+/// errors), so the status has to be read here rather than matched as an error.
+fn classify(status: u16) -> Result<bool, String> {
+    match status {
+        304 => Ok(false),
+        200..=299 => Ok(true),
+        other => Err(format!("GitHub answered HTTP {other}")),
+    }
+}
+
 /// The real request: `If-None-Match` when there is an ETag, 304 means unchanged.
 pub fn fetch_from_github(known_etag: &str) -> Result<Fetched, String> {
     let agent = crate::core::http::agent(Duration::from_secs(30));
@@ -108,6 +118,9 @@ pub fn fetch_from_github(known_etag: &str) -> Result<Fetched, String> {
     }
     match req.call() {
         Ok(mut resp) => {
+            if !classify(resp.status().as_u16())? {
+                return Ok(Fetched::NotModified);
+            }
             let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
             let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
             Ok(Fetched::Updated { text, etag })
@@ -205,6 +218,23 @@ mod tests {
         assert_eq!(fs::read(dir.join(CACHE_FILE)).unwrap(), before);
         assert_eq!(load_meta(&dir).etag, "\"e1\"");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn status_304_is_unchanged_not_an_unusable_download() {
+        assert_eq!(classify(200), Ok(true));
+        assert_eq!(classify(304), Ok(false));
+        assert!(classify(500).is_err() && classify(404).is_err() && classify(302).is_err());
+    }
+
+    /// Against the real server: a second request with the ETag of the first must come back unchanged.
+    /// Needs the network, so it only runs on request: `cargo test -- --ignored live_etag`.
+    #[test]
+    #[ignore]
+    fn live_etag_round_trip() {
+        let Fetched::Updated { etag, .. } = fetch_from_github("").unwrap() else { panic!("first request had no body") };
+        assert!(!etag.is_empty());
+        assert!(matches!(fetch_from_github(&etag).unwrap(), Fetched::NotModified));
     }
 
     #[test]

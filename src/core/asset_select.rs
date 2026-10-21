@@ -33,7 +33,7 @@ fn is_unusable_format(name_lower: &str) -> bool {
 }
 
 fn has_non_archive_extension(name_lower: &str) -> bool {
-    [".txt", ".md", ".sha256", ".sha1", ".sha512", ".md5", ".sig", ".asc", ".json", ".yml", ".yaml", ".pdf", ".log"]
+    [".txt", ".md", ".sha256", ".sha1", ".sha512", ".md5", ".sig", ".asc", ".json", ".yml", ".yaml", ".pdf", ".log", ".zsync"]
         .iter()
         .any(|ext| name_lower.ends_with(ext))
 }
@@ -79,6 +79,17 @@ pub fn pick_asset(assets: &[Value], preferred: Option<&str>) -> Result<Value, As
     if let Some(preferred) = preferred {
         let preferred_lower = preferred.to_lowercase();
         let matches: Vec<&Value> = assets.iter().filter(|a| asset_name(a).to_lowercase().contains(&preferred_lower)).collect();
+        // Fork: a checksum or update file beside the wanted one ("x.AppImage.zsync", "x.tar.gz.sha256") is not
+        // a second candidate.
+        let usable: Vec<&Value> = matches
+            .iter()
+            .copied()
+            .filter(|a| {
+                let name = asset_name(a).to_lowercase();
+                !has_non_archive_extension(&name) && !is_unusable_format(&name)
+            })
+            .collect();
+        let matches = if matches.len() > 1 && !usable.is_empty() { usable } else { matches };
         return match matches.len() {
             0 => Err(AssetSelectionError::Message(format!("No release file matches \"{preferred}\" (see \"preferred_asset\" for this port)."))),
             1 => Ok(matches[0].clone()),
@@ -277,6 +288,12 @@ mod tests {
     fn preferred_asset_sans_correspondance_est_une_erreur_claire() {
         let assets = vec![asset("SRB2-v2215-Full.zip")];
         assert!(matches!(pick_asset(&assets, Some("Portable.zip")), Err(AssetSelectionError::Message(_))));
+    }
+
+    #[test]
+    fn preferred_asset_ignore_les_fichiers_annexes() {
+        let assets = vec![asset("x-SteamDeck.AppImage"), asset("x-SteamDeck.AppImage.zsync"), asset("x-steamdeck.tar.gz.sha256")];
+        assert_eq!(asset_name(&pick_asset(&assets, Some("steamdeck")).unwrap()), "x-SteamDeck.AppImage");
     }
 
     #[test]

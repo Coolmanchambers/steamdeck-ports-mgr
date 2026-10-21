@@ -122,13 +122,17 @@ background the first time (a few seconds) and is kept for offline use.
 - A port the catalog already has, or one you already added, shows "Catalog" or "Yours" and behaves
   exactly as in All ports: no second copy.
 - A port that is not in the catalog asks first ("Add ... ?"), then adds it as your own entry in
-  `ports.local.json` (the old file is backed up next to it) and installs it. Its button says Open
-  folder instead of Uninstall. Game files are never included.
+  `ports.local.json` (the old file is backed up next to it as `ports.local.json.bak-<date>-<time>`)
+  and installs it. Its button says Open folder instead of Uninstall. Game files are never included.
+- The app doesn't know where an added port keeps its saves, so its updates are not backed up first.
+  Copy its save folder yourself before updating it.
 - "Deck build" and "Linux build" come from release file names. Only a launch on the Deck proves a
   port runs.
 
-To undo an added port: remove its entry from `ports.local.json` (keep the file valid JSON), then
-delete its folder under `Library/` yourself if you want the files gone.
+To undo an added port: remove its entry from `ports.local.json` (keep the file valid JSON), or copy
+the `ports.local.json.bak-...` from just before the add back over it. Its files stay in `Library/`.
+Before deleting that folder, look inside it for a save folder and copy that out: many ports keep their
+saves there.
 
 ## What to test
 
@@ -139,7 +143,7 @@ delete its folder under `Library/` yourself if you want the files gone.
 | Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |
 | Controller | D-pad moves, A activates, B closes, X opens Info, Y opens Settings |
 | Deck-ready list | L1/R1 switch lists; the list loads, Y filters it, A on a "Catalog" port installs it like All ports |
-| Deck-ready add | A on a port without a tag asks first, then installs; it appears in All ports with Open folder |
+| Deck-ready add | A on a row with Install and no Catalog or Yours tag (Info says "In the catalog: Not yet") asks first, then installs; it appears in All ports with Open folder |
 | Deck-ready offline | With Wi-Fi off, the list still opens from the saved copy and says GitHub could not be reached |
 | Game Mode | Starts from Steam, the controller works, a port launches and the app returns after |
 | Controller in dialogs | D-pad and A/B work inside Info, Settings and confirm dialogs, in both modes |
