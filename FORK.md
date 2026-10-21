@@ -47,6 +47,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/gamepad.rs` | Reads L1 and R1 (`button_lb`, `button_rb`), merged across controllers like the other buttons |
 | 2026-10-21 | `src/ui/gamepad_router.rs` | L1 and R1 map to a new `SwitchList` action (`GamepadTarget::switch_list`, no-op by default); tests |
 | 2026-10-21 | `src/core/catalog_sync.rs` | A 304 now counts as "not modified": `fetch_if_changed` reads the status in its `Ok` arm through a new `classify(status)` (ureq 3 returns a 304 as `Ok`, only 4xx and 5xx are errors; the old `Err(StatusCode(304))` arm never fired). 2 tests, one `#[ignore]` live ETag round trip |
+| 2026-10-21 | `src/app/sync.rs` | Catalog and themes checks send the stored ETag only while the saved `ports.json` / `themes.json` exists and passes the same validation as a download (`etag_for_saved_copy`), and record the new ETag only when the file was written (`etag_to_record`); `catalog_sync.rs` gains the pure `interpret(status, ...)`, `validate_ports` / `validate_themes` and 6 offline tests |
 | 2026-10-21 | `src/ui/slint_layout_lint.rs` | The new Slint file is linted too |
 | 2026-10-21 | `src/core/installer.rs` | `.tar.xz`, `.txz`, `.tar.zst` and `.tzst` count as archives and unpack in two steps like `.tar.gz` (7-Zip reads xz and zstd); 1 test |
 | 2026-10-21 | `src/core/asset_select.rs` | With `preferred_asset`, checksum and update files (`.sha256`, `.zsync`...) beside the match are dropped before deciding it is ambiguous; `.zsync` joins the non-archive list; 1 test |
@@ -212,6 +213,11 @@ when the change is reverted.
   status is now read first: 304 means unchanged, any other non-2xx is an error. Test that fails on
   the old code: `cargo test -- --ignored live_etag` (needs the network; also covers the Deck-ready
   list).
+  Two guards come with it, both copied from the Deck-ready sync: the stored ETag is sent only while
+  the saved file exists and still passes validation (otherwise a 304 would leave a deleted or broken
+  `themes.json` missing until upstream changes it), and the new ETag is stored only when the file was
+  written (otherwise a read-only install folder would be told "unchanged" about a file never saved).
+  A 304 to a request that carried no ETag is treated as an error.
 - **Side effects to know.** The `~` fix also means the Save Backup button (global backup) now
   includes upstream's `~/...` Linux save paths (about 32 catalog entries), installed or not. AppImage
   cleanup only recognizes names that differ by version numbers, so a renamed scheme keeps the old file.
