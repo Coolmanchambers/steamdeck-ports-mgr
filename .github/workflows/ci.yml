@@ -87,6 +87,21 @@ jobs:
           tar -C dist -czf "dist/$pkg-linux-x86_64.tar.gz" "$pkg"
           tar -tzvf "dist/$pkg-linux-x86_64.tar.gz"
 
+      # The packaged app must survive startup with no tray host and no desktop session (a failure
+      # here also blocks the release job). Mesa's software GL stands in for the Deck's GPU.
+      - name: Startup smoke test (virtual display, no tray)
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb imagemagick libgl1-mesa-dri
+          bash tools/smoke-test.sh dist/steamdeck-ports-mgr smoke-out
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: smoke-test
+          path: smoke-out
+          retention-days: 14
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: steamdeck-ports-mgr-linux-x86_64
