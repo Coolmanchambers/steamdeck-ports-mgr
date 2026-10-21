@@ -264,7 +264,8 @@ PORT_NAMES=(
 TIMEOUT_MARKER="::scan-timed-out::"
 run_find() {
   timeout 60 find "$@" 2>/dev/null
-  if [ $? -eq 124 ]; then printf '%s\0' "$TIMEOUT_MARKER"; fi
+  # The leading NUL ends a path that find was cut off in the middle of.
+  if [ $? -eq 124 ]; then printf '\0%s\0' "$TIMEOUT_MARKER"; fi
 }
 
 scan_ports() {
@@ -343,6 +344,7 @@ section_ports() {
   declare -A PL_DIRS=()
   for p in "${hits[@]+"${hits[@]}"}"; do
     if [ "$p" = "$TIMEOUT_MARKER" ]; then partial=1; continue; fi
+    [ -e "$p" ] || [ -L "$p" ] || continue
     case $p in *$'\n'*|*$'\r'*) skipped=$((skipped + 1)); continue ;; esac
     lb=$(printf '%s' "${p##*/}" | tr '[:upper:]' '[:lower:]')
     case $lb in
@@ -460,6 +462,8 @@ section_o2r() {
   for p in "${all[@]+"${all[@]}"}"; do
     [ -n "$p" ] || continue
     if [ "$p" = "$TIMEOUT_MARKER" ]; then partial=1; continue; fi
+    [ -e "$p" ] || continue
+    case $p in *$'\n'*|*$'\r'*) continue ;; esac
     if [ "$n" -ge "$cap" ]; then say "(list cut at $cap entries)"; break; fi
     say "- \`${p##*/}\`: $(human "$(stat -L -c %s -- "$p" 2>/dev/null || echo 0)"), modified $(date_of "$p"), in \`${p%/*}\`"
     n=$((n + 1))
@@ -618,7 +622,7 @@ KIND = {"": "grid", "p": "portrait", "_hero": "hero", "_logo": "logo", "_icon": 
 known = set()
 
 def clean(s):
-    return s.replace("\r", "\\r").replace("\n", "\\n")
+    return re.sub(r"[\x00-\x1f\x7f]", "?", s)
 
 
 def text(entry, key):
@@ -626,7 +630,7 @@ def text(entry, key):
     return clean(v if isinstance(v, str) else ("" if v is None else str(v)))
 
 
-SENSITIVE = re.compile(r"(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASS|PASSWORD|AUTH|CRED)[A-Za-z0-9_]*=)\S+", re.I)
+SENSITIVE = re.compile(r"(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASS|PASSWORD|AUTH|CRED)[A-Za-z0-9_]*=)(?:\"[^\"]*\"|'[^']*'|\S+)", re.I)
 
 
 def show(pos, idx, entry):
@@ -654,7 +658,7 @@ def show(pos, idx, entry):
 
     print("")
     print("#### Shortcut %d: %s" % (pos, name or "(no name)"))
-    print("- Index key in file: %s" % idx)
+    print("- Index key in file: %s" % clean(str(idx)))
     print("- AppName: %s" % (name or "(empty)"))
     print("- Exe: `%s`" % exe)
     print("- StartDir: `%s`" % startdir)
