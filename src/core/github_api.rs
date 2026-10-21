@@ -43,7 +43,15 @@ pub fn latest_installable_release(repo: &str, token: Option<&str>, preferred: Op
 }
 
 pub fn fetch_latest_tag_and_date(repo: &str, token: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
-    let (release, asset) = latest_installable_release(repo, token, None)?;
+    fetch_latest_tag_and_date_preferring(repo, token, None)
+}
+
+pub fn fetch_latest_tag_and_date_preferring(repo: &str, token: Option<&str>, preferred: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
+    latest_tag_and_date(list_releases(repo, token, RECENT_RELEASES_DEPTH)?, preferred)
+}
+
+pub fn latest_tag_and_date(releases: Vec<Value>, preferred: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
+    let (release, asset) = asset_select::latest_installable_release(releases, preferred, pick_release_asset)?;
     let latest_tag = release.get("tag_name").and_then(Value::as_str).unwrap_or("").to_string();
     let latest_date = asset
         .get("updated_at")

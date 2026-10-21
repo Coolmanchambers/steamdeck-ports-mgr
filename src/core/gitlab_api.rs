@@ -72,7 +72,11 @@ pub fn latest_installable_release(project_path: &str, token: Option<&str>, prefe
 }
 
 pub fn fetch_latest_tag_and_date(project_path: &str, token: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
-    let (release, _) = latest_installable_release(project_path, token, None)?;
+    fetch_latest_tag_and_date_preferring(project_path, token, None)
+}
+
+pub fn fetch_latest_tag_and_date_preferring(project_path: &str, token: Option<&str>, preferred: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
+    let (release, _) = latest_installable_release(project_path, token, preferred)?;
     let latest_tag = release.get("tag_name").and_then(Value::as_str).unwrap_or("").to_string();
     let latest_date = release
         .get("released_at")
