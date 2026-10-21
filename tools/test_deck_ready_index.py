@@ -73,10 +73,33 @@ class Misc(unittest.TestCase):
 
 
 class Retry(unittest.TestCase):
-    def test_honors_try_again_delay(self):
+    def test_retries_when_the_window_opens(self):
         text = 'gh: try again in 37.303766205s (HTTP 429)\n{"message":"try again in 37.303766205s"}'
-        self.assertEqual(d.retry_wait(text, 0), 42)
-        self.assertEqual(d.retry_wait(text, 2), 62)
+        for attempt in (0, 5):
+            self.assertTrue(38 <= d.retry_wait(text, attempt) <= 40)
+
+    def test_wait_is_capped_and_bad_numbers_do_not_crash(self):
+        self.assertEqual(d.retry_wait("try again in 3600s (HTTP 429)", 0), d.MAX_WAIT)
+        self.assertEqual(d.retry_wait("try again in . s (HTTP 429)", 0), 65)
+
+    def test_failed_search_falls_back_to_previous_list(self):
+        old = [{"id": "github:a/b", "host": "github", "repo": "A/b", "sources": ["catalog", "recomp_json"]},
+               {"id": "github:c/d", "host": "github", "repo": "c/d", "sources": ["topic:decomp"]},
+               {"id": "github:e/f", "host": "github", "repo": "e/f", "sources": ["recomp_json"],
+                "missing_since": "2026-01-01"}]
+        real, real_log = d.search_all, d.log
+        d.search_all = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("HTTP 429"))
+        d.log = lambda msg: None
+        try:
+            cands, warnings = {}, []
+            d.collect_recomp_json(cands, old, warnings)
+            self.assertEqual(list(cands), ["github:a/b"])
+            self.assertEqual(cands["github:a/b"]["sources"], ["recomp_json"])
+            self.assertIn("kept 1 from", warnings[0])
+            with self.assertRaises(RuntimeError):
+                d.collect_recomp_json({}, [], [])
+        finally:
+            d.search_all, d.log = real, real_log
 
     def test_rate_limit_without_delay(self):
         self.assertEqual(d.retry_wait("API rate limit exceeded", 0), 65)

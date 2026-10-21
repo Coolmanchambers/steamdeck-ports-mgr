@@ -33,7 +33,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
-| 2026-10-20 | `index/deck-ready.json` | The published Deck-ready list. Created by that workflow on its first run, written only by it |
+| 2026-10-20 | `index/deck-ready.json` | The published Deck-ready list. Seeded by a local run of the same builder, then refreshed only by that workflow |
 
 ## What still comes from upstream at runtime
 
@@ -77,6 +77,11 @@ Notes:
   stays for one more cycle with a `missing_since` date, then is removed.
 - The workflow commits to the branch it was started on (`main` for the weekly schedule) only when the file changed and lists what changed in the run
   summary. The builder refuses to publish a list that shrank by more than 30 percent.
+- **Search limits:** GitHub's search quota for the Actions token is shared with other users, so a
+  search can keep answering "try again later". When one does, that source keeps last week's
+  projects and the run summary shows a warning. An optional repository secret
+  `CODE_SEARCH_TOKEN` (a fine-grained token with read-only access to public repositories) gives
+  the searches their own quota.
 - **Reading the file:** key entries on `id` (names are not unique). `kind: game` is safe to show;
   `likely_game` came from topics alone and may include tools, so show it behind a toggle.
   `catalog_disabled` means upstream's catalog disables that entry. `archived`, `catalog_disabled`

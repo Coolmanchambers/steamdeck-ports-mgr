@@ -33,7 +33,7 @@ jobs:
   build:
     name: Build and commit the index
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -46,6 +46,10 @@ jobs:
       - name: Build the index
         env:
           ALLOW_SHRINK: ${{ inputs.allow_shrink && '--allow-shrink' || '' }}
+          # Optional: a fine-grained token (public repos, read-only) for searches only. The Actions token's
+          # search quota is shared with other callers; without this secret a failed search falls back to
+          # last week's projects for that source and says so in the summary.
+          SEARCH_GH_TOKEN: ${{ secrets.CODE_SEARCH_TOKEN }}
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           status=0

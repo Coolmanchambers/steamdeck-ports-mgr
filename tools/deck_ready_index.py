@@ -23,6 +23,9 @@ Usage (run with python -I):
 
 import argparse
 import json
+import math
+import os
+import random
 import re
 import subprocess
 import sys
@@ -42,6 +45,10 @@ TOPICS = ["recomp", "n64recomp", "static-recompilation", "recompilation", "xenon
           "source-port", "pc-port", "decomp", "decompilation"]
 GRAPHQL_BATCH = 25
 API_ATTEMPTS = 8
+GRAPHQL_RETRIES = 3  # on top of gh_api's own retries
+MAX_WAIT = 120
+SEARCH_BUDGET = 15 * 60  # seconds of retry waits shared by all searches in one run
+SEARCH_DEADLINE = None  # set in main(); past it, a failing search falls back at once
 
 DECK_RE = re.compile(r"steam[-_ .]?deck|(?<![a-z])deck(?![a-z])|steamos", re.I)
 LINUX_RE = re.compile(r"linux|appimage|flatpak|ubuntu|(?<![a-z])lin(?:64)?(?![a-z])|\.deb$|\.rpm$", re.I)
@@ -108,27 +115,30 @@ def log(msg):
 def retry_wait(error_text, attempt):
     """Seconds to wait before retrying a failed call.
 
-    Search rate limits answer HTTP 429 "try again in 37.3s" (the Actions token hits this from the first
-    call), so honor that delay, plus a margin that grows if the limit keeps coming back.
+    Search rate limits answer HTTP 429 "try again in 37.3s". The Actions token's code-search quota is
+    shared with other callers, so retry right when the window opens (plus a little jitter) rather than
+    after it, when others have already used it up again.
     """
-    m = re.search(r"try again in ([\d.]+)\s*s", error_text, re.I)
+    m = re.search(r"try again in (\d+(?:\.\d+)?)\s*s", error_text, re.I)
     if m:
-        return int(float(m.group(1))) + 5 + 10 * attempt
+        return min(math.ceil(float(m.group(1))) + random.uniform(0, 2), MAX_WAIT)
     if re.search(r"rate limit|secondary|abuse|HTTP 429", error_text, re.I):
         return 65
     return 5 * (attempt + 1)
 
 
-def gh_api(args, body=None):
+def gh_api(args, body=None, token=None, deadline=None):
     """Run `gh api ...`, retrying transient failures and rate limits. Returns parsed JSON.
 
     A GraphQL response with partial errors still exits non-zero but carries data; that is returned
-    so the caller can look at the individual errors.
+    so the caller can look at the individual errors. `token` overrides GH_TOKEN for this call. Past
+    `deadline` (time.monotonic()), a failing call is not retried. Bad credentials are never retried.
     """
+    env = {**os.environ, "GH_TOKEN": token} if token else None
     last = ""
     for attempt in range(API_ATTEMPTS):
         proc = subprocess.run(["gh", "api", *args], input=body, capture_output=True, text=True,
-                              encoding="utf-8", timeout=300)
+                              encoding="utf-8", timeout=300, env=env)
         try:
             payload = json.loads(proc.stdout) if proc.stdout.strip() else None
         except json.JSONDecodeError:
@@ -138,8 +148,13 @@ def gh_api(args, body=None):
         if isinstance(payload, dict) and payload.get("data"):
             return payload
         last = (proc.stderr + proc.stdout).strip()[:300]
+        if attempt == API_ATTEMPTS - 1 or re.search(r"HTTP 401|Bad credentials", last):
+            break
         wait = retry_wait(last, attempt)
-        log(f"  gh api failed (attempt {attempt + 1}/{API_ATTEMPTS}), waiting {wait}s: {last[:120]}")
+        if deadline is not None and time.monotonic() + wait > deadline:
+            log(f"  search time budget spent, not retrying: {last[:120]}")
+            break
+        log(f"  gh api failed (attempt {attempt + 1}/{API_ATTEMPTS}), waiting {wait:.0f}s: {last[:120]}")
         time.sleep(wait)
     raise RuntimeError(f"gh api {' '.join(args[:3])} kept failing: {last}")
 
@@ -169,6 +184,10 @@ def add(cands, key, **fields):
             entry[k] = v
 
 
+def is_url(v):
+    return isinstance(v, str) and re.match(r"https?://", v) is not None
+
+
 def collect_catalog(cands, catalog_path):
     data = json.loads(Path(catalog_path).read_text(encoding="utf-8-sig"))
     for p in data["ports"]:
@@ -179,15 +198,12 @@ def collect_catalog(cands, catalog_path):
         folder = p.get("folder") or p.get("-folder")
         disabled = not isinstance(p.get("name"), str) or not isinstance(p.get("folder"), str)
         src = p.get("source")
-        def is_url(v):
-            return isinstance(v, str) and re.match(r"https?://", v) is not None
-
         linux_url = src.get("linux") if isinstance(src, dict) and is_url(src.get("linux")) else None
         if isinstance(src, dict):
             url = linux_url or next((v for v in src.values() if is_url(v)), None)
         else:
             url = src
-        if not isinstance(url, str) or not re.match(r"https?://", url):
+        if not is_url(url):
             url = None  # placeholders such as "??" are not sources
         site = p.get("website")
         meta = {"name": name, "catalog_folder": folder, "catalog_disabled": disabled, "catalog_tags": tags,
@@ -204,17 +220,20 @@ def collect_catalog(cands, catalog_path):
             add(cands, "catalog:" + (folder or name or "?").lower(), host="none", **meta)
 
 
-def search_pages(query, kind, delay, sort=None):
-    """Yield every result item of a GitHub search, page by page (the API caps at 1000).
+def search_all(query, kind, delay, sort=None):
+    """Every result item of a GitHub search, all pages (the API caps at 1000). Raises on failure.
 
     Repository searches are sorted by stars so that a topic past the 1000 cap loses its least-starred
-    tail instead of reshuffling week to week.
+    tail instead of reshuffling week to week. SEARCH_GH_TOKEN, when set, is used for searches only:
+    the Actions token shares its search quota with other callers.
     """
+    token = os.environ.get("SEARCH_GH_TOKEN") or None
     extra = ["-f", f"sort={sort}", "-f", "order=desc"] if sort else []
+    out = []
     for page in range(1, 11):
         for attempt in range(3):
             res = gh_api(["-X", "GET", f"search/{kind}", "-f", f"q={query}", "-f", "per_page=100",
-                          "-f", f"page={page}", *extra])
+                          "-f", f"page={page}", *extra], token=token, deadline=SEARCH_DEADLINE)
             if not res.get("incomplete_results"):
                 break
             log(f"  incomplete search results, retrying page {page}")
@@ -222,17 +241,49 @@ def search_pages(query, kind, delay, sort=None):
         else:
             raise RuntimeError(f"search {kind} {query!r} page {page} stayed incomplete")
         items = res.get("items", [])
-        yield from items
+        out.extend(items)
         if page == 10 and len(items) == 100:
             log(f"::warning::search {query!r} hit GitHub's 1000 result cap; the tail is cut")
         if len(items) < 100:
-            return
+            return out
         time.sleep(delay)
+    return out
 
 
-def collect_recomp_json(cands):
+def seed_from_previous(cands, old_projects, source):
+    """Fall back to last run's projects for a source whose search failed. Returns how many were kept."""
+    n = 0
+    for p in old_projects:
+        if "missing_since" in p:  # already off the list; a failed search must not revive it
+            continue
+        if p.get("host") == "github" and p.get("repo") and source in (p.get("sources") or []):
+            add(cands, "github:" + p["repo"].lower(), host="github", repo=p["repo"], sources=[source])
+            n += 1
+    return n
+
+
+def search_source(cands, old_projects, warnings, source, query, kind, delay, sort=None):
+    """Run one search source. A search that keeps failing falls back to the previous list for that source
+    (with a warning) instead of failing the run; with no previous list it fails the run."""
+    try:
+        items = search_all(query, kind, delay, sort)
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        if not old_projects:
+            raise
+        kept = seed_from_previous(cands, old_projects, source)
+        msg = f"{source}: search failed ({str(e)[:160]}); kept {kept} from the previous list"
+        log(f"::warning::{msg}")
+        warnings.append(msg)
+        return None
+    return items
+
+
+def collect_recomp_json(cands, old_projects, warnings):
+    items = search_source(cands, old_projects, warnings, "recomp_json", "filename:.recomp.json", "code", 7)
+    if items is None:
+        return
     found = 0
-    for it in search_pages("filename:.recomp.json", "code", 7):
+    for it in items:
         if it.get("path") != ".recomp.json":
             continue
         repo = it["repository"]["full_name"]
@@ -243,16 +294,17 @@ def collect_recomp_json(cands):
         raise RuntimeError("code search found no .recomp.json files; refusing to continue")
 
 
-def collect_topics(cands):
+def collect_topics(cands, old_projects, warnings):
     for topic in TOPICS:
-        n = 0
-        for it in search_pages(f"topic:{topic} fork:false", "repositories", 2.5, sort="stars"):
-            add(cands, "github:" + it["full_name"].lower(), host="github", repo=it["full_name"],
-                sources=[f"topic:{topic}"])
-            n += 1
-        log(f"topic {topic}: {n}")
-        if n == 0:
-            raise RuntimeError(f"topic search for {topic} returned nothing; refusing to continue")
+        items = search_source(cands, old_projects, warnings, f"topic:{topic}", f"topic:{topic} fork:false",
+                              "repositories", 2.5, sort="stars")
+        if items is not None:
+            for it in items:
+                add(cands, "github:" + it["full_name"].lower(), host="github", repo=it["full_name"],
+                    sources=[f"topic:{topic}"])
+            log(f"topic {topic}: {len(items)}")
+            if not items:
+                raise RuntimeError(f"topic search for {topic} returned nothing; refusing to continue")
         time.sleep(2.5)
 
 
@@ -280,7 +332,7 @@ def graphql_batch(batch):
         owner, name = repo.split("/", 1)
         parts.append(f"r{j}: repository(owner: {json.dumps(owner)}, name: {json.dumps(name)}) {{{REPO_FIELDS}}}")
     query = "query {\n" + "\n".join(parts) + "\n rateLimit { remaining cost } }"
-    for attempt in range(API_ATTEMPTS):
+    for attempt in range(GRAPHQL_RETRIES):
         res = gh_api(["graphql", "--input", "-"], body=json.dumps({"query": query}))
         data = res.get("data") or {}
         errors = {}
@@ -304,7 +356,7 @@ def graphql_batch(batch):
         if ok:
             log(f"  rate remaining: {(data.get('rateLimit') or {}).get('remaining')}")
             return out
-        log(f"  graphql batch incomplete (attempt {attempt + 1}/{API_ATTEMPTS}): "
+        log(f"  graphql batch incomplete (attempt {attempt + 1}/{GRAPHQL_RETRIES}): "
             f"{json.dumps(res.get('errors', []))[:200]}")
         time.sleep(10 * (attempt + 1))
     raise RuntimeError("graphql batch kept returning incomplete data")
@@ -540,7 +592,7 @@ def merge_with_previous(new_ready, old_projects, today, grace_days=GRACE_DAYS):
     return result, changes
 
 
-def render_summary(changes, total, active):
+def render_summary(changes, total, active, warnings=()):
     lines = ["## Deck-ready index", "", f"{active} projects on the list, {total - active} no longer found "
              f"(kept one cycle), {total} entries in the file.", ""]
     sections = [("Added", "added"), ("Changed", "changed"), ("Back again", "revived"),
@@ -562,6 +614,10 @@ def render_summary(changes, total, active):
                 lines.append(f"- {it['name']} (`{it.get('repo') or it['id']}`)")
         if len(items) > SUMMARY_LIST_LIMIT:
             lines.append(f"- and {len(items) - SUMMARY_LIST_LIMIT} more")
+        lines.append("")
+    if warnings:
+        lines.append("### Warnings")
+        lines.extend(f"- {w}" for w in warnings)
         lines.append("")
     if not any_change:
         lines.append("No changes since the committed list.")
@@ -597,8 +653,11 @@ def main():
 
     cands = {}
     collect_catalog(cands, args.catalog)
-    collect_recomp_json(cands)
-    collect_topics(cands)
+    global SEARCH_DEADLINE
+    SEARCH_DEADLINE = time.monotonic() + SEARCH_BUDGET
+    warnings = []
+    collect_recomp_json(cands, old_projects, warnings)
+    collect_topics(cands, old_projects, warnings)
     log(f"candidates: {len(cands)}")
 
     gh = fetch_github(sorted({c["repo"] for c in cands.values() if c.get("host") == "github"}),
@@ -610,10 +669,13 @@ def main():
     active = sum(1 for p in projects if "missing_since" not in p)
     old_active = sum(1 for p in old_projects if "missing_since" not in p)
     log(f"on the list: {active} (previous {old_active})")
-    summary = render_summary(changes, len(projects), active)
+    summary = render_summary(changes, len(projects), active, warnings)
     print(summary)
     if args.summary:
         Path(args.summary).write_text(summary, encoding="utf-8")
+    if len(warnings) == 1 + len(TOPICS):
+        raise SystemExit("::error::every search failed and fell back to the previous list; the index would "
+                         "freeze. Check the search token and GitHub's status.")
     if old_active >= 50 and active < old_active * MIN_KEPT_RATIO and not args.allow_shrink:
         raise SystemExit(f"list shrank from {old_active} to {active}; a source probably failed. "
                          "Check the logs, then rerun with --allow-shrink if the drop is real.")
