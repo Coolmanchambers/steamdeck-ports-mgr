@@ -179,8 +179,9 @@ fn status_notifier_watcher_running() -> Option<bool> {
         .status()
         .ok()?;
     match status.code() {
-        // 124: timed out, 126/127: busctl missing or not runnable. None of those says "no tray".
-        Some(124 | 126 | 127) | None => None,
+        // 124: timed out, 125: timeout itself failed, 126/127: busctl missing or not runnable.
+        // None of those says "no tray".
+        Some(124..=127) | None => None,
         Some(code) => Some(code == 0),
     }
 }

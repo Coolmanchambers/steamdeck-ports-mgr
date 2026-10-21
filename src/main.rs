@@ -420,7 +420,11 @@ fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRout
     tray.on_quit_requested(|| {
         let _ = slint::quit_event_loop();
     });
-    let _ = tray.show();
+    if let Err(e) = tray.show() {
+        // Not seen with Slint 1.18 (a failed tray only logs), but Close must not hide into nothing.
+        eprintln!("couldn't show the tray icon ({e}); closing the window quits");
+        *app.tray.borrow_mut() = None;
+    }
 }
 
 #[cfg(test)]
