@@ -112,10 +112,15 @@ jobs:
   # Upstream also ships for Windows, and the fork edits a few shared files (windows_chrome.rs,
   # main.rs). This proves those edits still build and their tests pass there. It does not gate the
   # release: the Deck build is the product, so a Windows-only break shows red here and gets fixed
-  # without holding back a Linux release.
+  # without holding back a Linux release (the run still shows red on main; there is no required
+  # check). Skipped when upstream-sync calls this file (inputs.ref set), so a Windows hiccup can't
+  # turn a catalog-only sync into a PR. Synced code still gets it once it reaches main, on the next
+  # push made with a user's credentials (pushes made with GITHUB_TOKEN don't trigger CI).
   windows:
     name: Windows tests (upstream's other platform)
+    if: ${{ !inputs.ref }}
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:

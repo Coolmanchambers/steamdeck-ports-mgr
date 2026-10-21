@@ -9,6 +9,7 @@ name: Upstream sync
 #   it are not overwritten. Without an open PR the branch is rebuilt, so a failed PR gets retried.
 # - PRs need Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
 # - Pushes and PRs made with GITHUB_TOKEN do not trigger CI, so the test result lives in the PR body and run.
+# - The test phase runs ci.yml's Linux job only (its Windows job skips when called from here).
 
 on:
   schedule:

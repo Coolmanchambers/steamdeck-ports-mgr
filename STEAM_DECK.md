@@ -3,7 +3,7 @@
 This fork is for testing and validation. For everyday use, install the original
 [Ports Launcher](https://github.com/Nyaldee/Ports-Launcher) by Nyaldee.
 
-Every change that passes CI on `main` is published as the
+Every change that passes the Linux CI job on `main` is published as the
 [rolling release](https://github.com/Coolmanchambers/steamdeck-ports-mgr/releases/latest). No GitHub
 account is needed to download it.
 
