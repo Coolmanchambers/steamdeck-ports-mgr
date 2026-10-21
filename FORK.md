@@ -88,7 +88,8 @@ Files added by this fork:
 - **Artwork:** for each shortcut written, the catalog portrait and icon the app has cached
   (`cache/<folder>.png`, `cache/<folder>_icon.png`, fetched in the background when the screen opens) go
   through `art::grid::write_art` into `config/grid/` before the write, and the icon path is stored on
-  the shortcut. Art the user chose is never replaced (the writer's rule). Not done: art for a shortcut
+  the shortcut when it has no icon of its own (an existing icon is kept). Art the user chose is never
+  replaced (the writer's rule). Not done: art for a shortcut
   that is already in Steam, wide/hero/logo art.
 - **Not done:** the collection, Game Mode queueing, repointing a moved port's shortcut on its own,
   Windows (no `/proc` check: it refuses).

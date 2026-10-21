@@ -314,7 +314,7 @@ pub struct ApplyOutcome {
 /// one line per port that needs mentioning. Sets `WantedShortcut::icon` when an icon of ours is in
 /// place. Never overwrites art the user chose (the writer decides), never touches `shortcuts.vdf`.
 /// A port with nothing cached yet gets a note, not an error: the images are fetched in the background
-/// when the screen opens, so a second try a minute later has them.
+/// when the screen opens. Only a shortcut with no icon of its own gets ours; an existing one is kept.
 fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], taken_ids: &[u32], wanted: &mut [WantedShortcut]) -> Vec<String> {
     let Some(cache_dir) = &screen.cache_dir else { return Vec::new() };
     if !grid_dir.is_absolute() {
@@ -537,6 +537,7 @@ pub struct AdoptDone {
 /// Adopts the selected candidates one by one; a failure is reported and the others still go ahead.
 pub fn adopt_selected(screen: &AdoptScreen, catalog: &[Port], library_dir: &Path, local_json: &Path) -> AdoptDone {
     let mut adopted = Vec::new();
+    let mut failures = Vec::new();
     let mut lines = Vec::new();
     for candidate in screen.selected_candidates() {
         let Some(port) = catalog.iter().find(|p| p.key() == candidate.port_key) else { continue };
@@ -547,12 +548,19 @@ pub fn adopt_selected(screen: &AdoptScreen, catalog: &[Port], library_dir: &Path
                     registered.user_managed = true;
                     adopted.push(registered);
                 }
-                lines.push(format!("Adopted {}", candidate.port_name));
+                lines.push(format!("  {}", candidate.port_name));
             }
-            Err(e) => lines.push(format!("{}: {e}", candidate.port_name)),
+            Err(e) => failures.push(format!("{}: {e}", candidate.port_name)),
         }
     }
-    let mut text = listed(&lines);
+    // Failures first and never cut; the successes are capped like every other list.
+    let mut text = failures.join("\n");
+    if !lines.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&format!("Adopted {}:\n{}", lines.len(), listed(&lines)));
+    }
     if !adopted.is_empty() {
         text.push_str("\n\nThey now show as installed.\nAdopted ports are not checked for updates.");
     }
@@ -960,7 +968,7 @@ mod tests {
         let done = adopt_selected(&screen, &catalog(), &library, &local);
         assert_eq!(done.adopted.len(), 1);
         assert!(done.adopted[0].user_managed);
-        assert!(done.text.contains("Adopted Ship of Harkinian"));
+        assert!(done.text.contains("Adopted 1:\n  Ship of Harkinian"), "{}", done.text);
         assert!(library.join("SoH").join("soh.appimage").exists());
         assert!(home.join("Applications").join("SoH").join("soh.appimage").exists());
 
@@ -994,7 +1002,7 @@ mod tests {
         let done = adopt_selected(&screen_after, &catalog(), &library, &home.join("ports.local.json"));
         assert_eq!(done.adopted.len(), 1);
         assert!(done.text.contains("Dusklight: ") && done.text.contains("already exists"), "{}", done.text);
-        assert!(done.text.contains("Adopted Ship of Harkinian"));
+        assert!(done.text.contains("Adopted 1:\n  Ship of Harkinian"), "{}", done.text);
         let _ = fs::remove_dir_all(home);
     }
 

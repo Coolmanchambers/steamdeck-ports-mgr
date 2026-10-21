@@ -86,7 +86,7 @@ Choosing a row switches it on or off; **Review N changes...** shows the list and
   choose another). If Steam does not say which signed in last, the first row asks; the choice is
   remembered in `fork-settings.json`.
 - **Artwork:** the catalog portrait and icon are placed in `userdata/<id>/config/grid/` for each
-  shortcut written, under Steam's file names, and the icon is set on the shortcut. Art you chose
+  shortcut written, under Steam's file names, and the icon is set when the shortcut has none. Art you chose
   yourself is never replaced. The images are fetched when the screen opens, so give a freshly opened
   screen a minute before applying. If the result says "no cached artwork yet" for a port, its
   shortcut was still written without art, and a later run does not add art to a shortcut that is
