@@ -1,2 +1,3 @@
 *.bat -text
 extra/** linguist-vendored
+*.sh text eol=lf

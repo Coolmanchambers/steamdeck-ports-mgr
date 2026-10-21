@@ -109,6 +109,28 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  # Upstream also ships for Windows, and the fork edits a few shared files (windows_chrome.rs,
+  # main.rs). This proves those edits still build and their tests pass there. It does not gate the
+  # release: the Deck build is the product, so a Windows-only break shows red here and gets fixed
+  # without holding back a Linux release.
+  windows:
+    name: Windows tests (upstream's other platform)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ !inputs.ref }}
+
+      - name: Tests
+        run: cargo test --locked
+
   release:
     name: Publish the rolling release
     needs: linux

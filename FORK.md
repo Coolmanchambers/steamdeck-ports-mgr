@@ -30,6 +30,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/platform_resolve.rs` | A leading `~` in a path expands to the home folder (`HOME`, `USERPROFILE` on Windows); 5 tests |
 | 2026-10-21 | `src/core/installer.rs` | After an install, older AppImage files of the same product are removed; `follow_favorite_exe`; `apply_archive` backs up saves before extracting; tests |
 | 2026-10-21 | `src/core/save_backup.rs` | New `backup_before_update` (zip of the save folders under `Update Backups`), reusing the existing copy and zip helpers |
+| 2026-10-21 | `.gitattributes` | `*.sh text eol=lf`, so shell scripts keep Unix line endings in a Windows checkout too (a CRLF `#!/bin/sh` line fails to run on Linux). The repository's stored files are unchanged |
 | 2026-10-21 | `src/app/events.rs` | After an install finishes, a favorite executable that was an AppImage follows the new file (8 lines); a failed install no longer leaves the Play-launch pending and launches the installed game (6 lines) |
 
 Files added by this fork:
@@ -37,7 +38,7 @@ Files added by this fork:
 | Date | File | Purpose |
 |---|---|---|
 | 2026-10-20 | `.gitignore` | Keeps build output, game files, keys and firmware out of the repo |
-| 2026-10-20 | `.github/workflows/ci.yml` | Builds the Linux x86_64 release and runs the tests on every push; publishes the rolling release from `main` |
+| 2026-10-20 | `.github/workflows/ci.yml` | Builds the Linux x86_64 release and runs the tests on every push; publishes the rolling release from `main`. Since 2026-10-21 also builds and runs the tests on Windows (upstream's other platform), without gating the release |
 | 2026-10-20 | `.github/workflows/upstream-sync.yml` | Daily merge of upstream changes (see below) |
 | 2026-10-20 | `FORK.md` | This file |
 | 2026-10-21 | `src/core/contract_tests.rs` | Test-only module that pins the upstream behavior our features rely on (asset choice for our ports' real release names, update decision with a recycled tag, local-entry merge, `state.json` keys) |
