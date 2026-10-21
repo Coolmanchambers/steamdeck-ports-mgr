@@ -2,6 +2,8 @@ pub mod asset_select;
 pub mod catalog_sync;
 pub mod clock;
 pub mod config;
+#[cfg(test)]
+mod contract_tests;
 pub mod discord_presence;
 pub mod executable_detect;
 pub mod files;
