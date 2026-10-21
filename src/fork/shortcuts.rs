@@ -39,7 +39,9 @@ impl fmt::Display for ShortcutError {
 
 impl std::error::Error for ShortcutError {}
 
-/// A read-only copy of one entry. `exe` and `start_dir` are as stored, quotes included.
+/// A read-only copy of one entry, for display and matching. Text is converted lossily, so a value that
+/// is not valid UTF-8 shows replacement characters; do not write these strings back with `update`.
+/// `exe` and `start_dir` are as stored, quotes included; `icon` is a plain path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shortcut {
     pub key: String,
@@ -63,12 +65,14 @@ impl Shortcut {
     }
 }
 
-/// Paths are plain here; the library adds the quotes Steam stores.
+/// `exe` and `start_dir` are plain paths here; the library adds the quotes Steam stores for them.
 #[derive(Debug, Clone, Default)]
 pub struct NewShortcut {
     pub app_name: String,
     pub exe: String,
     pub start_dir: String,
+    /// Plain path of an icon file, stored unquoted. Steam only shows an icon when this is set; a file
+    /// in `config/grid/` alone is not enough.
     pub icon: Option<String>,
     pub launch_options: String,
     pub tags: Vec<String>,
@@ -86,8 +90,8 @@ pub enum Target<'a> {
     AppId(u32),
 }
 
-/// Fields to change; `None` leaves the field alone. Paths are plain (quotes are added). An empty
-/// `icon` clears it. The name is not here on purpose: renaming would change what Steam derives for an
+/// Fields to change; `None` leaves the field alone. `exe` and `start_dir` are plain paths (quotes are
+/// added); `icon` is stored as a plain path, and an empty one clears it. The name is not here on purpose: renaming would change what Steam derives for an
 /// entry without a stored ID, and Steam Input layouts follow the name.
 #[derive(Debug, Clone, Default)]
 pub struct ShortcutUpdate {
@@ -97,7 +101,8 @@ pub struct ShortcutUpdate {
     pub icon: Option<String>,
     /// For an entry with no stored `appid`: compute what Steam derives from its current exe and name
     /// and store it before changing anything. Unverified against a real Steam (see `app_id`), so off
-    /// by default.
+    /// by default; a wrong guess orphans the art and play time tied to the real ID. The safer route is
+    /// to open and quit Steam once (it stores the ID it uses on exit) and load the file again.
     pub derive_missing_app_id: bool,
 }
 
@@ -117,6 +122,15 @@ pub fn quote_path(path: &str) -> Result<String, ShortcutError> {
         return Err(ShortcutError::InvalidValue { field: "path", reason: "contains a double quote".into() });
     }
     Ok(format!("\"{path}\""))
+}
+
+/// A path stored without quotes (the `icon` field). Only values that would corrupt the file are refused.
+fn plain_path(path: &str) -> Result<String, ShortcutError> {
+    check_text("path", path)?;
+    if path.is_empty() {
+        return Err(ShortcutError::InvalidValue { field: "path", reason: "empty".into() });
+    }
+    Ok(path.to_string())
 }
 
 pub fn unquote(stored: &str) -> &str {
@@ -191,13 +205,15 @@ pub fn list(doc: &Document) -> Vec<Shortcut> {
     shortcuts_entries(doc).map(|entries| entries.iter().filter_map(read_shortcut).collect()).unwrap_or_default()
 }
 
-fn next_key(entries: &[Entry]) -> String {
-    let next = entries
-        .iter()
-        .filter_map(|e| std::str::from_utf8(&e.key).ok()?.parse::<u64>().ok())
-        .max()
-        .map_or(0, |max| max + 1);
-    next.to_string()
+fn next_key(entries: &[Entry]) -> Result<String, ShortcutError> {
+    let max = entries.iter().filter_map(|e| std::str::from_utf8(&e.key).ok()?.parse::<u64>().ok()).max();
+    let next = match max {
+        None => 0,
+        Some(max) => max
+            .checked_add(1)
+            .ok_or_else(|| ShortcutError::BadField { field: "shortcuts", reason: "no free numeric key".into() })?,
+    };
+    Ok(next.to_string())
 }
 
 pub fn add(doc: &mut Document, new: &NewShortcut) -> Result<Added, ShortcutError> {
@@ -209,7 +225,7 @@ pub fn add(doc: &mut Document, new: &NewShortcut) -> Result<Added, ShortcutError
     let exe = quote_path(&new.exe)?;
     let start_dir = quote_path(&new.start_dir)?;
     let icon = match &new.icon {
-        Some(path) => quote_path(path)?,
+        Some(path) => plain_path(path)?,
         None => String::new(),
     };
     for tag in &new.tags {
@@ -222,7 +238,7 @@ pub fn add(doc: &mut Document, new: &NewShortcut) -> Result<Added, ShortcutError
     }
 
     let tags = new.tags.iter().enumerate().map(|(i, t)| Entry::string(&i.to_string(), t)).collect();
-    // Same field order Steam and Steam ROM Manager write.
+    // The field order Steam itself writes.
     let fields = vec![
         Entry::int("appid", app_id),
         Entry::string("AppName", &new.app_name),
@@ -251,7 +267,7 @@ pub fn add(doc: &mut Document, new: &NewShortcut) -> Result<Added, ShortcutError
     }
     doc.terminated = true;
     let entries = shortcuts_entries_mut(doc).expect("section exists");
-    let key = next_key(entries);
+    let key = next_key(entries)?;
     entries.push(Entry::new(&key, Value::Object(fields)));
     Ok(Added { key, app_id })
 }
@@ -283,6 +299,7 @@ fn ensure_string_field(fields: &[Entry], name: &'static str) -> Result<(), Short
     }
 }
 
+/// Sets the first field with this name (Steam reads the first when a key is duplicated).
 fn set_text(fields: &mut Vec<Entry>, name: &'static str, value: String) -> Result<(), ShortcutError> {
     match fields.iter_mut().find(|e| e.key_matches(name)) {
         Some(entry) => match &mut entry.value {
@@ -301,7 +318,7 @@ pub fn update(doc: &mut Document, target: Target, change: &ShortcutUpdate) -> Re
     let start_dir = change.start_dir.as_deref().map(quote_path).transpose()?;
     let icon = match change.icon.as_deref() {
         Some("") => Some(String::new()),
-        Some(path) => Some(quote_path(path)?),
+        Some(path) => Some(plain_path(path)?),
         None => None,
     };
     if let Some(options) = &change.launch_options {
@@ -460,6 +477,23 @@ mod tests {
     }
 
     #[test]
+    fn add_refuses_instead_of_overflowing_the_key_counter() {
+        let bytes = file_of(&[object("18446744073709551615", &[int_field("appid", 3)])]);
+        let mut doc = parse(&bytes);
+        assert!(matches!(add(&mut doc, &new_port()), Err(ShortcutError::BadField { field: "shortcuts", .. })));
+        assert_eq!(doc.encode(), bytes);
+    }
+
+    #[test]
+    fn add_stores_the_icon_as_a_plain_path() {
+        let mut doc = parse(EMPTY_FILE);
+        let mut port = new_port();
+        port.icon = Some("/home/deck/.steam/grid/77_icon.png".into());
+        add(&mut doc, &port).unwrap();
+        assert_eq!(list(&doc)[0].icon, "/home/deck/.steam/grid/77_icon.png");
+    }
+
+    #[test]
     fn add_creates_the_section_when_the_file_has_none() {
         let mut doc = parse(&[]);
         add(&mut doc, &new_port()).unwrap();
@@ -546,7 +580,7 @@ mod tests {
         .unwrap();
         let s = &list(&doc)[1];
         assert_eq!(s.launch_options, "--fullscreen");
-        assert_eq!(s.icon, "\"/grid/1_icon.png\"");
+        assert_eq!(s.icon, "/grid/1_icon.png");
         update(&mut doc, Target::Key("1"), &ShortcutUpdate { icon: Some(String::new()), ..Default::default() }).unwrap();
         assert_eq!(list(&doc)[1].icon, "");
     }

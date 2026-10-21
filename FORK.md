@@ -22,6 +22,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-20 | `src/ui/linux_chrome.rs` | `gamepad_input_allowed` replaces `foreground_window_belongs_to_us`; when X11 can't say who is in front (native Wayland, gamescope, an active window with no PID) it allows input if any of our windows has focus. `tray_host_available` returns false under gamescope, else asks `busctl` (capped by `timeout 3`) for a StatusNotifier host; with no answer, only a named desktop gets a tray. Tests for each decision |
 | 2026-10-20 | `src/ui/windows_chrome.rs` | Same two functions, keeping upstream's Windows behavior |
 | 2026-10-20 | `src/core/gamepad.rs` | Reads every connected controller and merges their state, instead of only the first; tests |
+| 2026-10-21 | `src/main.rs` | One line, `mod fork;`, to include the fork's own modules (`src/fork/`) |
 
 Files added by this fork:
 
@@ -40,6 +41,27 @@ Files added by this fork:
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
 | 2026-10-20 | `index/deck-ready.json` | The published Deck-ready list. Seeded by a local run of the same builder, then refreshed only by that workflow |
+| 2026-10-21 | `src/fork/mod.rs` | Module root for code this fork adds (the Steam shortcuts library, the `src/fork/` files). Nothing in the app calls it yet |
+| 2026-10-21 | `src/fork/vdf.rs` | Lossless codec for Steam's binary KeyValues format (`shortcuts.vdf`) |
+| 2026-10-21 | `src/fork/app_id.rs` | CRC-32, non-Steam shortcut app IDs, 64-bit grid IDs, signed/unsigned forms |
+| 2026-10-21 | `src/fork/shortcuts.rs` | List, add and update-in-place (app ID kept) shortcuts in a parsed file |
+| 2026-10-21 | `src/fork/store.rs` | Load and save `shortcuts.vdf`: refuses while Steam runs, backup first, atomic write, read-back check |
+| 2026-10-21 | `src/fork/artwork.rs` | Artwork file names and placement in `config/grid/`, plus Steam folder layout helpers |
+
+## Steam shortcuts library (`src/fork/`)
+
+Library only; no UI and no caller yet. Rules it enforces so a later feature cannot break Steam:
+
+- Saving `shortcuts.vdf` is refused while a Steam process (`steam`, `steamwebhelper`) exists, and when
+  that check cannot run. Steam rewrites the file when it exits, so a write while it runs is lost.
+- A timestamped backup (`shortcuts.vdf.bak-<UTC stamp>`) is written and verified before any write.
+- The write goes to a temp file in the same folder, is synced, then renamed over the original, and the
+  result is read back. A failure leaves the original in place.
+- Saving is refused if the file changed on disk since it was loaded.
+- An entry's stored app ID is never recomputed. The CRC formula (the one Steam ROM Manager uses) is only
+  used for new entries. Newer Steam builds may assign other IDs to shortcuts added in the Steam UI.
+- Code in `src/fork/` uses English names and module docs; upstream's own tests are in French.
+- Backups (`shortcuts.vdf.bak-<local time>`) are never pruned by the library; a later UI stage decides retention.
 
 ## What still comes from upstream at runtime
 

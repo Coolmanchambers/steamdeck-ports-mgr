@@ -5,8 +5,9 @@
 //! 1. refuses while a Steam process exists (or when the check itself fails),
 //! 2. refuses if the file changed on disk since it was loaded,
 //! 3. writes a timestamped backup of the current file and checks the copy,
-//! 4. writes a temp file in the same folder, syncs it and renames it over the original,
-//! 5. reads the result back and compares it.
+//! 4. writes a temp file in the same folder and syncs it,
+//! 5. checks for Steam again, then renames the temp file over the original,
+//! 6. reads the result back and compares it.
 //! A failure at any step leaves the original file as it was.
 
 use super::vdf::{Document, ParseError};
@@ -18,7 +19,7 @@ use std::path::{Path, PathBuf};
 const TEMP_SUFFIX: &str = ".dpm-tmp";
 const MAX_BACKUP_COLLISIONS: u32 = 1000;
 /// Process names (`/proc/<pid>/comm`) that mean Steam is running.
-const STEAM_PROCESS_NAMES: [&str; 2] = ["steam", "steamwebhelper"];
+const STEAM_PROCESS_NAMES: [&str; 3] = ["steam", "steam.sh", "steamwebhelper"];
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -68,18 +69,41 @@ impl<F: Fn() -> io::Result<Vec<String>>> SteamProcessCheck for F {
     }
 }
 
-/// The real check: scans `/proc` on Linux. Elsewhere it fails, which refuses the write.
-pub struct SystemSteamCheck;
+/// The real check: scans `/proc`. Where there is no `/proc` (Windows) the scan fails, which refuses
+/// the write. It cannot see Steam from inside a sandbox with its own process namespace, so this app
+/// must not be packaged that way without another check.
+pub struct SystemSteamCheck {
+    proc_root: PathBuf,
+}
 
-impl SteamProcessCheck for SystemSteamCheck {
-    #[cfg(target_os = "linux")]
-    fn running_steam_processes(&self) -> io::Result<Vec<String>> {
-        steam_processes_in(Path::new("/proc"))
+impl SystemSteamCheck {
+    pub fn new() -> Self {
+        SystemSteamCheck { proc_root: PathBuf::from("/proc") }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    /// For tests: scan a `/proc`-shaped folder instead of the machine's.
+    pub fn with_proc_root(proc_root: PathBuf) -> Self {
+        SystemSteamCheck { proc_root }
+    }
+}
+
+impl Default for SystemSteamCheck {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SteamProcessCheck for SystemSteamCheck {
     fn running_steam_processes(&self) -> io::Result<Vec<String>> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "Steam process check is only implemented for Linux"))
+        steam_processes_in(&self.proc_root)
+    }
+}
+
+fn check_steam(steam: &dyn SteamProcessCheck) -> Result<(), StoreError> {
+    match steam.running_steam_processes() {
+        Ok(procs) if procs.is_empty() => Ok(()),
+        Ok(procs) => Err(StoreError::SteamRunning(procs)),
+        Err(e) => Err(StoreError::SteamCheckFailed(e)),
     }
 }
 
@@ -103,9 +127,9 @@ pub fn steam_processes_in(proc_root: &Path) -> io::Result<Vec<String>> {
     Ok(found)
 }
 
-/// UTC time as it appears in backup names.
+/// Local time as it appears in backup names (upstream's save backups use local time too).
 pub fn backup_stamp() -> String {
-    chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
+    chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,24 +165,23 @@ impl ShortcutsFile {
         &self.path
     }
 
-    /// `stamp` names the backup; use [`backup_stamp`] outside tests.
-    pub fn save(&self, steam: &dyn SteamProcessCheck, stamp: &str) -> Result<SaveReport, StoreError> {
+    /// Writes the document if it differs from what was loaded. `stamp` names the backup; use
+    /// [`backup_stamp`] outside tests. After a successful save the file counts as loaded again, so
+    /// further edits and saves on the same value work. A missing parent folder is an error: Steam
+    /// creates `config/` itself, so a missing one means a wrong path.
+    pub fn save(&mut self, steam: &dyn SteamProcessCheck, stamp: &str) -> Result<SaveReport, StoreError> {
         self.save_with(steam, stamp, &|_| Ok(()))
     }
 
     /// `before_rename` runs after the temp file is complete and before it replaces the original;
     /// tests use it to simulate a failure at that point.
     fn save_with(
-        &self,
+        &mut self,
         steam: &dyn SteamProcessCheck,
         stamp: &str,
         before_rename: &dyn Fn(&Path) -> io::Result<()>,
     ) -> Result<SaveReport, StoreError> {
-        match steam.running_steam_processes() {
-            Ok(procs) if procs.is_empty() => {}
-            Ok(procs) => return Err(StoreError::SteamRunning(procs)),
-            Err(e) => return Err(StoreError::SteamCheckFailed(e)),
-        }
+        check_steam(steam)?;
 
         let current = match fs::read(&self.path) {
             Ok(bytes) => Some(bytes),
@@ -169,28 +192,42 @@ impl ShortcutsFile {
             return Err(StoreError::ChangedOnDisk);
         }
 
+        let unchanged = SaveReport { wrote: false, backup: None };
+        if current.as_deref() == Some(self.doc.encode().as_slice()) || (current.is_none() && self.doc == Document::empty()) {
+            return Ok(unchanged);
+        }
+        // Whatever was edited, a file we write always ends with the root's end marker.
+        self.doc.terminated = true;
         let encoded = self.doc.encode();
         if Document::parse(&encoded).as_ref() != Ok(&self.doc) {
             return Err(StoreError::EncodeCheckFailed);
         }
         if current.as_deref() == Some(encoded.as_slice()) {
-            return Ok(SaveReport { wrote: false, backup: None });
+            return Ok(unchanged);
         }
 
+        if let Some(parent) = self.path.parent() {
+            if !parent.is_dir() {
+                return Err(io_err("find folder", parent)(io::Error::new(io::ErrorKind::NotFound, "no such folder")));
+            }
+        }
         let backup = match &current {
             Some(bytes) => Some(write_backup(&self.path, bytes, stamp)?),
             None => None,
         };
 
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(io_err("create folder", parent))?;
-        }
-        write_atomic(&self.path, &encoded, before_rename)?;
+        // Steam can start while the backup and temp file are being written, so look again right
+        // before the rename.
+        write_atomic(&self.path, &encoded, &|temp| {
+            check_steam(steam)?;
+            before_rename(temp).map_err(io_err("finish", temp))
+        })?;
 
         let written = fs::read(&self.path).map_err(io_err("read back", &self.path))?;
         if written != encoded {
             return Err(StoreError::VerifyFailed(self.path.clone()));
         }
+        self.original = Some(encoded);
         Ok(SaveReport { wrote: true, backup })
     }
 }
@@ -219,12 +256,13 @@ fn write_backup(path: &Path, bytes: &[u8], stamp: &str) -> Result<PathBuf, Store
         }
         return Ok(backup);
     }
-    Err(io_err("create backup", path)(io::Error::new(io::ErrorKind::AlreadyExists, "too many backups with this timestamp")))
+    let pattern = sibling(path, &format!(".bak-{stamp}"));
+    Err(io_err("create backup", &pattern)(io::Error::new(io::ErrorKind::AlreadyExists, "too many backups with this timestamp")))
 }
 
 /// Temp file in the same folder, synced, then renamed over `path`. The temp file is removed if
 /// anything fails, and `path` is untouched until the rename.
-fn write_atomic(path: &Path, bytes: &[u8], before_rename: &dyn Fn(&Path) -> io::Result<()>) -> Result<(), StoreError> {
+fn write_atomic(path: &Path, bytes: &[u8], before_rename: &dyn Fn(&Path) -> Result<(), StoreError>) -> Result<(), StoreError> {
     let temp = sibling(path, TEMP_SUFFIX);
     let result = (|| {
         let mut file = File::create(&temp).map_err(io_err("create", &temp))?;
@@ -235,7 +273,7 @@ fn write_atomic(path: &Path, bytes: &[u8], before_rename: &dyn Fn(&Path) -> io::
             // Keep the original's permissions; a failure here is not worth losing the write over.
             let _ = fs::set_permissions(&temp, meta.permissions());
         }
-        before_rename(&temp).map_err(io_err("finish", &temp))?;
+        before_rename(&temp)?;
         fs::rename(&temp, path).map_err(io_err("replace", path))
     })();
     if result.is_err() {
@@ -296,7 +334,7 @@ mod tests {
     fn loading_and_saving_an_unchanged_file_writes_nothing() {
         for (i, bytes) in [plain_file(), odd_file(), EMPTY_FILE.to_vec()].into_iter().enumerate() {
             let (dir, path) = setup(&format!("unchanged{i}"), &bytes);
-            let file = ShortcutsFile::load(&path).unwrap();
+            let mut file = ShortcutsFile::load(&path).unwrap();
             assert_eq!(file.doc.encode(), bytes);
             let report = file.save(&no_steam, "T").unwrap();
             assert_eq!(report, SaveReport { wrote: false, backup: None });
@@ -412,7 +450,7 @@ mod tests {
         let err = file
             .save_with(&no_steam, "T", &|temp| {
                 assert!(temp.exists() && fs::metadata(temp).unwrap().len() > before.len() as u64);
-                Err(io::Error::new(io::ErrorKind::Other, "disk full"))
+                Err(io::Error::other("disk full"))
             })
             .unwrap_err();
         assert!(matches!(err, StoreError::Io { action: "finish", .. }));
@@ -437,12 +475,97 @@ mod tests {
     fn a_missing_file_loads_empty_and_is_created_without_a_backup() {
         let dir = temp_dir("missing");
         let path = dir.join("userdata").join("1").join("config").join("shortcuts.vdf");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut file = ShortcutsFile::load(&path).unwrap();
         assert!(shortcuts::list(&file.doc).is_empty());
         shortcuts::add(&mut file.doc, &port()).unwrap();
         let report = file.save(&no_steam, "T").unwrap();
         assert_eq!(report, SaveReport { wrote: true, backup: None });
         assert_eq!(shortcuts::list(&ShortcutsFile::load(&path).unwrap().doc).len(), 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_missing_folder_is_refused_instead_of_created() {
+        let dir = temp_dir("nofolder");
+        let path = dir.join("userdata").join("1").join("config").join("shortcuts.vdf");
+        let mut file = ShortcutsFile::load(&path).unwrap();
+        shortcuts::add(&mut file.doc, &port()).unwrap();
+        assert!(matches!(file.save(&no_steam, "T"), Err(StoreError::Io { action: "find folder", .. })));
+        assert!(!dir.join("userdata").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_untouched_document_for_a_missing_file_writes_nothing() {
+        let dir = temp_dir("untouched_missing");
+        let path = dir.join("shortcuts.vdf");
+        let mut file = ShortcutsFile::load(&path).unwrap();
+        assert_eq!(file.save(&no_steam, "T").unwrap(), SaveReport { wrote: false, backup: None });
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_second_save_on_the_same_value_works_after_the_first() {
+        let (dir, path) = setup("twice", &plain_file());
+        let mut file = ShortcutsFile::load(&path).unwrap();
+        shortcuts::add(&mut file.doc, &port()).unwrap();
+        assert!(file.save(&no_steam, "A").unwrap().wrote);
+        let mut second = port();
+        second.app_name = "Second".into();
+        shortcuts::add(&mut file.doc, &second).unwrap();
+        let report = file.save(&no_steam, "B").unwrap();
+        assert!(report.wrote);
+        assert_eq!(shortcuts::list(&ShortcutsFile::load(&path).unwrap().doc).len(), 4);
+        // The second backup holds the state after the first save.
+        assert_eq!(shortcuts::list(&ShortcutsFile::load(&report.backup.unwrap()).unwrap().doc).len(), 3);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn steam_starting_after_the_first_check_stops_the_write_before_the_rename() {
+        let before = plain_file();
+        let (dir, path) = setup("late_steam", &before);
+        let mut file = ShortcutsFile::load(&path).unwrap();
+        shortcuts::add(&mut file.doc, &port()).unwrap();
+        let calls = Cell::new(0);
+        let late = || -> io::Result<Vec<String>> {
+            calls.set(calls.get() + 1);
+            Ok(if calls.get() == 1 { vec![] } else { vec!["77 steam".to_string()] })
+        };
+        assert!(matches!(file.save(&late, "T"), Err(StoreError::SteamRunning(_))));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(files_in(&path), ["shortcuts.vdf", "shortcuts.vdf.bak-T"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_file_written_from_an_unterminated_document_ends_with_the_root_end_marker() {
+        use super::super::vdf::{Entry, Value};
+        let (dir, path) = setup("terminate", &[]);
+        let mut file = ShortcutsFile::load(&path).unwrap();
+        assert!(!file.doc.terminated);
+        file.doc.root.push(Entry::new("shortcuts", Value::Object(vec![])));
+        file.save(&no_steam, "T").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), EMPTY_FILE);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_system_check_refuses_a_save_end_to_end_when_its_proc_shows_steam() {
+        let (dir, path) = setup("system_check", &plain_file());
+        let proc = dir.join("proc");
+        fake_proc(&proc, &[("10", "bash"), ("11", "steam")]);
+        let mut file = ShortcutsFile::load(&path).unwrap();
+        shortcuts::add(&mut file.doc, &port()).unwrap();
+        let err = file.save(&SystemSteamCheck::with_proc_root(proc.clone()), "T").unwrap_err();
+        assert!(matches!(&err, StoreError::SteamRunning(p) if p == &["11 steam"]));
+        assert_eq!(fs::read(&path).unwrap(), plain_file());
+
+        fs::remove_dir_all(proc.join("11")).unwrap();
+        assert!(file.save(&SystemSteamCheck::with_proc_root(proc), "T").unwrap().wrote);
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -480,11 +603,11 @@ mod tests {
     #[test]
     fn steam_processes_are_found_by_name_in_a_proc_style_folder() {
         let dir = temp_dir("proc");
-        fake_proc(&dir, &[("1", "systemd"), ("200", "steam"), ("201", "steamwebhelper"), ("300", "steamos-manager"), ("400", "bash")]);
+        fake_proc(&dir, &[("1", "systemd"), ("200", "steam"), ("201", "steamwebhelper"), ("202", "steam.sh"), ("300", "steamos-manager"), ("400", "bash")]);
         fs::create_dir_all(dir.join("self")).unwrap();
         fs::write(dir.join("meminfo"), "x").unwrap();
         fs::create_dir_all(dir.join("500")).unwrap();
-        assert_eq!(steam_processes_in(&dir).unwrap(), ["200 steam", "201 steamwebhelper"]);
+        assert_eq!(steam_processes_in(&dir).unwrap(), ["200 steam", "201 steamwebhelper", "202 steam.sh"]);
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -500,7 +623,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_system_check_can_read_this_machines_proc() {
-        assert!(SystemSteamCheck.running_steam_processes().is_ok());
+        assert!(SystemSteamCheck::new().running_steam_processes().is_ok());
     }
 
     #[test]

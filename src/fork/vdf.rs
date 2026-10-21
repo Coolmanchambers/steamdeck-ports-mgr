@@ -22,6 +22,10 @@ const TAG_UINT64: u8 = 7;
 const TAG_END: u8 = 8;
 const TAG_INT64: u8 = 10;
 
+// Wide strings are read as NUL-terminated UTF-16. Valve's own KeyValues writer uses a length prefix
+// instead, but `shortcuts.vdf` never contains wide strings, so this only decides what an unexpected one
+// does to a file we refuse or round-trip; do not "fix" it without a real sample.
+
 /// Real files nest 3 or 4 deep; the cap only stops a hostile file from overflowing the stack.
 const MAX_DEPTH: usize = 32;
 
@@ -74,8 +78,9 @@ pub struct Document {
 }
 
 impl Document {
+    /// What Steam writes for a user with no shortcuts: an empty `shortcuts` object.
     pub fn empty() -> Self {
-        Document { root: Vec::new(), terminated: true, trailing: Vec::new() }
+        Document { root: vec![Entry::new("shortcuts", Value::Object(Vec::new()))], terminated: true, trailing: Vec::new() }
     }
 
     pub fn parse(data: &[u8]) -> Result<Document, ParseError> {
@@ -171,10 +176,8 @@ fn parse_entries(r: &mut Reader, depth: usize) -> Result<(Vec<Entry>, bool), Par
                 if depth + 1 >= MAX_DEPTH {
                     return Err(ParseError::TooDeep { offset: tag_offset });
                 }
-                let (children, terminated) = parse_entries(r, depth + 1)?;
-                if !terminated {
-                    return Err(ParseError::Truncated { offset: r.pos });
-                }
+                // A child object only returns on its end marker; running out of input is an error.
+                let (children, _) = parse_entries(r, depth + 1)?;
                 Value::Object(children)
             }
             TAG_STRING => Value::String(r.cstring()?),
@@ -348,7 +351,7 @@ mod tests {
         let doc = Document::parse(EMPTY_FILE).unwrap();
         assert_eq!(doc.encode(), EMPTY_FILE);
         assert_eq!(doc, Document { root: vec![Entry::new("shortcuts", Value::Object(vec![]))], terminated: true, trailing: vec![] });
-        assert_eq!(Document::empty().encode(), vec![8]);
+        assert_eq!(Document::empty().encode(), EMPTY_FILE);
     }
 
     #[test]
@@ -388,7 +391,12 @@ mod tests {
     fn every_truncation_is_an_error_or_a_clean_root_cut_never_a_panic() {
         for bytes in [plain_file(), odd_file()] {
             for cut in 0..bytes.len() {
-                let _ = Document::parse(&bytes[..cut]);
+                match Document::parse(&bytes[..cut]) {
+                    Err(_) => {}
+                    // A cut between root entries, or inside the trailing bytes, is still readable and
+                    // must round-trip as cut.
+                    Ok(doc) => assert_eq!(doc.encode(), &bytes[..cut], "cut at {cut}"),
+                }
             }
         }
     }

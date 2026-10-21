@@ -67,11 +67,11 @@ pub fn app_id_from_grid_id(grid_id: u64) -> u32 {
 
 /// The value as `shortcuts.vdf` shows it in tools that print the int32 as signed.
 pub fn to_signed(app_id: u32) -> i32 {
-    i32::from_ne_bytes(app_id.to_ne_bytes())
+    app_id as i32
 }
 
 pub fn from_signed(stored: i32) -> u32 {
-    u32::from_ne_bytes(stored.to_ne_bytes())
+    stored as u32
 }
 
 #[cfg(test)]

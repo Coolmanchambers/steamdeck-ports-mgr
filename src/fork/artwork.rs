@@ -5,6 +5,10 @@
 //! (the names Steam ROM Manager and SteamGridDB tools use). Old Big Picture clients named files after
 //! the 64-bit grid ID; that is not written here.
 //!
+//! A file in `config/grid/` named `<id>_icon.*` does not by itself give a shortcut an icon: Steam shows
+//! the path in the entry's `icon` field, so set that to the placed file (`NewShortcut::icon`,
+//! `ShortcutUpdate::icon`).
+//!
 //! Placing artwork does not need Steam closed (Steam does not rewrite this folder on exit), so unlike
 //! `shortcuts.vdf` there is no process check. An existing file is only replaced when asked to be.
 
@@ -24,6 +28,7 @@ pub enum ArtworkKind {
     Wide,
     Hero,
     Logo,
+    /// Also needs the shortcut's `icon` field pointed at the placed file.
     Icon,
 }
 
@@ -44,6 +49,17 @@ impl ArtworkKind {
         } else {
             &IMAGE_EXTENSIONS
         }
+    }
+}
+
+/// Cheap check that the bytes are the image type the extension claims; not a full decode.
+fn matches_extension(ext: &str, bytes: &[u8]) -> bool {
+    match ext {
+        "png" => bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+        "jpg" | "jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        "ico" => bytes.starts_with(&[0, 0, 1, 0]),
+        _ => false,
     }
 }
 
@@ -122,6 +138,10 @@ pub fn place_artwork(
     if meta.len() == 0 {
         return Err(bad("empty file"));
     }
+    let bytes = fs::read(source).map_err(io_err("read", source))?;
+    if !matches_extension(&ext, &bytes) {
+        return Err(bad("contents do not match the file extension"));
+    }
 
     let existing = existing_artwork(grid_dir, app_id, kind).map_err(io_err("list", grid_dir))?;
     if !replace {
@@ -131,10 +151,10 @@ pub fn place_artwork(
     }
 
     fs::create_dir_all(grid_dir).map_err(io_err("create folder", grid_dir))?;
-    let dest = grid_dir.join(format!("{}.{ext}", grid_file_stem(app_id, kind)));
-    let temp = grid_dir.join(format!("{}.{ext}.dpm-tmp", grid_file_stem(app_id, kind)));
+    let dest_name = format!("{}.{ext}", grid_file_stem(app_id, kind));
+    let dest = grid_dir.join(&dest_name);
+    let temp = grid_dir.join(format!("{dest_name}.dpm-tmp"));
     let result = (|| {
-        let bytes = fs::read(source).map_err(io_err("read", source))?;
         let mut file = File::create(&temp).map_err(io_err("create", &temp))?;
         file.write_all(&bytes).map_err(io_err("write", &temp))?;
         file.sync_all().map_err(io_err("sync", &temp))?;
@@ -147,7 +167,9 @@ pub fn place_artwork(
     }
 
     for stale in existing {
-        if stale != dest {
+        // On a case-insensitive filesystem (exFAT, NTFS) `77p.PNG` and the new `77p.png` are one file.
+        let same_file = stale.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&dest_name));
+        if !same_file {
             let _ = fs::remove_file(stale);
         }
     }
@@ -176,6 +198,21 @@ pub fn grid_dir(user_dir: &Path) -> PathBuf {
     user_dir.join("config").join("grid")
 }
 
+/// The candidate roots that exist, each once. `~/.steam/steam` is normally a symlink to
+/// `~/.local/share/Steam`, so roots are compared by their resolved path.
+pub fn existing_steam_roots(home: &Path) -> Vec<PathBuf> {
+    let mut seen = Vec::new();
+    let mut roots = Vec::new();
+    for root in candidate_steam_roots(home) {
+        let Ok(real) = fs::canonicalize(&root) else { continue };
+        if real.is_dir() && !seen.contains(&real) {
+            seen.push(real);
+            roots.push(root);
+        }
+    }
+    roots
+}
+
 /// Where Steam usually lives under a home folder: the native install, the legacy symlink, Flatpak.
 pub fn candidate_steam_roots(home: &Path) -> Vec<PathBuf> {
     vec![
@@ -197,7 +234,29 @@ mod tests {
         p
     }
 
-    fn image(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
+    /// Not a viewable image: the signature for the file's extension plus a payload.
+    fn image_bytes(name: &str, payload: &[u8]) -> Vec<u8> {
+        let ext = name.rsplit('.').next().unwrap().to_ascii_lowercase();
+        let mut bytes = match ext.as_str() {
+            "png" => vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+            "jpg" | "jpeg" => vec![0xFF, 0xD8, 0xFF, 0xE0],
+            "webp" => b"RIFF\0\0\0\0WEBP".to_vec(),
+            "ico" => vec![0, 0, 1, 0],
+            _ => Vec::new(),
+        };
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    /// A source image with a valid signature for its extension.
+    fn image(dir: &Path, name: &str, payload: &[u8]) -> PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, image_bytes(name, payload)).unwrap();
+        p
+    }
+
+    /// A file already in the grid folder; contents are not checked there.
+    fn raw(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
         let p = dir.join(name);
         fs::write(&p, bytes).unwrap();
         p
@@ -227,7 +286,7 @@ mod tests {
             let source = image(&dir, src, b"image bytes");
             let placed = place_artwork(&grid, 77, kind, &source, false).unwrap();
             assert_eq!(placed, grid.join(want));
-            assert_eq!(fs::read(&placed).unwrap(), b"image bytes");
+            assert_eq!(fs::read(&placed).unwrap(), image_bytes(src, b"image bytes"));
         }
         let mut names: Vec<String> = fs::read_dir(&grid).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         names.sort();
@@ -240,7 +299,7 @@ mod tests {
         let dir = temp_dir("exists");
         let grid = dir.join("grid");
         fs::create_dir_all(&grid).unwrap();
-        image(&grid, "77p.jpg", b"hand made");
+        raw(&grid, "77p.jpg", b"hand made");
         let source = image(&dir, "new.png", b"new");
         let err = place_artwork(&grid, 77, ArtworkKind::Cover, &source, false).unwrap_err();
         assert!(matches!(err, ArtworkError::AlreadyExists(p) if p == grid.join("77p.jpg")));
@@ -254,15 +313,27 @@ mod tests {
         let dir = temp_dir("replace");
         let grid = dir.join("grid");
         fs::create_dir_all(&grid).unwrap();
-        image(&grid, "77p.jpg", b"old cover");
-        image(&grid, "77_hero.jpg", b"hero stays");
-        image(&grid, "770p.png", b"other app stays");
+        raw(&grid, "77p.jpg", b"old cover");
+        raw(&grid, "77_hero.jpg", b"hero stays");
+        raw(&grid, "770p.png", b"other app stays");
         let source = image(&dir, "new.png", b"new cover");
         let placed = place_artwork(&grid, 77, ArtworkKind::Cover, &source, true).unwrap();
-        assert_eq!(fs::read(&placed).unwrap(), b"new cover");
+        assert_eq!(fs::read(&placed).unwrap(), image_bytes("x.png", b"new cover"));
         assert!(!grid.join("77p.jpg").exists());
         assert_eq!(fs::read(grid.join("77_hero.jpg")).unwrap(), b"hero stays");
         assert_eq!(fs::read(grid.join("770p.png")).unwrap(), b"other app stays");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn replace_never_deletes_the_new_file_when_names_differ_only_in_case() {
+        let dir = temp_dir("replace_case");
+        let grid = dir.join("grid");
+        fs::create_dir_all(&grid).unwrap();
+        raw(&grid, "77p.PNG", b"old");
+        let source = image(&dir, "new.png", b"new");
+        let placed = place_artwork(&grid, 77, ArtworkKind::Cover, &source, true).unwrap();
+        assert_eq!(fs::read(&placed).unwrap(), image_bytes("x.png", b"new"));
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -271,10 +342,10 @@ mod tests {
         let dir = temp_dir("replace_same");
         let grid = dir.join("grid");
         fs::create_dir_all(&grid).unwrap();
-        image(&grid, "77.png", b"old");
+        raw(&grid, "77.png", b"old");
         let source = image(&dir, "new.png", b"new");
         let placed = place_artwork(&grid, 77, ArtworkKind::Wide, &source, true).unwrap();
-        assert_eq!(fs::read(placed).unwrap(), b"new");
+        assert_eq!(fs::read(placed).unwrap(), image_bytes("x.png", b"new"));
         assert_eq!(fs::read_dir(&grid).unwrap().count(), 1);
         let _ = fs::remove_dir_all(dir);
     }
@@ -283,10 +354,12 @@ mod tests {
     fn rejects_unusable_sources_without_creating_the_folder() {
         let dir = temp_dir("bad");
         let grid = dir.join("grid");
-        let txt = image(&dir, "a.txt", b"x");
+        let txt = raw(&dir, "a.txt", b"x");
         let ico = image(&dir, "a.ico", b"x");
-        let empty = image(&dir, "empty.png", b"");
-        for (kind, src) in [(ArtworkKind::Cover, &txt), (ArtworkKind::Cover, &ico), (ArtworkKind::Hero, &empty)] {
+        let empty = raw(&dir, "empty.png", b"");
+        let junk = raw(&dir, "junk.png", b"this is not a png");
+        let wrong = raw(&dir, "wrong.jpg", &image_bytes("x.png", b"png bytes in a jpg"));
+        for (kind, src) in [(ArtworkKind::Cover, &txt), (ArtworkKind::Cover, &ico), (ArtworkKind::Hero, &empty), (ArtworkKind::Hero, &junk), (ArtworkKind::Hero, &wrong)] {
             assert!(matches!(place_artwork(&grid, 1, kind, src, false), Err(ArtworkError::BadSource { .. })));
         }
         assert!(matches!(place_artwork(&grid, 1, ArtworkKind::Hero, &dir.join("missing.png"), false), Err(ArtworkError::Io { .. })));
@@ -317,6 +390,17 @@ mod tests {
         assert_eq!(shortcuts_path(&dirs[0]), dir.join("userdata/1234/config/shortcuts.vdf"));
         assert_eq!(grid_dir(&dirs[0]), dir.join("userdata/1234/config/grid"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_roots_skip_missing_ones_and_symlink_aliases() {
+        let home = temp_dir("roots");
+        fs::create_dir_all(home.join(".local/share/Steam/userdata")).unwrap();
+        fs::create_dir_all(home.join(".steam")).unwrap();
+        std::os::unix::fs::symlink(home.join(".local/share/Steam"), home.join(".steam/steam")).unwrap();
+        assert_eq!(existing_steam_roots(&home), [home.join(".local/share/Steam")]);
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]
