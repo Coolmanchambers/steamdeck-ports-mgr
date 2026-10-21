@@ -82,9 +82,24 @@ fn known_folder_override<'a>(_var_name: &str, _after_var: &'a str) -> Option<(St
     None
 }
 
+#[cfg(target_os = "windows")]
+const HOME_VAR: &str = "USERPROFILE";
+#[cfg(target_os = "linux")]
+const HOME_VAR: &str = "HOME";
+
+fn split_tilde<'a>(path: &'a str, home: Option<&str>) -> Option<(String, &'a str)> {
+    let home = home.filter(|h| !h.is_empty())?;
+    let rest = path.strip_prefix('~')?;
+    (rest.is_empty() || rest.starts_with(['/', '\\'])).then(|| (home.to_string(), rest))
+}
+
 pub fn expand_env_path(path: &str) -> PathBuf {
     let mut out = String::with_capacity(path.len());
     let mut rest = path;
+    if let Some((home, remainder)) = split_tilde(path, std::env::var(HOME_VAR).ok().as_deref()) {
+        out.push_str(&home);
+        rest = remainder;
+    }
     while let Some(start) = rest.find('%') {
         out.push_str(&rest[..start]);
         let after_percent = &rest[start + 1..];
@@ -201,6 +216,39 @@ mod tests {
     #[test]
     fn expand_env_path_pourcent_non_referme_est_conserve() {
         assert_eq!(expand_env_path("100%save"), PathBuf::from("100%save"));
+    }
+
+    #[test]
+    fn split_tilde_ne_remplace_que_le_tilde_initial_seul() {
+        assert_eq!(split_tilde("~/x", Some("/home/me")), Some(("/home/me".to_string(), "/x")));
+        assert_eq!(split_tilde("~", Some("/home/me")), Some(("/home/me".to_string(), "")));
+        assert_eq!(split_tilde("~other/x", Some("/home/me")), None);
+        assert_eq!(split_tilde("a/~/x", Some("/home/me")), None);
+        assert_eq!(split_tilde("~/x", None), None);
+        assert_eq!(split_tilde("~/x", Some("")), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn expand_env_path_tilde_se_resout_sous_le_dossier_personnel() {
+        let home = std::env::var("HOME").expect("HOME");
+        assert_eq!(expand_env_path("~/.local/share/x"), PathBuf::from(&home).join(".local/share/x"));
+        assert_eq!(expand_env_path("~"), PathBuf::from(&home));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn expand_env_path_home_entre_pourcents_marche_toujours() {
+        let home = std::env::var("HOME").expect("HOME");
+        assert_eq!(expand_env_path("%HOME%/.local/share/x"), PathBuf::from(&home).join(".local/share/x"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn resolve_save_folder_tilde_est_absolu_et_ne_se_colle_plus_au_dossier_du_jeu() {
+        let home = std::env::var("HOME").expect("HOME");
+        let save_folder = json!({"windows": "%APPDATA%\\x", "linux": "~/.local/share/lasrecomp"});
+        assert_eq!(resolve_save_folder(&save_folder, Path::new("/library/Game")), Some(PathBuf::from(home).join(".local/share/lasrecomp")));
     }
 
     #[test]
