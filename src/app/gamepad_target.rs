@@ -52,6 +52,7 @@ pub(crate) fn dialog_reject(app: &AppState) {
         DialogSlot::Picker(d) => d.invoke_close_requested(),
         DialogSlot::Info(d) => d.invoke_close_requested(),
         DialogSlot::SearchList(d) => d.invoke_close_requested(),
+        DialogSlot::DeckReadyInfo(d) => d.invoke_close_requested(),
         DialogSlot::Progress(_) | DialogSlot::None => {}
     }
 }
@@ -72,6 +73,7 @@ pub(crate) fn dialog_activate(app: &AppState) {
                 invoke_info_button(&d, index);
             }
         }
+        DialogSlot::DeckReadyInfo(d) => super::deck_ready_screen::info_activate(&d, nav.info_nav_index.get()),
         DialogSlot::Progress(_) | DialogSlot::None => {}
     }
 }
@@ -127,6 +129,15 @@ pub(crate) fn dialog_move_selection(app: &AppState, dx: i32, dy: i32) {
                 }
             }
         }
+        DialogSlot::DeckReadyInfo(d) => {
+            if dy != 0 {
+                d.invoke_scroll_body(dy);
+            }
+            if let Some(next) = (dx != 0).then(|| super::deck_ready_screen::info_step(&d, nav.info_nav_index.get(), dx)).flatten() {
+                nav.info_nav_index.set(next);
+                d.set_selected_index(next);
+            }
+        }
         DialogSlot::Message(_) | DialogSlot::Progress(_) | DialogSlot::None => {}
     }
 }
@@ -173,6 +184,17 @@ impl GamepadTarget for AppGamepadTarget {
         activate_selection(&self.app, &self.router);
     }
 
+    // Fork: B leaves the Deck-ready list (it does nothing in All ports); L1/R1 switch lists.
+    fn reject(&self) {
+        if self.app.deck_ready.is_active() {
+            super::deck_ready_screen::toggle(&self.app, &self.router);
+        }
+    }
+
+    fn switch_list(&self) {
+        super::deck_ready_screen::toggle(&self.app, &self.router);
+    }
+
     fn show_info_for_selection(&self) {
         show_info_for_current_selection(&self.app, &self.router);
     }
@@ -182,6 +204,10 @@ impl GamepadTarget for AppGamepadTarget {
     }
 
     fn open_settings(&self) {
+        // Fork: in the Deck-ready list Y opens its Filters instead.
+        if self.app.deck_ready.is_active() {
+            return super::deck_ready_screen::open_filters(&self.app, &self.router);
+        }
         open_settings_dialog(&self.app, &self.router);
     }
 }

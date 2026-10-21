@@ -208,7 +208,7 @@ pub(crate) fn open_update_toggle_dialog_row(app: &Rc<AppState>, router: &Router,
     }
 }
 
-fn activate_port(app: &Rc<AppState>, router: &Router, port: &Port) {
+pub(crate) fn activate_port(app: &Rc<AppState>, router: &Router, port: &Port) {
     if dialog_is_open(app) || app.install_runtime.installing.borrow().contains(port.key()) {
         return;
     }
@@ -245,12 +245,18 @@ fn launch_with_update_check(app: &Rc<AppState>, router: &Router, port: &Port) {
 }
 
 pub(crate) fn activate_selection(app: &Rc<AppState>, router: &Router) {
+    if app.deck_ready.is_active() {
+        return super::deck_ready_screen::activate(app, router);
+    }
     if let Some(port) = app.current_selected_port() {
         activate_port(app, router, &port);
     }
 }
 
 pub(crate) fn show_info_for_current_selection(app: &Rc<AppState>, router: &Router) {
+    if app.deck_ready.is_active() {
+        return super::deck_ready_screen::show_info(app, router);
+    }
     if let Some(port) = app.current_selected_port() {
         open_info_dialog(app, router, &port);
     }

@@ -12,8 +12,8 @@ use crate::ui::font_sizing::FontSizes;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::ui::theme::{SemanticPalette, ThemeColors, ThemeConfig};
 use crate::{
-    AppWindow, ConfirmDialog, ErrorDialog, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog, SearchListDialog,
-    SemanticColors, Theme, Tr,
+    AppWindow, ConfirmDialog, DeckReadyInfoDialog, ErrorDialog, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog,
+    SearchListDialog, SemanticColors, Theme, Tr,
 };
 use serde_json::Value;
 use slint::ComponentHandle;
@@ -160,6 +160,7 @@ pub(crate) enum DialogSlot {
     Progress(ProgressDialog),
     Picker(ListPickerDialog),
     SearchList(SearchListDialog),
+    DeckReadyInfo(DeckReadyInfoDialog),
 }
 
 impl DialogSlot {
@@ -173,6 +174,7 @@ impl DialogSlot {
             DialogSlot::Progress(d) => Some(d.window()),
             DialogSlot::Picker(d) => Some(d.window()),
             DialogSlot::SearchList(d) => Some(d.window()),
+            DialogSlot::DeckReadyInfo(d) => Some(d.window()),
         }
     }
 
@@ -186,6 +188,7 @@ impl DialogSlot {
             DialogSlot::Progress(d) => DialogSlot::Progress(d.clone_strong()),
             DialogSlot::Picker(d) => DialogSlot::Picker(d.clone_strong()),
             DialogSlot::SearchList(d) => DialogSlot::SearchList(d.clone_strong()),
+            DialogSlot::DeckReadyInfo(d) => DialogSlot::DeckReadyInfo(d.clone_strong()),
         }
     }
 }
@@ -512,6 +515,20 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     wire_keyboard_nav!(dialog, app, horizontal);
     let _ = dialog.show();
     finish_dialog_open(app, router, DialogSlot::Info(dialog));
+}
+
+// Fork: the Deck-ready Info dialog, sized and wired like Info; src/app/deck_ready_screen.rs fills it.
+pub(crate) fn build_deck_ready_info_dialog(app: &Rc<AppState>, router: &Router) -> Option<DeckReadyInfoDialog> {
+    close_current_dialog(app, router);
+    let (dw, dh) = main_window_size(app);
+    let (x, y) = centered_position(app, dw, dh);
+    let dialog = DeckReadyInfoDialog::new().ok()?;
+    style_dialog!(dialog, app, app.window_geometry.normal_mode.borrow().fonts);
+    position_dialog!(dialog, app, dw, dh, x, y);
+    wire_dialog_close!(dialog, app, router);
+    wire_nav_hovered!(dialog, app, info_nav_index);
+    wire_keyboard_nav!(dialog, app, horizontal);
+    Some(dialog)
 }
 
 pub(crate) fn open_update_toggle_dialog(app: &Rc<AppState>, router: &Router, port: Port) {

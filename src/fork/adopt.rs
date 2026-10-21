@@ -301,7 +301,7 @@ fn make_link(_target: &Path, _link: &Path) -> io::Result<()> {
 }
 
 /// Reads `ports.local.json` (missing is an empty list). Anything that is not `{"ports": [...]}` is refused.
-fn read_local_file(path: &Path) -> Result<(Map<String, Value>, Option<Vec<u8>>), AdoptError> {
+pub(crate) fn read_local_file(path: &Path) -> Result<(Map<String, Value>, Option<Vec<u8>>), AdoptError> {
     match fs::read(path) {
         Ok(bytes) => {
             let text = String::from_utf8_lossy(&bytes);
@@ -318,7 +318,7 @@ fn read_local_file(path: &Path) -> Result<(Map<String, Value>, Option<Vec<u8>>),
 
 /// Copies the current bytes to `<file>.bak-<stamp>`, or `-1`, `-2`... when that name is taken, so several
 /// adoptions in the same second each keep their own backup and none overwrites another.
-fn write_backup(path: &Path, bytes: &[u8], stamp: &str) -> Result<PathBuf, AdoptError> {
+pub(crate) fn write_backup(path: &Path, bytes: &[u8], stamp: &str) -> Result<PathBuf, AdoptError> {
     let base = path.file_name().unwrap_or_default().to_os_string();
     for attempt in 0..1000u32 {
         let mut name = base.clone();

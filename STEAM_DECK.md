@@ -111,6 +111,25 @@ To undo, in this order: remove the port's entry from `ports.local.json` (and kee
 JSON), then delete the link in `Library/` (your original folder stays). Deleting only the link leaves
 the entry, and the port then shows an Install button that makes an empty folder.
 
+## Deck-ready list
+
+Press **L1** or **R1** (or Tab, or the **Deck-ready** button in the footer) to switch from All ports to
+this fork's list of ports whose latest release has a Steam Deck or Linux build. It loads in the
+background the first time (a few seconds) and is kept for offline use.
+
+- **A** installs or plays, **X** opens Info, **Y** opens Filters (builds, system, community finds),
+  **B** goes back to All ports. The search box works here too.
+- A port the catalog already has, or one you already added, shows "Catalog" or "Yours" and behaves
+  exactly as in All ports: no second copy.
+- A port that is not in the catalog asks first ("Add ... ?"), then adds it as your own entry in
+  `ports.local.json` (the old file is backed up next to it) and installs it. Its button says Open
+  folder instead of Uninstall. Game files are never included.
+- "Deck build" and "Linux build" come from release file names. Only a launch on the Deck proves a
+  port runs.
+
+To undo an added port: remove its entry from `ports.local.json` (keep the file valid JSON), then
+delete its folder under `Library/` yourself if you want the files gone.
+
 ## What to test
 
 | Area | Pass looks like |
@@ -119,6 +138,9 @@ the entry, and the port then shows an Install button that makes an empty folder.
 | Install a port | Progress, then installed, with a Linux build under `Library/` |
 | Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |
 | Controller | D-pad moves, A activates, B closes, X opens Info, Y opens Settings |
+| Deck-ready list | L1/R1 switch lists; the list loads, Y filters it, A on a "Catalog" port installs it like All ports |
+| Deck-ready add | A on a port without a tag asks first, then installs; it appears in All ports with Open folder |
+| Deck-ready offline | With Wi-Fi off, the list still opens from the saved copy and says GitHub could not be reached |
 | Game Mode | Starts from Steam, the controller works, a port launches and the app returns after |
 | Controller in dialogs | D-pad and A/B work inside Info, Settings and confirm dialogs, in both modes |
 | Close in Game Mode | The X button quits and Steam returns to the Library with no "running" badge |

@@ -21,6 +21,8 @@ pub trait GamepadTarget {
     fn show_info_for_selection(&self) {}
     fn toggle_fullscreen(&self) {}
     fn open_settings(&self) {}
+    // Fork: L1 / R1.
+    fn switch_list(&self) {}
 }
 
 fn read_directions(state: &GamepadState) -> [bool; 4] {
@@ -33,7 +35,7 @@ fn read_directions(state: &GamepadState) -> [bool; 4] {
 }
 
 fn read_buttons(state: &GamepadState) -> [bool; BUTTON_COUNT] {
-    [state.button_a, state.button_start, state.button_b, state.button_x, state.button_back, state.button_y]
+    [state.button_a, state.button_start, state.button_b, state.button_x, state.button_back, state.button_y, state.button_lb, state.button_rb]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,9 +45,10 @@ pub enum GamepadAction {
     ShowInfoForSelection,
     ToggleFullscreen,
     OpenSettings,
+    SwitchList,
 }
 
-const BUTTON_COUNT: usize = 6;
+const BUTTON_COUNT: usize = 8;
 
 const BUTTON_ACTIONS: [GamepadAction; BUTTON_COUNT] = [
     GamepadAction::ActivateSelection,
@@ -54,10 +57,12 @@ const BUTTON_ACTIONS: [GamepadAction; BUTTON_COUNT] = [
     GamepadAction::ShowInfoForSelection,
     GamepadAction::ToggleFullscreen,
     GamepadAction::OpenSettings,
+    GamepadAction::SwitchList,
+    GamepadAction::SwitchList,
 ];
 
 const BUTTON_INPUTS: [CheatInput; BUTTON_COUNT] =
-    [CheatInput::A, CheatInput::Other, CheatInput::B, CheatInput::Other, CheatInput::Other, CheatInput::Y];
+    [CheatInput::A, CheatInput::Other, CheatInput::B, CheatInput::Other, CheatInput::Other, CheatInput::Y, CheatInput::Other, CheatInput::Other];
 
 type Move = ((i32, i32), Option<CheatInput>);
 
@@ -168,6 +173,7 @@ pub fn dispatch(result: PollResult) {
             GamepadAction::ShowInfoForSelection => result.target.show_info_for_selection(),
             GamepadAction::ToggleFullscreen => result.target.toggle_fullscreen(),
             GamepadAction::OpenSettings => result.target.open_settings(),
+            GamepadAction::SwitchList => result.target.switch_list(),
         }
     }
 }
@@ -217,7 +223,8 @@ mod tests {
 
     #[test]
     fn decide_button_actions_front_montant_uniquement() {
-        let a_held = [true, false, false, false, false, false];
+        let mut a_held = [false; BUTTON_COUNT];
+        a_held[0] = true;
         assert!(decide_button_actions(a_held, a_held).is_empty());
         assert_eq!(decide_button_actions([false; BUTTON_COUNT], a_held), vec![(GamepadAction::ActivateSelection, CheatInput::A)]);
     }
@@ -234,6 +241,8 @@ mod tests {
         assert_eq!(pressed(3), vec![GamepadAction::ShowInfoForSelection]);
         assert_eq!(pressed(4), vec![GamepadAction::ToggleFullscreen]);
         assert_eq!(pressed(5), vec![GamepadAction::OpenSettings]);
+        assert_eq!(pressed(6), vec![GamepadAction::SwitchList]);
+        assert_eq!(pressed(7), vec![GamepadAction::SwitchList]);
     }
 
     #[test]

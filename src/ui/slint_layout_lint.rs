@@ -8,6 +8,7 @@ const SLINT_FILES: &[(&str, &str)] = &[
     ("dialogs/simple.slint", include_str!("../../ui/dialogs/simple.slint")),
     ("dialogs/picker.slint", include_str!("../../ui/dialogs/picker.slint")),
     ("dialogs/info.slint", include_str!("../../ui/dialogs/info.slint")),
+    ("fork/deck-ready.slint", include_str!("../../ui/fork/deck-ready.slint")),
 ];
 
 struct Frame {

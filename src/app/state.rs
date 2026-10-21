@@ -85,6 +85,8 @@ pub(crate) struct AppState {
     pub(crate) install_runtime: InstallRuntime,
     pub(crate) dialog_nav: DialogNav,
     pub(crate) cheats: super::cheats::Cheats,
+    // Fork: the Deck-ready list (src/app/deck_ready_screen.rs).
+    pub(crate) deck_ready: super::deck_ready_screen::DeckReadyUi,
     pub(crate) events: Arc<Mutex<Vec<AppEvent>>>,
 }
 
@@ -129,6 +131,9 @@ impl AppState {
     }
 
     pub(crate) fn current_selected_port(&self) -> Option<Port> {
+        if self.deck_ready.is_active() {
+            return None;
+        }
         if self.window().get_big_mode() {
             let (row, col) = self.grid_nav.grid_selected.get();
             let idx = row * self.grid_nav.grid_columns.get().max(1) + col;
@@ -187,6 +192,9 @@ impl AppState {
     }
 
     pub(crate) fn move_selection(&self, dx: i32, dy: i32) {
+        if self.deck_ready.is_active() {
+            return super::deck_ready_screen::move_selection(self, dx, dy);
+        }
         if self.window().get_big_mode() {
             self.move_grid_selection(dx, dy);
         } else {
@@ -327,6 +335,9 @@ impl AppState {
     }
 
     pub(crate) fn refresh_current_view(&self) {
+        if self.deck_ready.is_active() {
+            return super::deck_ready_screen::rebuild(self);
+        }
         if self.window().get_big_mode() {
             self.rebuild_grid(true);
         } else {

@@ -1,0 +1,448 @@
+// Fork: the Deck-ready list (a second list beside All ports) and its Info dialog.
+// Drawn from rows the Rust side prepares in src/app/deck_ready_screen.rs.
+
+import { ListView } from "std-widgets.slint";
+import { SemanticColors, Theme, ThemedScrollbar } from "../shared.slint";
+import { DialogButton, DialogChrome } from "../dialogs/chrome.slint";
+
+// kind: 0 plain, 1 dashed (community find), 2 warning, 3 muted (off in catalog)
+export struct DeckReadyTag {
+    label: string,
+    kind: int,
+}
+
+export struct DeckReadyRow {
+    name: string,
+    sub: string,
+    deck: bool,
+    tags: [DeckReadyTag],
+    button: string,
+}
+
+component RowButton inherits Rectangle {
+    in property <string> text;
+    in property <color> fill;
+    in property <color> fill-hover;
+    in property <length> font-size;
+    in property <length> pad;
+    callback clicked();
+
+    width: label.preferred-width + root.pad * 2;
+    background: area.has-hover ? root.fill-hover : root.fill;
+    area := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    label := Text {
+        text: root.text;
+        color: SemanticColors.text-on-accent;
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <color> fill;
+    in property <color> ink;
+    in property <color> line;
+    in property <length> font-size;
+    in property <length> chip-height;
+
+    width: label.preferred-width + root.chip-height * 0.8;
+    height: root.chip-height;
+    border-radius: root.chip-height / 2;
+    border-width: 1px;
+    border-color: root.line;
+    background: root.fill;
+    label := Text {
+        text: root.text;
+        color: root.ink;
+        font-size: root.font-size;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}
+
+export component DeckReadyList inherits Rectangle {
+    in property <[DeckReadyRow]> rows: [];
+    in property <int> selected-index: -1;
+    in property <length> item-font-px: 14px;
+    in property <length> row-height: 48px;
+    in property <length> spacing: 6px;
+    in property <string> status-text: "";
+    in property <string> filter-text: "";
+    in property <string> empty-text: "";
+    in property <bool> show-hints: true;
+    in property <bool> scroll-trigger: false;
+    callback row-hovered(int);
+    callback row-info(int);
+    callback row-action(int);
+    callback filters-requested();
+
+    property <length> small-font: root.item-font-px * 0.85;
+    property <length> line-height: root.row-height * 1.3;
+    property <length> chip-height: root.small-font * 1.7;
+    property <length> button-height: root.line-height - root.spacing * 2;
+    property <length> button-padding: root.spacing * 2;
+    property <length> scrollbar-gap: 8px / Theme.scale-factor;
+
+    VerticalLayout {
+        spacing: root.spacing;
+
+        HorizontalLayout {
+            spacing: root.spacing * 2;
+            height: root.row-height * 0.8;
+
+            filter-chip := Rectangle {
+                width: filter-label.preferred-width + root.row-height * 0.5;
+                border-radius: self.height / 2;
+                border-width: 1px;
+                border-color: Theme.border-color;
+                background: filter-area.has-hover ? Theme.selected-background : Theme.search-background;
+                filter-area := TouchArea {
+                    clicked => { root.filters-requested(); }
+                }
+                filter-label := Text {
+                    text: root.filter-text;
+                    color: filter-area.has-hover ? Theme.selected-text : Theme.list-text;
+                    font-size: root.small-font;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+
+            Text {
+                text: root.status-text;
+                color: Theme.list-text;
+                font-size: root.small-font;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+
+        list-area := Rectangle {
+            vertical-stretch: 1;
+
+            if root.rows.length == 0: Text {
+                text: root.empty-text;
+                color: Theme.list-text;
+                font-size: root.item-font-px;
+                wrap: word-wrap;
+                x: root.spacing * 2;
+                y: root.spacing * 3;
+                width: list-area.width - root.spacing * 4;
+            }
+
+            list := ListView {
+                x: 0px;
+                y: 0px;
+                width: list-area.width - root.scrollbar-gap;
+                height: list-area.height;
+                vertical-scrollbar-policy: always-off;
+                horizontal-scrollbar-policy: always-off;
+
+                property <bool> scroll-trigger-local: root.scroll-trigger;
+                property <length> selected-top: root.selected-index * root.line-height;
+                changed scroll-trigger-local => {
+                    if (root.selected-index < 0) {
+                        return;
+                    }
+                    if (self.selected-top + self.content-y < 0px) {
+                        self.content-y = -self.selected-top;
+                    } else if (self.selected-top + root.line-height + self.content-y > self.visible-height) {
+                        self.content-y = self.visible-height - self.selected-top - root.line-height;
+                    }
+                }
+
+                for item[index] in root.rows: row := Rectangle {
+                    height: root.line-height;
+                    property <bool> selected: index == root.selected-index;
+                    background: self.selected ? Theme.selected-background : Theme.list-background;
+
+                    TouchArea {
+                        clicked => { root.row-hovered(index); }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.row-hovered(index);
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: root.spacing * 2;
+                        padding-right: root.spacing;
+                        spacing: root.spacing * 2;
+                        alignment: stretch;
+
+                        VerticalLayout {
+                            alignment: center;
+                            Chip {
+                                text: item.deck ? "Deck build" : "Linux build";
+                                fill: row.selected ? Theme.selected-text : (item.deck ? SemanticColors.success : SemanticColors.info);
+                                ink: row.selected ? Theme.selected-background : SemanticColors.text-on-accent;
+                                line: self.fill;
+                                font-size: root.small-font;
+                                chip-height: root.chip-height;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: item.name;
+                                color: row.selected ? Theme.selected-text : Theme.list-text;
+                                font-size: root.item-font-px;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: item.sub;
+                                color: row.selected ? Theme.selected-text : Theme.list-text;
+                                opacity: 0.85;
+                                font-size: root.small-font;
+                                overflow: elide;
+                            }
+                        }
+
+                        for tag in item.tags: VerticalLayout {
+                            alignment: center;
+                            Chip {
+                                text: tag.label;
+                                fill: tag.kind == 3 ? Theme.border-color : (tag.kind == 2 ? SemanticColors.warning : transparent);
+                                ink: tag.kind == 2 || tag.kind == 3 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-text : Theme.list-text);
+                                line: tag.kind == 1 ? Theme.search-text : (tag.kind == 0 ? (row.selected ? Theme.selected-text : Theme.list-text) : self.fill);
+                                font-size: root.small-font;
+                                chip-height: root.chip-height;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            RowButton {
+                                text: @tr("Info");
+                                fill: SemanticColors.info;
+                                fill-hover: SemanticColors.info-hover;
+                                font-size: root.item-font-px;
+                                pad: root.button-padding;
+                                height: root.button-height;
+                                clicked => { root.row-info(index); }
+                            }
+                        }
+
+                        if item.button != "": VerticalLayout {
+                            alignment: center;
+                            RowButton {
+                                text: item.button;
+                                fill: SemanticColors.success;
+                                fill-hover: SemanticColors.success-hover;
+                                font-size: root.item-font-px;
+                                pad: root.button-padding;
+                                height: root.button-height;
+                                clicked => { root.row-action(index); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            ThemedScrollbar {
+                x: list-area.width - self.width;
+                y: 0px;
+                height: list-area.height;
+                viewport-height: list.content-height;
+                visible-height: list.visible-height;
+                viewport-y <=> list.content-y;
+            }
+        }
+
+        if root.show-hints: Text {
+            text: "A  Install or play     X  Info     Y  Filters     B  All ports     L1 / R1 / Tab  Switch list";
+            color: Theme.list-text;
+            font-size: root.small-font;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component DeckReadyInfoDialog inherits Window {
+    no-frame: true;
+    title: root.dialog-title;
+    background: Theme.list-background;
+    in property <length> initial-width: 600px;
+    in property <length> initial-height: 500px;
+    width: initial-width;
+    height: initial-height;
+
+    in property <string> font-family;
+    default-font-family: root.font-family;
+
+    in property <string> dialog-title: "";
+    in property <string> body-text: "";
+    in property <string> action-label: "";
+    in property <bool> action-enabled: false;
+    in property <bool> project-enabled: false;
+    in property <bool> releases-enabled: false;
+    in property <int> selected-index: -1;
+    callback action-requested();
+    callback project-requested();
+    callback releases-requested();
+    callback close-requested();
+    callback nav-hovered(int);
+    callback move-selection-requested(int);
+    callback activate-selection-requested();
+    callback scroll-body(int);
+    scroll-body(direction) => {
+        body-flick.content-y = Math.clamp(
+            body-flick.content-y - direction * row-height,
+            min(0px, body-flick.height - body-flick.content-height),
+            0px,
+        );
+    }
+    forward-focus: key-handler;
+
+    in property <length> item-font-px-physical: 14px;
+    in property <length> title-font-px-physical: 13px;
+    in property <length> row-height-physical: 48px;
+    in property <length> title-bar-height-physical: 34px;
+
+    property <length> border-px: Theme.border-width * 1px / Theme.scale-factor;
+    property <length> item-font-px: item-font-px-physical / Theme.scale-factor;
+    property <length> title-font-px: title-font-px-physical / Theme.scale-factor;
+    property <length> bar-height: title-bar-height-physical / Theme.scale-factor;
+    property <length> row-height: row-height-physical / Theme.scale-factor;
+    property <length> gutter: 12px / Theme.scale-factor;
+    property <length> button-padding: 10px / Theme.scale-factor;
+    property <length> row-spacing: 6px / Theme.scale-factor;
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
+            } else if (event.text == Key.LeftArrow) {
+                root.move-selection-requested(-1);
+                return accept;
+            } else if (event.text == Key.RightArrow) {
+                root.move-selection-requested(1);
+                return accept;
+            } else if (event.text == Key.UpArrow) {
+                root.scroll-body(-1);
+                return accept;
+            } else if (event.text == Key.DownArrow) {
+                root.scroll-body(1);
+                return accept;
+            } else if (event.text == Key.Return) {
+                root.activate-selection-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        chrome := DialogChrome {
+            dialog-title: root.dialog-title;
+            bar-height: root.bar-height;
+            title-font-px: root.title-font-px;
+            border-px: root.border-px;
+            logical-w: root.width - root.border-px * 2;
+            logical-h: root.height - root.border-px * 2;
+            close-requested => { root.close-requested(); }
+
+            body-box := Rectangle {
+                x: root.gutter;
+                y: root.gutter;
+                width: chrome.content-width - root.gutter * 2;
+                height: chrome.content-height - root.gutter * 3 - root.row-height;
+                background: Theme.search-background;
+                border-width: root.border-px;
+                border-color: Theme.border-color;
+
+                body-flick := Flickable {
+                    x: root.gutter * 0.5;
+                    y: root.gutter * 0.5;
+                    width: body-box.width - root.gutter;
+                    height: body-box.height - root.gutter;
+                    content-width: self.width;
+                    content-height: max(self.height, body-text.preferred-height);
+
+                    body-text := Text {
+                        text: root.body-text;
+                        color: Theme.list-text;
+                        font-size: root.item-font-px;
+                        wrap: word-wrap;
+                        width: body-flick.width - 8px / Theme.scale-factor;
+                    }
+                }
+
+                ThemedScrollbar {
+                    x: body-box.width - self.width - 2px / Theme.scale-factor;
+                    y: body-flick.y;
+                    height: body-flick.height;
+                    viewport-height: body-flick.content-height;
+                    visible-height: body-flick.height;
+                    viewport-y <=> body-flick.content-y;
+                }
+            }
+
+            HorizontalLayout {
+                x: root.gutter;
+                y: chrome.content-height - root.gutter - root.row-height;
+                width: chrome.content-width - root.gutter * 2;
+                height: root.row-height;
+                spacing: root.row-spacing;
+                alignment: center;
+
+                if root.action-label != "": DialogButton {
+                    text: root.action-label;
+                    enabled: root.action-enabled;
+                    selected: root.selected-index == 0;
+                    border-px: root.border-px;
+                    font-size: root.item-font-px;
+                    width: self.text-preferred-width + root.button-padding * 2;
+                    clicked => { root.action-requested(); }
+                    hovered => { root.nav-hovered(0); }
+                }
+                DialogButton {
+                    text: "Project page";
+                    enabled: root.project-enabled;
+                    selected: root.selected-index == 1;
+                    border-px: root.border-px;
+                    font-size: root.item-font-px;
+                    width: self.text-preferred-width + root.button-padding * 2;
+                    clicked => { root.project-requested(); }
+                    hovered => { root.nav-hovered(1); }
+                }
+                DialogButton {
+                    text: "Releases page";
+                    enabled: root.releases-enabled;
+                    selected: root.selected-index == 2;
+                    border-px: root.border-px;
+                    font-size: root.item-font-px;
+                    width: self.text-preferred-width + root.button-padding * 2;
+                    clicked => { root.releases-requested(); }
+                    hovered => { root.nav-hovered(2); }
+                }
+                DialogButton {
+                    text: @tr("Close");
+                    selected: root.selected-index == 3;
+                    border-px: root.border-px;
+                    font-size: root.item-font-px;
+                    width: self.text-preferred-width + root.button-padding * 2;
+                    clicked => { root.close-requested(); }
+                    hovered => { root.nav-hovered(3); }
+                }
+            }
+        }
+    }
+}

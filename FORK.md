@@ -36,6 +36,18 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
 | 2026-10-21 | `src/core/installer.rs` | `refuse_adopted`: `install_port` and `install_extra` stop with a message when `Library/<folder>` is a symlink (an adopted port), whatever the catalog says, so a bad edit of `ports.local.json` cannot make the installer write into the user's own folder; 1 test |
 | 2026-10-21 | `README.md` | Item 4 (adopt) set to "Testing", item 5 (Steam shortcuts) to "In progress" |
+| 2026-10-21 | `ui/app-window.slint` | The Deck-ready list: imports `ui/fork/deck-ready.slint`, `deck-ready-*` properties and callbacks, the list shown instead of the port list or card grid while `deck-ready-mode` is on, a "Deck-ready" / "All ports" footer button, the title and search placeholder for that list, Tab switches lists and Escape leaves it |
+| 2026-10-21 | `src/app/state.rs` | `deck_ready` field; `refresh_current_view`, `move_selection` and `current_selected_port` hand over to the Deck-ready list while it is shown (3 guards) |
+| 2026-10-21 | `src/app/install_launch.rs` | `activate_port` made `pub(crate)`; `activate_selection` and `show_info_for_current_selection` hand over to the Deck-ready list while it is shown |
+| 2026-10-21 | `src/app/events.rs` | `AppEvent::DeckReadyFetched` and its one-line handler |
+| 2026-10-21 | `src/app/dialogs.rs` | `DialogSlot::DeckReadyInfo` (two match arms) and `build_deck_ready_info_dialog`, sized and wired like Info |
+| 2026-10-21 | `src/app/gamepad_target.rs` | The Deck-ready Info dialog in the three dialog matches; in the main window B leaves the Deck-ready list, Y opens its Filters while it is shown, L1/R1 switch lists |
+| 2026-10-21 | `src/app/mod.rs` | One line registering `deck_ready_screen` |
+| 2026-10-21 | `src/main.rs` | `deck_ready` field initialised; one line wiring the Deck-ready callbacks |
+| 2026-10-21 | `src/core/gamepad.rs` | Reads L1 and R1 (`button_lb`, `button_rb`), merged across controllers like the other buttons |
+| 2026-10-21 | `src/ui/gamepad_router.rs` | L1 and R1 map to a new `SwitchList` action (`GamepadTarget::switch_list`, no-op by default); tests |
+| 2026-10-21 | `src/ui/slint_layout_lint.rs` | The new Slint file is linted too |
+| 2026-10-21 | `README.md` | Item 8 (Deck-ready list) set to "Testing" |
 
 Files added by this fork:
 
@@ -50,7 +62,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
-| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, and quits on Close. CI runs it and blocks the release on failure |
+| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
@@ -72,6 +84,12 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
+| 2026-10-21 | `src/fork/deck_ready/index.rs` | Reads `index/deck-ready.json` (schema 1); unusable entries are skipped, an unusable file is refused |
+| 2026-10-21 | `src/fork/deck_ready/sync.rs` | Fetches the list from this repo with an ETag, at most every 12 hours, and keeps the saved copy in `cache/` |
+| 2026-10-21 | `src/fork/deck_ready/view.rs` | Rows, filters, sorting, matching to ports the app already has, and the Info and confirm text; tested without UI |
+| 2026-10-21 | `src/fork/deck_ready/entry.rs` | Turns an entry the app doesn't have into the user's own `ports.local.json` entry (backup first) |
+| 2026-10-21 | `src/app/deck_ready_screen.rs` | The Deck-ready list screen: switching lists, Filters, Info, install and play |
+| 2026-10-21 | `ui/fork/deck-ready.slint` | The Deck-ready list and its Info dialog |
 
 ## Add to Steam and adopting (Settings menu)
 
@@ -264,7 +282,34 @@ Notes:
   `catalog_disabled` means upstream's catalog disables that entry. `archived`, `catalog_disabled`
   and `readme_mentions_deck` can be null when unknown. `generated` is the date the list last
   changed, not the date it was last checked.
-- The app does not read this file yet.
+- **In the app** (since 2026-10-21): see "The Deck-ready list in the app" below.
+
+## The Deck-ready list in the app
+
+A second list beside All ports. L1/R1, Tab or the footer button switch lists; in the Deck-ready list
+A installs or plays, X opens Info, Y opens its Filters and B (or Escape) goes back to All ports.
+
+- **Fetching:** `index/deck-ready.json` from this repository's `main`, with `If-None-Match`, when the
+  list is opened and the saved copy is missing or older than 12 hours. The copy is saved as
+  `cache/deck-ready.json` (ETag and check time in `cache/deck-ready.meta.json`) and shown at once;
+  offline, the saved copy stays on screen with a note. A download that doesn't parse never replaces it,
+  and an ETag is only sent when a usable copy exists.
+- **What is shown:** `kind: game` by default; community finds (`likely_game`) behind a Filters toggle.
+  Filters: builds (all, Deck build, Linux build), system, community finds. Deck builds first, then the
+  newest release. The search box searches name, system and repository.
+- **No duplicates:** an entry is matched to a port the app already has by the index's
+  `catalog_folder`, then by repository. A match installs or plays that port exactly as All ports does
+  ("Catalog", "Yours" or no tag when installed).
+- **Adding a new one:** an entry with no match (including ones the catalog turned off) is added after
+  a confirm dialog as the user's own entry in `ports.local.json` (backed up first, like adopting):
+  `source` is the repository, so the normal installer downloads it and the normal update check follows
+  it; Uninstall is replaced by Open folder. For a Deck build, `preferred_asset` is the Deck marker of
+  the file name (`steamdeck`, `steamos`...), so next version's file still matches. The folder is the
+  catalog's folder name or the repository name, with the owner added when that is taken.
+- **Not installable from here:** an entry missing from the latest refresh (`missing_since`), and one
+  that is not on GitHub or GitLab (unless the catalog has it).
+- **Limits:** English only. `ports.local.json` backups are never pruned. The ratings are file-name
+  ratings; nothing here records whether a port ran on the Deck.
 
 ## Builds
 

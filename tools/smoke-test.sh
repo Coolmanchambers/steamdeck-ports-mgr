@@ -4,6 +4,7 @@
 #   - it is still running after STARTUP_SECONDS, with no panic;
 #   - it skipped the tray (no tray host here) instead of letting Slint try and fail;
 #   - its window is mapped and the screenshot is not blank;
+#   - Tab opens the Deck-ready list without a crash (whether it downloads is only reported), Tab returns;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
@@ -56,10 +57,19 @@ check "window mapped" 'grep -q "\"Ports Launcher\"" "$OUT/windows.txt"'
 check "screenshot not blank ($colors colours)" '[ "${colors:-0}" -ge 32 ]'
 
 if [ "$alive" = yes ]; then
-    # No window manager here, so focus the window directly, then press Escape (Close in windowed view).
+    # No window manager here, so focus the window directly.
     win=$(xdotool search --name "^Ports Launcher$" 2>/dev/null | head -1)
     if [ -n "$win" ]; then
-        xdotool windowfocus "$win" 2>/dev/null; sleep 0.5; xdotool key Escape
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
+        # Tab opens the Deck-ready list (it loads in the background), Tab again goes back.
+        xdotool key Tab; sleep "${DECK_READY_SECONDS:-8}"
+        import -window root "$OUT/deck-ready.png" 2>/dev/null
+        dr_alive=no; kill -0 "$APP" 2>/dev/null && dr_alive=yes
+        check "Deck-ready list opens and the app keeps running" '[ "$dr_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log"'
+        if [ -f "$APP_DIR/cache/deck-ready.json" ]; then echo "info: Deck-ready list downloaded and saved"; else echo "info: Deck-ready list not saved (no network here?)"; fi
+        xdotool key Tab; sleep 1
+        # Escape is Close in the windowed view.
+        xdotool key Escape
     fi
     for _ in $(seq 1 25); do kill -0 "$APP" 2>/dev/null || break; sleep 0.2; done
     if kill -0 "$APP" 2>/dev/null; then

@@ -1,5 +1,6 @@
 
 pub mod cards;
+pub mod deck_ready_screen;
 pub mod dialogs;
 pub mod events;
 pub mod gamepad_target;

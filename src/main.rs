@@ -200,6 +200,7 @@ fn main() {
             info_dialog_port_key: RefCell::new(None),
         },
         cheats: Default::default(),
+        deck_ready: Default::default(),
         events,
     });
     let router = Rc::new(RefCell::new(GamepadRouter::new()));
@@ -267,6 +268,8 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     window.on_activate_requested(with!(app, router => move || activate_selection(&app, &router)));
     window.on_reveal_folder_requested(with!(app => move || reveal_selected_folder(&app)));
     window.on_discord_requested(|| core::launch::open_url(DISCORD_URL));
+    // Fork: the Deck-ready list.
+    app::deck_ready_screen::wire(window, app, router);
     window.on_key_intercepted(with!(app => move |text, modified, repeat| {
         app::cheats::intercept(&app, (!repeat).then(|| app::cheats::keyboard_input(&text, modified)))
     }));

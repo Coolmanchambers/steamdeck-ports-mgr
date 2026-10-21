@@ -2,6 +2,8 @@ import { ListView } from "std-widgets.slint";
 import { CardGrid, CardItem, CardRow } from "card-grid.slint";
 import { SemanticColors, Theme, ThemedScrollbar, InertialScroller, TitleBarIconButton } from "shared.slint";
 import { MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr } from "dialogs.slint";
+// Fork: the Deck-ready list and its Info dialog.
+import { DeckReadyList, DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog } from "fork/deck-ready.slint";
 export { AppTray } from "tray.slint";
 
 export struct PortItem {
@@ -12,6 +14,7 @@ export struct PortItem {
 }
 
 export { CardItem, CardRow, SemanticColors, Theme, MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr }
+export { DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog }
 
 component ActionButton inherits Rectangle {
     in property <string> text: "";
@@ -75,6 +78,19 @@ export component AppWindow inherits Window {
     in property <bool> refocus-trigger: false;
     changed refocus-trigger => { search-input.focus(); }
     in property <bool> scroll-trigger: false;
+
+    // Fork: the Deck-ready list replaces the port list or card grid while deck-ready-mode is on.
+    in property <bool> deck-ready-mode: false;
+    in property <[DeckReadyRow]> deck-ready-rows: [];
+    in property <int> deck-ready-selected: -1;
+    in property <string> deck-ready-status: "";
+    in property <string> deck-ready-filters: "";
+    in property <string> deck-ready-empty-text: "";
+    callback deck-ready-toggle-requested();
+    callback deck-ready-row-hovered(int);
+    callback deck-ready-row-info(int);
+    callback deck-ready-row-action(int);
+    callback deck-ready-filters-requested();
 
     init => { search-input.focus(); }
 
@@ -184,7 +200,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: "Ports Launcher";
+                        text: root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : "Ports Launcher";
                         color: Theme.list-text;
                         vertical-alignment: center;
                         font-weight: 700;
@@ -267,6 +283,9 @@ export component AppWindow inherits Window {
                                     key-pressed(event) => {
                                         if (root.key-intercepted(event.text, event.modifiers.control || event.modifiers.alt || event.modifiers.meta || event.modifiers.shift, event.repeat)) {
                                             accept
+                                        } else if (event.text == Key.Tab || (root.deck-ready-mode && event.text == Key.Escape)) {
+                                            root.deck-ready-toggle-requested();
+                                            accept
                                         } else if (event.text == Key.Escape) {
                                             if (root.big-mode) {
                                                 root.fullscreen-toggle-requested();
@@ -323,7 +342,7 @@ export component AppWindow inherits Window {
                             }
 
                             if search-input.text.is-empty: Text {
-                                text: root.placeholder-text;
+                                text: root.deck-ready-mode ? @tr("Type to search the Deck-ready list...") : root.placeholder-text;
                                 color: Theme.search-text;
                                 font-size: search-font-px;
                                 vertical-alignment: center;
@@ -340,7 +359,7 @@ export component AppWindow inherits Window {
                         transform-scale-y: root.head-scale * 100%;
                         animate transform-rotation { duration: 1s; easing: ease-in-out; }
 
-                        if root.big-mode: CardGrid {
+                        if root.big-mode && !root.deck-ready-mode: CardGrid {
                             x: root.shake-x;
                             y: root.shake-y;
                             width: 100%;
@@ -357,7 +376,7 @@ export component AppWindow inherits Window {
                             card-unhovered() => { root.card-unhovered(); }
                         }
 
-                        if !root.big-mode: list-container := Rectangle {
+                        if !root.big-mode && !root.deck-ready-mode: list-container := Rectangle {
                             x: root.shake-x;
                             y: root.shake-y;
                             width: 100%;
@@ -537,6 +556,24 @@ export component AppWindow inherits Window {
                                 viewport-y <=> port-list.content-y;
                             }
                         }
+
+                        if root.deck-ready-mode: DeckReadyList {
+                            width: 100%;
+                            height: 100%;
+                            rows: root.deck-ready-rows;
+                            selected-index: root.deck-ready-selected;
+                            item-font-px: item-font-px;
+                            row-height: row-height;
+                            spacing: row-spacing;
+                            status-text: root.deck-ready-status;
+                            filter-text: root.deck-ready-filters;
+                            empty-text: root.deck-ready-empty-text;
+                            scroll-trigger: root.scroll-trigger;
+                            row-hovered(i) => { root.deck-ready-row-hovered(i); }
+                            row-info(i) => { root.deck-ready-row-info(i); }
+                            row-action(i) => { root.deck-ready-row-action(i); }
+                            filters-requested => { root.deck-ready-filters-requested(); }
+                        }
                     }
 
                     Rectangle {
@@ -548,6 +585,16 @@ export component AppWindow inherits Window {
                             height: 100%;
                             spacing: row-spacing;
                             alignment: end;
+
+                            ActionButton {
+                                text: root.deck-ready-mode ? @tr("All ports") : @tr("Deck-ready");
+                                fill-color: SemanticColors.info;
+                                fill-hover-color: SemanticColors.info-hover;
+                                font-size: item-font-px;
+                                width: self.text-preferred-width + button-padding * 2;
+                                height: 100%;
+                                clicked => { root.deck-ready-toggle-requested(); }
+                            }
 
                             ActionButton {
                                 text: root.self-update-available ? @tr("Update") : @tr("GitHub");

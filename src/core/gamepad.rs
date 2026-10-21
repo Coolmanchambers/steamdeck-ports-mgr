@@ -13,6 +13,9 @@ pub struct GamepadState {
     pub button_y: bool,
     pub button_start: bool,
     pub button_back: bool,
+    // Fork: L1 / R1 switch between All ports and the Deck-ready list.
+    pub button_lb: bool,
+    pub button_rb: bool,
     pub stick_x: f32,
     pub stick_y: f32,
 }
@@ -46,6 +49,8 @@ impl GamepadPoller {
             button_y: gamepad.is_pressed(Button::North),
             button_start: gamepad.is_pressed(Button::Start),
             button_back: gamepad.is_pressed(Button::Select),
+            button_lb: gamepad.is_pressed(Button::LeftTrigger),
+            button_rb: gamepad.is_pressed(Button::RightTrigger),
             stick_x: gamepad.value(Axis::LeftStickX),
             stick_y: gamepad.value(Axis::LeftStickY),
         }))
@@ -67,6 +72,8 @@ fn merge_states(states: impl Iterator<Item = GamepadState>) -> Option<GamepadSta
         button_y: a.button_y || b.button_y,
         button_start: a.button_start || b.button_start,
         button_back: a.button_back || b.button_back,
+        button_lb: a.button_lb || b.button_lb,
+        button_rb: a.button_rb || b.button_rb,
         stick_x: further(a.stick_x, b.stick_x),
         stick_y: further(a.stick_y, b.stick_y),
     })

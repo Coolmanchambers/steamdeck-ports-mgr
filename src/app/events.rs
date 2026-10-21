@@ -35,6 +35,8 @@ pub(crate) enum AppEvent {
     ThemesCheckDone { etag: String },
     SaveBackupProgress { name: String },
     SaveBackupDone { copied: usize, skipped: usize, failed: usize },
+    // Fork: the Deck-ready list finished a background check.
+    DeckReadyFetched(Box<crate::fork::deck_ready::sync::Outcome>),
 }
 
 fn json_field_labels(items: &[Value], field: &str) -> Vec<String> {
@@ -187,6 +189,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 open_message_dialog(app, router, &tr.invoke_dialog_title_saves_backup(), &summary);
             }
             AppEvent::BringToForeground => chrome::restore_window(app.window().window()),
+            AppEvent::DeckReadyFetched(outcome) => super::deck_ready_screen::on_fetched(app, *outcome),
         }
     }
 
