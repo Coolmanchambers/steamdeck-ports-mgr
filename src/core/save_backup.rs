@@ -95,7 +95,8 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
         .into_iter()
         .filter_map(|(save_folder, field)| {
             let src = save_folder.and_then(|v| resolve_save_folder(v, game_dir)).filter(|src| src.is_dir())?;
-            Some((src, field))
+            // "save": "." (or a folder holding the game) is not a save folder: copying it would duplicate the whole game on every update.
+            (!is_within(game_dir, &src) && !is_within(saves_backup_dir, &src)).then_some((src, field))
         })
         .collect();
     if sources.is_empty() {
@@ -113,9 +114,11 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
         return Ok(None);
     }
     let zip_path = unused_zip_path(&backups_dir, stamp)?;
-    zip_staging_dir(staging.path(), &zip_path)?;
-    if fs::metadata(&zip_path).map_or(true, |m| m.len() == 0) {
-        return Err(format!("the backup file is missing -- {}", zip_path.display()));
+    let zipped = zip_staging_dir(staging.path(), &zip_path)
+        .and_then(|()| if fs::metadata(&zip_path).map_or(true, |m| m.len() == 0) { Err(format!("the backup file is missing -- {}", zip_path.display())) } else { Ok(()) });
+    if let Err(e) = zipped {
+        let _ = fs::remove_file(&zip_path);
+        return Err(e);
     }
     Ok(Some(zip_path))
 }

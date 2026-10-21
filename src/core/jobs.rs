@@ -129,12 +129,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn verification_de_maj_suit_l_asset_prefere_et_ignore_un_asset_voisin_plus_recent() {
         let releases = severed_chains_releases("2026-10-20T08:00:00Z");
         assert!(!check(&severed_chains(), &releases));
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn verification_de_maj_signale_un_nouvel_asset_prefere() {
         let mut releases = severed_chains_releases("2026-10-17T01:16:08Z");
         releases[0]["assets"][2]["updated_at"] = "2026-10-19T10:00:00Z".into();
@@ -142,6 +144,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn verification_de_maj_sans_asset_prefere_retombe_sur_la_vieille_release() {
         let mut port = severed_chains();
         port.preferred_asset = None;

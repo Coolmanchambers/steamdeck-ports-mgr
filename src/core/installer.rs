@@ -496,7 +496,7 @@ pub fn install_port(
     overrides: InstallOverrides,
     on_progress: &mut dyn FnMut(&str),
 ) -> Result<Option<String>, InstallError> {
-    let InstallPaths { library_dir, saves_backup_dir } = paths;
+    let library_dir = paths.library_dir;
     let dest_dir = safe_join(library_dir, &port.folder).map_err(InstallError::Message)?;
     let tmp = temp_dir_in(library_dir, "_download_")?;
     let preferred_asset = port.preferred_asset.as_ref().and_then(resolve_preferred_asset);
@@ -1022,6 +1022,11 @@ mod tests {
             (snapshot(&self.dest_dir.join("saves")), snapshot(&self.external_save))
         }
 
+        fn staging_leftovers(&self) -> Vec<String> {
+            let names = fs::read_dir(&self.saves_backup_dir).map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_string()).collect());
+            names.unwrap_or_else(|_| Vec::new()).into_iter().filter(|name| name.starts_with("_")).collect()
+        }
+
         fn backup_zip(&self, stamp: &str) -> PathBuf {
             self.saves_backup_dir.join("Update Backups").join("MyGame").join(format!("{stamp}.zip"))
         }
@@ -1055,6 +1060,7 @@ mod tests {
         assert!(f.backup_zip("2026-10-20_12-00-00").is_file(), "the backup is made before the install touches anything");
         assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"old-version");
         assert_eq!(f.saves(), saves_before);
+        assert!(f.staging_leftovers().is_empty(), "{:?}", f.staging_leftovers());
     }
 
     #[test]
@@ -1068,8 +1074,30 @@ mod tests {
         let error = apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap_err();
 
         assert!(matches!(&error, InstallError::Message(m) if m.contains("nothing was changed")), "{error:?}");
+        assert!(f.staging_leftovers().is_empty(), "{:?}", f.staging_leftovers());
         assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"old-version");
         assert_eq!(f.saves(), saves_before);
+    }
+
+    #[test]
+    fn apply_archive_ne_copie_pas_le_jeu_quand_save_designe_le_dossier_du_jeu() {
+        let dir = temp_dir("update_save_is_game_dir");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let dest_dir = library_dir.join("MyGame");
+        put(&dest_dir.join("game.exe"), b"old-version");
+        put(&dest_dir.join("assets").join("big.bin"), b"a whole game dump");
+        for save in [".", "./"] {
+            let port = port_with_save("MyGame", Some(save));
+            let archive_path = dir.join("update.zip");
+            build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
+
+            apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+
+            assert_eq!(fs::read(dest_dir.join("game.exe")).unwrap(), b"new-version");
+            assert_eq!(fs::read(dest_dir.join("assets").join("big.bin")).unwrap(), b"a whole game dump");
+            assert!(!saves_backup_dir.exists(), "save {save:?} would have duplicated the whole game");
+        }
     }
 
     #[test]

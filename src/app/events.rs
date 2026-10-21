@@ -122,6 +122,12 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             }
             AppEvent::InstallError { key, message } => {
                 finish_operation(app, router, &key);
+                // A failed update must not lock the player out of the game that is already installed.
+                if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
+                    if let Some(port) = app.find_port(&key) {
+                        launch_flow(app, router, &port);
+                    }
+                }
                 open_message_dialog(app, router, &tr!(app).invoke_dialog_title_installation_error(), &message);
             }
             AppEvent::ExtraInstallDone { key, result } => {
