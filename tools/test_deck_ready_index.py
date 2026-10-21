@@ -46,6 +46,10 @@ class Release(unittest.TestCase):
         window = [self.rel("nightly-2", [], True), self.rel("v0", ["g-linux.zip"])]
         self.assertEqual(d.pick_release(window, None)["tagName"], "v0")
 
+    def test_junk_only_latest_is_skipped(self):
+        window = [self.rel("b1", ["g-linux.zip"], True)]
+        self.assertEqual(d.pick_release(window, self.rel("v1", ["g.sha256"]))["tagName"], "b1")
+
     def test_prerelease_only_project_uses_prerelease(self):
         self.assertEqual(d.pick_release([self.rel("b1", ["g-linux.zip"], True)], None)["tagName"], "b1")
 
@@ -128,6 +132,12 @@ class Merge(unittest.TestCase):
         stranger = next(p for p in out if p["github_id"] == 99)
         self.assertEqual(stranger["first_seen"], "2026-02-01")
         self.assertEqual([p["github_id"] for p in ch["added"]], [99])
+
+    def test_reused_slug_keeps_ids_unique(self):
+        old = [proj("github:a/b", github_id=5)]
+        out, ch = self.merge([proj("github:a/b", github_id=9)], old)
+        self.assertEqual([p["id"] for p in out], ["github:a/b"])
+        self.assertEqual(len(ch["removed"]), 1)
 
     def test_output_sorted_by_name(self):
         out, _ = self.merge([proj("github:a/z", "Zed"), proj("github:a/a", "alpha")], [])

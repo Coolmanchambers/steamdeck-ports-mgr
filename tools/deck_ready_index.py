@@ -65,7 +65,7 @@ CATALOG_SYSTEM_TAGS = {"n64": "N64", "ps1": "PS1", "ps2": "PS2", "ps4": "PS4", "
 TOOL_RE = re.compile(
     r"\b(tool|tools|toolkit|library|framework|toolchain|decompiler|disassembler|sdk|plugin|ghidra|ida pro|"
     r"binary ninja|emulator|compiler|linker|assembler|utility|utilities|template|boilerplate|runtime|"
-    r"editor|ide|converter|launcher|manager|workspace)\b", re.I)
+    r"ide|converter|workspace)\b", re.I)
 
 OUTPUT_FIELDS = ("id", "github_id", "name", "system", "repo", "repo_url", "host", "catalog_folder", "catalog_disabled",
                  "website", "kind", "deck_rating", "readme_mentions_deck", "archived", "sources", "evidence",
@@ -168,7 +168,7 @@ def collect_catalog(cands, catalog_path):
         src = p.get("source")
         linux_url = src.get("linux") if isinstance(src, dict) else None
         url = linux_url or (src if isinstance(src, str) else next(iter(src.values()), None) if isinstance(src, dict) else None)
-        if url and not re.match(r"https?://", url):
+        if not isinstance(url, str) or not re.match(r"https?://", url):
             url = None  # placeholders such as "??" are not sources
         site = p.get("website")
         meta = {"name": name, "catalog_folder": folder, "catalog_disabled": disabled, "catalog_tags": tags,
@@ -357,9 +357,12 @@ def pick_release(nodes, latest=None):
     `latest` matters for projects that publish many nightlies: their last stable release can fall out of
     the release window.
     """
-    if latest and not latest.get("isDraft") and (latest.get("releaseAssets") or {}).get("nodes"):
+    def has_files(n):
+        return any(not JUNK_RE.search(a["name"]) for a in (n.get("releaseAssets") or {}).get("nodes", []))
+
+    if latest and not latest.get("isDraft") and has_files(latest):
         return latest
-    usable = [n for n in nodes if not n.get("isDraft") and (n.get("releaseAssets") or {}).get("nodes")]
+    usable = [n for n in nodes if not n.get("isDraft") and has_files(n)]
     stable = [n for n in usable if not n.get("isPrerelease")]
     return (stable or usable or [None])[0]
 
@@ -496,8 +499,12 @@ def merge_with_previous(new_ready, old_projects, today, grace_days=GRACE_DAYS):
             if diff:
                 changes["changed"].append((p, diff))
         result.append(p)
+    taken = {p["id"] for p in result}
     for old in old_projects:
         if old["id"] in matched:
+            continue
+        if old["id"] in taken:  # the slug was reused by a different repo; ids stay unique
+            changes["removed"].append(old)
             continue
         since = old.get("missing_since")
         if since is None:
