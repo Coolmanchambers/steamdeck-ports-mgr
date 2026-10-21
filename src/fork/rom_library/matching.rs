@@ -261,7 +261,11 @@ fn group_disc_sets<'a>(hits: Vec<(&'a RomFile, Basis)>) -> Vec<FileMatch> {
     }
     for (f, basis) in hits.iter().filter(|(f, _)| f.ext != "cue") {
         let k = (folder(f), stem_key(f));
-        let owner = sets.iter_mut().find(|((dir, cue_key), g)| g[0].0.ext == "cue" && *dir == k.0 && k.1.starts_with(cue_key.as_str()));
+        // A track file: a disc-image extension, named like the cue or like the cue plus "(Track N)".
+        let track_like = matches!(f.ext.as_str(), "bin" | "img" | "wav" | "raw");
+        let owner = sets.iter_mut().find(|((dir, cue_key), g)| {
+            g[0].0.ext == "cue" && *dir == k.0 && track_like && k.1.strip_prefix(cue_key.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with("track"))
+        });
         match owner {
             Some((_, group)) => group.push((*f, *basis)),
             None => match sets.iter_mut().find(|(sk, g)| *sk == k && g[0].0.ext != "cue") {
@@ -350,7 +354,7 @@ pub fn match_slots(spec: &RomSpec, files: &[RomFile]) -> Vec<SlotResult> {
             status_for_slot(slot, &remaining)
         };
         if let SlotStatus::Found(m) = &status {
-            taken.extend(files.iter().filter(|f| f.path == m.path));
+            taken.extend(files.iter().filter(|f| f.path == m.path || m.parts.contains(&f.path)));
         }
         results.push(SlotResult {
             slot_id: slot.id(),
@@ -743,5 +747,49 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].status, PortStatus::Found);
         assert_eq!(all[1].status, PortStatus::Unspecified);
+    }
+
+    #[test]
+    fn f_zero_x_with_cartridge_and_disk_but_no_ipl_is_still_partial() {
+        let dir = temp_dir();
+        let (game, ipl, disk) = (n64_rom(60, 4096), n64_rom(61, 4096), random_bytes(62, 3000));
+        write(&dir.path().join("F-Zero X (USA).z64"), &game);
+        write(&dir.path().join("disk.ndd"), &disk);
+        let text = format!("Required files: F-Zero X (USA)/[BIOS] Nintendo 64DD IPL (Japan) (v1.2).z64/NUD-EFZE-USA_2.ndd (CRC32: {}/{}/{})", crc_text(&game), crc_text(&ipl), crc_text(&disk));
+        let m = match_port("k", "FZ", &spec(&text), &scan_dir(dir.path()));
+        assert_eq!(m.status, PortStatus::Partial, "{:#?}", m.slots);
+        assert!(matches!(m.slots[0].status, SlotStatus::Found(_)));
+        assert!(matches!(m.slots[1].status, SlotStatus::Missing));
+        assert!(matches!(m.slots[2].status, SlotStatus::Found(_)));
+        write(&dir.path().join("ipl.z64"), &ipl);
+        assert_eq!(match_port("k", "FZ", &spec(&text), &scan_dir(dir.path())).status, PortStatus::Found);
+    }
+
+    #[test]
+    fn only_track_files_named_like_the_cue_are_its_parts() {
+        let dir = temp_dir();
+        write(&dir.path().join("psx/SLUS-00972.cue"), b"FILE \"SLUS-00972.bin\" BINARY\n");
+        write(&dir.path().join("psx/SLUS-00972.bin"), &random_bytes(63, 2000));
+        write(&dir.path().join("psx/SLUS-00972.chd"), &random_bytes(64, 2000));
+        let m = match_port("k", "G", &spec("Required files: SLUS-00972"), &scan_dir(dir.path()));
+        // The .chd is a second, separate answer, not a track of the cue disc.
+        assert_eq!(m.status, PortStatus::Ambiguous, "{:#?}", m.slots);
+        let SlotStatus::Ambiguous(v) = &m.slots[0].status else { panic!() };
+        assert_eq!(v.len(), 2);
+        let cue = v.iter().find(|f| f.path.ends_with("SLUS-00972.cue")).unwrap();
+        assert_eq!(cue.parts.len(), 1);
+        assert!(cue.parts[0].ends_with("SLUS-00972.bin"));
+    }
+
+    #[test]
+    fn a_later_slot_cannot_claim_a_track_of_a_disc_an_earlier_slot_took() {
+        let dir = temp_dir();
+        let (bin, cue) = (random_bytes(65, 3000), b"FILE \"Game.bin\" BINARY\n".to_vec());
+        write(&dir.path().join("Game.bin"), &bin);
+        write(&dir.path().join("Game.cue"), &cue);
+        let text = format!("Required files: Game.bin/cue (CRC32: {}/{}) + Other.bin (CRC32: {})", crc_text(&bin), crc_text(&cue), crc_text(&bin));
+        let m = match_port("k", "G", &spec(&text), &scan_dir(dir.path()));
+        assert!(matches!(m.slots[0].status, SlotStatus::Found(_)));
+        assert!(matches!(m.slots[1].status, SlotStatus::Missing), "{:#?}", m.slots[1]);
     }
 }

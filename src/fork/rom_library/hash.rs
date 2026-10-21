@@ -247,8 +247,8 @@ pub fn from_hex(text: &str) -> Option<Vec<u8>> {
     (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).ok()).collect()
 }
 
-/// The checksums of one stream of bytes. SHA-1 is optional because it is the slowest of the three
-/// and no catalog entry names a SHA-1.
+/// The checksums of one stream of bytes. SHA-1 is optional because it is the slowest of the three; the
+/// few catalog entries that name only a SHA-1 cannot be matched without it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digests {
     pub crc32: u32,

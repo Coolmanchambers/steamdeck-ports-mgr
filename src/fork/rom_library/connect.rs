@@ -447,10 +447,11 @@ pub fn apply(plan: &ConnectPlan, approval: Approval) -> Result<Mapping, ApplyErr
             let dest = plan.dest.as_ref().expect("a link plan has a destination");
             source_unchanged(plan)?;
             let dest_dir = dest.parent().unwrap_or(Path::new("."));
-            fs::create_dir_all(dest_dir).map_err(apply_io(dest))?;
+            // Checked before the folder is created: a missing folder is judged by its deepest existing parent.
             if !confined(&plan.request.port_dir, dest_dir) {
                 return Err(ApplyError::OutsidePortFolder(dest_dir.to_path_buf()));
             }
+            fs::create_dir_all(dest_dir).map_err(apply_io(dest))?;
             if !absent(dest) {
                 return Err(ApplyError::DestAppeared(dest.clone()));
             }
@@ -482,10 +483,10 @@ pub fn apply(plan: &ConnectPlan, approval: Approval) -> Result<Mapping, ApplyErr
 
 fn copy_without_overwriting(plan: &ConnectPlan, dest: &Path) -> Result<u32, ApplyError> {
     let dest_dir = dest.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(dest_dir).map_err(apply_io(dest_dir))?;
     if !confined(&plan.request.port_dir, dest_dir) {
         return Err(ApplyError::OutsidePortFolder(dest_dir.to_path_buf()));
     }
+    fs::create_dir_all(dest_dir).map_err(apply_io(dest_dir))?;
     if !absent(dest) {
         return Err(ApplyError::DestAppeared(dest.to_path_buf()));
     }
@@ -1065,5 +1066,25 @@ mod tests {
         write(&f.port.join("Game (USA).z64"), b"appeared later");
         assert!(apply_set(&plans, Approval::CopyAllowed).is_err());
         assert_eq!(fs::read(f.port.join("Game (USA).cue")).unwrap(), cue_data, "a pre-existing file is not ours to remove");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_link_after_planning_is_caught_before_anything_is_created() {
+        let f = fixture();
+        let outside = f._tmp.path().join("elsewhere");
+        fs::create_dir_all(&outside).unwrap();
+        for method in [Method::Symlink, Method::Copy] {
+            let mut req = request(&f, method, Access::Link);
+            req.dest_subdir = "isos/disc1".into();
+            let plan = plan_connect(&req).unwrap();
+            // After the plan, "isos" becomes a link that leaves the port folder.
+            let _ = fs::remove_file(f.port.join("isos"));
+            std::os::unix::fs::symlink(&outside, f.port.join("isos")).unwrap();
+            let err = apply(&plan, Approval::CopyAllowed).unwrap_err();
+            assert!(matches!(err, ApplyError::OutsidePortFolder(_)), "{method:?}: {err}");
+            assert!(fs::read_dir(&outside).unwrap().next().is_none(), "{method:?}: nothing, not even a folder, may appear outside");
+            fs::remove_file(f.port.join("isos")).unwrap();
+        }
     }
 }

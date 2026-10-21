@@ -20,7 +20,8 @@ const CHUNK: usize = 1 << 20;
 pub struct ScanOptions {
     /// Folders below the ROM folder to enter. 0 scans only the ROM folder itself.
     pub max_depth: usize,
-    /// SHA-1 costs the most CPU of the three hashes and nothing in the catalog asks for it.
+    /// SHA-1 costs the most CPU of the three hashes. Leave it on: a few catalog entries (BattleTanx) give
+    /// only a SHA-1, and without it a correct dump of those would be reported as a wrong version.
     pub sha1: bool,
     /// Hash files whose extension is not a known ROM or disc extension too.
     pub hash_all_extensions: bool,

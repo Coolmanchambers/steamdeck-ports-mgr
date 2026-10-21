@@ -317,6 +317,41 @@ fn split_after_ext_slash(s: &str) -> Vec<&str> {
     vec![s]
 }
 
+/// "A/B.z64/C.ndd (CRC32: x/y/z)": after `split_after_ext_slash`, the slash-separated names are as many
+/// as the checksums, so every name is its own file with its own checksum, in order. A name without an
+/// extension takes the one that ends its part ("A/B.z64" is "A.z64" and "B.z64"). Variants like
+/// "(USA)/(Japan)" are not files, so their presence cancels this.
+fn split_each_segment(parts: &[&str]) -> Option<Vec<Vec<(Alt, bool)>>> {
+    let (last_name, clauses) = split_clauses(parts.last()?);
+    let wanted = clauses.crc32.len();
+    let mut names: Vec<String> = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        let text = if i + 1 == parts.len() { last_name } else { part };
+        let segments = top_level_split(text, "/");
+        let (_, exts) = extract_exts(segments.last()?)?;
+        if segments.iter().any(|s| s.starts_with('(')) {
+            return None;
+        }
+        for seg in segments {
+            names.push(if extract_exts(seg).is_some() { seg.to_string() } else { format!("{seg}.{}", exts[0]) });
+        }
+    }
+    if wanted < 2 || names.len() != wanted {
+        return None;
+    }
+    Some(
+        names
+            .iter()
+            .zip(&clauses.crc32)
+            .map(|(name, crc)| {
+                let (mut alt, _) = parse_alt(name);
+                alt.crc32 = vec![*crc];
+                vec![(alt, true)]
+            })
+            .collect(),
+    )
+}
+
 fn kind_of(display: &str) -> SlotKind {
     let l = display.to_ascii_lowercase();
     if l.contains("bios") || l.contains("scph") || l.contains("boot.bin") || l.contains("boot.rom") {
@@ -398,7 +433,8 @@ fn required_files_text(instructions: &str) -> Option<String> {
             .map(|l| l.trim().trim_start_matches(|c: char| !c.is_alphanumeric()).to_string())
             .collect();
         if !items.is_empty() && items.iter().all(|s| is_file_like(s)) {
-            return Some(items.join(" + "));
+            // The list is the games the port supports, not files that are all needed.
+            return Some(items.join(" or "));
         }
         return Some(String::new());
     }
@@ -484,7 +520,14 @@ pub fn parse_instructions(instructions: &str) -> Requirement {
     let mut pieces: Vec<Vec<(Alt, bool)>> = Vec::new();
     for plus in top_level_split(body, " + ") {
         for comma in split_if_file_like(plus, ",") {
-            for part in split_after_ext_slash(comma) {
+            let parts = split_after_ext_slash(comma);
+            if parts.len() > 1 {
+                if let Some(each) = split_each_segment(&parts) {
+                    pieces.extend(each);
+                    continue;
+                }
+            }
+            for part in parts {
                 pieces.push(split_if_file_like(part, " or ").into_iter().map(parse_alt).collect());
             }
         }
@@ -878,19 +921,23 @@ mod tests {
     }
 
     #[test]
-    fn catalog_f_zero_x_is_separate_files_not_one_any_of_slot() {
+    fn catalog_f_zero_x_is_three_files_with_one_checksum_each() {
         let r = parse_instructions(&catalog_instructions("F-Zero X"));
-        assert_eq!(r.slots.len(), 2, "{:#?}", r.slots);
-        assert!(r.slots[1].alternatives[0].names[0].ends_with("NUD-EFZE-USA_2.ndd"));
-        assert_eq!(r.slots[1].alternatives[0].crc32.len(), 3);
-        assert_eq!(r.slots[0].alternatives[0].crc32.len(), 3);
+        assert_eq!(r.slots.len(), 3, "{:#?}", r.slots);
+        let names: Vec<&str> = r.slots.iter().map(|s| s.alternatives[0].names[0].as_str()).collect();
+        assert_eq!(names, vec!["F-Zero X (USA).z64", "[BIOS] Nintendo 64DD IPL (Japan) (v1.2).z64", "NUD-EFZE-USA_2.ndd"]);
+        let crcs: Vec<Vec<u32>> = r.slots.iter().map(|s| s.alternatives[0].crc32.clone()).collect();
+        assert_eq!(crcs, vec![vec![0x0B56_1FBA], vec![0x7F93_3CE2], vec![0xEBDF_BD2B]]);
+        assert_eq!(r.slots[0].kind, SlotKind::Game);
+        assert_eq!(r.slots[1].kind, SlotKind::Bios);
     }
 
     #[test]
-    fn catalog_bulleted_list_gives_one_slot_per_game() {
+    fn catalog_bulleted_list_is_one_slot_any_of_the_supported_games() {
         let r = parse_instructions(&catalog_instructions("mon Gen 1"));
-        assert_eq!(r.slots.len(), 7, "{:#?}", r.slots.iter().map(|s| &s.label).collect::<Vec<_>>());
-        assert!(r.slots.iter().all(|s| s.alternatives[0].crc32.len() == 1));
+        assert_eq!(r.slots.len(), 1, "{:#?}", r.slots.iter().map(|s| &s.label).collect::<Vec<_>>());
+        assert_eq!(r.slots[0].alternatives.len(), 7);
+        assert!(r.slots[0].alternatives.iter().all(|a| a.crc32.len() == 1));
         assert!(r.slots[0].alternatives[0].names[0].starts_with("Pokemon - Blue Version"));
     }
 
