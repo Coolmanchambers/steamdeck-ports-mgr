@@ -40,7 +40,8 @@ pub struct FieldChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Add,
-    Update { key: String, app_id: u32, changes: Vec<FieldChange> },
+    /// `by_name`: the shortcut was found by its name only, so it points at a different program today.
+    Update { key: String, app_id: u32, changes: Vec<FieldChange>, by_name: bool },
     UpToDate { app_id: Option<u32> },
     Blocked(String),
 }
@@ -123,18 +124,23 @@ fn same_text(stored: &str, wanted: &str) -> bool {
     stored == wanted
 }
 
+/// Steam writes a start folder with a trailing slash; ours has none. Same folder either way.
+fn same_dir(stored: &str, wanted: &str) -> bool {
+    stored.trim_end_matches(['/', '\\']) == wanted.trim_end_matches(['/', '\\'])
+}
+
 fn diff(existing: &Shortcut, wanted: &WantedShortcut) -> Vec<FieldChange> {
     let mut changes = Vec::new();
-    let mut check = |field: &'static str, from: &str, to: &str| {
-        if !same_text(from, to) {
+    let mut check = |field: &'static str, from: &str, to: &str, same: fn(&str, &str) -> bool| {
+        if !same(from, to) {
             changes.push(FieldChange { field, from: from.to_string(), to: to.to_string() });
         }
     };
-    check("program", existing.exe_path(), &wanted.exe);
-    check("start folder", existing.start_dir_path(), &wanted.start_dir);
-    check("launch options", &existing.launch_options, &wanted.launch_options);
+    check("program", existing.exe_path(), &wanted.exe, same_text);
+    check("start folder", existing.start_dir_path(), &wanted.start_dir, same_dir);
+    check("launch options", &existing.launch_options, &wanted.launch_options, same_text);
     if let Some(icon) = &wanted.icon {
-        check("icon", &existing.icon, icon);
+        check("icon", &existing.icon, icon, same_text);
     }
     changes
 }
@@ -145,7 +151,8 @@ pub fn plan(doc: &Document, wanted: &[WantedShortcut]) -> Vec<PlanItem> {
         .iter()
         .map(|w| {
             let by_exe: Vec<&Shortcut> = existing.iter().filter(|s| s.exe_path() == w.exe).collect();
-            let matches = if by_exe.is_empty() {
+            let by_name = by_exe.is_empty();
+            let matches = if by_name {
                 existing.iter().filter(|s| s.app_name.eq_ignore_ascii_case(&w.app_name)).collect()
             } else {
                 by_exe
@@ -156,7 +163,7 @@ pub fn plan(doc: &Document, wanted: &[WantedShortcut]) -> Vec<PlanItem> {
                     let changes = diff(one, w);
                     match (changes.is_empty(), one.app_id) {
                         (true, id) => Action::UpToDate { app_id: id },
-                        (false, Some(app_id)) => Action::Update { key: one.key.clone(), app_id, changes },
+                        (false, Some(app_id)) => Action::Update { key: one.key.clone(), app_id, changes, by_name },
                         (false, None) => Action::Blocked(
                             "its Steam entry has no stored app ID; open and quit Steam once, then try again".into(),
                         ),
@@ -307,11 +314,11 @@ mod tests {
     fn same_program_means_update_in_place_and_shows_only_what_differs() {
         // plain_file has "Zelda Ship" at /home/deck/Ports/soh/soh.AppImage with start dir ".../soh/".
         let mut w = wanted("Ship of Harkinian", "/home/deck/Ports/soh/soh.AppImage");
-        w.start_dir = "/home/deck/Ports/soh".into();
+        w.start_dir = "/elsewhere/soh".into();
         let items = plan(&doc(), &[w]);
         match &items[0].action {
-            Action::Update { key, app_id, changes } => {
-                assert_eq!((key.as_str(), *app_id), ("0", 0xF154_8865));
+            Action::Update { key, app_id, changes, by_name } => {
+                assert_eq!((key.as_str(), *app_id, *by_name), ("0", 0xF154_8865, false));
                 assert_eq!(changes.iter().map(|c| c.field).collect::<Vec<_>>(), ["start folder"]);
                 assert_eq!(changes[0].from, "/home/deck/Ports/soh/");
             }
@@ -320,10 +327,18 @@ mod tests {
     }
 
     #[test]
+    fn a_start_folder_with_or_without_a_trailing_slash_is_the_same_folder() {
+        let mut w = wanted("Ship of Harkinian", "/home/deck/Ports/soh/soh.AppImage");
+        w.start_dir = "/home/deck/Ports/soh".into();
+        assert_eq!(plan(&doc(), &[w])[0].action, Action::UpToDate { app_id: Some(0xF154_8865) });
+    }
+
+    #[test]
     fn same_name_with_a_moved_program_is_a_repoint_keeping_the_id() {
         let items = plan(&doc(), &[wanted("zelda ship", "/lib/SoH/soh.AppImage")]);
         match &items[0].action {
-            Action::Update { app_id, changes, .. } => {
+            Action::Update { app_id, changes, by_name, .. } => {
+                assert!(*by_name, "found by its name, not its program");
                 assert_eq!(*app_id, 0xF154_8865);
                 assert_eq!(changes.iter().map(|c| c.field).collect::<Vec<_>>(), ["program", "start folder"]);
             }
@@ -450,42 +465,44 @@ mod tests {
         port_from_value(&v).unwrap()
     }
 
-    #[cfg(unix)]
-    fn exe(path: &Path, mode: u32) {
-        use std::os::unix::fs::PermissionsExt;
+    /// Writes a program file; the mode only matters on Unix.
+    fn exe(path: &Path, executable: bool) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"x").unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(if executable { 0o755 } else { 0o644 })).unwrap();
+        }
+        let _ = executable;
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_installed_port_with_one_program_gets_a_shortcut_for_it() {
         let lib = temp_dir("wanted_one");
-        exe(&lib.join("SoH").join("soh.appimage"), 0o755);
+        exe(&lib.join("SoH").join("soh.exe"), true);
         let w = wanted_from_port(&port(json!({})), &lib, None).unwrap();
         assert_eq!(w.app_name, "Ship");
-        assert_eq!(w.exe, lib.join("SoH").join("soh.appimage").to_str().unwrap());
+        assert_eq!(w.exe, lib.join("SoH").join("soh.exe").to_str().unwrap());
         assert_eq!(w.start_dir, lib.join("SoH").to_str().unwrap());
         let _ = fs::remove_dir_all(lib);
     }
 
-    #[cfg(unix)]
     #[test]
     fn the_catalog_executable_and_then_the_favorite_decide_which_program() {
         let lib = temp_dir("wanted_choice");
-        exe(&lib.join("SoH").join("bin").join("main"), 0o755);
-        exe(&lib.join("SoH").join("other"), 0o755);
+        exe(&lib.join("SoH").join("bin").join("main"), true);
+        exe(&lib.join("SoH").join("other"), true);
         let p = port(json!({"executable": "bin/main"}));
-        assert!(wanted_from_port(&p, &lib, None).unwrap().exe.ends_with("SoH/bin/main"));
-        assert!(wanted_from_port(&p, &lib, Some("other")).unwrap().exe.ends_with("SoH/other"));
+        let ends = |w: WantedShortcut, tail: &str| Path::new(&w.exe).ends_with(tail);
+        assert!(ends(wanted_from_port(&p, &lib, None).unwrap(), "SoH/bin/main"));
+        assert!(ends(wanted_from_port(&p, &lib, Some("other")).unwrap(), "SoH/other"));
         // A favorite that is gone or tries to leave the folder falls back to the catalog's program.
-        assert!(wanted_from_port(&p, &lib, Some("../../x")).unwrap().exe.ends_with("SoH/bin/main"));
-        assert!(wanted_from_port(&p, &lib, Some("missing")).unwrap().exe.ends_with("SoH/bin/main"));
+        assert!(ends(wanted_from_port(&p, &lib, Some("../../x")).unwrap(), "SoH/bin/main"));
+        assert!(ends(wanted_from_port(&p, &lib, Some("missing")).unwrap(), "SoH/bin/main"));
         let _ = fs::remove_dir_all(lib);
     }
 
-    #[cfg(unix)]
     #[test]
     fn reasons_a_port_cannot_be_offered_are_plain() {
         let lib = temp_dir("wanted_reasons");
@@ -493,13 +510,20 @@ mod tests {
         assert_eq!(wanted_from_port(&p, &lib, None).unwrap_err(), "not installed");
         fs::create_dir_all(lib.join("SoH")).unwrap();
         assert_eq!(wanted_from_port(&p, &lib, None).unwrap_err(), "no program found in its folder");
-        exe(&lib.join("SoH").join("a"), 0o755);
-        exe(&lib.join("SoH").join("b"), 0o755);
+        exe(&lib.join("SoH").join("a.exe"), true);
+        exe(&lib.join("SoH").join("b.exe"), true);
         assert!(wanted_from_port(&p, &lib, None).unwrap_err().starts_with("several programs"));
-        let q = port(json!({"executable": "a"}));
-        fs::set_permissions(lib.join("SoH").join("a"), std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
-        assert!(wanted_from_port(&q, &lib, None).unwrap_err().contains("not marked executable"));
         assert!(wanted_from_port(&p, Path::new("relative/lib"), None).is_err());
+        let _ = fs::remove_dir_all(lib);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_without_the_executable_bit_is_refused_with_a_hint() {
+        let lib = temp_dir("wanted_not_exec");
+        exe(&lib.join("SoH").join("a"), false);
+        let q = port(json!({"executable": "a"}));
+        assert!(wanted_from_port(&q, &lib, None).unwrap_err().contains("not marked executable"));
         let _ = fs::remove_dir_all(lib);
     }
 
@@ -507,7 +531,7 @@ mod tests {
     #[test]
     fn a_path_with_a_double_quote_is_refused_with_a_reason() {
         let lib = temp_dir("wanted_quote");
-        exe(&lib.join("SoH").join("a\"b"), 0o755);
+        exe(&lib.join("SoH").join("a\"b"), true);
         assert!(wanted_from_port(&port(json!({"executable": "a\"b"})), &lib, None).unwrap_err().contains("double quote"));
         let _ = fs::remove_dir_all(lib);
     }
@@ -517,7 +541,7 @@ mod tests {
     fn a_symlinked_adopted_port_gets_the_library_path_not_the_target() {
         let dir = temp_dir("wanted_link");
         let real = dir.join("Applications").join("SoH");
-        exe(&real.join("soh.appimage"), 0o755);
+        exe(&real.join("soh.appimage"), true);
         let lib = dir.join("Library");
         fs::create_dir_all(&lib).unwrap();
         std::os::unix::fs::symlink(&real, lib.join("SoH")).unwrap();

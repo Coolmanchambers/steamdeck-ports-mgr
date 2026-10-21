@@ -5,12 +5,13 @@
 //! something lives here so it can be tested with fixtures.
 
 use super::adopt::{self, Candidate, ScanResult};
+use super::art;
 use super::artwork;
 use super::backups;
 use super::settings::ForkSettings;
 use super::steam_sync::{self, Action, PlanItem, WantedShortcut};
 use super::steam_user::{self, SteamAccount};
-use super::store::{backup_stamp, ShortcutsFile, SteamProcessCheck, StoreError};
+use super::store::{backup_stamp, check_steam, ShortcutsFile, SteamProcessCheck, StoreError};
 use crate::core::models::Port;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -22,6 +23,14 @@ pub const CLOSE_STEAM_HELP: &str = "Steam is running, so nothing was changed.\n\
     Game Mode cannot close Steam.";
 
 pub const RESTART_STEAM_HELP: &str = "Start Steam again to see them under Non-Steam games.";
+
+/// `CLOSE_STEAM_HELP` plus the processes still found, since Steam's helper can outlive "Exit" by a few seconds.
+pub fn close_steam_message(processes: &[String]) -> String {
+    if processes.is_empty() {
+        return CLOSE_STEAM_HELP.to_string();
+    }
+    format!("{CLOSE_STEAM_HELP}\nStill running: {} (it can take a few seconds to stop).", processes.join(", "))
+}
 
 pub fn short_path(path: &Path, home: &Path) -> String {
     match path.strip_prefix(home) {
@@ -50,6 +59,8 @@ pub enum SteamLine {
 pub struct PortRow {
     pub name: String,
     pub key: String,
+    /// The catalog folder, which names the port's cached artwork.
+    pub folder: String,
     pub wanted: Result<WantedShortcut, String>,
     pub plan: Option<PlanItem>,
     pub selected: bool,
@@ -58,6 +69,11 @@ pub struct PortRow {
 impl PortRow {
     fn can_change(&self) -> bool {
         self.plan.as_ref().is_some_and(PlanItem::changes_the_file)
+    }
+
+    /// An existing shortcut found by name only: it points at some other program today.
+    fn by_name(&self) -> bool {
+        matches!(self.plan.as_ref().map(|p| &p.action), Some(Action::Update { by_name: true, .. }))
     }
 }
 
@@ -68,12 +84,15 @@ pub struct SteamScreen {
     pub rows: Vec<PortRow>,
     /// Why the shortcuts file could not be read, if so.
     pub load_error: Option<String>,
+    /// Where the app caches catalog images (`<folder>.png`, `<folder>_icon.png`). Artwork is only
+    /// placed from files found here.
+    pub cache_dir: Option<PathBuf>,
 }
 
 impl SteamScreen {
     /// `favorite_exe` answers, per port key, which program the user picked in the port's info.
     pub fn load(home: &Path, library_dir: &Path, catalog: &[Port], settings: &ForkSettings, favorite_exe: &dyn Fn(&str) -> Option<String>) -> SteamScreen {
-        let mut screen = SteamScreen { steam_root: None, accounts: Vec::new(), account: None, rows: Vec::new(), load_error: None };
+        let mut screen = SteamScreen { steam_root: None, accounts: Vec::new(), account: None, rows: Vec::new(), load_error: None, cache_dir: None };
         for root in artwork::existing_steam_roots(home) {
             if let Ok(accounts) = steam_user::discover_accounts(&root) {
                 if !accounts.is_empty() {
@@ -128,16 +147,23 @@ impl SteamScreen {
             .filter(|p| !p.is_android_only() && crate::core::installer::is_installed(p, library_dir))
             .collect();
         eligible.sort_by_key(|p| p.display_name().to_lowercase());
-        let wanted: Vec<(String, String, Result<WantedShortcut, String>)> = eligible
-            .iter()
-            .map(|p| (p.display_name().to_string(), p.key().to_string(), steam_sync::wanted_from_port(p, library_dir, favorite_exe(p.key()).as_deref())))
-            .collect();
-        let ok: Vec<WantedShortcut> = wanted.iter().filter_map(|(_, _, w)| w.as_ref().ok().cloned()).collect();
+        let wanted: Vec<(&Port, Result<WantedShortcut, String>)> =
+            eligible.iter().map(|p| (*p, steam_sync::wanted_from_port(p, library_dir, favorite_exe(p.key()).as_deref()))).collect();
+        let ok: Vec<WantedShortcut> = wanted.iter().filter_map(|(_, w)| w.as_ref().ok().cloned()).collect();
         let mut plans = steam_sync::plan(&file.doc, &ok).into_iter();
-        for (name, key, wanted) in wanted {
+        for (port, wanted) in wanted {
             let plan = wanted.is_ok().then(|| plans.next()).flatten();
-            let selected = plan.as_ref().is_some_and(PlanItem::changes_the_file);
-            self.rows.push(PortRow { name, key, wanted, plan, selected });
+            let mut row = PortRow {
+                name: port.display_name().to_string(),
+                key: port.key().to_string(),
+                folder: port.folder.clone(),
+                wanted,
+                plan,
+                selected: false,
+            };
+            // A shortcut found by name only is left off until the user switches it on.
+            row.selected = row.can_change() && !row.by_name();
+            self.rows.push(row);
         }
     }
 
@@ -171,6 +197,10 @@ impl SteamScreen {
                 let what = match (&row.wanted, row.plan.as_ref().map(|p| &p.action)) {
                     (Err(reason), _) => format!("skipped, {reason}"),
                     (_, Some(Action::Add)) => "will add".to_string(),
+                    (_, Some(Action::Update { changes, by_name: true, .. })) => {
+                        let now = changes.iter().find(|c| c.field == "program").map_or("another program", |c| program_name(&c.from));
+                        format!("same name as a shortcut for {now}, will repoint it")
+                    }
                     (_, Some(Action::Update { changes, .. })) => {
                         format!("will update ({})", changes.iter().map(|c| c.field).collect::<Vec<_>>().join(", "))
                     }
@@ -182,6 +212,7 @@ impl SteamScreen {
             }
             SteamLine::Review => match (&self.load_error, self.selected_count()) {
                 (Some(_), _) => "Could not read shortcuts.vdf: see the message".to_string(),
+                (None, _) if self.account.is_none() => "Choose a Steam account first".to_string(),
                 (None, 0) if self.rows.is_empty() => "No installed ports to add".to_string(),
                 (None, 0) => "Nothing selected to add or update".to_string(),
                 (None, 1) => "Review 1 change...".to_string(),
@@ -208,6 +239,24 @@ impl SteamScreen {
         self.rows.iter().filter(|r| r.selected).filter_map(|r| r.plan.clone().filter(PlanItem::changes_the_file)).collect()
     }
 
+    /// Why "Review" cannot go ahead, as the message to show; `None` when it can.
+    pub fn review_problem(&self, steam: &dyn SteamProcessCheck) -> Option<String> {
+        if let Some(e) = &self.load_error {
+            return Some(e.clone());
+        }
+        if self.account.is_none() {
+            return Some("Choose your Steam account first (the first row).".to_string());
+        }
+        if self.selected_count() == 0 {
+            return Some("Nothing is selected to add or update.".to_string());
+        }
+        match steam.running_steam_processes() {
+            Ok(p) if p.is_empty() => None,
+            Ok(p) => Some(close_steam_message(&p)),
+            Err(_) => Some("Could not tell whether Steam is running, so nothing will be written.".to_string()),
+        }
+    }
+
     /// The text of the confirmation: what will be added, what will change, where the backup goes.
     pub fn review_text(&self) -> String {
         let mut added = Vec::new();
@@ -215,9 +264,13 @@ impl SteamScreen {
         for item in self.selected_items() {
             match &item.action {
                 Action::Add => added.push(format!("  {}", item.wanted.app_name)),
-                Action::Update { changes, .. } => {
+                Action::Update { changes, by_name, .. } => {
                     let fields: Vec<&str> = changes.iter().map(|c| c.field).collect();
-                    updated.push(format!("  {} ({})", item.wanted.app_name, fields.join(", ")));
+                    let detail = match (by_name, changes.iter().find(|c| c.field == "program")) {
+                        (true, Some(c)) => format!("now {}: {}", program_name(&c.from), fields.join(", ")),
+                        _ => fields.join(", "),
+                    };
+                    updated.push(format!("  {} ({detail})", item.wanted.app_name));
                 }
                 _ => {}
             }
@@ -232,6 +285,11 @@ impl SteamScreen {
         out.push_str("shortcuts.vdf is backed up first.");
         out
     }
+}
+
+/// The file name of a program path, for short labels.
+fn program_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().filter(|n| !n.is_empty()).unwrap_or(path)
 }
 
 /// At most `MAX_LISTED` lines, so a long list cannot outgrow its dialog.
@@ -252,13 +310,48 @@ pub struct ApplyOutcome {
     pub wrote: bool,
 }
 
-/// ART HOOK: the one place the artwork pipeline plugs in. It is called after the plan is made and
-/// before anything is written, with the app ID each wanted shortcut will have, and may fill in
-/// `WantedShortcut::icon` (the placed icon's path). It must not write `shortcuts.vdf` and must never
-/// overwrite art the user chose. No artwork is placed yet: this does nothing until the
-/// `src/fork/art/` writer lands (`art::grid::write_art(grid_dir, app_id, set, options)`, which returns
-/// the icon path), then call it here per `(wanted, app_id)` and re-plan.
-fn art_hook(_grid_dir: &Path, _wanted: &mut [(WantedShortcut, u32)]) {}
+/// Places the catalog artwork the app has cached for each wanted shortcut and returns what happened,
+/// one line per port that needs mentioning. Sets `WantedShortcut::icon` when an icon of ours is in
+/// place. Never overwrites art the user chose (the writer decides), never touches `shortcuts.vdf`.
+/// A port with nothing cached yet gets a note, not an error: the images are fetched in the background
+/// when the screen opens, so a second try a minute later has them.
+fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], wanted: &mut [WantedShortcut]) -> Vec<String> {
+    let Some(cache_dir) = &screen.cache_dir else { return Vec::new() };
+    if !grid_dir.is_absolute() {
+        return vec!["  skipped: the Steam folder path is not absolute".to_string()];
+    }
+    let mut notes = Vec::new();
+    for item in items {
+        let Some(app_id) = steam_sync::expected_app_id(item) else { continue };
+        let Some(row) = screen.rows.iter().find(|r| r.key == item.wanted.port_key) else { continue };
+        let portrait = art::catalog::cached_portrait_path(cache_dir, &row.folder);
+        let icon = crate::core::image_cache::cached_image_path(cache_dir, &format!("{}_icon", row.folder)).ok().filter(|p| p.is_file());
+        if portrait.is_none() && icon.is_none() {
+            notes.push(format!("  {}: no cached artwork yet", row.name));
+            continue;
+        }
+        let found = art::catalog::catalog_art_from_files(portrait.as_deref(), icon.as_deref());
+        let mut problems: Vec<String> = found.problems.iter().map(|(slot, e)| format!("{}: {e}", slot.name())).collect();
+        match art::grid::write_art(grid_dir, app_id, &found.set, &art::grid::WriteOptions::default()) {
+            Ok(report) => {
+                if let Some(slot) = wanted.iter_mut().find(|w| w.port_key == item.wanted.port_key) {
+                    if let Some(icon_path) = report.icon_path.as_ref().and_then(|p| p.to_str()).filter(|p| !p.contains('"')) {
+                        slot.icon = Some(icon_path.to_string());
+                    }
+                }
+                problems.extend(report.failures().into_iter().map(|(slot, why)| format!("{}: {why}", slot.name())));
+                if let Some(e) = &report.manifest_error {
+                    problems.push(format!("could not record it: {e}"));
+                }
+            }
+            Err(e) => problems.push(e.to_string()),
+        }
+        if !problems.is_empty() {
+            notes.push(format!("  {}: {}", row.name, problems.join("; ")));
+        }
+    }
+    notes
+}
 
 /// Writes the selected rows. Loads the file again, so edits Steam or another tool made since the
 /// screen opened are not lost; the plan is rebuilt from that fresh copy.
@@ -273,36 +366,43 @@ pub fn apply_selected(screen: &SteamScreen, steam: &dyn SteamProcessCheck, setti
     if wanted.is_empty() {
         return Err("Nothing is selected.".into());
     }
+    // Before any artwork is placed: with Steam up nothing at all should change.
+    match check_steam(steam) {
+        Ok(()) => {}
+        Err(StoreError::SteamRunning(procs)) => return Err(close_steam_message(&procs)),
+        Err(e) => return Err(format!("{e}\n\nNothing was changed.")),
+    }
     let mut file = ShortcutsFile::load(&path).map_err(|e| e.to_string())?;
 
     // Art goes in before the write so the icon path can ride along with the shortcut.
+    let mut art_notes = Vec::new();
     if let Some(grid) = screen.grid_dir() {
         let first = steam_sync::plan(&file.doc, &wanted);
-        let mut with_ids: Vec<(WantedShortcut, u32)> =
-            first.iter().filter_map(|p| steam_sync::expected_app_id(p).map(|id| (p.wanted.clone(), id))).collect();
-        art_hook(&grid, &mut with_ids);
-        for (w, _) in with_ids {
-            if let Some(slot) = wanted.iter_mut().find(|x| x.port_key == w.port_key) {
-                *slot = w;
-            }
-        }
+        art_notes = place_catalog_art(screen, &grid, &first, &mut wanted);
     }
     let items = steam_sync::plan(&file.doc, &wanted);
 
     let report = match steam_sync::apply(&mut file, &items, steam, &backup_stamp()) {
         Ok(report) => report,
-        Err(steam_sync::SyncError::Store(StoreError::SteamRunning(_))) => return Err(CLOSE_STEAM_HELP.to_string()),
-        Err(e) => return Err(format!("{e}\n\nNothing was changed.")),
+        Err(steam_sync::SyncError::Store(StoreError::SteamRunning(procs))) => return Err(close_steam_message(&procs)),
+        Err(e) => return Err(format!("{e}\n\nNothing was changed in shortcuts.vdf.")),
     };
 
     let pruned = if report.save.wrote { backups::prune_backups(&path, settings.backups_keep(), now).map(|r| r.deleted.len()).unwrap_or(0) } else { 0 };
     let mut text = format!("Added {}, updated {}, already fine {}.", report.added.len(), report.updated.len(), report.unchanged.len());
     if !report.skipped.is_empty() {
-        text.push_str(&format!("\nLeft out {}:", report.skipped.len()));
-        for (key, why) in &report.skipped {
-            let name = screen.rows.iter().find(|r| &r.key == key).map_or(key.as_str(), |r| r.name.as_str());
-            text.push_str(&format!("\n  {name}: {why}"));
-        }
+        let lines: Vec<String> = report
+            .skipped
+            .iter()
+            .map(|(key, why)| {
+                let name = screen.rows.iter().find(|r| &r.key == key).map_or(key.as_str(), |r| r.name.as_str());
+                format!("  {name}: {why}")
+            })
+            .collect();
+        text.push_str(&format!("\nLeft out {}:\n{}", lines.len(), listed(&lines)));
+    }
+    if !art_notes.is_empty() {
+        text.push_str(&format!("\nArtwork:\n{}", listed(&art_notes)));
     }
     if let Some(backup) = &report.backup {
         let file_name = backup.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -350,6 +450,9 @@ impl AdoptScreen {
             .iter()
             .map(|a| format!("Not adopted, fits {} ports: {}", a.matches.len(), short_path(&a.path, &self.home)))
             .collect();
+        for (name, path) in &self.scan.duplicates {
+            out.push(format!("Also found {name} in {}: not adopted", short_path(path, &self.home)));
+        }
         if !self.scan.already_in_library.is_empty() {
             out.push(format!("Already in the library: {}", self.scan.already_in_library.join(", ")));
         }
@@ -479,17 +582,18 @@ mod tests {
         .collect()
     }
 
-    #[cfg(unix)]
     fn put_exe(path: &Path) {
-        use std::os::unix::fs::PermissionsExt;
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"x").unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
 
     /// A fake home with a Steam folder (account 1234, signed in last), a library with three ports and
     /// a shortcuts file that already has a hand-made "Ship of Harkinian" pointing at an old path.
-    #[cfg(unix)]
     fn fake_home(name: &str) -> (PathBuf, PathBuf, PathBuf) {
         use super::super::vdf::fixtures::*;
         let home = temp_dir(name);
@@ -503,12 +607,11 @@ mod tests {
         let library = home.join("DeckPorts").join("Library");
         put_exe(&library.join("SoH").join("soh.appimage"));
         put_exe(&library.join("dusklight").join("dusk"));
-        put_exe(&library.join("twoprog").join("a"));
-        put_exe(&library.join("twoprog").join("b"));
+        put_exe(&library.join("twoprog").join("a.exe"));
+        put_exe(&library.join("twoprog").join("b.exe"));
         (home, library, path)
     }
 
-    #[cfg(unix)]
     #[test]
     fn the_screen_lists_installed_ports_with_what_would_happen_to_each() {
         let (home, library, _) = fake_home("screen");
@@ -517,46 +620,49 @@ mod tests {
         assert_eq!(labels[0], "Steam account: Account 1234");
         assert_eq!(labels[1], "Steam is closed: ready to write");
         assert_eq!(labels[2], "[x] Dusklight: will add");
-        assert_eq!(labels[3], "[x] Ship of Harkinian: will update (program, start folder)");
+        assert_eq!(labels[3], "[ ] Ship of Harkinian: same name as a shortcut for soh.appimage, will repoint it");
         assert!(labels[4].starts_with("Two Programs: skipped, several programs found"));
-        assert_eq!(labels.last().unwrap(), "Review 2 changes...");
+        assert_eq!(labels.last().unwrap(), "Review 1 change...");
         assert_eq!(labels.len(), 6, "the port that is not installed is not listed");
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn toggling_changes_the_count_and_unchangeable_rows_ignore_it() {
         let (home, library, _) = fake_home("toggle");
         let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
-        screen.toggle(0);
         assert_eq!(screen.selected_count(), 1);
         assert_eq!(screen.label(SteamLine::Review, &no_steam), "Review 1 change...");
         screen.toggle(2);
         assert!(screen.rows[2].plan.is_none() && !screen.rows[2].selected);
         screen.toggle(1);
+        assert_eq!(screen.label(SteamLine::Review, &no_steam), "Review 2 changes...");
+        screen.toggle(0);
+        screen.toggle(1);
         assert_eq!(screen.label(SteamLine::Review, &no_steam), "Nothing selected to add or update");
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn the_review_text_names_what_is_added_and_updated() {
         let (home, library, _) = fake_home("review");
-        let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
         let text = screen.review_text();
         assert!(text.contains("Add 1:\n  Dusklight"));
-        assert!(text.contains("Update 1 (play time and art stay):\n  Ship of Harkinian (program, start folder)"));
+        assert!(!text.contains("Update"), "the name-only match is off until switched on");
+        screen.toggle(1);
+        let text = screen.review_text();
+        assert!(text.contains("Update 1 (play time and art stay):\n  Ship of Harkinian (now soh.appimage: program, start folder)"), "{text}");
         assert!(text.contains("backed up first"));
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn applying_writes_a_backup_keeps_the_id_and_says_to_restart_steam() {
         let (home, library, path) = fake_home("apply");
         let before = fs::read(&path).unwrap();
-        let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        screen.toggle(1);
         let out = apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
         assert!(out.wrote);
         assert!(out.text.starts_with("Added 1, updated 1, already fine 0."), "{}", out.text);
@@ -578,7 +684,6 @@ mod tests {
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn applying_while_steam_runs_gives_the_close_steam_message_and_touches_nothing() {
         let (home, library, path) = fake_home("running");
@@ -587,14 +692,14 @@ mod tests {
         let running = || -> std::io::Result<Vec<String>> { Ok(vec!["99 steam".into()]) };
         assert_eq!(screen.label(SteamLine::Status, &running), "Steam is running: close it before applying");
         let err = apply_selected(&screen, &running, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap_err();
-        assert_eq!(err, CLOSE_STEAM_HELP);
+        assert!(err.starts_with(CLOSE_STEAM_HELP));
+        assert!(err.contains("Still running: 99 steam"), "{err}");
         assert!(err.contains("Desktop Mode") && err.contains("Game Mode"));
         assert_eq!(fs::read(&path).unwrap(), before);
         assert!(backups::list_backups(&path).unwrap().is_empty());
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_failing_steam_check_also_refuses_and_says_nothing_was_changed() {
         let (home, library, path) = fake_home("checkfail");
@@ -608,7 +713,6 @@ mod tests {
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn edits_made_by_someone_else_since_the_screen_opened_are_kept_not_overwritten() {
         use super::super::vdf::fixtures::*;
@@ -624,7 +728,6 @@ mod tests {
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn old_backups_are_pruned_after_a_write_but_recent_ones_stay() {
         let (home, library, path) = fake_home("prune");
@@ -654,7 +757,6 @@ mod tests {
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_unreadable_shortcuts_file_is_reported_and_blocks_review() {
         let (home, library, path) = fake_home("garbled");
@@ -665,7 +767,6 @@ mod tests {
         let _ = fs::remove_dir_all(home);
     }
 
-    #[cfg(unix)]
     #[test]
     fn two_accounts_without_a_clear_choice_ask_which_and_the_choice_sticks() {
         let (home, library, _) = fake_home("two_accounts");
@@ -675,15 +776,130 @@ mod tests {
         let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&settings_path), &|_| None);
         assert!(screen.account.is_none() && screen.rows.is_empty());
         assert_eq!(screen.label(SteamLine::Account, &no_steam), "Choose your Steam account");
+        assert_eq!(screen.label(SteamLine::Review, &no_steam), "Choose a Steam account first");
+        assert!(screen.review_problem(&no_steam).unwrap().contains("Choose your Steam account first"));
         let index = screen.accounts.iter().position(|a| a.account_id == 5678).unwrap();
         screen.set_account(index, &library, &catalog(), &|_| None);
         assert_eq!(screen.label(SteamLine::Account, &no_steam), "Steam account: Account 5678 (choose another)");
         // With no shortcuts file yet, every installed port is an add.
+        assert_eq!(screen.rows.len(), 3);
         assert!(screen.rows.iter().filter(|r| r.plan.is_some()).all(|r| matches!(r.plan.as_ref().unwrap().action, Action::Add)));
         let mut settings = ForkSettings::load(&settings_path);
         settings.set_steam_account(5678).unwrap();
         let again = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&settings_path), &|_| None);
         assert_eq!(again.active_account().unwrap().account_id, 5678);
+        let _ = fs::remove_dir_all(home);
+    }
+
+
+    #[test]
+    fn a_shortcut_found_by_name_only_is_off_by_default_and_the_label_says_what_it_points_at() {
+        use super::super::vdf::fixtures::*;
+        let (home, library, path) = fake_home("by_name");
+        // Another program's shortcut that happens to share the port's name.
+        let entry = steam_entry(0, 0xAAAA_0001, "Dusklight", "\"/usr/bin/other-launcher\"", "\"/usr/bin/\"", &[]);
+        fs::write(&path, file_of(&[entry])).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        let labels = screen.labels(&no_steam);
+        assert_eq!(labels[2], "[ ] Dusklight: same name as a shortcut for other-launcher, will repoint it");
+        assert_eq!(screen.selected_count(), 1, "only the ordinary add is on");
+        assert!(!screen.review_text().contains("Dusklight"));
+        screen.toggle(0);
+        assert!(screen.review_text().contains("Dusklight (now other-launcher: program, start folder)"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_start_folder_that_differs_only_by_a_trailing_slash_is_not_a_change() {
+        let (home, library, path) = fake_home("slash");
+        // The port is already in Steam the way Steam writes it: quoted program, start folder with a slash.
+        let dusk = library.join("dusklight").join("dusk");
+        let dir = format!("{}/", library.join("dusklight").to_str().unwrap());
+        let entry = super::super::vdf::fixtures::steam_entry(0, 0xAAAA_0002, "Dusklight", &format!("\"{}\"", dusk.to_str().unwrap()), &format!("\"{dir}\""), &[]);
+        fs::write(&path, super::super::vdf::fixtures::file_of(&[entry])).unwrap();
+        let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        assert_eq!(screen.labels(&no_steam)[2], "Dusklight: already in Steam");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_library_path_with_spaces_goes_all_the_way_through_and_reads_as_up_to_date_afterwards() {
+        let (home, library, path) = fake_home("path with spaces");
+        let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        let saved = super::super::shortcuts::list(&ShortcutsFile::load(&path).unwrap().doc);
+        let dusk = saved.iter().find(|s| s.app_name == "Dusklight").unwrap();
+        assert!(dusk.exe_path().contains("path with spaces"));
+        let again = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        assert_eq!(again.labels(&no_steam)[2], "Dusklight: already in Steam");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn steam_starting_after_the_screen_opened_refuses_at_apply_and_names_the_process() {
+        let (home, library, path) = fake_home("late");
+        let before = fs::read(&path).unwrap();
+        let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        assert!(screen.review_problem(&no_steam).is_none());
+        let started = || -> std::io::Result<Vec<String>> { Ok(vec!["31 steamwebhelper".into()]) };
+        assert!(screen.review_problem(&started).unwrap().contains("Still running: 31 steamwebhelper"));
+        let err = apply_selected(&screen, &started, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap_err();
+        assert!(err.contains("Still running: 31 steamwebhelper"));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(!path.parent().unwrap().join("grid").exists(), "no artwork was placed either");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn review_cannot_start_when_the_steam_check_fails() {
+        let (home, library, _) = fake_home("review_checkfail");
+        let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        let broken = || -> std::io::Result<Vec<String>> { Err(std::io::Error::other("no /proc")) };
+        let message = screen.review_problem(&broken).unwrap();
+        assert!(message.contains("Could not tell whether Steam is running"), "{message}");
+        assert!(!message.contains("Steam is running, so nothing was changed"), "must not claim Steam is running");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn cached_catalog_art_is_placed_before_the_write_and_its_icon_goes_into_the_shortcut() {
+        let (home, library, path) = fake_home("art");
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        image::RgbaImage::from_pixel(600, 900, image::Rgba([200, 30, 30, 255])).save(cache.join("dusklight.png")).unwrap();
+        image::RgbaImage::from_pixel(128, 128, image::Rgba([30, 30, 200, 255])).save(cache.join("dusklight_icon.png")).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        screen.cache_dir = Some(cache);
+        screen.toggle(1);
+        let out = apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        let saved = super::super::shortcuts::list(&ShortcutsFile::load(&path).unwrap().doc);
+        let dusk = saved.iter().find(|s| s.app_name == "Dusklight").unwrap();
+        let id = dusk.app_id.unwrap();
+        let grid = path.parent().unwrap().join("grid");
+        assert!(grid.join(format!("{id}p.png")).is_file(), "portrait placed under the shortcut's app ID");
+        assert!(grid.join(format!("{id}_icon.png")).is_file());
+        assert_eq!(dusk.icon, grid.join(format!("{id}_icon.png")).to_str().unwrap());
+        // The other port has nothing cached: told, not failed.
+        assert!(out.text.contains("Artwork:") && out.text.contains("Ship of Harkinian: no cached artwork yet"), "{}", out.text);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn art_the_user_chose_is_left_alone_when_adding_to_steam() {
+        let (home, library, path) = fake_home("art_user");
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        image::RgbaImage::from_pixel(600, 900, image::Rgba([200, 30, 30, 255])).save(cache.join("dusklight.png")).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        screen.cache_dir = Some(cache);
+        // The ID the new shortcut will get, and a cover the user already put there.
+        let wanted = screen.rows[0].wanted.as_ref().unwrap();
+        let id = super::super::app_id::shortcut_app_id(&format!("\"{}\"", wanted.exe), "Dusklight");
+        let grid = path.parent().unwrap().join("grid");
+        fs::create_dir_all(&grid).unwrap();
+        fs::write(grid.join(format!("{id}p.png")), b"the user's own cover").unwrap();
+        apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        assert_eq!(fs::read(grid.join(format!("{id}p.png"))).unwrap(), b"the user's own cover");
         let _ = fs::remove_dir_all(home);
     }
 
@@ -695,6 +911,7 @@ mod tests {
         let home = temp_dir("adopt_screen");
         let library = home.join("DeckPorts").join("Library");
         fs::create_dir_all(&library).unwrap();
+        fs::create_dir_all(home.join(".local/share/Steam/userdata/1234/config")).unwrap();
         put_exe(&home.join("Applications").join("SoH").join("soh.appimage"));
         fs::create_dir_all(home.join("Games").join("junk")).unwrap();
         let settings = ForkSettings::load(&home.join("s.json"));
@@ -720,7 +937,14 @@ mod tests {
         let mut merged = catalog();
         merged = crate::core::config::merge_local_catalog(merged, done.adopted);
         let steam_screen = SteamScreen::load(&home, &library, &merged, &settings, &|_| None);
-        assert!(steam_screen.load_error.is_some(), "no Steam folder in this fixture");
+        assert_eq!(steam_screen.labels(&no_steam)[2], "[x] Ship of Harkinian: will add");
+        let wanted = steam_screen.rows[0].wanted.as_ref().unwrap();
+        assert_eq!(wanted.exe, library.join("SoH").join("soh.appimage").to_str().unwrap());
+
+        // Looking again: it is in the library now, so it is not offered a second time.
+        let again = AdoptScreen::load(&home, &library, &merged, &settings);
+        assert!(again.scan.candidates.is_empty());
+        assert!(again.labels().iter().any(|l| l == "Already in the library: Ship of Harkinian"), "{:?}", again.labels());
         let _ = fs::remove_dir_all(home);
     }
 
@@ -740,6 +964,18 @@ mod tests {
         assert_eq!(done.adopted.len(), 1);
         assert!(done.text.contains("Dusklight: ") && done.text.contains("already exists"), "{}", done.text);
         assert!(done.text.contains("Adopted Ship of Harkinian"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_second_folder_for_a_port_shows_up_as_an_info_row() {
+        let home = temp_dir("adopt_dup");
+        let library = home.join("Library");
+        put_exe(&home.join("Applications").join("dusklight").join("dusk"));
+        put_exe(&home.join("Games").join("dusklight").join("dusk"));
+        let screen = AdoptScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")));
+        assert_eq!(screen.scan.candidates.len(), 1);
+        assert!(screen.labels().iter().any(|l| l == "Also found Dusklight in ~/Games/dusklight: not adopted"), "{:?}", screen.labels());
         let _ = fs::remove_dir_all(home);
     }
 

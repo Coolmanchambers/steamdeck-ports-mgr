@@ -70,20 +70,32 @@ Settings > **Add to Steam...** lists every installed port with what would happen
 `[x] Dusklight: will add`, `[x] Ship of Harkinian: will update (program)` (a shortcut you made by
 hand, matched by program or name, keeps its play time, art and controller layout), `already in Steam`,
 or `skipped, <reason>` (no single program found, program not marked executable, and so on).
+A shortcut that only shares the port's name but points at another program shows as
+`same name as a shortcut for <program>, will repoint it` and starts switched off.
 Choosing a row switches it on or off; **Review N changes...** shows the list and asks before writing.
+(Backing out of the review or the account list with B returns to the main window; reopen the screen.)
 
 - **Close Steam first.** Steam rewrites its shortcut list when it exits, so the app only writes while
-  Steam is closed. If Steam is running you get a message and nothing changes. Steam cannot be closed
-  in Game Mode: switch to Desktop Mode, Steam menu > Exit, then apply.
+  Steam is closed. If Steam is running, **Review** shows a message (naming the Steam processes still
+  found) instead of the Apply button, and nothing changes. Steam cannot be closed in Game Mode: switch
+  to Desktop Mode, Steam menu > Exit, wait a few seconds, then try again.
 - **Backup:** every write first copies `shortcuts.vdf` to `shortcuts.vdf.bak-<date>-<time>` in the
   same folder (`userdata/<id>/config/`). The newest 10 are kept (set `steam_backups_keep` in
   `fork-settings.json`); anything from the last hour is never removed.
-- **Account:** the Steam account that signed in last is used. With several accounts the first row
-  asks which one; the choice is remembered in `fork-settings.json`.
-- After it says "Added ...", start Steam again. The shortcuts are under Non-Steam games. Artwork is
-  not placed yet.
+- **Account:** the Steam account that signed in last is used (the first row names it and lets you
+  choose another). If Steam does not say which signed in last, the first row asks; the choice is
+  remembered in `fork-settings.json`.
+- **Artwork:** the catalog portrait and icon are placed in `userdata/<id>/config/grid/` for each
+  shortcut written, under Steam's file names, and the icon is set on the shortcut. Art you chose
+  yourself is never replaced. The images are fetched when the screen opens, so give a freshly opened
+  screen a minute before applying. If the result says "no cached artwork yet" for a port, its
+  shortcut was still written without art, and a later run does not add art to a shortcut that is
+  already in Steam yet.
+- After it says "Added ...", start Steam again. The shortcuts are under Non-Steam games.
 
-To undo, close Steam and copy the newest `shortcuts.vdf.bak-...` over `shortcuts.vdf`.
+To undo, close Steam and copy the backup from before that write (the one named for the time of the
+write, listed in the result) over `shortcuts.vdf`. Each write makes its own backup, so the newest
+backup is the state after the latest write, not before it.
 
 ## Adopt ports you installed elsewhere (Desktop Mode)
 
@@ -93,8 +105,11 @@ creates that file and opens it). A folder is offered when its name, or a program
 catalog port. Adopting does not move, copy or change your folder: it adds a link `Library/<port>`
 pointing at it and an entry in `ports.local.json` (backed up first). The port then shows as
 installed, Play and Info work, and Uninstall is replaced by Open folder. Adopted ports are not
-checked for updates. To undo: delete the link in `Library/` (the original stays) and the entry in
-`ports.local.json`.
+checked for updates, and the app refuses to install or update into a linked folder.
+
+To undo, in this order: remove the port's entry from `ports.local.json` (and keep the file valid
+JSON), then delete the link in `Library/` (your original folder stays). Deleting only the link leaves
+the entry, and the port then shows an Install button that makes an empty folder.
 
 ## What to test
 
@@ -111,7 +126,7 @@ checked for updates. To undo: delete the link in `Library/` (the original stays)
 | Force update | App closes and reopens on the newest build; `updater.log` ends with `=== done` |
 | Force update offline | App reopens on the old build; `update-failed.txt` says why |
 | Force update in Game Mode | The app comes back in Game Mode and Steam still shows it running |
-| Add to Steam, Steam open | Settings > Add to Steam > Review > Apply shows the close-Steam message and changes nothing |
+| Add to Steam, Steam open | Settings > Add to Steam > Review shows the close-Steam message (no Apply button) and changes nothing |
 | Add to Steam, Steam closed | "Added N", a `shortcuts.vdf.bak-...` next to `shortcuts.vdf`, shortcuts appear after Steam restarts |
 | Adopt | An outside install shows as installed with Play and Open folder; your folder is untouched |
 | Update offered | After a later-dated build and a relaunch 24 h past the last check, the footer says Update |

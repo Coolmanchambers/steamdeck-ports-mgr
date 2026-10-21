@@ -400,9 +400,21 @@ fn temp_dir_in(library_dir: &Path, prefix: &str) -> Result<tempfile::TempDir, In
     with_path(tempfile::Builder::new().prefix(prefix).tempdir_in(library_dir), library_dir).install_err()
 }
 
+/// A port adopted from another folder is a symlink in the library (see `fork::adopt`). Installing or
+/// updating through it would write into the user's own folder, so refuse whatever the catalog says.
+fn refuse_adopted(dest_dir: &Path) -> Result<(), InstallError> {
+    if fs::symlink_metadata(dest_dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(InstallError::Message(
+            "This port was adopted from another folder, so it is not installed or updated here. Remove its link from the Library folder first if you want a managed copy.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn install_extra(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMut(&str)) -> Result<(), InstallError> {
     let url = port.extra.as_deref().ok_or_else(|| InstallError::Message("This port has no \"extra\" files to install.".to_string()))?;
     let dest_dir = safe_join(library_dir, &port.folder).map_err(InstallError::Message)?;
+    refuse_adopted(&dest_dir)?;
     if !dest_dir.exists() {
         return Err(InstallError::Message("Install this port first, then add its extra files.".to_string()));
     }
@@ -498,6 +510,7 @@ pub fn install_port(
 ) -> Result<Option<String>, InstallError> {
     let library_dir = paths.library_dir;
     let dest_dir = safe_join(library_dir, &port.folder).map_err(InstallError::Message)?;
+    refuse_adopted(&dest_dir)?;
     let tmp = temp_dir_in(library_dir, "_download_")?;
     let preferred_asset = port.preferred_asset.as_ref().and_then(resolve_preferred_asset);
     let repo = port.repo.as_deref().unwrap_or_default();
@@ -585,6 +598,35 @@ mod tests {
 
     fn port_with_save(folder: &str, save: Option<&str>) -> Port {
         port_with_saves(folder, save, None)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_port_adopted_as_a_symlink_is_never_installed_or_updated_through_the_link() {
+        let dir = temp_dir("adopted_link");
+        let library_dir = dir.join("Library");
+        let theirs = dir.join("theirs");
+        fs::create_dir_all(&library_dir).unwrap();
+        fs::create_dir_all(&theirs).unwrap();
+        fs::write(theirs.join("keep.sav"), "mine").unwrap();
+        std::os::unix::fs::symlink(&theirs, library_dir.join("game")).unwrap();
+        let port = super::super::models::port_from_value(
+            &serde_json::json!({"name": "n", "folder": "game", "source": "https://example.com/x.zip", "extra": "https://example.com/e.zip"}),
+        )
+        .unwrap();
+        let saves = dir.join("saves");
+        let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves };
+        let text = |e: InstallError| match e {
+            InstallError::Message(m) => m,
+            other => format!("{other:?}"),
+        };
+        let err = install_port(&port, paths, None, None, InstallOverrides::default(), &mut no_progress).unwrap_err();
+        assert!(text(err).contains("adopted"));
+        let err = install_extra(&port, &library_dir, &mut no_progress).unwrap_err();
+        assert!(text(err).contains("adopted"));
+        assert_eq!(fs::read_to_string(theirs.join("keep.sav")).unwrap(), "mine");
+        assert_eq!(fs::read_dir(&theirs).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&library_dir).unwrap().count(), 1, "no download folder was created");
     }
 
     #[test]

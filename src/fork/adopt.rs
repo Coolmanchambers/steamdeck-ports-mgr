@@ -65,6 +65,8 @@ pub struct ScanResult {
     pub ambiguous: Vec<Ambiguous>,
     /// Matches whose catalog entry is already installed in `Library/`.
     pub already_in_library: Vec<String>,
+    /// A second folder that fits a port another folder was already offered for: port name and folder.
+    pub duplicates: Vec<(String, PathBuf)>,
     pub roots_scanned: Vec<PathBuf>,
 }
 
@@ -182,7 +184,9 @@ pub fn scan(roots: &[PathBuf], catalog: &[Port], library_dir: &Path) -> ScanResu
         dirs.sort();
         for dir in dirs {
             let Some(dir_name) = dir.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
-            if fs::canonicalize(&dir).is_ok_and(|real| real.starts_with(&library)) {
+            // Never the library itself, anything in it, or a folder that contains it (the app's own
+            // folder, usually): its `Library/<port>` folders would all look like installs to adopt.
+            if fs::canonicalize(&dir).is_ok_and(|real| real.starts_with(&library) || library.starts_with(&real)) {
                 continue;
             }
             let (how, hits) = match_dir(&dir, &dir_name, catalog);
@@ -192,7 +196,9 @@ pub fn scan(roots: &[PathBuf], catalog: &[Port], library_dir: &Path) -> ScanResu
                     let port = &catalog[*one];
                     if crate::core::installer::is_installed(port, library_dir) {
                         result.already_in_library.push(port.display_name().to_string());
-                    } else if !result.candidates.iter().any(|c| c.port_key == port.key()) {
+                    } else if result.candidates.iter().any(|c| c.port_key == port.key()) {
+                        result.duplicates.push((port.display_name().to_string(), dir));
+                    } else {
                         result.candidates.push(Candidate {
                             path: dir,
                             dir_name,
@@ -310,12 +316,33 @@ fn read_local_file(path: &Path) -> Result<(Map<String, Value>, Option<Vec<u8>>),
     }
 }
 
+/// Copies the current bytes to `<file>.bak-<stamp>`, or `-1`, `-2`... when that name is taken, so several
+/// adoptions in the same second each keep their own backup and none overwrites another.
+fn write_backup(path: &Path, bytes: &[u8], stamp: &str) -> Result<PathBuf, AdoptError> {
+    let base = path.file_name().unwrap_or_default().to_os_string();
+    for attempt in 0..1000u32 {
+        let mut name = base.clone();
+        name.push(if attempt == 0 { format!(".bak-{stamp}") } else { format!(".bak-{stamp}-{attempt}") });
+        let backup = path.with_file_name(name);
+        match fs::OpenOptions::new().write(true).create_new(true).open(&backup) {
+            Ok(mut file) => {
+                io::Write::write_all(&mut file, bytes).map_err(io_err("back up", &backup))?;
+                return Ok(backup);
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(io_err("back up", &backup)(e)),
+        }
+    }
+    Err(io_err("back up", path)(io::Error::new(io::ErrorKind::AlreadyExists, "too many backups with this timestamp")))
+}
+
 /// Links `Library/<folder>` to the install and registers the entry. `stamp` names the backup of an
 /// existing `ports.local.json` (`backup_stamp` style). On any failure the link made here is removed.
 pub fn adopt(install: &Path, port: &Port, library_dir: &Path, local_json: &Path, stamp: &str) -> Result<Adopted, AdoptError> {
     let real = fs::canonicalize(install).map_err(|_| AdoptError::BadInstallFolder(install.to_path_buf()))?;
     let library = fs::canonicalize(library_dir).unwrap_or_else(|_| library_dir.to_path_buf());
-    if !real.is_dir() || is_within(&real, &library) {
+    // Neither inside the library nor containing it (a link back up the tree would be a cycle).
+    if !real.is_dir() || is_within(&real, &library) || is_within(&library, &real) {
         return Err(AdoptError::BadInstallFolder(install.to_path_buf()));
     }
     // The folder name must be one plain name: it becomes a direct child of the library.
@@ -345,15 +372,13 @@ pub fn adopt(install: &Path, port: &Port, library_dir: &Path, local_json: &Path,
 
     let backup = match &original {
         Some(bytes) => {
-            let mut name = local_json.file_name().unwrap_or_default().to_os_string();
-            name.push(format!(".bak-{stamp}"));
-            let backup = local_json.with_file_name(name);
-            let saved = fs::OpenOptions::new().write(true).create_new(true).open(&backup).and_then(|mut f| io::Write::write_all(&mut f, bytes));
-            if let Err(e) = saved {
-                let _ = fs::remove_file(&link);
-                return Err(io_err("back up", &backup)(e));
+            match write_backup(local_json, bytes, stamp) {
+                Ok(backup) => Some(backup),
+                Err(e) => {
+                    let _ = fs::remove_file(&link);
+                    return Err(e);
+                }
             }
-            Some(backup)
         }
         None => None,
     };
@@ -687,4 +712,70 @@ mod tests {
         assert!(install.join("keep.sav").exists());
         let _ = fs::remove_dir_all(dir);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_adoptions_with_the_same_stamp_each_keep_their_own_backup_of_the_local_file() {
+        let dir = temp_dir("same_stamp");
+        let local = dir.join("ports.local.json");
+        fs::write(&local, r#"{"ports":[]}"#).unwrap();
+        let library = dir.join("Library");
+        for (i, port) in [0usize, 2].iter().enumerate() {
+            let install = dir.join(format!("install{i}"));
+            fs::create_dir_all(&install).unwrap();
+            adopt(&install, &catalog()[*port], &library, &local, "SAME").unwrap();
+        }
+        assert_eq!(crate::core::config::load_local_config(&local).len(), 2);
+        assert!(dir.join("ports.local.json.bak-SAME").exists() && dir.join("ports.local.json.bak-SAME-1").exists());
+        // The second backup holds the file as the first adoption left it.
+        assert_eq!(crate::core::config::load_local_config(&dir.join("ports.local.json.bak-SAME-1")).len(), 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_contains_the_library_cannot_be_adopted_and_is_not_offered() {
+        let dir = temp_dir("contains_library");
+        let library = dir.join("Applications").join("steamdeck-ports-mgr").join("Library");
+        mkdirs(&library, &["SoH"]);
+        touch(&library.join("SoH").join("soh.appimage"));
+        let local = dir.join("l.json");
+        let outer = dir.join("Applications").join("steamdeck-ports-mgr");
+        assert!(matches!(adopt(&outer, &catalog()[0], &library, &local, "T"), Err(AdoptError::BadInstallFolder(_))));
+        let result = scan(&[dir.join("Applications")], &catalog(), &library);
+        assert!(result.candidates.is_empty() && result.ambiguous.is_empty() && result.already_in_library.is_empty());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_second_folder_for_the_same_port_is_reported_not_silently_dropped() {
+        let dir = temp_dir("duplicates");
+        let apps = dir.join("Applications");
+        mkdirs(&apps, &["SoH", "soh-old"]);
+        touch(&apps.join("soh-old").join("shipwright.appimage"));
+        let mut catalog = catalog();
+        catalog[0].executable = Some(json!("shipwright.appimage"));
+        let result = scan(&[apps], &catalog, &dir.join("Library"));
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].dir_name, "SoH");
+        assert_eq!(result.duplicates.len(), 1);
+        assert!(result.duplicates[0].1.ends_with("soh-old"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_in_the_library_still_offers_the_port_and_adopting_refuses_it() {
+        let dir = temp_dir("dangling_scan");
+        let apps = dir.join("Applications");
+        mkdirs(&apps, &["SoH"]);
+        let library = dir.join("Library");
+        fs::create_dir_all(&library).unwrap();
+        std::os::unix::fs::symlink(dir.join("gone"), library.join("SoH")).unwrap();
+        let result = scan(&[apps], &catalog(), &library);
+        assert_eq!(result.candidates.len(), 1);
+        assert!(matches!(adopt(&result.candidates[0].path, &catalog()[0], &library, &dir.join("l.json"), "T"), Err(AdoptError::LibraryFolderTaken(_))));
+        let _ = fs::remove_dir_all(dir);
+    }
+
 }

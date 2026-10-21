@@ -34,6 +34,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/events.rs` | After an install finishes, a favorite executable that was an AppImage follows the new file (8 lines); a failed install no longer leaves the Play-launch pending and launches the installed game (6 lines) |
 | 2026-10-21 | `src/app/dialogs.rs` | `finish_dialog_open`, `open_confirm_dialog`, `set_picker_items` and `build_picker_dialog` made `pub(crate)` for the new screens; two Settings entries ("Add to Steam...", "Adopt installed ports...") added to the list and its menu match (English text, not in the translation tables) |
 | 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
+| 2026-10-21 | `src/core/installer.rs` | `refuse_adopted`: `install_port` and `install_extra` stop with a message when `Library/<folder>` is a symlink (an adopted port), whatever the catalog says, so a bad edit of `ports.local.json` cannot make the installer write into the user's own folder; 1 test |
 | 2026-10-21 | `README.md` | Item 4 (adopt) set to "Testing", item 5 (Steam shortcuts) to "In progress" |
 
 Files added by this fork:
@@ -81,9 +82,16 @@ Files added by this fork:
 - **Matching:** an existing shortcut is the port's when it has the same program, else the same name
   (ignoring case). It is updated in place, so its app ID stays. Two matches, or an entry with no stored
   app ID that needs a change, are blocked and shown as skipped, never guessed.
-- **Not done:** artwork (one marked hook, `art_hook` in `screens.rs`, waits for `src/fork/art/`), the
-  collection, Game Mode queueing, repointing a moved port's shortcut on its own, Windows (no `/proc`
-  check: it refuses).
+- **A shortcut found by name only** (different program than today's) starts switched off and says what
+  it points at now, so a hand-made shortcut of another program with the same name is not repointed by
+  accident. A start folder differing only by a trailing slash is not a change.
+- **Artwork:** for each shortcut written, the catalog portrait and icon the app has cached
+  (`cache/<folder>.png`, `cache/<folder>_icon.png`, fetched in the background when the screen opens) go
+  through `art::grid::write_art` into `config/grid/` before the write, and the icon path is stored on
+  the shortcut. Art the user chose is never replaced (the writer's rule). Not done: art for a shortcut
+  that is already in Steam, wide/hero/logo art.
+- **Not done:** the collection, Game Mode queueing, repointing a moved port's shortcut on its own,
+  Windows (no `/proc` check: it refuses).
 - **Screen text is English only**, built from the upstream picker dialog.
 
 ## Adopting installed ports

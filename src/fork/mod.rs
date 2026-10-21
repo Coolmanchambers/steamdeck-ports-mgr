@@ -4,7 +4,7 @@
 //! artwork, pick the Steam account, adopt installs, plan and apply shortcuts. The Settings screens in
 //! `src/app/steam_screens.rs` call it.
 
-// No callers until the Steam stage wires it into the app; the tests exercise all of it.
+// Parts of the library (a few helpers, the 64-bit grid IDs) have no caller yet; the tests exercise them.
 #![allow(dead_code)]
 
 pub mod adopt;

@@ -9,7 +9,7 @@
 use super::dialogs::{build_picker_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, set_picker_items, DialogSlot};
 use super::state::AppState;
 use crate::core::launch::open_file;
-use crate::fork::screens::{self, AdoptLine, AdoptScreen, SteamLine, SteamScreen, CLOSE_STEAM_HELP};
+use crate::fork::screens::{self, AdoptLine, AdoptScreen, SteamLine, SteamScreen};
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::fork::steam_user::SteamAccount;
 use crate::fork::store::SystemSteamCheck;
@@ -36,8 +36,7 @@ fn settings_path(app: &AppState) -> PathBuf {
 /// The dialogs size themselves from a text estimate that comes out a line short for wrapped text, which
 /// clips the last line; one spare line keeps it readable.
 fn padded(text: &str) -> String {
-    format!("{text}
-")
+    format!("{text}\n")
 }
 
 fn no_home(app: &Rc<AppState>, router: &Router, title: &str) {
@@ -52,12 +51,38 @@ pub(crate) fn open_steam_screen(app: &Rc<AppState>, router: &Router) {
     }
     let Some(home) = home_dir() else { return no_home(app, router, STEAM_TITLE) };
     let settings = ForkSettings::load(&settings_path(app));
-    let screen = {
+    let mut screen = {
         let catalog = app.catalog.borrow();
         let state = app.state.borrow();
         SteamScreen::load(&home, &app.paths.library_dir, &catalog, &settings, &|key| state.get(key).and_then(|i| i.favorite_exe.clone()))
     };
+    screen.cache_dir = Some(app.paths.cache_dir.clone());
+    prefetch_art(app);
     show_steam_screen(app, router, Rc::new(RefCell::new(screen)));
+}
+
+/// Fetches the catalog portrait and icon of every installed port in the background, so Apply finds
+/// them in the cache (`<folder>.png`, `<folder>_icon.png`). Ones already cached are not fetched again,
+/// and a failed fetch is silent: Apply says "no cached artwork yet" for that port.
+fn prefetch_art(app: &AppState) {
+    let wanted: Vec<(String, Option<String>, Option<String>)> = app
+        .catalog
+        .borrow()
+        .iter()
+        .filter(|p| !p.is_android_only() && app.is_installed(p))
+        .map(|p| (p.folder.clone(), p.image.clone(), p.icon.clone()))
+        .collect();
+    let cache_dir = app.paths.cache_dir.clone();
+    std::thread::spawn(move || {
+        for (folder, image, icon) in wanted {
+            if let Some(url) = image {
+                crate::core::image_cache::cache_image(&url, &cache_dir, &folder);
+            }
+            if let Some(url) = icon {
+                crate::core::image_cache::cache_image(&url, &cache_dir, &format!("{folder}_icon"));
+            }
+        }
+    });
 }
 
 fn reload_after_account_change(app: &AppState, screen: &mut SteamScreen, index: usize) {
@@ -112,18 +137,7 @@ fn show_steam_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<Ste
 
 fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<SteamScreen>>) {
     let steam = SystemSteamCheck::new();
-    let problem = {
-        let screen = screen.borrow();
-        if let Some(e) = &screen.load_error {
-            Some(e.clone())
-        } else if screen.selected_count() == 0 {
-            Some("Nothing is selected to add or update.".to_string())
-        } else if !matches!(crate::fork::store::SteamProcessCheck::running_steam_processes(&steam), Ok(p) if p.is_empty()) {
-            Some(CLOSE_STEAM_HELP.to_string())
-        } else {
-            None
-        }
-    };
+    let problem = screen.borrow().review_problem(&steam);
     if let Some(message) = problem {
         return open_message_dialog(app, router, STEAM_TITLE, &padded(&message));
     }
