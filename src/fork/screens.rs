@@ -280,7 +280,7 @@ impl SteamScreen {
             out.push_str(&format!("Add {}:\n{}\n\n", added.len(), listed(&added)));
         }
         if !updated.is_empty() {
-            out.push_str(&format!("Update {} (play time and art stay):\n{}\n\n", updated.len(), listed(&updated)));
+            out.push_str(&format!("Update {} (play time stays):\n{}\n\n", updated.len(), listed(&updated)));
         }
         out.push_str("shortcuts.vdf is backed up first.");
         out
@@ -315,14 +315,21 @@ pub struct ApplyOutcome {
 /// place. Never overwrites art the user chose (the writer decides), never touches `shortcuts.vdf`.
 /// A port with nothing cached yet gets a note, not an error: the images are fetched in the background
 /// when the screen opens, so a second try a minute later has them.
-fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], wanted: &mut [WantedShortcut]) -> Vec<String> {
+fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], taken_ids: &[u32], wanted: &mut [WantedShortcut]) -> Vec<String> {
     let Some(cache_dir) = &screen.cache_dir else { return Vec::new() };
     if !grid_dir.is_absolute() {
         return vec!["  skipped: the Steam folder path is not absolute".to_string()];
     }
     let mut notes = Vec::new();
     for item in items {
+        if !item.changes_the_file() {
+            continue;
+        }
         let Some(app_id) = steam_sync::expected_app_id(item) else { continue };
+        // A new entry whose ID another shortcut already stores will be refused; its art would land on that one.
+        if matches!(item.action, Action::Add) && taken_ids.contains(&app_id) {
+            continue;
+        }
         let Some(row) = screen.rows.iter().find(|r| r.key == item.wanted.port_key) else { continue };
         let portrait = art::catalog::cached_portrait_path(cache_dir, &row.folder);
         let icon = crate::core::image_cache::cached_image_path(cache_dir, &format!("{}_icon", row.folder)).ok().filter(|p| p.is_file());
@@ -378,7 +385,8 @@ pub fn apply_selected(screen: &SteamScreen, steam: &dyn SteamProcessCheck, setti
     let mut art_notes = Vec::new();
     if let Some(grid) = screen.grid_dir() {
         let first = steam_sync::plan(&file.doc, &wanted);
-        art_notes = place_catalog_art(screen, &grid, &first, &mut wanted);
+        let taken: Vec<u32> = super::shortcuts::list(&file.doc).iter().filter_map(|s| s.app_id).collect();
+        art_notes = place_catalog_art(screen, &grid, &first, &taken, &mut wanted);
     }
     let items = steam_sync::plan(&file.doc, &wanted);
 
@@ -514,7 +522,7 @@ impl AdoptScreen {
             "Adopt {}:\n{}\n\nEach is linked into your library and added to ports.local.json (backed up first). \
              Your folders are not moved, copied or changed.",
             names.len(),
-            names.join("\n")
+            listed(&names)
         )
     }
 }
@@ -544,7 +552,7 @@ pub fn adopt_selected(screen: &AdoptScreen, catalog: &[Port], library_dir: &Path
             Err(e) => lines.push(format!("{}: {e}", candidate.port_name)),
         }
     }
-    let mut text = lines.join("\n");
+    let mut text = listed(&lines);
     if !adopted.is_empty() {
         text.push_str("\n\nThey now show as installed.\nAdopted ports are not checked for updates.");
     }
@@ -652,7 +660,7 @@ mod tests {
         assert!(!text.contains("Update"), "the name-only match is off until switched on");
         screen.toggle(1);
         let text = screen.review_text();
-        assert!(text.contains("Update 1 (play time and art stay):\n  Ship of Harkinian (now soh.appimage: program, start folder)"), "{text}");
+        assert!(text.contains("Update 1 (play time stays):\n  Ship of Harkinian (now soh.appimage: program, start folder)"), "{text}");
         assert!(text.contains("backed up first"));
         let _ = fs::remove_dir_all(home);
     }
@@ -839,7 +847,11 @@ mod tests {
     fn steam_starting_after_the_screen_opened_refuses_at_apply_and_names_the_process() {
         let (home, library, path) = fake_home("late");
         let before = fs::read(&path).unwrap();
-        let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        image::RgbaImage::from_pixel(600, 900, image::Rgba([200, 30, 30, 255])).save(cache.join("dusklight.png")).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        screen.cache_dir = Some(cache);
         assert!(screen.review_problem(&no_steam).is_none());
         let started = || -> std::io::Result<Vec<String>> { Ok(vec!["31 steamwebhelper".into()]) };
         assert!(screen.review_problem(&started).unwrap().contains("Still running: 31 steamwebhelper"));
@@ -847,6 +859,25 @@ mod tests {
         assert!(err.contains("Still running: 31 steamwebhelper"));
         assert_eq!(fs::read(&path).unwrap(), before);
         assert!(!path.parent().unwrap().join("grid").exists(), "no artwork was placed either");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn art_is_not_placed_for_a_new_entry_whose_id_another_shortcut_already_stores() {
+        let (home, library, path) = fake_home("art_taken");
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        image::RgbaImage::from_pixel(600, 900, image::Rgba([200, 30, 30, 255])).save(cache.join("dusklight.png")).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        screen.cache_dir = Some(cache);
+        // Another shortcut (renamed and repointed in Steam) already stores the ID Dusklight would get.
+        let wanted = screen.rows[0].wanted.as_ref().unwrap();
+        let id = super::super::app_id::shortcut_app_id(&format!("\"{}\"", wanted.exe), "Dusklight");
+        let entry = super::super::vdf::fixtures::steam_entry(1, id, "Renamed", "\"/else/where\"", "\"/else/\"", &[]);
+        fs::write(&path, super::super::vdf::fixtures::file_of(&[entry])).unwrap();
+        let out = apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        assert!(out.text.contains("Left out 1") && out.text.contains("Dusklight"), "{}", out.text);
+        assert!(!path.parent().unwrap().join("grid").join(format!("{id}p.png")).exists());
         let _ = fs::remove_dir_all(home);
     }
 

@@ -732,7 +732,6 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_folder_that_contains_the_library_cannot_be_adopted_and_is_not_offered() {
         let dir = temp_dir("contains_library");

@@ -139,7 +139,8 @@ fn diff(existing: &Shortcut, wanted: &WantedShortcut) -> Vec<FieldChange> {
     check("program", existing.exe_path(), &wanted.exe, same_text);
     check("start folder", existing.start_dir_path(), &wanted.start_dir, same_dir);
     check("launch options", &existing.launch_options, &wanted.launch_options, same_text);
-    if let Some(icon) = &wanted.icon {
+    // An icon the shortcut already has (Steam's own, or one the user pointed it at) is never replaced.
+    if let Some(icon) = wanted.icon.as_ref().filter(|_| existing.icon.is_empty()) {
         check("icon", &existing.icon, icon, same_text);
     }
     changes
@@ -324,6 +325,30 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn an_icon_the_shortcut_already_has_is_not_replaced_but_an_empty_one_is_filled() {
+        let mut w = wanted("Chiaki", "/usr/bin/chiaki");
+        w.start_dir = "/usr/bin/".into();
+        w.icon = Some("/grid/9_icon.png".into());
+        // plain_file's Chiaki has no icon: filling it is a change.
+        match &plan(&doc(), &[w.clone()])[0].action {
+            Action::Update { changes, .. } => assert_eq!(changes.iter().map(|c| c.field).collect::<Vec<_>>(), ["icon"]),
+            other => panic!("{other:?}"),
+        }
+        // With one set (here by a hand-edited file), ours does not take its place.
+        let with_icon = {
+            use super::super::vdf::fixtures::*;
+            let mut entry = Vec::new();
+            entry.extend(int_field("appid", 0x9962_3236));
+            entry.extend(str_field("AppName", b"Chiaki"));
+            entry.extend(str_field("Exe", b"\"/usr/bin/chiaki\""));
+            entry.extend(str_field("StartDir", b"\"/usr/bin/\""));
+            entry.extend(str_field("icon", b"/home/deck/icons/chiaki.ico"));
+            Document::parse(&file_of(&[object("0", &[entry])])).unwrap()
+        };
+        assert_eq!(plan(&with_icon, &[w])[0].action, Action::UpToDate { app_id: Some(0x9962_3236) });
     }
 
     #[test]
