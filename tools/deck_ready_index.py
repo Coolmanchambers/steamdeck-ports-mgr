@@ -179,8 +179,14 @@ def collect_catalog(cands, catalog_path):
         folder = p.get("folder") or p.get("-folder")
         disabled = not isinstance(p.get("name"), str) or not isinstance(p.get("folder"), str)
         src = p.get("source")
-        linux_url = src.get("linux") if isinstance(src, dict) else None
-        url = linux_url or (src if isinstance(src, str) else next(iter(src.values()), None) if isinstance(src, dict) else None)
+        def is_url(v):
+            return isinstance(v, str) and re.match(r"https?://", v) is not None
+
+        linux_url = src.get("linux") if isinstance(src, dict) and is_url(src.get("linux")) else None
+        if isinstance(src, dict):
+            url = linux_url or next((v for v in src.values() if is_url(v)), None)
+        else:
+            url = src
         if not isinstance(url, str) or not re.match(r"https?://", url):
             url = None  # placeholders such as "??" are not sources
         site = p.get("website")
@@ -486,7 +492,8 @@ def merge_with_previous(new_ready, old_projects, today, grace_days=GRACE_DAYS):
     old_by_id = {p["id"]: p for p in old_projects}
     old_by_gid = {p["github_id"]: p for p in old_projects if p.get("github_id")}
     matched = set()
-    changes = {"added": [], "changed": [], "revived": [], "newly_missing": [], "still_missing": [], "removed": []}
+    changes = {"added": [], "changed": [], "revived": [], "newly_missing": [], "still_missing": [], "removed": [],
+               "replaced": []}
     result = []
     for p in new_ready:
         # A renamed GitHub repo keeps its numeric id, so it stays the same project.
@@ -517,7 +524,7 @@ def merge_with_previous(new_ready, old_projects, today, grace_days=GRACE_DAYS):
         if old["id"] in matched:
             continue
         if old["id"] in taken:  # the slug was reused by a different repo; ids stay unique
-            changes["removed"].append(old)
+            changes["replaced"].append(old)
             continue
         since = old.get("missing_since")
         if since is None:
@@ -538,7 +545,8 @@ def render_summary(changes, total, active):
              f"(kept one cycle), {total} entries in the file.", ""]
     sections = [("Added", "added"), ("Changed", "changed"), ("Back again", "revived"),
                 ("No longer found (kept one cycle)", "newly_missing"),
-                ("Removed after one cycle", "removed")]
+                ("Removed after one cycle", "removed"),
+                ("Removed now: a different repo took over the same name", "replaced")]
     any_change = False
     for title, key in sections:
         items = changes[key]

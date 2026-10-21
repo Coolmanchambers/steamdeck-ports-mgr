@@ -68,7 +68,7 @@ class Misc(unittest.TestCase):
     def test_summary_caps_long_lists(self):
         added = [{"name": f"G{i}", "repo": f"a/g{i}", "id": f"github:a/g{i}"} for i in range(100)]
         text = d.render_summary({"added": added, "changed": [], "revived": [], "newly_missing": [],
-                                 "still_missing": [], "removed": []}, 100, 100)
+                                 "still_missing": [], "removed": [], "replaced": []}, 100, 100)
         self.assertIn("and 40 more", text)
 
 
@@ -150,7 +150,8 @@ class Merge(unittest.TestCase):
         old = [proj("github:a/b", github_id=5)]
         out, ch = self.merge([proj("github:a/b", github_id=9)], old)
         self.assertEqual([p["id"] for p in out], ["github:a/b"])
-        self.assertEqual(len(ch["removed"]), 1)
+        self.assertEqual((len(ch["replaced"]), len(ch["removed"])), (1, 0))
+        self.assertIn("a different repo took over", d.render_summary(ch, 1, 1))
 
     def test_output_sorted_by_name(self):
         out, _ = self.merge([proj("github:a/z", "Zed"), proj("github:a/a", "alpha")], [])
@@ -168,6 +169,19 @@ class Catalog(unittest.TestCase):
             cands = {}
             d.collect_catalog(cands, f)
         self.assertEqual(sorted(cands), ["catalog:a", "github:x/y"])
+
+    def test_dict_source_uses_first_real_url(self):
+        import json, tempfile
+        data = {"ports": [{"name": "C", "folder": "c", "tags": [],
+                           "source": {"linux": None, "windows": "https://github.com/x/win"}},
+                          {"name": "D", "folder": "d", "tags": [],
+                           "source": {"linux": "https://github.com/x/lin", "windows": "https://github.com/x/w2"}}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ports.json"
+            f.write_text(json.dumps(data), encoding="utf-8")
+            cands = {}
+            d.collect_catalog(cands, f)
+        self.assertEqual(sorted(cands), ["github:x/lin", "github:x/win"])
 
 
 class Candidates(unittest.TestCase):
