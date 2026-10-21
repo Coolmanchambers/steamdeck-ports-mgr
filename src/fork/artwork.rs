@@ -170,8 +170,10 @@ pub fn place_artwork(
     // must survive; on ext4 they are two files and the old one goes.
     let dest_id = fs::canonicalize(&dest).ok();
     for stale in existing {
-        let same_file = stale == dest || (dest_id.is_some() && fs::canonicalize(&stale).ok() == dest_id);
-        if !same_file {
+        // If identity cannot be established, keep the file: a stale image is harmless, a lost one is not.
+        let stale_id = fs::canonicalize(&stale).ok();
+        let different = stale != dest && dest_id.is_some() && stale_id.is_some() && stale_id != dest_id;
+        if different {
             let _ = fs::remove_file(stale);
         }
     }

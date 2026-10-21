@@ -169,8 +169,8 @@ impl ShortcutsFile {
 
     /// Refused while Steam runs even when nothing changed, so a caller never reports a clean save in a
     /// state where the next real one would be refused. Writes the document if it differs from what was
-    /// loaded; a missing file with an untouched empty document also counts as unchanged. `stamp` names the backup; use
-    /// [`backup_stamp`] outside tests. After a successful save the file counts as loaded again, so
+    /// loaded; a missing file with an untouched empty document also counts as unchanged. `stamp` names
+    /// the backup; use [`backup_stamp`] outside tests. After a successful save the file counts as loaded again, so
     /// further edits and saves on the same value work. A missing parent folder is an error: Steam
     /// creates `config/` itself, so a missing one means a wrong path.
     pub fn save(&mut self, steam: &dyn SteamProcessCheck, stamp: &str) -> Result<SaveReport, StoreError> {
