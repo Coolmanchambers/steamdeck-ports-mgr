@@ -131,7 +131,12 @@ Library only; no UI and no caller yet. Rules it enforces:
 - Nothing already in a port folder is overwritten. A different file at the destination refuses the plan;
   an identical file (or a link already pointing at the original) is accepted as connected and left alone.
   A copy is written under a temporary name, verified, and published with `hard_link` (which cannot
-  replace anything), then the temporary file is removed.
+  replace anything; where hard links are unavailable the content is written with `create_new`, which fails the
+  same way), then the temporary file is removed.
+- Destinations are checked after resolving symlinks, so a subfolder that is a link out of the port folder is refused.
+- A disc is connected as a set (`plan_connect_set` / `apply_set`): planned whole, one approval, and if a later step
+  fails the links and copies that call already made are removed again (only those; an existing file is never ours
+  to remove, and an original is never touched).
 - A copy is a planned action that reports its size and is refused by `apply` without `Approval::CopyAllowed`.
   A link that the file system refuses (exFAT) fails with `SymlinkUnsupported`; the fallback is a new,
   confirmed copy plan.
@@ -139,12 +144,16 @@ Library only; no UI and no caller yet. Rules it enforces:
 - Forgetting a connection removes the record and no files.
 - State lives in `rom_library.json` and `rom_scan_cache.json` beside `state.json`, not in `state.json`:
   `StateManager::save` rewrites that file from a fixed field list, so a key added to it would be dropped.
-- Matching: CRC-32 of the file as stored or, for N64, converted to big-endian (the form checksum lists use);
-  then name (low-confidence flag); a name match whose checksum differs from the catalog's is "wrong version".
+- Matching: a file fills at most one slot of a port; CRC-32 or SHA-1 of the file as stored or, for N64, converted to big-endian (the form checksum lists use);
+  then name (low-confidence flag); a name match whose checksum differs from the catalog's is "wrong version", and a
+  title-only match is not offered when the region tags disagree (USA vs Europe). A `.cue` with its `.bin` tracks
+  (any number) is one disc led by the `.cue`.
 - Local entries can state requirements explicitly (`rom_files`, `rom_access`, `rom_dest`); the app's own
   parser drops unknown fields, so the library reads those from the raw `ports.local.json`.
 
-Known limits: a ZIP is hashed as a file (a CRC of a ROM inside an archive is not matched); headered dumps
+Known limits: no N64 conversion (a `.v64` is reported with a warning, not converted); PS1 ports that list only a
+disc serial can be found only when a file name contains it; BIOS files kept outside the ROM folder show those ports
+as partial; the BIOS and serial checks are by name only. A ZIP is hashed as a file (a CRC of a ROM inside an archive is not matched); headered dumps
 (SNES copier headers, iNES) hash differently from headerless No-Intro lists and show as "wrong version";
 Switch dumps that are folders are not scanned; `rom_access` for Ship of Harkinian and 2 Ship 2 Harkinian
 ("use original") comes from the findings document and is not yet confirmed on a Deck.

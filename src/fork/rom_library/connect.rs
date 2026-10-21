@@ -25,7 +25,8 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The cheapest way a port can reach a game file. Each level also allows the more expensive ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,6 +189,21 @@ impl fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
+/// True when `dest_dir`, with symlinks resolved, is inside `port_dir`. A folder that does not exist
+/// yet is judged by its deepest existing parent. `safe_join` only normalizes `..` in the text; this
+/// catches a subfolder that is itself a link pointing out of the port folder.
+fn confined(port_dir: &Path, dest_dir: &Path) -> bool {
+    let Ok(root) = fs::canonicalize(port_dir) else { return false };
+    let mut probe = dest_dir;
+    while !probe.exists() {
+        match probe.parent() {
+            Some(p) => probe = p,
+            None => return false,
+        }
+    }
+    fs::canonicalize(probe).is_ok_and(|real| real.starts_with(&root))
+}
+
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> PlanError + '_ {
     move |source| PlanError::Io { path: path.to_path_buf(), source }
 }
@@ -258,6 +274,9 @@ pub fn plan_connect(req: &ConnectRequest) -> Result<ConnectPlan, PlanError> {
         return Err(PlanError::InvalidDestName(name));
     }
     let dest_dir = safe_join(&req.port_dir, &req.dest_subdir).map_err(|_| PlanError::DestOutsidePortFolder(req.dest_subdir.clone()))?;
+    if !confined(&req.port_dir, &dest_dir) {
+        return Err(PlanError::DestOutsidePortFolder(req.dest_subdir.clone()));
+    }
     let dest = dest_dir.join(&name);
 
     match fs::symlink_metadata(&dest) {
@@ -279,13 +298,13 @@ pub fn plan_connect(req: &ConnectRequest) -> Result<ConnectPlan, PlanError> {
                 }
                 return Ok(ConnectPlan { dest: Some(dest), action: PlanAction::AlreadyConnected(Method::Symlink), ..base });
             }
-            // Something else is there. Identical content is fine to keep; anything else is not ours to touch.
-            let same = fs::metadata(&dest).map(|m| m.is_file()).unwrap_or(false) && files_identical(&source, &dest).unwrap_or(false);
+            // Something else is there. A link to another file is not ours to judge; a regular file with
+            // identical content is fine to keep; anything else is not ours to touch.
+            let same = !existing.file_type().is_symlink() && existing.is_file() && files_identical(&source, &dest).unwrap_or(false);
             if !same {
                 return Err(PlanError::DestExistsDifferent(dest));
             }
-            let found = if existing.file_type().is_symlink() { Method::Symlink } else { Method::Copy };
-            Ok(ConnectPlan { dest: Some(dest), action: PlanAction::AlreadyConnected(found), ..base })
+            Ok(ConnectPlan { dest: Some(dest), action: PlanAction::AlreadyConnected(Method::Copy), ..base })
         }
     }
 }
@@ -310,6 +329,8 @@ pub enum ApplyError {
     SymlinkUnsupported(io::Error),
     /// The copy did not match the original. The bad copy was removed.
     VerifyFailed(PathBuf),
+    /// The destination folder resolves (through a link) to somewhere outside the port folder.
+    OutsidePortFolder(PathBuf),
     Io { path: PathBuf, source: io::Error },
 }
 
@@ -321,6 +342,7 @@ impl fmt::Display for ApplyError {
             ApplyError::DestAppeared(p) => write!(f, "{} appeared in the meantime; it was left alone", p.display()),
             ApplyError::SymlinkUnsupported(e) => write!(f, "this drive does not support links ({e}); a copy is the alternative"),
             ApplyError::VerifyFailed(p) => write!(f, "the copy at {} did not match the original and was removed", p.display()),
+            ApplyError::OutsidePortFolder(p) => write!(f, "{} leads outside the port's folder; nothing was written", p.display()),
             ApplyError::Io { path, source } => write!(f, "{}: {source}", path.display()),
         }
     }
@@ -424,7 +446,11 @@ pub fn apply(plan: &ConnectPlan, approval: Approval) -> Result<Mapping, ApplyErr
         PlanAction::CreateLink => {
             let dest = plan.dest.as_ref().expect("a link plan has a destination");
             source_unchanged(plan)?;
-            fs::create_dir_all(dest.parent().unwrap_or(Path::new("."))).map_err(apply_io(dest))?;
+            let dest_dir = dest.parent().unwrap_or(Path::new("."));
+            fs::create_dir_all(dest_dir).map_err(apply_io(dest))?;
+            if !confined(&plan.request.port_dir, dest_dir) {
+                return Err(ApplyError::OutsidePortFolder(dest_dir.to_path_buf()));
+            }
             if !absent(dest) {
                 return Err(ApplyError::DestAppeared(dest.clone()));
             }
@@ -457,22 +483,54 @@ pub fn apply(plan: &ConnectPlan, approval: Approval) -> Result<Mapping, ApplyErr
 fn copy_without_overwriting(plan: &ConnectPlan, dest: &Path) -> Result<u32, ApplyError> {
     let dest_dir = dest.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dest_dir).map_err(apply_io(dest_dir))?;
+    if !confined(&plan.request.port_dir, dest_dir) {
+        return Err(ApplyError::OutsidePortFolder(dest_dir.to_path_buf()));
+    }
     if !absent(dest) {
         return Err(ApplyError::DestAppeared(dest.to_path_buf()));
     }
-    let tmp_name = format!(".{}.dpm-copy-{}", dest.file_name().unwrap_or_default().to_string_lossy(), std::process::id());
-    let tmp = dest_dir.join(tmp_name);
-    let result = write_temp_and_publish(plan, &tmp, dest);
-    // Only the temporary file this call made is ever removed here.
-    if tmp.exists() {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = format!(
+        "{}-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let tmp = dest_dir.join(format!(".{}.dpm-copy-{unique}", dest.file_name().unwrap_or_default().to_string_lossy()));
+    let mut created = false;
+    let result = write_temp_and_publish(plan, &tmp, dest, &mut created);
+    // Only a temporary file this call created is removed. Its name is unique to this call, so
+    // `create_new` cannot have found someone else's file there.
+    if created {
         let _ = fs::remove_file(&tmp);
     }
     result
 }
 
-fn write_temp_and_publish(plan: &ConnectPlan, tmp: &Path, dest: &Path) -> Result<u32, ApplyError> {
+/// Write `dest` as a new file (it must not exist) with the content of `tmp`. Used where hard links
+/// are unavailable. A failure removes the partial `dest`, which this function created.
+fn copy_new(tmp: &Path, dest: &Path) -> Result<(), ApplyError> {
+    let mut src = File::open(tmp).map_err(apply_io(tmp))?;
+    let mut out = OpenOptions::new().write(true).create_new(true).open(dest).map_err(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists {
+            ApplyError::DestAppeared(dest.to_path_buf())
+        } else {
+            ApplyError::Io { path: dest.to_path_buf(), source: e }
+        }
+    })?;
+    let written = io::copy(&mut src, &mut out).and_then(|_| out.sync_all());
+    drop(out);
+    if let Err(e) = written {
+        let _ = fs::remove_file(dest);
+        return Err(ApplyError::Io { path: dest.to_path_buf(), source: e });
+    }
+    Ok(())
+}
+
+fn write_temp_and_publish(plan: &ConnectPlan, tmp: &Path, dest: &Path, created: &mut bool) -> Result<u32, ApplyError> {
     let mut src = File::open(&plan.source).map_err(apply_io(&plan.source))?;
     let mut out = OpenOptions::new().write(true).create_new(true).open(tmp).map_err(apply_io(tmp))?;
+    *created = true;
     let mut crc = Crc32::new();
     let mut buf = vec![0u8; 1 << 20];
     let mut total = 0u64;
@@ -493,16 +551,12 @@ fn write_temp_and_publish(plan: &ConnectPlan, tmp: &Path, dest: &Path) -> Result
         return Err(ApplyError::SourceChanged);
     }
     // `hard_link` fails if the name is taken, so unlike `rename` it cannot replace anything. Where
-    // hard links are unavailable (exFAT) fall back to a checked rename.
+    // hard links are unavailable (exFAT) the content is written to `dest` with `create_new`, which
+    // fails the same way if the name is taken.
     match fs::hard_link(tmp, dest) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(ApplyError::DestAppeared(dest.to_path_buf())),
-        Err(_) => {
-            if !absent(dest) {
-                return Err(ApplyError::DestAppeared(dest.to_path_buf()));
-            }
-            fs::rename(tmp, dest).map_err(apply_io(dest))?;
-        }
+        Err(_) => copy_new(tmp, dest)?,
     }
     match files_identical(&plan.source, dest) {
         Ok(true) => Ok(crc.finish()),
@@ -512,6 +566,45 @@ fn write_temp_and_publish(plan: &ConnectPlan, tmp: &Path, dest: &Path) -> Result
             Err(ApplyError::VerifyFailed(dest.to_path_buf()))
         }
     }
+}
+
+/// Plan several files of one connection (a `.cue` and its `.bin` tracks, two discs). Every request is
+/// planned before anything is written, and two requests may not end up at the same destination.
+pub fn plan_connect_set(requests: &[ConnectRequest]) -> Result<Vec<ConnectPlan>, PlanError> {
+    let plans = requests.iter().map(plan_connect).collect::<Result<Vec<_>, _>>()?;
+    for (i, a) in plans.iter().enumerate() {
+        if let Some(dest) = &a.dest {
+            if plans[..i].iter().any(|b| b.dest.as_ref() == Some(dest) && b.source != a.source) {
+                return Err(PlanError::DestExistsDifferent(dest.clone()));
+            }
+        }
+    }
+    Ok(plans)
+}
+
+/// Apply a set of plans. A copy anywhere in the set needs approval, checked before anything is
+/// written. If one step fails, the links and copies this call already made are removed again (only
+/// those, only by the paths it created; an original is never touched) and the error is returned, so
+/// a disc is never left half connected.
+pub fn apply_set(plans: &[ConnectPlan], approval: Approval) -> Result<Vec<Mapping>, ApplyError> {
+    if approval != Approval::CopyAllowed && plans.iter().any(|p| p.needs_confirmation) {
+        return Err(ApplyError::NeedsConfirmation);
+    }
+    let mut done: Vec<Mapping> = Vec::new();
+    for plan in plans {
+        match apply(plan, approval) {
+            Ok(m) => done.push(m),
+            Err(e) => {
+                for m in done.iter().filter(|m| m.created_by_us) {
+                    if let Some(dest) = &m.dest {
+                        let _ = fs::remove_file(dest);
+                    }
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok(done)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -864,5 +957,113 @@ mod tests {
         write(&other, b"other");
         std::os::unix::fs::symlink(&other, &dest).unwrap();
         assert_eq!(check_mapping(&m), Health::DestChanged);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_subfolder_that_is_a_link_out_of_the_port_folder_is_refused() {
+        let f = fixture();
+        let outside = f._tmp.path().join("elsewhere");
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, f.port.join("isos")).unwrap();
+        let mut req = request(&f, Method::Copy, Access::Copy);
+        req.dest_subdir = "isos".into();
+        assert!(matches!(plan_connect(&req).unwrap_err(), PlanError::DestOutsidePortFolder(_)));
+        assert!(fs::read_dir(&outside).unwrap().next().is_none(), "nothing may be written outside the port");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_different_file_with_the_same_content_is_not_claimed() {
+        let f = fixture();
+        let twin = f.roms.join("twin.z64");
+        write(&twin, &f.data);
+        std::os::unix::fs::symlink(&twin, f.port.join("Game (USA).z64")).unwrap();
+        assert!(matches!(plan_connect(&request(&f, Method::Symlink, Access::Link)).unwrap_err(), PlanError::DestExistsDifferent(_)));
+    }
+
+    fn second_rom(f: &Fixture) -> (PathBuf, Vec<u8>) {
+        let path = f.roms.join("psx").join("Game (USA).cue");
+        let data = b"FILE \"Game (USA).bin\" BINARY\n".to_vec();
+        write(&path, &data);
+        (path, data)
+    }
+
+    fn set_requests(f: &Fixture) -> Vec<ConnectRequest> {
+        let (cue, _) = second_rom(f);
+        let mut second = request(f, Method::Copy, Access::Copy);
+        second.source = cue;
+        second.slot = "disc#1".into();
+        vec![request(f, Method::Copy, Access::Copy), second]
+    }
+
+    #[test]
+    fn a_set_is_planned_whole_and_applied_with_one_approval_keeping_the_names() {
+        let f = fixture();
+        let (cue, cue_data) = second_rom(&f);
+        let before = snapshot(&f.roms);
+        let mut reqs = set_requests(&f);
+        reqs[0].source = f.rom.clone();
+        reqs[0].dest_name = Some("Game (USA).bin".into());
+        let plans = plan_connect_set(&reqs).unwrap();
+        assert_eq!(plans.len(), 2);
+        assert!(plans.iter().all(|p| p.needs_confirmation));
+        assert!(matches!(apply_set(&plans, Approval::None), Err(ApplyError::NeedsConfirmation)));
+        assert!(snapshot(&f.port).is_empty());
+        let mappings = apply_set(&plans, Approval::CopyAllowed).unwrap();
+        assert_eq!(mappings.len(), 2);
+        assert_eq!(fs::read(f.port.join("Game (USA).bin")).unwrap(), f.data);
+        assert_eq!(fs::read(f.port.join("Game (USA).cue")).unwrap(), cue_data);
+        assert_eq!(fs::read(&cue).unwrap(), cue_data);
+        originals_untouched(&f, &before);
+    }
+
+    #[test]
+    fn a_set_with_a_conflict_is_refused_before_anything_is_written() {
+        let f = fixture();
+        let reqs = set_requests(&f);
+        write(&f.port.join("Game (USA).cue"), b"theirs");
+        assert!(matches!(plan_connect_set(&reqs).unwrap_err(), PlanError::DestExistsDifferent(_)));
+        assert!(!f.port.join("Game (USA).z64").exists());
+        assert_eq!(fs::read(f.port.join("Game (USA).cue")).unwrap(), b"theirs");
+    }
+
+    #[test]
+    fn two_requests_for_one_destination_are_refused() {
+        let f = fixture();
+        let mut reqs = set_requests(&f);
+        reqs[1].dest_name = Some("Game (USA).z64".into());
+        assert!(matches!(plan_connect_set(&reqs).unwrap_err(), PlanError::DestExistsDifferent(_)));
+    }
+
+    #[test]
+    fn a_set_that_fails_halfway_removes_what_it_made_and_nothing_else() {
+        let f = fixture();
+        let requests = set_requests(&f);
+        let before = snapshot(&f.roms);
+        let plans = plan_connect_set(&requests).unwrap();
+        // Between planning and applying, someone puts a file where the second one goes.
+        write(&f.port.join("Game (USA).cue"), b"appeared later");
+        let err = apply_set(&plans, Approval::CopyAllowed).unwrap_err();
+        assert!(matches!(err, ApplyError::DestAppeared(_)), "{err}");
+        assert!(!f.port.join("Game (USA).z64").exists(), "the first copy was rolled back");
+        assert_eq!(fs::read(f.port.join("Game (USA).cue")).unwrap(), b"appeared later");
+        let names: Vec<_> = fs::read_dir(&f.port).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec!["Game (USA).cue"]);
+        originals_untouched(&f, &before);
+    }
+
+    #[test]
+    fn a_set_leaves_files_that_were_already_there_alone_when_it_rolls_back() {
+        let f = fixture();
+        let (_, cue_data) = second_rom(&f);
+        write(&f.port.join("Game (USA).cue"), &cue_data); // identical, so already connected
+        let mut reqs = set_requests(&f);
+        reqs.swap(0, 1);
+        let plans = plan_connect_set(&reqs).unwrap();
+        // Make the second step fail.
+        write(&f.port.join("Game (USA).z64"), b"appeared later");
+        assert!(apply_set(&plans, Approval::CopyAllowed).is_err());
+        assert_eq!(fs::read(f.port.join("Game (USA).cue")).unwrap(), cue_data, "a pre-existing file is not ours to remove");
     }
 }

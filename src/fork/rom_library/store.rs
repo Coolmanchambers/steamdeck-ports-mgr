@@ -5,7 +5,7 @@
 //! fork added to it would be silently dropped the next time the app saved. A separate file also keeps
 //! the upstream `state` module unedited.
 
-use super::connect::{apply, ApplyError, Approval, ConnectPlan, Mapping};
+use super::connect::{apply, apply_set, ApplyError, Approval, ConnectPlan, Mapping};
 use super::scan::ScanResult;
 use crate::core::files::write_atomic;
 use serde_json::{json, Value};
@@ -125,6 +125,15 @@ impl RomLibraryStore {
         let mapping = apply(plan, approval).map_err(ApplyOrStoreError::Apply)?;
         self.record(mapping.clone()).map_err(ApplyOrStoreError::Record)?;
         Ok(mapping)
+    }
+
+    /// Apply several plans (a disc: its `.cue` and tracks) all-or-nothing and record every mapping.
+    pub fn apply_set_and_record(&mut self, plans: &[ConnectPlan], approval: Approval) -> Result<Vec<Mapping>, ApplyOrStoreError> {
+        let mappings = apply_set(plans, approval).map_err(ApplyOrStoreError::Apply)?;
+        self.mappings.retain(|old| !mappings.iter().any(|m| m.port_key == old.port_key && m.slot == old.slot));
+        self.mappings.extend(mappings.iter().cloned());
+        self.save().map_err(ApplyOrStoreError::Record)?;
+        Ok(mappings)
     }
 
     /// Where the saved scan lives: beside the library file.

@@ -28,11 +28,11 @@ pub mod system;
 mod testutil;
 
 #[allow(unused_imports)]
-pub use connect::{apply, check_mapping, plan_connect, Access, ApplyError, Approval, ConnectPlan, ConnectRequest, Health, Mapping, Method, PlanAction, PlanError};
+pub use connect::{apply, apply_set, check_mapping, plan_connect, plan_connect_set, Access, ApplyError, Approval, ConnectPlan, ConnectRequest, Health, Mapping, Method, PlanAction, PlanError};
 #[allow(unused_imports)]
-pub use matching::{match_port, Basis, FileMatch, PortMatch, PortStatus, SlotResult, SlotStatus};
+pub use matching::{match_all, match_port, Basis, FileMatch, PortMatch, PortStatus, SlotResult, SlotStatus};
 #[allow(unused_imports)]
-pub use requirements::{parse_instructions, Requirement, RomSpec, Slot, SlotKind};
+pub use requirements::{load_local_entries, parse_instructions, Requirement, RomSpec, Slot, SlotKind};
 #[allow(unused_imports)]
 pub use scan::{scan as scan_folder, RomFile, ScanOptions, ScanResult};
 #[allow(unused_imports)]

@@ -7,6 +7,9 @@
 //! is never silently offered to a port that wants the USA one.
 
 use super::requirements::{Alt, RomSpec, Slot, SlotKind};
+use crate::core::models::Port;
+use serde_json::Value;
+use std::collections::HashMap;
 use super::scan::RomFile;
 use super::system::ByteOrder;
 use std::path::PathBuf;
@@ -18,6 +21,8 @@ pub enum Basis {
     /// The CRC-32 equals a required one only after converting an N64 image to big-endian. The file
     /// on disk is not in the order the port expects.
     Crc32AfterByteOrderFix,
+    /// The file's SHA-1 equals a required one (catalog entries that give SHA-1 instead of CRC-32).
+    Sha1,
     /// The file name equals the required name.
     Name,
     /// Only the title (the name up to its first parenthesis) equals the required one.
@@ -34,12 +39,15 @@ impl Basis {
 pub struct FileMatch {
     pub path: PathBuf,
     pub size: u64,
+    /// CRC-32 of the file as it is on disk, so a screen can show "expected X, you have Y".
+    pub crc32: u32,
     pub basis: Basis,
     pub byte_order: Option<ByteOrder>,
     /// Other files with exactly the same content (and any N64 byte order), so a duplicate is not
     /// mistaken for an ambiguity.
     pub also_at: Vec<PathBuf>,
-    /// For a multi-file disc (`.cue` + `.bin`): the other files of the same set. `path` is the `.cue`.
+    /// For a multi-file disc (`.cue` + `.bin`): the other files of the same set. `path` is the `.cue`
+    /// when one matched; if only a `.bin` matched there is no `.cue` and `parts` is empty.
     pub parts: Vec<PathBuf>,
 }
 
@@ -51,6 +59,11 @@ impl FileMatch {
     /// The file is an N64 image in a byte order a port expecting `.z64` cannot read as it is.
     pub fn needs_byte_order_conversion(&self) -> bool {
         matches!(self.byte_order, Some(ByteOrder::ByteSwapped | ByteOrder::LittleEndian))
+    }
+
+    /// The main file and the other files of its disc set: everything to connect for this slot.
+    pub fn all_paths(&self) -> Vec<PathBuf> {
+        std::iter::once(self.path.clone()).chain(self.parts.iter().cloned()).collect()
     }
 }
 
@@ -66,7 +79,11 @@ pub enum SlotStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotResult {
+    /// `Slot::id`, stable across rewording of the catalog text: use it as `ConnectRequest::slot`.
+    pub slot_id: String,
     pub label: String,
+    /// What the slot asks for (names, checksums), so a screen can say what was expected.
+    pub alternatives: Vec<Alt>,
     pub kind: SlotKind,
     pub optional: bool,
     pub vague: bool,
@@ -84,8 +101,10 @@ pub enum PortStatus {
     /// Files with the right names exist but none with a listed checksum.
     WrongVersion,
     Missing,
-    /// The port states nothing checkable.
+    /// The port states nothing at all about its files (it may need none).
     Unspecified,
+    /// The port names a game but nothing a file can be checked against, and nothing matched by name.
+    Unverifiable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,8 +141,33 @@ fn crc_basis(alt: &Alt, file: &RomFile) -> Option<Basis> {
     if alt.crc32.contains(&file.raw.crc32) {
         return Some(Basis::Crc32);
     }
+    if file.raw.sha1.is_some_and(|h| alt.sha1.contains(&h)) {
+        return Some(Basis::Sha1);
+    }
     let normalized = file.normalized.as_ref()?;
-    alt.crc32.contains(&normalized.crc32).then_some(Basis::Crc32AfterByteOrderFix)
+    if alt.crc32.contains(&normalized.crc32) || normalized.sha1.is_some_and(|h| alt.sha1.contains(&h)) {
+        return Some(Basis::Crc32AfterByteOrderFix);
+    }
+    None
+}
+
+/// Region words in parentheses: "(USA, Europe)" gives usa and europe.
+fn regions(s: &str) -> Vec<&'static str> {
+    const WORDS: [&str; 8] = ["usa", "europe", "japan", "world", "australia", "korea", "china", "brazil"];
+    let lower = s.to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut rest = lower.as_str();
+    while let Some(open) = rest.find('(') {
+        let Some(close) = rest[open..].find(')') else { break };
+        let inside = &rest[open + 1..open + close];
+        for w in WORDS {
+            if inside.split(|c: char| !c.is_ascii_alphabetic()).any(|t| t == w) {
+                out.push(w);
+            }
+        }
+        rest = &rest[open + close + 1..];
+    }
+    out
 }
 
 fn name_basis(alt: &Alt, file: &RomFile) -> Option<Basis> {
@@ -150,6 +194,13 @@ fn name_basis(alt: &Alt, file: &RomFile) -> Option<Basis> {
     let title = title_key(&file_name_without_ext(&file_name));
     let titles = declared.iter().flat_map(|d| d.split('/')).map(title_key);
     if title.len() >= 4 && titles.into_iter().any(|t| t == title) {
+        // The title is the same but the region tags disagree: a Europe dump is not the USA game the
+        // port asked for, so it is not offered on the strength of a shared title.
+        let file_regions = regions(&file_name);
+        let declared_regions: Vec<&str> = declared.iter().flat_map(|d| regions(d)).collect();
+        if !file_regions.is_empty() && !declared_regions.is_empty() && !file_regions.iter().any(|r| declared_regions.contains(r)) {
+            return None;
+        }
         return Some(Basis::NameTitle);
     }
     None
@@ -182,6 +233,7 @@ fn group_candidates<'a>(hits: Vec<(&'a RomFile, Basis)>) -> Vec<FileMatch> {
             FileMatch {
                 path: best.path.clone(),
                 size: best.size,
+                crc32: best.raw.crc32,
                 basis,
                 byte_order: best.byte_order,
                 also_at: g[1..].iter().map(|(f, _)| f.path.clone()).collect(),
@@ -193,29 +245,45 @@ fn group_candidates<'a>(hits: Vec<(&'a RomFile, Basis)>) -> Vec<FileMatch> {
     out
 }
 
-/// The files of a `.cue`/`.bin` disc sit side by side with different content. Hits in the same folder
-/// with the same base name are one disc: the `.cue` is the entry point and the rest are its parts.
+/// The files of a `.cue`/`.bin` disc sit side by side with different content, and a multi-track
+/// disc has a `.bin` per track ("Game (Track 1).bin" next to "Game.cue"). A hit in the same folder
+/// whose name starts with a `.cue` hit's name belongs to that cue: the `.cue` is the entry point and
+/// the rest are its parts. Hits with no `.cue` are grouped by folder and base name.
 fn group_disc_sets<'a>(hits: Vec<(&'a RomFile, Basis)>) -> Vec<FileMatch> {
-    let mut groups: Vec<((Option<PathBuf>, String), Vec<(&RomFile, Basis)>)> = Vec::new();
-    for hit in hits {
-        let group_key = (hit.0.path.parent().map(PathBuf::from), key(file_stem(&hit.0.file_name())));
-        match groups.iter_mut().find(|(k, _)| *k == group_key) {
-            Some((_, g)) => g.push(hit),
-            None => groups.push((group_key, vec![hit])),
+    let stem_key = |f: &RomFile| key(file_stem(&f.file_name()));
+    let folder = |f: &RomFile| f.path.parent().map(PathBuf::from);
+    let mut sets: Vec<((Option<PathBuf>, String), Vec<(&RomFile, Basis)>)> = Vec::new();
+    // Cues first, longest name first, so a short cue name does not claim a longer cue's tracks.
+    let mut cues: Vec<&(&RomFile, Basis)> = hits.iter().filter(|(f, _)| f.ext == "cue").collect();
+    cues.sort_by_key(|(f, _)| std::cmp::Reverse(stem_key(f).len()));
+    for (f, basis) in cues {
+        sets.push(((folder(f), stem_key(f)), vec![(*f, *basis)]));
+    }
+    for (f, basis) in hits.iter().filter(|(f, _)| f.ext != "cue") {
+        let k = (folder(f), stem_key(f));
+        let owner = sets.iter_mut().find(|((dir, cue_key), g)| g[0].0.ext == "cue" && *dir == k.0 && k.1.starts_with(cue_key.as_str()));
+        match owner {
+            Some((_, group)) => group.push((*f, *basis)),
+            None => match sets.iter_mut().find(|(sk, g)| *sk == k && g[0].0.ext != "cue") {
+                Some((_, group)) => group.push((*f, *basis)),
+                None => sets.push((k, vec![(*f, *basis)])),
+            },
         }
     }
-    let mut out: Vec<FileMatch> = groups
+    let mut out: Vec<FileMatch> = sets
         .into_iter()
         .map(|(_, mut g)| {
             g.sort_by_key(|(f, basis)| (f.ext != "cue", *basis as u8, f.path.clone()));
             let (best, basis) = g[0];
+            let has_cue = best.ext == "cue";
             FileMatch {
                 path: best.path.clone(),
                 size: best.size,
+                crc32: best.raw.crc32,
                 basis,
                 byte_order: None,
                 also_at: Vec::new(),
-                parts: g[1..].iter().map(|(f, _)| f.path.clone()).collect(),
+                parts: if has_cue { g[1..].iter().map(|(f, _)| f.path.clone()).collect() } else { Vec::new() },
             }
         })
         .collect();
@@ -235,7 +303,7 @@ fn status_for_slot(slot: &Slot, files: &[RomFile]) -> SlotStatus {
             }
             if let Some(basis) = name_basis(alt, file) {
                 // A name match against a requirement that lists checksums, none of which the file has.
-                if alt.crc32.is_empty() {
+                if alt.crc32.is_empty() && alt.sha1.is_empty() {
                     name_hits.push((file, basis));
                 } else {
                     wrong_hits.push((file, basis));
@@ -243,8 +311,10 @@ fn status_for_slot(slot: &Slot, files: &[RomFile]) -> SlotStatus {
             }
         }
     }
-    let disc_set = slot.alternatives.iter().any(|a| a.exts.iter().any(|e| e == "cue") && a.exts.iter().any(|e| e == "bin"));
-    let pick = |hits| {
+    let declared_disc = slot.alternatives.iter().any(|a| a.exts.iter().any(|e| e == "cue") && a.exts.iter().any(|e| e == "bin"));
+    let pick = |hits: Vec<(&RomFile, Basis)>| {
+        // A serial or title that matched a .cue file is a disc as well, even if the text never said bin/cue.
+        let disc_set = declared_disc || hits.iter().any(|(f, _)| f.ext == "cue");
         let found = if disc_set { group_disc_sets(hits) } else { group_candidates(hits) };
         match found.len() {
             0 => None,
@@ -258,7 +328,7 @@ fn status_for_slot(slot: &Slot, files: &[RomFile]) -> SlotStatus {
     if let Some(s) = pick(name_hits) {
         return s;
     }
-    let wrong = if disc_set { group_disc_sets(wrong_hits) } else { group_candidates(wrong_hits) };
+    let wrong = if declared_disc || wrong_hits.iter().any(|(f, _)| f.ext == "cue") { group_disc_sets(wrong_hits) } else { group_candidates(wrong_hits) };
     if wrong.is_empty() {
         SlotStatus::Missing
     } else {
@@ -266,12 +336,33 @@ fn status_for_slot(slot: &Slot, files: &[RomFile]) -> SlotStatus {
     }
 }
 
+/// A file satisfies at most one slot: once a slot has taken a file, later slots do not see it (or any
+/// copy of it). Without this, a checksum list shared by several files ("game + IPL + disk") would let
+/// the cartridge alone fill all three slots.
 pub fn match_slots(spec: &RomSpec, files: &[RomFile]) -> Vec<SlotResult> {
-    spec.requirement
-        .slots
-        .iter()
-        .map(|slot| SlotResult { label: slot.label.clone(), kind: slot.kind, optional: slot.optional, vague: slot.is_vague(), status: status_for_slot(slot, files) })
-        .collect()
+    let mut taken: Vec<&RomFile> = Vec::new();
+    let mut results = Vec::new();
+    for slot in &spec.requirement.slots {
+        let status = if taken.is_empty() {
+            status_for_slot(slot, files)
+        } else {
+            let remaining: Vec<RomFile> = files.iter().filter(|f| !taken.iter().any(|t| same_content(t, f))).cloned().collect();
+            status_for_slot(slot, &remaining)
+        };
+        if let SlotStatus::Found(m) = &status {
+            taken.extend(files.iter().filter(|f| f.path == m.path));
+        }
+        results.push(SlotResult {
+            slot_id: slot.id(),
+            label: slot.label.clone(),
+            alternatives: slot.alternatives.clone(),
+            kind: slot.kind,
+            optional: slot.optional,
+            vague: slot.is_vague(),
+            status,
+        });
+    }
+    results
 }
 
 fn overall(slots: &[SlotResult]) -> PortStatus {
@@ -279,7 +370,8 @@ fn overall(slots: &[SlotResult]) -> PortStatus {
     // not evidence of anything missing.
     let required: Vec<&SlotResult> = slots.iter().filter(|s| !s.optional && !(s.vague && s.status == SlotStatus::Missing)).collect();
     if required.is_empty() {
-        return PortStatus::Unspecified;
+        let only_vague_misses = !slots.is_empty() && slots.iter().all(|s| s.vague && s.status == SlotStatus::Missing);
+        return if only_vague_misses { PortStatus::Unverifiable } else { PortStatus::Unspecified };
     }
     let count = |f: &dyn Fn(&SlotStatus) -> bool| required.iter().filter(|s| f(&s.status)).count();
     let found = count(&|s| matches!(s, SlotStatus::Found(_)));
@@ -305,6 +397,17 @@ pub fn match_port(port_key: &str, port_name: &str, spec: &RomSpec, files: &[RomF
     let slots = match_slots(spec, files);
     let status = overall(&slots);
     PortMatch { port_key: port_key.to_string(), port_name: port_name.to_string(), slots, status }
+}
+
+/// Match every port against one scan. `local_entries` is `requirements::load_local_entries`, by folder.
+pub fn match_all(ports: &[Port], local_entries: &HashMap<String, Value>, files: &[RomFile]) -> Vec<PortMatch> {
+    ports
+        .iter()
+        .map(|p| {
+            let spec = RomSpec::for_port(p, local_entries.get(&p.folder));
+            match_port(p.key(), &p.name, &spec, files)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -384,7 +487,7 @@ mod tests {
     #[test]
     fn title_only_name_match_is_the_weakest() {
         let dir = temp_dir();
-        write(&dir.path().join("Ace Combat 5 - The Unsung War (Europe).iso"), &random_bytes(6, 3000));
+        write(&dir.path().join("Ace Combat 5 - The Unsung War (USA).iso"), &random_bytes(6, 3000));
         let m = match_port("k", "AC5", &spec("Required files: Ace Combat 5 - The Unsung War (USA) (En,Ja).iso"), &scan_dir(dir.path()));
         let SlotStatus::Found(f) = &m.slots[0].status else { panic!("{:?}", m.slots) };
         assert_eq!(f.basis, Basis::NameTitle);
@@ -510,11 +613,11 @@ mod tests {
     }
 
     #[test]
-    fn a_vague_title_that_matches_nothing_is_unspecified_not_missing() {
+    fn a_vague_title_that_matches_nothing_is_unverifiable_not_missing() {
         let dir = temp_dir();
         write(&dir.path().join("x.gba"), &random_bytes(20, 100));
         let m = match_port("k", "G", &spec("Required files: Saru Get You: Saru Saru Daisakusen"), &scan_dir(dir.path()));
-        assert_eq!(m.status, PortStatus::Unspecified);
+        assert_eq!(m.status, PortStatus::Unverifiable);
         write(&dir.path().join("Saru Get You Saru Saru Daisakusen.iso"), &random_bytes(21, 100));
         let found = match_port("k", "G", &spec("Required files: Saru Get You: Saru Saru Daisakusen"), &scan_dir(dir.path()));
         assert_eq!(found.status, PortStatus::Found);
@@ -530,5 +633,115 @@ mod tests {
         let spec = RomSpec::for_port(&port, Some(&entry));
         let m = match_port(port.key(), &port.name, &spec, &scan_dir(dir.path()));
         assert_eq!(m.status, PortStatus::Found);
+    }
+
+    #[test]
+    fn a_title_match_with_a_different_region_is_not_offered() {
+        let dir = temp_dir();
+        write(&dir.path().join("Ace Combat 5 - The Unsung War (Europe).iso"), &random_bytes(30, 3000));
+        let m = match_port("k", "AC5", &spec("Required files: Ace Combat 5 - The Unsung War (USA) (En,Ja).iso"), &scan_dir(dir.path()));
+        assert_eq!(m.status, PortStatus::Missing);
+        // A shared region, or no region tag on the file, still matches by title.
+        write(&dir.path().join("Ace Combat 5 - The Unsung War (USA, Europe).iso"), &random_bytes(31, 3000));
+        let m = match_port("k", "AC5", &spec("Required files: Ace Combat 5 - The Unsung War (USA) (En,Ja).iso"), &scan_dir(dir.path()));
+        assert_eq!(m.status, PortStatus::Found);
+    }
+
+    #[test]
+    fn a_multi_track_redump_disc_is_one_answer_led_by_the_cue() {
+        let dir = temp_dir();
+        let tracks: Vec<Vec<u8>> = (0..3).map(|i| random_bytes(40 + i, 4000)).collect();
+        let cue = b"FILE \"Tekken 3 (USA) (Track 1).bin\" BINARY\n".to_vec();
+        for (i, t) in tracks.iter().enumerate() {
+            write(&dir.path().join(format!("psx/Tekken 3 (USA)/Tekken 3 (USA) (Track {}).bin", i + 1)), t);
+        }
+        write(&dir.path().join("psx/Tekken 3 (USA)/Tekken 3 (USA).cue"), &cue);
+        let crcs: Vec<String> = tracks.iter().map(|t| crc_text(t)).chain(std::iter::once(crc_text(&cue))).collect();
+        let text = format!("Required files: Tekken 3 (USA) (Track 1/2/3).bin/cue (CRC32: {})", crcs.join("/"));
+        let m = match_port("k", "T3", &spec(&text), &scan_dir(dir.path()));
+        assert_eq!(m.status, PortStatus::Found, "{:#?}", m.slots);
+        let SlotStatus::Found(f) = &m.slots[0].status else { panic!() };
+        assert!(f.path.ends_with("Tekken 3 (USA).cue"));
+        assert_eq!(f.parts.len(), 3);
+        assert_eq!(f.all_paths().len(), 4);
+    }
+
+    #[test]
+    fn a_serial_named_bin_and_cue_are_one_disc() {
+        let dir = temp_dir();
+        write(&dir.path().join("psx/SLUS-00972.bin"), &random_bytes(50, 3000));
+        write(&dir.path().join("psx/SLUS-00972.cue"), b"FILE \"SLUS-00972.bin\" BINARY\n");
+        let m = match_port("k", "G", &spec("Required files: SLUS-00972"), &scan_dir(dir.path()));
+        assert_eq!(m.status, PortStatus::Found, "{:#?}", m.slots);
+        let SlotStatus::Found(f) = &m.slots[0].status else { panic!() };
+        assert!(f.path.ends_with("SLUS-00972.cue") && f.parts.len() == 1);
+    }
+
+    #[test]
+    fn a_bin_without_its_cue_is_still_found_but_has_no_parts() {
+        let dir = temp_dir();
+        let bin = random_bytes(51, 3000);
+        write(&dir.path().join("Game (USA).bin"), &bin);
+        let text = format!("Required files: Game (USA).bin/cue (CRC32: {}/00000001)", crc_text(&bin));
+        let m = match_port("k", "G", &spec(&text), &scan_dir(dir.path()));
+        let SlotStatus::Found(f) = &m.slots[0].status else { panic!("{:#?}", m.slots) };
+        assert!(f.path.ends_with("Game (USA).bin") && f.parts.is_empty());
+    }
+
+    #[test]
+    fn a_sha1_requirement_matches_by_sha1_and_a_wrong_dump_with_the_right_name_does_not() {
+        let dir = temp_dir();
+        let rom = n64_rom(52, 4096);
+        let sha1 = digests_of(&rom).sha1_hex().unwrap();
+        write(&dir.path().join("renamed.z64"), &rom);
+        write(&dir.path().join("BattleTanx - Global Assault (USA).z64"), &n64_rom(53, 4096));
+        let text = format!("Required files: BattleTanx - Global Assault (USA).z64 (SHA-1: {sha1})");
+        let m = match_port("k", "BT", &spec(&text), &scan_dir(dir.path()));
+        assert_eq!(m.status, PortStatus::Found);
+        let SlotStatus::Found(f) = &m.slots[0].status else { panic!() };
+        assert_eq!(f.basis, Basis::Sha1);
+        assert!(f.path.ends_with("renamed.z64"));
+        let only_wrong = tempfile::tempdir().unwrap();
+        write(&only_wrong.path().join("BattleTanx - Global Assault (USA).z64"), &n64_rom(53, 4096));
+        assert_eq!(match_port("k", "BT", &spec(&text), &scan_dir(only_wrong.path())).status, PortStatus::WrongVersion);
+    }
+
+    #[test]
+    fn f_zero_x_with_only_the_cartridge_is_partial_not_found() {
+        let dir = temp_dir();
+        let game = n64_rom(54, 4096);
+        write(&dir.path().join("F-Zero X (USA).z64"), &game);
+        let text = format!("Required files: F-Zero X (USA)/[BIOS] Nintendo 64DD IPL (Japan) (v1.2).z64/NUD-EFZE-USA_2.ndd (CRC32: {}/7F933CE2/EBDFBD2B)", crc_text(&game));
+        let m = match_port("k", "FZ", &spec(&text), &scan_dir(dir.path()));
+        assert_eq!(m.status, PortStatus::Partial, "{:#?}", m.slots);
+    }
+
+    #[test]
+    fn slot_results_carry_an_id_and_what_was_expected_and_the_files_own_crc() {
+        let dir = temp_dir();
+        let rom = random_bytes(55, 2000);
+        write(&dir.path().join("x.sfc"), &rom);
+        let m = match_port("k", "G", &spec(&format!("Required files: Real.sfc (CRC32: {})", crc_text(&rom))), &scan_dir(dir.path()));
+        assert_eq!(m.slots[0].slot_id.len(), 8);
+        assert_eq!(m.slots[0].alternatives[0].names, vec!["Real.sfc"]);
+        let SlotStatus::Found(f) = &m.slots[0].status else { panic!() };
+        assert_eq!(f.crc32, digests_of(&rom).crc32);
+    }
+
+    #[test]
+    fn match_all_uses_local_entries_by_folder() {
+        let dir = temp_dir();
+        let rom = random_bytes(56, 2000);
+        write(&dir.path().join("x.iso"), &rom);
+        let catalog = crate::core::config::parse_catalog(
+            r#"{"ports":[{"name":"A","folder":"a","instructions":"Required files: nothing.iso (CRC32: 00000001)"},{"name":"B","folder":"b"}]}"#,
+        )
+        .unwrap();
+        let mut local = HashMap::new();
+        local.insert("a".to_string(), serde_json::json!({"folder": "a", "rom_files": [{"name": "x.iso", "crc32": crc_text(&rom)}]}));
+        let all = match_all(&catalog, &local, &scan_dir(dir.path()));
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].status, PortStatus::Found);
+        assert_eq!(all[1].status, PortStatus::Unspecified);
     }
 }

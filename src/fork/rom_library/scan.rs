@@ -643,4 +643,20 @@ mod tests {
         assert!(counts.contains(&(System::GameBoyAdvance, 2)));
         assert!(counts.contains(&(System::GameCube, 1)));
     }
+
+    #[test]
+    fn cancel_in_the_middle_of_a_file_stops_it() {
+        let dir = temp_dir();
+        write(&dir.path().join("big.iso"), &random_bytes(14, CHUNK * 3));
+        write(&dir.path().join("later.iso"), &random_bytes(15, CHUNK));
+        let cancel = AtomicBool::new(false);
+        let res = scan(dir.path(), &ScanOptions::default(), None, &cancel, &mut |p| {
+            if p.bytes_hashed > 0 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        })
+        .unwrap();
+        assert!(res.cancelled);
+        assert!(res.files.is_empty(), "a half-hashed file is not reported");
+    }
 }

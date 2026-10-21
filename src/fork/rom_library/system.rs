@@ -181,7 +181,7 @@ pub fn system_from_extension(ext: &str) -> Option<System> {
 /// Extensions the scan hashes. Anything else (images, saves, text) is counted and skipped.
 pub fn is_rom_extension(ext: &str) -> bool {
     let e = ext.to_ascii_lowercase();
-    system_from_extension(&e).is_some() || matches!(e.as_str(), "iso" | "bin" | "cue" | "chd" | "img" | "mdf" | "ciso" | "rvz" | "zip" | "7z" | "rom" | "a26" | "pce" | "wsc" | "ws" | "ngp" | "ngc" | "dat" | "cdt" | "tap")
+    system_from_extension(&e).is_some() || matches!(e.as_str(), "iso" | "bin" | "cue" | "chd" | "img" | "xbe" | "xiso" | "swf" | "mdf" | "ciso" | "rvz" | "zip" | "7z" | "rom" | "a26" | "pce" | "wsc" | "ws" | "ngp" | "ngc" | "dat" | "cdt" | "tap")
 }
 
 /// Classify a file by its path relative to the ROM folder. The folder closest to the file that names
