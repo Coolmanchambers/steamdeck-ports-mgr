@@ -47,6 +47,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/gamepad.rs` | Reads L1 and R1 (`button_lb`, `button_rb`), merged across controllers like the other buttons |
 | 2026-10-21 | `src/ui/gamepad_router.rs` | L1 and R1 map to a new `SwitchList` action (`GamepadTarget::switch_list`, no-op by default); tests |
 | 2026-10-21 | `src/ui/slint_layout_lint.rs` | The new Slint file is linted too |
+| 2026-10-21 | `src/ui/font_metrics.rs` | Linux `wrapped_text_height` counts each line break as a new line (as Windows' `DrawTextW` does). It split the whole text on whitespace, so every multi-line message was measured as one paragraph and its dialog cut off the last lines; 1 test |
 | 2026-10-21 | `README.md` | Item 8 (Deck-ready list) set to "Testing" |
 
 Files added by this fork:

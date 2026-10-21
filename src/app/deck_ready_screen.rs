@@ -159,7 +159,8 @@ fn tag_model(row: &Row) -> slint::ModelRc<DeckReadyTag> {
     slint::ModelRc::new(slint::VecModel::from(tags))
 }
 
-fn status_text(ui: &DeckReadyUi, shown: usize) -> String {
+fn status_text(ui: &DeckReadyUi, count: usize) -> String {
+    let shown = if count == 1 { "1 port".to_string() } else { format!("{count} ports") };
     let index = ui.index.borrow();
     let error = ui.error.borrow();
     let Some(index) = index.as_ref() else {
@@ -167,11 +168,11 @@ fn status_text(ui: &DeckReadyUi, shown: usize) -> String {
     };
     let changed = view::date_long(&index.generated).unwrap_or_else(|| "unknown".to_string());
     if error.is_some() {
-        return format!("{shown} ports  ·  showing the saved list from {changed}; GitHub could not be reached");
+        return format!("{shown}  ·  showing the saved list from {changed}; GitHub could not be reached");
     }
     let checked = view::checked_label(&ui.meta.borrow().checked_at, &chrono::Local::now());
     let checking = if ui.fetching.get() { "  ·  checking for a newer list" } else { "" };
-    format!("{shown} ports  ·  list changed {changed}  ·  checked {checked}{checking}")
+    format!("{shown}  ·  list changed {changed}  ·  checked {checked}{checking}")
 }
 
 fn empty_text(ui: &DeckReadyUi) -> String {

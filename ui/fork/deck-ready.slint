@@ -69,6 +69,34 @@ component Chip inherits Rectangle {
     }
 }
 
+component FilterChip inherits Rectangle {
+    in property <string> text;
+    in property <length> font-size;
+    in property <length> widest;
+    callback clicked();
+
+    width: min(label.preferred-width + root.height, root.widest);
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: Theme.border-color;
+    background: area.has-hover ? Theme.selected-background : Theme.search-background;
+    area := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    label := Text {
+        text: root.text;
+        color: area.has-hover ? Theme.selected-text : Theme.list-text;
+        font-size: root.font-size;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+        x: root.height / 2;
+        width: root.width - root.height;
+        height: 100%;
+    }
+}
+
 export component DeckReadyList inherits Rectangle {
     in property <[DeckReadyRow]> rows: [];
     in property <int> selected-index: -1;
@@ -91,35 +119,25 @@ export component DeckReadyList inherits Rectangle {
     property <length> button-height: root.line-height - root.spacing * 2;
     property <length> button-padding: root.spacing * 2;
     property <length> scrollbar-gap: 8px / Theme.scale-factor;
+    property <length> header-height: root.row-height * 0.8;
+    // The filter summary and the count share one line only when the list is wide (fullscreen).
+    property <bool> wide: root.width >= root.item-font-px * 60;
+    // Tags give way before the name gets narrower than this.
+    property <length> min-name-width: root.item-font-px * 10;
 
     VerticalLayout {
         spacing: root.spacing;
 
-        HorizontalLayout {
+        if root.wide: HorizontalLayout {
             spacing: root.spacing * 2;
-            height: root.row-height * 0.8;
-
-            filter-chip := Rectangle {
-                width: filter-label.preferred-width + root.row-height * 0.5;
-                border-radius: self.height / 2;
-                border-width: 1px;
-                border-color: Theme.border-color;
-                background: filter-area.has-hover ? Theme.selected-background : Theme.search-background;
-                filter-area := TouchArea {
-                    clicked => { root.filters-requested(); }
-                }
-                filter-label := Text {
-                    text: root.filter-text;
-                    color: filter-area.has-hover ? Theme.selected-text : Theme.list-text;
-                    font-size: root.small-font;
-                    font-weight: 700;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    width: 100%;
-                    height: 100%;
-                }
+            height: root.header-height;
+            vertical-stretch: 0;
+            FilterChip {
+                text: root.filter-text;
+                font-size: root.small-font;
+                widest: root.width * 0.6;
+                clicked => { root.filters-requested(); }
             }
-
             Text {
                 text: root.status-text;
                 color: Theme.list-text;
@@ -128,6 +146,27 @@ export component DeckReadyList inherits Rectangle {
                 vertical-alignment: center;
                 overflow: elide;
                 horizontal-stretch: 1;
+            }
+        }
+
+        if !root.wide: VerticalLayout {
+            spacing: root.spacing / 2;
+            vertical-stretch: 0;
+            HorizontalLayout {
+                alignment: start;
+                height: root.header-height;
+                FilterChip {
+                    text: root.filter-text;
+                    font-size: root.small-font;
+                    widest: root.width;
+                    clicked => { root.filters-requested(); }
+                }
+            }
+            Text {
+                text: root.status-text;
+                color: Theme.list-text;
+                font-size: root.small-font;
+                wrap: word-wrap;
             }
         }
 
@@ -165,9 +204,19 @@ export component DeckReadyList inherits Rectangle {
                     }
                 }
 
+                // Laid out like upstream's port rows: buttons anchored on the right, the name takes what
+                // is left, and the tags are dropped (Info still shows them) when they would squeeze it.
                 for item[index] in root.rows: row := Rectangle {
                     height: root.line-height;
                     property <bool> selected: index == root.selected-index;
+                    property <length> gap: root.spacing * 2;
+                    property <bool> has-action: item.button != "";
+                    // A narrow window (the default windowed size) keeps room for the name with short labels.
+                    property <bool> compact: self.width < root.item-font-px * 36;
+                    property <length> info-x: (self.has-action ? action-btn.x - root.spacing : self.width - root.spacing) - info-btn.width;
+                    property <length> name-x: build-chip.x + build-chip.width + self.gap;
+                    property <bool> tags-fit: self.info-x - self.gap - tags.preferred-width - self.gap - self.name-x >= root.min-name-width;
+                    property <length> name-right: (self.tags-fit && item.tags.length > 0 ? tags.x : self.info-x) - self.gap;
                     background: self.selected ? Theme.selected-background : Theme.list-background;
 
                     TouchArea {
@@ -179,77 +228,80 @@ export component DeckReadyList inherits Rectangle {
                         }
                     }
 
-                    HorizontalLayout {
-                        padding-left: root.spacing * 2;
-                        padding-right: root.spacing;
-                        spacing: root.spacing * 2;
-                        alignment: stretch;
+                    build-chip := Chip {
+                        x: root.spacing * 2;
+                        y: (row.height - self.height) / 2;
+                        text: item.deck ? (row.compact ? "Deck" : "Deck build") : (row.compact ? "Linux" : "Linux build");
+                        fill: row.selected ? Theme.selected-text : (item.deck ? SemanticColors.success : SemanticColors.info);
+                        ink: row.selected ? Theme.selected-background : SemanticColors.text-on-accent;
+                        line: self.fill;
+                        font-size: root.small-font;
+                        chip-height: root.chip-height;
+                    }
 
-                        VerticalLayout {
-                            alignment: center;
-                            Chip {
-                                text: item.deck ? "Deck build" : "Linux build";
-                                fill: row.selected ? Theme.selected-text : (item.deck ? SemanticColors.success : SemanticColors.info);
-                                ink: row.selected ? Theme.selected-background : SemanticColors.text-on-accent;
-                                line: self.fill;
-                                font-size: root.small-font;
-                                chip-height: root.chip-height;
-                            }
+                    VerticalLayout {
+                        x: row.name-x;
+                        y: 0px;
+                        width: max(0px, row.name-right - row.name-x);
+                        height: row.height;
+                        alignment: center;
+                        Text {
+                            text: item.name;
+                            color: row.selected ? Theme.selected-text : Theme.list-text;
+                            font-size: root.item-font-px;
+                            overflow: elide;
                         }
-
-                        VerticalLayout {
-                            alignment: center;
-                            horizontal-stretch: 1;
-                            Text {
-                                text: item.name;
-                                color: row.selected ? Theme.selected-text : Theme.list-text;
-                                font-size: root.item-font-px;
-                                overflow: elide;
-                            }
-                            Text {
-                                text: item.sub;
-                                color: row.selected ? Theme.selected-text : Theme.list-text;
-                                opacity: 0.85;
-                                font-size: root.small-font;
-                                overflow: elide;
-                            }
+                        Text {
+                            text: item.sub;
+                            color: row.selected ? Theme.selected-text : Theme.list-text;
+                            opacity: 0.85;
+                            font-size: root.small-font;
+                            overflow: elide;
                         }
+                    }
 
-                        for tag in item.tags: VerticalLayout {
-                            alignment: center;
-                            Chip {
-                                text: tag.label;
-                                fill: tag.kind == 3 ? Theme.border-color : (tag.kind == 2 ? SemanticColors.warning : transparent);
-                                ink: tag.kind == 2 || tag.kind == 3 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-text : Theme.list-text);
-                                line: tag.kind == 1 ? Theme.search-text : (tag.kind == 0 ? (row.selected ? Theme.selected-text : Theme.list-text) : self.fill);
-                                font-size: root.small-font;
-                                chip-height: root.chip-height;
-                            }
+                    tags := HorizontalLayout {
+                        visible: row.tags-fit;
+                        x: row.info-x - row.gap - self.preferred-width;
+                        y: (row.height - root.chip-height) / 2;
+                        width: self.preferred-width;
+                        height: root.chip-height;
+                        spacing: root.spacing;
+                        for tag in item.tags: Chip {
+                            text: tag.label;
+                            fill: tag.kind == 3 ? Theme.border-color : (tag.kind == 2 ? SemanticColors.warning : transparent);
+                            ink: tag.kind == 2 || tag.kind == 3 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-text : Theme.list-text);
+                            line: tag.kind == 1 ? Theme.search-text : (tag.kind == 0 ? (row.selected ? Theme.selected-text : Theme.list-text) : self.fill);
+                            font-size: root.small-font;
+                            chip-height: root.chip-height;
                         }
+                    }
 
-                        VerticalLayout {
-                            alignment: center;
-                            RowButton {
-                                text: @tr("Info");
-                                fill: SemanticColors.info;
-                                fill-hover: SemanticColors.info-hover;
-                                font-size: root.item-font-px;
-                                pad: root.button-padding;
-                                height: root.button-height;
-                                clicked => { root.row-info(index); }
-                            }
-                        }
+                    info-btn := RowButton {
+                        x: row.info-x;
+                        y: root.spacing;
+                        height: root.button-height;
+                        text: @tr("Info");
+                        fill: SemanticColors.info;
+                        fill-hover: SemanticColors.info-hover;
+                        font-size: root.item-font-px;
+                        pad: root.button-padding;
+                        clicked => { root.row-info(index); }
+                    }
 
-                        if item.button != "": VerticalLayout {
-                            alignment: center;
-                            RowButton {
-                                text: item.button;
-                                fill: SemanticColors.success;
-                                fill-hover: SemanticColors.success-hover;
-                                font-size: root.item-font-px;
-                                pad: root.button-padding;
-                                height: root.button-height;
-                                clicked => { root.row-action(index); }
+                    action-btn := RowButton {
+                        visible: row.has-action;
+                        x: row.width - root.spacing - self.width;
+                        y: root.spacing;
+                        height: root.button-height;
+                        text: item.button;
+                        fill: SemanticColors.success;
+                        fill-hover: SemanticColors.success-hover;
+                        font-size: root.item-font-px;
+                        pad: root.button-padding;
+                        clicked => {
+                            if (row.has-action) {
+                                root.row-action(index);
                             }
                         }
                     }
@@ -267,11 +319,12 @@ export component DeckReadyList inherits Rectangle {
         }
 
         if root.show-hints: Text {
-            text: "A  Install or play     X  Info     Y  Filters     B  All ports     L1 / R1 / Tab  Switch list";
+            text: "A  Install / Play     X  Info     Y  Filters     B  Back     L1 R1  Switch list";
             color: Theme.list-text;
             font-size: root.small-font;
             vertical-alignment: center;
-            overflow: elide;
+            wrap: word-wrap;
+            vertical-stretch: 0;
         }
     }
 }
@@ -414,7 +467,7 @@ export component DeckReadyInfoDialog inherits Window {
                     hovered => { root.nav-hovered(0); }
                 }
                 DialogButton {
-                    text: "Project page";
+                    text: "Website";
                     enabled: root.project-enabled;
                     selected: root.selected-index == 1;
                     border-px: root.border-px;
@@ -424,7 +477,7 @@ export component DeckReadyInfoDialog inherits Window {
                     hovered => { root.nav-hovered(1); }
                 }
                 DialogButton {
-                    text: "Releases page";
+                    text: "Releases";
                     enabled: root.releases-enabled;
                     selected: root.selected-index == 2;
                     border-px: root.border-px;

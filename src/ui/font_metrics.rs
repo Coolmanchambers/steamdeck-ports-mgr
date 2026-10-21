@@ -143,20 +143,25 @@ pub fn wrapped_text_height(family: &str, px: i32, text: &str, max_width_px: i32)
     let max_width = max_width_px.max(1) as f32;
     let space_width = font.metrics(' ', px as f32).advance_width;
 
-    let mut lines = 1i32;
-    let mut current_width = 0.0f32;
-    for word in text.split_whitespace() {
-        let word_width: f32 = word.chars().map(|c| font.metrics(c, px as f32).advance_width).sum();
-        if current_width > 0.0 && current_width + space_width + word_width > max_width {
-            lines += 1;
-            current_width = word_width;
-        } else if current_width > 0.0 {
-            current_width += space_width + word_width;
-        } else {
-            current_width = word_width;
+    // Fork: every line break starts a new line, as DrawTextW does on Windows. Upstream split the whole
+    // text on whitespace, so a multi-line message measured as one paragraph and its dialog cut it off.
+    let mut lines = 0i32;
+    for paragraph in text.split('\n') {
+        lines += 1;
+        let mut current_width = 0.0f32;
+        for word in paragraph.split_whitespace() {
+            let word_width: f32 = word.chars().map(|c| font.metrics(c, px as f32).advance_width).sum();
+            if current_width > 0.0 && current_width + space_width + word_width > max_width {
+                lines += 1;
+                current_width = word_width;
+            } else if current_width > 0.0 {
+                current_width += space_width + word_width;
+            } else {
+                current_width = word_width;
+            }
         }
     }
-    (lines * linespace).max(px)
+    (lines.max(1) * linespace).max(px)
 }
 
 pub fn solve_font_for_height(family: &str, target_linespace: i32) -> (i32, i32) {
@@ -229,6 +234,17 @@ mod tests {
             300,
         );
         assert!(long > short, "short={short} long={long}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wrapped_text_height_compte_chaque_retour_a_la_ligne() {
+        if cached_font("Segoe UI").is_none() {
+            return;
+        }
+        let one = wrapped_text_height("Segoe UI", 14, "a", 300);
+        assert_eq!(wrapped_text_height("Segoe UI", 14, "a\nb\nc", 300), one * 3);
+        assert_eq!(wrapped_text_height("Segoe UI", 14, "a\n\nc", 300), one * 3);
     }
 
     #[test]
