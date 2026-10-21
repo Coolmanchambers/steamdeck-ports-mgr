@@ -41,7 +41,12 @@ if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then
   exit 1
 fi
 
-EXTRA_ROM_DIRS=("$@")
+EXTRA_ROM_DIRS=()
+for a in "$@"; do
+  # a leading dash would otherwise be read as an option by find
+  case $a in -*) a="./$a" ;; esac
+  EXTRA_ROM_DIRS+=("$a")
+done
 STAMP=$(date +%Y%m%d-%H%M)
 
 # ---------------------------------------------------------------- helpers
@@ -87,7 +92,7 @@ describe_dir() {
 # top_names <dir> [cap]: first-level entry names only, never contents.
 top_names() {
   local d=$1 cap=${2:-12} names total shown
-  names=$(timeout 10 find "$d" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort)
+  names=$(timeout 10 find -H "$d" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort)
   if [ -z "$names" ]; then printf '(empty)'; return; fi
   total=$(printf '%s\n' "$names" | grep -c .)
   shown=$(printf '%s\n' "$names" | head -n "$cap" | paste -sd'|' - | sed 's/|/, /g')
@@ -100,7 +105,7 @@ version_hint() {
   v=$(printf '%s' "$b" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)*' | head -n1)
   if [ -z "$v" ] && [ -d "$p" ]; then
     for f in version VERSION version.txt VERSION.txt .version; do
-      if [ -f "$p/$f" ] && [ "$(stat -c %s -- "$p/$f" 2>/dev/null || echo 99999)" -le 1024 ]; then
+      if [ -f "$p/$f" ] && [ ! -L "$p/$f" ] && [ "$(stat -c %s -- "$p/$f" 2>/dev/null || echo 99999)" -le 1024 ]; then
         line=$(head -n1 -- "$p/$f" 2>/dev/null | tr -cd '[:print:]' | cut -c1-60)
         if [ -n "$line" ]; then v="$line (first line of $f)"; break; fi
       fi
@@ -119,9 +124,9 @@ fs_symlink_note() {
 
 fs_line() {
   local label=$1 path=$2 fstype avail total
-  fstype=$(df --output=fstype -- "$path" 2>/dev/null | tail -n1 | tr -d ' ')
-  avail=$(df -h --output=avail -- "$path" 2>/dev/null | tail -n1 | tr -d ' ')
-  total=$(df -h --output=size -- "$path" 2>/dev/null | tail -n1 | tr -d ' ')
+  fstype=$(timeout 10 df --output=fstype -- "$path" 2>/dev/null | tail -n1 | tr -d ' ')
+  avail=$(timeout 10 df -h --output=avail -- "$path" 2>/dev/null | tail -n1 | tr -d ' ')
+  total=$(timeout 10 df -h --output=size -- "$path" 2>/dev/null | tail -n1 | tr -d ' ')
   printf -- '- %s `%s`: %s, %s free of %s; %s\n' "$label" "$path" "${fstype:-unknown}" "${avail:-?}" "${total:-?}" "$(fs_symlink_note "${fstype:-}")"
 }
 
@@ -131,7 +136,16 @@ fs_line() {
 MEDIA_ROOT=${DPM_MEDIA_ROOT:-/run/media}
 SD_MOUNTS=()
 for m in "$MEDIA_ROOT"/* "$MEDIA_ROOT"/*/*; do
-  if [ -d "$m" ] && mountpoint -q -- "$m" 2>/dev/null; then SD_MOUNTS+=("$m"); fi
+  if [ -d "$m" ] && timeout 5 mountpoint -q -- "$m" 2>/dev/null; then
+    # SteamOS keeps /run/media/mmcblk0p1 as a symlink to /run/media/deck/<label>; list each card once.
+    real=$(readlink -f -- "$m")
+    dup=0
+    for r in "${SD_MOUNTS[@]+"${SD_MOUNTS[@]}"}"; do [ "$r" = "$real" ] && dup=1; done
+    # a mount inside a card that is already a mount (for example a loop mount) is not a second card
+    parent=${m%/*}
+    if [ "$parent" != "$MEDIA_ROOT" ] && timeout 5 mountpoint -q -- "$parent" 2>/dev/null; then dup=1; fi
+    [ "$dup" = 0 ] && SD_MOUNTS+=("$real")
+  fi
 done
 
 STEAM_ROOTS=()
@@ -144,6 +158,10 @@ for c in "$HOME/.local/share/Steam" "$HOME/.steam/steam" "$HOME/.var/app/com.val
   fi
 done
 
+mask_id() {
+  if [ "${#1}" -le 4 ]; then printf '****'; else printf '****%s' "${1: -4}"; fi
+}
+
 STEAM_IDS=()
 for root in "${STEAM_ROOTS[@]+"${STEAM_ROOTS[@]}"}"; do
   for u in "$root"/userdata/*/; do
@@ -154,9 +172,10 @@ done
 
 MASK=(cat)
 if [ ${#STEAM_IDS[@]} -gt 0 ]; then
-  MASK=(sed)
+  MASK=(sed -u)
   for id in "${STEAM_IDS[@]}"; do
-    MASK+=(-e "s/$id/****${id: -4}/g")
+    # Only the ID folder names are rewritten, so dates, appids and file names are never touched.
+    MASK+=(-e "s#/userdata/$id\\b#/userdata/$(mask_id "$id")#g" -e "s#/Steam Controller Configs/$id\\b#/Steam Controller Configs/$(mask_id "$id")#g")
   done
 fi
 
@@ -170,9 +189,12 @@ print_header() {
   say "- Report file: \`$REPORT\`"
   say ""
   say "**What this run read:** system info files (/etc/os-release, df, mount list), folder and file"
-  say "names, sizes and dates under the search places, the Steam \`shortcuts.vdf\` (opened read-only)"
-  say "and \`config.vdf\` (to look up compatibility tool names), the names inside Steam's \`grid/\`"
-  say "folder, the first line of tiny version files, and \`flatpak list\`."
+  say "names, sizes and dates under the search places (hidden folders are skipped), the Steam"
+  say "\`shortcuts.vdf\` (opened read-only; the report includes each shortcut's name, program path,"
+  say "start folder and launch options, with values of anything that looks like a token or key hidden)"
+  say "and \`config.vdf\` (only to look up compatibility tool names), the names inside Steam's \`grid/\`"
+  say "folder, the first line of tiny version files, and \`flatpak list\`. Folders it cannot read are"
+  say "skipped without a message."
   say ""
   say "**What it did NOT do:** write, copy, move or delete anything except this report file; run any"
   say "port or AppImage it found; print the contents of any save, config, ROM or state file; hash or"
@@ -199,8 +221,14 @@ section_system() {
   say "- XDG_SESSION_TYPE: ${XDG_SESSION_TYPE:-unset}"
   say "- XDG_CURRENT_DESKTOP: ${XDG_CURRENT_DESKTOP:-unset}"
   say "- DISPLAY set: $([ -n "${DISPLAY:-}" ] && echo yes || echo no); WAYLAND_DISPLAY set: $([ -n "${WAYLAND_DISPLAY:-}" ] && echo yes || echo no)"
-  say "- Root filesystem mount options: $(findmnt -no OPTIONS / 2>/dev/null | cut -d, -f1-2 || echo unknown) (ro = read-only root, normal for SteamOS)"
-  say "- python3: $(python3 --version 2>&1 || echo 'not found')"
+  local rootopts
+  rootopts=$(findmnt -no OPTIONS / 2>/dev/null | cut -d, -f1-2)
+  say "- Root filesystem mount options: ${rootopts:-unknown} (ro = read-only root, normal for SteamOS)"
+  if command -v python3 >/dev/null 2>&1; then
+    say "- python3: $(python3 --version 2>&1)"
+  else
+    say "- python3: not found"
+  fi
   if [ -z "${XDG_SESSION_TYPE:-}" ]; then
     say ""
     say "Note: XDG_SESSION_TYPE is unset. This usually means the script was not started from"
@@ -231,9 +259,17 @@ PORT_NAMES=(
   -o -iname '*.appimage' -o -iname '*.o2r' -o -iname '*.otr'
 )
 
+# run_find: find with a 60 s cap. If the cap is hit it appends a marker entry so callers can say
+# the list is partial instead of silently reporting "nothing found".
+TIMEOUT_MARKER="::scan-timed-out::"
+run_find() {
+  timeout 60 find "$@" 2>/dev/null
+  if [ $? -eq 124 ]; then printf '%s\0' "$TIMEOUT_MARKER"; fi
+}
+
 scan_ports() {
-  timeout 60 find -H "$1" -xdev -maxdepth "$2" \
-    \( -path "$HOME/.*" -o -iname roms -o -iname steamapps -o -iname node_modules -o -name .git \
+  run_find -H "$1" -xdev -maxdepth "$2" \
+    \( -name '.*' -o -iname roms -o -iname steamapps -o -iname node_modules \
        -o -name compatdata -o -name shadercache \) -prune \
     -o \( "${PORT_NAMES[@]}" \) -print0 2>/dev/null
 }
@@ -302,15 +338,20 @@ section_ports() {
     } | sort -zu
   )
 
-  local classes=("Ship of Harkinian" "2 Ship 2 Harkinian" "Dusklight" "SkyRecomp" "Severed Chains" "Courage Reborn" "Other AppImage")
-  local hit_class=() hit_path=() lb
+  local classes=("Ship of Harkinian" "2 Ship 2 Harkinian" "Dusklight" "SkyRecomp" "Severed Chains" "Courage Reborn" "Ports Launcher program" "Other AppImage")
+  local hit_class=() hit_path=() lb partial=0 skipped=0
   declare -A PL_DIRS=()
   for p in "${hits[@]+"${hits[@]}"}"; do
+    if [ "$p" = "$TIMEOUT_MARKER" ]; then partial=1; continue; fi
+    case $p in *$'\n'*|*$'\r'*) skipped=$((skipped + 1)); continue ;; esac
     lb=$(printf '%s' "${p##*/}" | tr '[:upper:]' '[:lower:]')
     case $lb in
       *.appimage.home|*.appimage.config) continue ;;
       *.o2r|*.otr) O2R_FOUND+=("$p"); continue ;;
-      ports.json|ports.local.json|ports_launcher*) PL_DIRS["${p%/*}"]=1; continue ;;
+      ports.json|ports.local.json) PL_DIRS["${p%/*}"]=1; continue ;;
+      ports_launcher*)
+        if [ -f "${p%/*}/ports.json" ] || [ -f "${p%/*}/state.json" ]; then PL_DIRS["${p%/*}"]=1; fi
+        hit_class+=("Ports Launcher program") ;;
       2s2h*|2ship*|*2ship2harkinian*|*2*ship*2*harkinian*) hit_class+=("2 Ship 2 Harkinian") ;;
       soh|soh[-_.]*|*shipwright*|*harkinian*) hit_class+=("Ship of Harkinian") ;;
       *dusklight*|*twilit*realm*) hit_class+=("Dusklight") ;;
@@ -343,6 +384,15 @@ section_ports() {
     say "Nothing found."
   else
     for d in "${!PL_DIRS[@]}"; do report_ports_launcher_dir "$d"; done
+  fi
+
+  if [ "$partial" = 1 ]; then
+    say ""
+    say "**Warning:** at least one search hit its 60 second limit, so this list may be incomplete."
+  fi
+  if [ "$skipped" -gt 0 ]; then
+    say ""
+    say "Note: $skipped match(es) were left out because the name contains a line break."
   fi
 }
 
@@ -401,18 +451,21 @@ section_o2r() {
   say ""
   local extra=() all=() p
   mapfile -d '' extra < <(
-    timeout 60 find -H "$HOME/.local/share" "$HOME/.config" -maxdepth 6 \
-      \( -iname '*.o2r' -o -iname '*.otr' \) -type f -print0 2>/dev/null
+    run_find -H "$HOME/.local/share" "$HOME/.config" -maxdepth 6 \
+      \( -name Steam -o -name flatpak -o -name Trash -o -name containers -o -name compatdata \) -prune \
+      -o \( -iname '*.o2r' -o -iname '*.otr' \) -type f -print0
   )
   mapfile -d '' all < <(printf '%s\0' "${O2R_FOUND[@]+"${O2R_FOUND[@]}"}" "${extra[@]+"${extra[@]}"}" | sort -zu)
-  local n=0 cap=80
+  local n=0 cap=80 partial=0
   for p in "${all[@]+"${all[@]}"}"; do
     [ -n "$p" ] || continue
+    if [ "$p" = "$TIMEOUT_MARKER" ]; then partial=1; continue; fi
     if [ "$n" -ge "$cap" ]; then say "(list cut at $cap entries)"; break; fi
     say "- \`${p##*/}\`: $(human "$(stat -L -c %s -- "$p" 2>/dev/null || echo 0)"), modified $(date_of "$p"), in \`${p%/*}\`"
     n=$((n + 1))
   done
   if [ "$n" -eq 0 ]; then say "None found."; fi
+  if [ "$partial" = 1 ]; then say ""; say "**Warning:** the search hit its 60 second limit, so this list may be incomplete."; fi
 }
 
 PYSRC=''
@@ -480,9 +533,11 @@ def parse(data):
                     val = num("<I")
                 elif t == 5:
                     end = data.find(b"\x00\x00", pos)
+                    while end >= 0 and (end - pos) % 2:
+                        end = data.find(b"\x00\x00", end + 1)
                     if end < 0:
                         raise EOFError
-                    val = data[pos:end + 1].decode("utf-16-le", "replace")
+                    val = data[pos:end].decode("utf-16-le", "replace")
                     pos = end + 2
                 elif t == 7:
                     val = num("<Q")
@@ -539,6 +594,10 @@ except OSError as exc:
     print("Could not open shortcuts.vdf for reading: %s" % exc)
     sys.exit(0)
 
+if not data:
+    print("The file is empty (0 bytes), so there are no shortcuts.")
+    sys.exit(0)
+
 root = parse(data)
 if state["truncated"]:
     print("Warning: the file ended early (Steam may have been writing it). Showing what was readable.")
@@ -558,18 +617,27 @@ compat = compat_tools()
 KIND = {"": "grid", "p": "portrait", "_hero": "hero", "_logo": "logo", "_icon": "icon"}
 known = set()
 
-print("%d shortcut(s) in the file." % len(shortcuts))
-for pos, (idx, entry) in enumerate(shortcuts, 1):
-    if not isinstance(entry, list):
-        continue
-    name = field(entry, "appname") or ""
-    exe = field(entry, "exe") or ""
-    startdir = field(entry, "startdir") or ""
-    opts = field(entry, "launchoptions") or ""
-    icon = field(entry, "icon") or ""
+def clean(s):
+    return s.replace("\r", "\\r").replace("\n", "\\n")
+
+
+def text(entry, key):
+    v = field(entry, key)
+    return clean(v if isinstance(v, str) else ("" if v is None else str(v)))
+
+
+SENSITIVE = re.compile(r"(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASS|PASSWORD|AUTH|CRED)[A-Za-z0-9_]*=)\S+", re.I)
+
+
+def show(pos, idx, entry):
+    name = text(entry, "appname")
+    exe = text(entry, "exe")
+    startdir = text(entry, "startdir")
+    opts = SENSITIVE.sub(r"\1<redacted>", text(entry, "launchoptions"))[:300]
+    icon = text(entry, "icon")
     stored = field(entry, "appid")
     tags_block = field(entry, "tags")
-    tags = [v for _, v in tags_block] if isinstance(tags_block, list) else []
+    tags = [clean(str(v)) for _, v in tags_block] if isinstance(tags_block, list) else []
     played = field(entry, "lastplaytime")
 
     unquoted = exe[1:-1] if len(exe) >= 2 and exe[0] == exe[-1] == '"' else exe
@@ -637,8 +705,18 @@ for pos, (idx, entry) in enumerate(shortcuts, 1):
         kinds = sorted({KIND[m.group(2) or ""] for m in (rx.match(f) for f in grid_files) if m})
         print("- art in grid/: %s" % (", ".join(kinds) if kinds else "none found"))
 
+print("%d shortcut(s) in the file." % len(shortcuts))
+for pos, (idx, entry) in enumerate(shortcuts, 1):
+    if not isinstance(entry, list):
+        continue
+    try:
+        show(pos, idx, entry)
+    except Exception as exc:
+        print("")
+        print("#### Shortcut %d: could not be read (%s)" % (pos, exc))
+
 if grid_files is not None:
-    stray = [f for f in grid_files if not any(f.startswith(k) for k in known)]
+    stray =[f for f in grid_files if not any(f.startswith(k) for k in known)]
     print("")
     print("grid/ holds %d file(s); %d do not belong to any shortcut listed above." % (len(grid_files), len(stray)))
 PY
@@ -668,7 +746,7 @@ section_steam() {
       cfg="$ud/config"
       vdf="$cfg/shortcuts.vdf"
       grid="$cfg/grid"
-      sub "Steam user $id"
+      sub "Steam user $(mask_id "$id")"
       if [ -f "$vdf" ]; then
         say "- \`$vdf\`: $(human "$(stat -c %s -- "$vdf" 2>/dev/null || echo 0)"), modified $(date_of "$vdf")"
         if command -v python3 >/dev/null 2>&1; then
@@ -708,7 +786,7 @@ tool_probe() {
     for r in "${roots[@]}"; do
       while IFS= read -r -d '' f; do out+=("$f"); done < <(
         timeout 30 find -H "$r" -xdev -maxdepth 3 \
-          \( -path "$HOME/.*" -o -iname roms -o -iname steamapps -o -name .git \) -prune \
+          \( -name '.*' -o -iname roms -o -iname steamapps \) -prune \
           -o \( "${expr[@]}" \) -print0 2>/dev/null | sort -z
       )
     done
@@ -751,6 +829,8 @@ section_tooling() {
 
   sub "Flatpak apps"
   if command -v flatpak >/dev/null 2>&1; then
+    # flatpak list is read-only; on a host with no user installation it may create an empty
+    # ~/.local/share/flatpak. Every Deck already has one.
     local apps total relevant
     apps=$(timeout 30 flatpak list --app --columns=application,version 2>/dev/null)
     total=$(printf '%s\n' "$apps" | grep -c .)
