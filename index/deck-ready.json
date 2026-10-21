@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "generated": "2026-10-20",
+ "generated": "2026-10-21",
  "about": "Projects whose latest release has a Steam Deck build or a non-ARM Linux build. Sources: Ports Launcher catalog, maintainers' .recomp.json files, GitHub topics. Ratings come from release asset names and are not hand-checked; a test launch on the Deck is the proof. Show kind 'game' by default and 'likely_game' (found by topic only, may include tools) behind a toggle. catalog_disabled means upstream's catalog disables the entry. archived, catalog_disabled and readme_mentions_deck can be null when unknown. Key on id, not name. Entries with missing_since were not found in the latest refresh and are removed after one more cycle. `generated` is the date the list last changed, not the date it was last checked.",
- "count": 372,
+ "count": 374,
  "no_longer_found": 0,
  "projects": [
   {
@@ -6786,6 +6786,42 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:sp00nznet/linksawakening-portable",
+   "github_id": 1241195026,
+   "name": "linksawakening-portable",
+   "system": "PS3",
+   "repo": "sp00nznet/linksawakening-portable",
+   "repo_url": "https://github.com/sp00nznet/linksawakening-portable",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0",
+     "date": "2026-10-21T03:16:09Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "LinksAwakening-Consoles-Installer-linux-x64.tar.gz"
+    ],
+    "windows_assets": [
+     "LinksAwakening-Consoles-Installer-windows-x64.exe"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-21"
+  },
+  {
    "id": "github:freefrank/lostodysseyrecomp",
    "github_id": 1357918016,
    "name": "Lost Odyssey (LostOdysseyRecomp)",
@@ -10465,6 +10501,58 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:ogdanimal/skiesofarcadialegends-recomp",
+   "github_id": 1414989149,
+   "name": "Skies of Arcadia Legends",
+   "system": "GameCube",
+   "repo": "ogdanimal/SkiesOfArcadiaLegends-Recomp",
+   "repo_url": "https://github.com/ogdanimal/SkiesOfArcadiaLegends-Recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.60.0-beta",
+     "date": "2026-10-20T07:10:25Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "SkiesOfArcadiaLegends-v0.60.0-beta-linux-x86_64.AppImage",
+     "SkiesOfArcadiaLegends-v0.60.0-beta-linux.tar.gz"
+    ],
+    "windows_assets": [
+     "SkiesOfArcadiaLegends-v0.60.0-beta-windows.zip"
+    ],
+    "asset_count": 4
+   },
+   "recomp_json": {
+    "game": "Skies of Arcadia Legends",
+    "system": "GameCube",
+    "type": "recomp",
+    "status": "playable",
+    "targets": [
+     "Windows",
+     "Linux",
+     "macOS",
+     "Android"
+    ],
+    "toolchain": [
+     "DolRecomp",
+     "ModernGekko"
+    ]
+   },
+   "first_seen": "2026-10-21"
   },
   {
    "id": "github:jjmhalew/skipperre",
