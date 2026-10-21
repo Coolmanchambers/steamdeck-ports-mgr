@@ -149,5 +149,8 @@ jobs:
             gh release create rolling "$asset" "$asset.sha256" --target "$GITHUB_SHA" \
               --title "Rolling build (main)" --notes-file notes.md --latest
           fi
-          gh release view rolling --json tagName,isLatest,assets --jq '"\(.tagName) latest=\(.isLatest) assets=\([.assets[].name] | join(", "))"'
+          # gh release view has no "is latest" field; ask the API which release /releases/latest serves.
+          gh release view rolling --json tagName,isPrerelease,assets --jq '"\(.tagName) prerelease=\(.isPrerelease) assets=\([.assets[].name] | join(", "))"'
+          test "$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" = rolling
           test "$(gh api "repos/$GH_REPO/git/ref/tags/rolling" --jq .object.sha)" = "$GITHUB_SHA"
+          echo "rolling release is latest and points at ${GITHUB_SHA::7}"
