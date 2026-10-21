@@ -151,7 +151,7 @@ Library only; no UI and no caller yet. Rules it enforces:
 - Local entries can state requirements explicitly (`rom_files`, `rom_access`, `rom_dest`); the app's own
   parser drops unknown fields, so the library reads those from the raw `ports.local.json`.
 
-Known limits: a catalog entry that lists several games as a bulleted list (Pokemon Gen 1) is read as "any one of these"; on an exFAT card (no hard links) a copy briefly needs twice the file's size; matching clones the scan once per extra slot (fine for one port, to be tightened before bulk use); no N64 conversion (a `.v64` is reported with a warning, not converted); PS1 ports that list only a
+Known limits: a catalog entry that lists several games as a bulleted list (Pokemon Gen 1) is read as "any one of these"; on an exFAT card (no hard links) a copy briefly needs twice the file's size; matching clones the scan once per extra slot (fine for one port, to be tightened before bulk use); a multi-bin disc whose tracks are not named like the cue plus "(Track N)" reads as several candidates instead of one disc; no N64 conversion (a `.v64` is reported with a warning, not converted); PS1 ports that list only a
 disc serial can be found only when a file name contains it; BIOS files kept outside the ROM folder show those ports
 as partial; the BIOS and serial checks are by name only. A ZIP is hashed as a file (a CRC of a ROM inside an archive is not matched); headered dumps
 (SNES copier headers, iNES) hash differently from headerless No-Intro lists and show as "wrong version";
