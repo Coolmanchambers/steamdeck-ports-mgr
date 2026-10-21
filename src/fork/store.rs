@@ -8,7 +8,9 @@
 //! 4. writes a temp file in the same folder and syncs it,
 //! 5. checks for Steam again, then renames the temp file over the original,
 //! 6. reads the result back and compares it.
-//! A failure at any step leaves the original file as it was.
+//! A failure before the rename leaves the original file as it was; a failed read-back after it means the
+//! new bytes are on disk and `ShortcutsFile` still holds the old ones, so the next save is refused
+//! until the file is loaded again.
 
 use super::vdf::{Document, ParseError};
 use std::fmt;
@@ -165,7 +167,9 @@ impl ShortcutsFile {
         &self.path
     }
 
-    /// Writes the document if it differs from what was loaded. `stamp` names the backup; use
+    /// Refused while Steam runs even when nothing changed, so a caller never reports a clean save in a
+    /// state where the next real one would be refused. Writes the document if it differs from what was
+    /// loaded; a missing file with an untouched empty document also counts as unchanged. `stamp` names the backup; use
     /// [`backup_stamp`] outside tests. After a successful save the file counts as loaded again, so
     /// further edits and saves on the same value work. A missing parent folder is an error: Steam
     /// creates `config/` itself, so a missing one means a wrong path.
@@ -207,8 +211,9 @@ impl ShortcutsFile {
         }
 
         if let Some(parent) = self.path.parent() {
-            if !parent.is_dir() {
-                return Err(io_err("find folder", parent)(io::Error::new(io::ErrorKind::NotFound, "no such folder")));
+            let folder = if parent.as_os_str().is_empty() { Path::new(".") } else { parent };
+            if !folder.is_dir() {
+                return Err(io_err("find folder", folder)(io::Error::new(io::ErrorKind::NotFound, "no such folder")));
             }
         }
         let backup = match &current {

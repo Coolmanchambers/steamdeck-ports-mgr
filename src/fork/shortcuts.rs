@@ -91,8 +91,9 @@ pub enum Target<'a> {
 }
 
 /// Fields to change; `None` leaves the field alone. `exe` and `start_dir` are plain paths (quotes are
-/// added); `icon` is stored as a plain path, and an empty one clears it. The name is not here on purpose: renaming would change what Steam derives for an
-/// entry without a stored ID, and Steam Input layouts follow the name.
+/// added); `icon` is stored as a plain path, and an empty one clears it. The name is not here on purpose:
+/// renaming would change what Steam derives for an entry without a stored ID, and Steam Input layouts
+/// follow the name.
 #[derive(Debug, Clone, Default)]
 pub struct ShortcutUpdate {
     pub exe: Option<String>,
@@ -262,12 +263,16 @@ pub fn add(doc: &mut Document, new: &NewShortcut) -> Result<Added, ShortcutError
     if doc.root.iter().any(|e| e.key_matches(SHORTCUTS_KEY) && !matches!(e.value, Value::Object(_))) {
         return Err(ShortcutError::BadField { field: "shortcuts", reason: "is not an object".into() });
     }
+    // Everything that can fail comes before the first change to the document.
+    let key = match shortcuts_entries(doc) {
+        Some(entries) => next_key(entries)?,
+        None => "0".to_string(),
+    };
     if shortcuts_entries(doc).is_none() {
         doc.root.push(Entry::new(SHORTCUTS_KEY, Value::Object(Vec::new())));
     }
     doc.terminated = true;
     let entries = shortcuts_entries_mut(doc).expect("section exists");
-    let key = next_key(entries)?;
     entries.push(Entry::new(&key, Value::Object(fields)));
     Ok(Added { key, app_id })
 }
@@ -481,6 +486,16 @@ mod tests {
         let bytes = file_of(&[object("18446744073709551615", &[int_field("appid", 3)])]);
         let mut doc = parse(&bytes);
         assert!(matches!(add(&mut doc, &new_port()), Err(ShortcutError::BadField { field: "shortcuts", .. })));
+        assert_eq!(doc.encode(), bytes);
+    }
+
+    #[test]
+    fn a_refused_add_leaves_even_an_unterminated_document_as_it_was() {
+        let mut bytes = file_of(&[object("18446744073709551615", &[])]);
+        bytes.pop();
+        let mut doc = parse(&bytes);
+        assert!(!doc.terminated);
+        assert!(add(&mut doc, &new_port()).is_err());
         assert_eq!(doc.encode(), bytes);
     }
 

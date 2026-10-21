@@ -52,9 +52,9 @@ Files added by this fork:
 
 Library only; no UI and no caller yet. Rules it enforces so a later feature cannot break Steam:
 
-- Saving `shortcuts.vdf` is refused while a Steam process (`steam`, `steamwebhelper`) exists, and when
+- Saving `shortcuts.vdf` is refused while a Steam process (`steam`, `steam.sh`, `steamwebhelper`) exists, and when
   that check cannot run. Steam rewrites the file when it exits, so a write while it runs is lost.
-- A timestamped backup (`shortcuts.vdf.bak-<UTC stamp>`) is written and verified before any write.
+- A timestamped backup (`shortcuts.vdf.bak-<local time stamp>`) is written and verified before any write.
 - The write goes to a temp file in the same folder, is synced, then renamed over the original, and the
   result is read back. A failure leaves the original in place.
 - Saving is refused if the file changed on disk since it was loaded.

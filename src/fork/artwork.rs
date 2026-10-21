@@ -166,9 +166,11 @@ pub fn place_artwork(
         return Err(e);
     }
 
+    // On a case-insensitive filesystem (exFAT, NTFS) `77p.PNG` and the new `77p.png` are one file and
+    // must survive; on ext4 they are two files and the old one goes.
+    let dest_id = fs::canonicalize(&dest).ok();
     for stale in existing {
-        // On a case-insensitive filesystem (exFAT, NTFS) `77p.PNG` and the new `77p.png` are one file.
-        let same_file = stale.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&dest_name));
+        let same_file = stale == dest || (dest_id.is_some() && fs::canonicalize(&stale).ok() == dest_id);
         if !same_file {
             let _ = fs::remove_file(stale);
         }
@@ -334,6 +336,8 @@ mod tests {
         let source = image(&dir, "new.png", b"new");
         let placed = place_artwork(&grid, 77, ArtworkKind::Cover, &source, true).unwrap();
         assert_eq!(fs::read(&placed).unwrap(), image_bytes("x.png", b"new"));
+        // Exactly one cover remains whichever way the filesystem treats case.
+        assert_eq!(existing_artwork(&grid, 77, ArtworkKind::Cover).unwrap().len(), 1);
         let _ = fs::remove_dir_all(dir);
     }
 
