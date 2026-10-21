@@ -41,7 +41,7 @@ SUMMARY_LIST_LIMIT = 60
 TOPICS = ["recomp", "n64recomp", "static-recompilation", "recompilation", "xenonrecomp",
           "source-port", "pc-port", "decomp", "decompilation"]
 GRAPHQL_BATCH = 25
-API_ATTEMPTS = 5
+API_ATTEMPTS = 8
 
 DECK_RE = re.compile(r"steam[-_ .]?deck|(?<![a-z])deck(?![a-z])|steamos", re.I)
 LINUX_RE = re.compile(r"linux|appimage|flatpak|ubuntu|(?<![a-z])lin(?:64)?(?![a-z])|\.deb$|\.rpm$", re.I)
@@ -105,6 +105,20 @@ def log(msg):
     print(msg, flush=True)
 
 
+def retry_wait(error_text, attempt):
+    """Seconds to wait before retrying a failed call.
+
+    Search rate limits answer HTTP 429 "try again in 37.3s" (the Actions token hits this from the first
+    call), so honor that delay, plus a margin that grows if the limit keeps coming back.
+    """
+    m = re.search(r"try again in ([\d.]+)\s*s", error_text, re.I)
+    if m:
+        return int(float(m.group(1))) + 5 + 10 * attempt
+    if re.search(r"rate limit|secondary|abuse|HTTP 429", error_text, re.I):
+        return 65
+    return 5 * (attempt + 1)
+
+
 def gh_api(args, body=None):
     """Run `gh api ...`, retrying transient failures and rate limits. Returns parsed JSON.
 
@@ -124,8 +138,7 @@ def gh_api(args, body=None):
         if isinstance(payload, dict) and payload.get("data"):
             return payload
         last = (proc.stderr + proc.stdout).strip()[:300]
-        limited = re.search(r"rate limit|secondary|abuse", last, re.I)
-        wait = 65 if limited else 5 * (attempt + 1)
+        wait = retry_wait(last, attempt)
         log(f"  gh api failed (attempt {attempt + 1}/{API_ATTEMPTS}), waiting {wait}s: {last[:120]}")
         time.sleep(wait)
     raise RuntimeError(f"gh api {' '.join(args[:3])} kept failing: {last}")

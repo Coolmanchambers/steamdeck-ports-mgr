@@ -72,6 +72,19 @@ class Misc(unittest.TestCase):
         self.assertIn("and 40 more", text)
 
 
+class Retry(unittest.TestCase):
+    def test_honors_try_again_delay(self):
+        text = 'gh: try again in 37.303766205s (HTTP 429)\n{"message":"try again in 37.303766205s"}'
+        self.assertEqual(d.retry_wait(text, 0), 42)
+        self.assertEqual(d.retry_wait(text, 2), 62)
+
+    def test_rate_limit_without_delay(self):
+        self.assertEqual(d.retry_wait("API rate limit exceeded", 0), 65)
+
+    def test_other_errors_back_off_briefly(self):
+        self.assertEqual(d.retry_wait("HTTP 502: Bad Gateway", 1), 10)
+
+
 class Slugs(unittest.TestCase):
     def test_github_slug_strips_git_suffix(self):
         self.assertEqual(d.github_slug("https://github.com/a/b.git"), "a/b")
