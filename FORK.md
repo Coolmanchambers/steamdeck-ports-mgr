@@ -16,6 +16,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-20 | `src/core/config.rs` | Added tests that pin how local entries with a GitHub or GitLab source load |
 | 2026-10-20 | `src/core/version.rs` | Self-update check and project links point at this fork instead of upstream |
 | 2026-10-20 | `README.md` | Note at the top crediting Nyaldee and listing what this fork adds |
+| 2026-10-20 | `README.md` | Item 8 (Deck-ready list) set to "In progress" |
 
 Files added by this fork:
 
@@ -29,6 +30,10 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
+| 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
+| 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
+| 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
+| 2026-10-20 | `index/deck-ready.json` | The published Deck-ready list, written only by that workflow |
 
 ## What still comes from upstream at runtime
 
@@ -59,6 +64,20 @@ Notes:
   branch alone. If upstream moves again, or no PR is open, the branch is rebuilt, so put fix-ups on
   a separate branch.
 - To test without touching `main`, start it by hand with `base_branch` set to a scratch branch.
+
+## The Deck-ready list
+
+`index/deck-ready.json` lists ports whose latest release has a Steam Deck or Linux x86_64 build.
+`deck-ready-index.yml` rebuilds it every Monday and can be started by hand.
+
+- **Sources:** this repo's `ports.json`, maintainers' own `.recomp.json` files (GitHub code search)
+  and GitHub topics such as `recomp` and `decomp`. No third-party port table is read or copied.
+- **Ratings** come from release file names, not test launches. Treat them as a starting point.
+- **Changes:** new projects are added and changed ones updated. A project that stops qualifying
+  stays for one more cycle with a `missing_since` date, then is removed.
+- The workflow commits to `main` only when the file changed and lists what changed in the run
+  summary. The builder refuses to publish a list that shrank by more than 30 percent.
+- The app does not read this file yet.
 
 ## Builds
 

@@ -1,0 +1,81 @@
+name: Deck-ready index
+
+# Rebuilds index/deck-ready.json, the list of ports with a Deck or Linux x86_64 build, every week.
+# Sources: ports.json in this repo, maintainers' .recomp.json files (GitHub code search) and GitHub
+# topics. No third-party port table is read.
+# - New projects are added and changed ones updated. Projects that stop qualifying stay one cycle with
+#   a missing_since date, then are removed.
+# - The file is committed to the branch the run was started on (main for the schedule) only when it
+#   changed. The change summary is in the run summary.
+# - Pushes made with GITHUB_TOKEN do not trigger CI. That is fine: the commit only touches index/.
+# - The builder refuses to publish a list that shrank by more than 30 percent (a failed source
+#   would look like that); rerun with allow_shrink once the drop is confirmed real.
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      allow_shrink:
+        description: Publish even if the list shrank by more than 30 percent
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deck-ready-index
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and commit the index
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Test the builder
+        run: python3 -I tools/test_deck_ready_index.py
+
+      - name: Build the index
+        env:
+          ALLOW_SHRINK: ${{ inputs.allow_shrink && '--allow-shrink' || '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 -I tools/deck_ready_index.py --summary "$RUNNER_TEMP/out/summary.md" $ALLOW_SHRINK
+          cat "$RUNNER_TEMP/out/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit if changed
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ -z "$(git status --porcelain -- index)" ]; then
+            echo "index/deck-ready.json unchanged, nothing to commit" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index/deck-ready.json
+          git commit -m "Refresh Deck-ready index"
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$BRANCH" && git push origin "HEAD:$BRANCH" && exit 0
+            sleep 5
+          done
+          echo "::error::could not push the refreshed index to $BRANCH"
+          exit 1
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: deck-ready-index
+          path: |
+            index/deck-ready.json
+            ${{ runner.temp }}/out/summary.md
+          if-no-files-found: ignore
+          retention-days: 30
