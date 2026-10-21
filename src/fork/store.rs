@@ -101,7 +101,7 @@ impl SteamProcessCheck for SystemSteamCheck {
     }
 }
 
-fn check_steam(steam: &dyn SteamProcessCheck) -> Result<(), StoreError> {
+pub fn check_steam(steam: &dyn SteamProcessCheck) -> Result<(), StoreError> {
     match steam.running_steam_processes() {
         Ok(procs) if procs.is_empty() => Ok(()),
         Ok(procs) => Err(StoreError::SteamRunning(procs)),
