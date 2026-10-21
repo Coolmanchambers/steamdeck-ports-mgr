@@ -30,7 +30,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/platform_resolve.rs` | A leading `~` in a path expands to the home folder (`HOME`, `USERPROFILE` on Windows); 5 tests |
 | 2026-10-21 | `src/core/installer.rs` | After an install, older AppImage files of the same product are removed; `follow_favorite_exe`; `apply_archive` backs up saves before extracting; tests |
 | 2026-10-21 | `src/core/save_backup.rs` | New `backup_before_update` (zip of the save folders under `Update Backups`), reusing the existing copy and zip helpers |
-| 2026-10-21 | `src/app/events.rs` | After an install finishes, a favorite executable that was an AppImage follows the new file (8 lines) |
+| 2026-10-21 | `src/app/events.rs` | After an install finishes, a favorite executable that was an AppImage follows the new file (8 lines); a failed install no longer leaves the Play-launch pending and launches the installed game (6 lines) |
 
 Files added by this fork:
 
@@ -91,8 +91,14 @@ when the change is reverted.
 - **Saves backed up before every install.** Before an install writes into a port that has `save` or
   `save2` folders, those folders are zipped to
   `<Saves Backup>/Update Backups/<port folder>/<YYYY-MM-DD_HH-MM-SS>.zip` (a second one in the same
-  second gets `-2`). If the backup cannot be made, the install stops and changes nothing. Backups
-  are not pruned yet.
+  second gets `-2`). If the backup cannot be made, the install stops and changes nothing, and a
+  Play-triggered update that fails still launches the installed game (`src/app/events.rs`). Limits:
+  backups are not pruned; a `save` that is the game folder itself (`"."`) or holds it is skipped,
+  because it would copy the whole game; symlinked files inside a save folder and `save` paths that
+  are files are not backed up; "Install extras" is not backed up.
+- **Side effects to know.** The `~` fix also means the Save Backup button (global backup) now
+  includes upstream's `~/...` Linux save paths (about 32 catalog entries), installed or not. AppImage
+  cleanup only recognizes names that differ by version numbers, so a renamed scheme keeps the old file.
 
 ## What still comes from upstream at runtime
 
