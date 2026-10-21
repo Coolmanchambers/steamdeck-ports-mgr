@@ -37,6 +37,7 @@ fn fetch_if_changed(url: &str, known_etag: &str, validate: impl FnOnce(&str) -> 
             validate(&text)?;
             Ok(CatalogUpdate::Updated { text, etag })
         }
+        // Not reached with ureq 3 (a 304 is an `Ok` response); kept in case the agent is ever set to treat 3xx as errors.
         Err(ureq::Error::StatusCode(304)) => Ok(CatalogUpdate::NotModified),
         Err(e) => Err(e.to_string()),
     }
@@ -70,10 +71,10 @@ mod tests {
     #[test]
     #[ignore]
     fn live_etag_round_trip() {
-        let CatalogUpdate::Updated { etag, .. } = fetch_ports_if_changed("").unwrap() else { panic!("first request had no body") };
+        let CatalogUpdate::Updated { etag, .. } = fetch_ports_if_changed("").unwrap() else { panic!("a request without an ETag must return the file, not 304") };
         assert!(!etag.is_empty());
         assert!(matches!(fetch_ports_if_changed(&etag), Ok(CatalogUpdate::NotModified)));
-        let CatalogUpdate::Updated { etag, .. } = fetch_themes_if_changed("").unwrap() else { panic!("first request had no body") };
+        let CatalogUpdate::Updated { etag, .. } = fetch_themes_if_changed("").unwrap() else { panic!("a request without an ETag must return the file, not 304") };
         assert!(!etag.is_empty());
         assert!(matches!(fetch_themes_if_changed(&etag), Ok(CatalogUpdate::NotModified)));
     }
