@@ -174,6 +174,7 @@ mod tests {
     fn cached_portrait_path_only_returns_an_existing_file() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(cached_portrait_path(tmp.path(), "Game"), None);
+        assert!(crate::core::image_cache::cached_image_path(tmp.path(), "../evil").is_err());
         assert_eq!(cached_portrait_path(tmp.path(), "../evil"), None);
         fs::write(tmp.path().join("Game.png"), png(600, 900, [0, 0, 0, 255])).unwrap();
         assert_eq!(cached_portrait_path(tmp.path(), "Game"), Some(tmp.path().join("Game.png")));
@@ -190,6 +191,10 @@ mod tests {
         assert_eq!(report.icon_path, Some(grid.join(format!("{id}_icon.png"))));
         assert_eq!(image::image_dimensions(grid.join(format!("{id}p.png"))).unwrap(), (600, 900));
         assert_eq!(image::image_dimensions(grid.join(format!("{id}_icon.png"))).unwrap(), (256, 256));
+        let manifest = crate::fork::art::grid::Manifest::load(&grid);
+        let entry = &manifest.entries()[&format!("{id}p.png")];
+        assert_eq!((entry.source.as_str(), entry.slot.as_str(), entry.generated), ("catalog", "portrait", true));
+        assert_eq!(manifest.entries()[&format!("{id}_icon.png")].source, "catalog");
         // No logo, so no position file; no wide or hero either.
         assert!(!grid.join(format!("{id}.json")).exists());
         assert!(!grid.join(format!("{id}_hero.png")).exists());

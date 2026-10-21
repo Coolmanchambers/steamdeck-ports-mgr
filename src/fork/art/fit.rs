@@ -28,12 +28,16 @@ use crate::fork::artwork::ArtworkKind;
 /// Largest enlargement accepted ("about 1.5x").
 pub const MAX_UPSCALE: f64 = 1.5;
 /// Sources bigger than this per side are not decoded (decompression-bomb guard).
-const MAX_SOURCE_SIDE: u32 = 8192;
-const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
+const MAX_SOURCE_SIDE: u32 = 4096;
+const MAX_DECODE_ALLOC: u64 = 192 * 1024 * 1024;
 /// Icons up to this far from square are cropped square; wilder shapes are padded.
 const ICON_CROP_MAX_RATIO: f64 = 1.2;
 /// Smallest square icon [`fit_icon_keep_size`] accepts.
 pub const ICON_MIN_SIDE: u32 = 32;
+/// A logo whose longer side is below this is refused as too small.
+pub const LOGO_MIN_SIDE: u32 = 64;
+/// Portrait sources whose contained picture would fill less than this share of the slot are refused.
+const PORTRAIT_MIN_FILL: f64 = 0.2;
 
 pub const PORTRAIT_SIZE: (u32, u32) = (600, 900);
 pub const WIDE_SIZE: (u32, u32) = (920, 430);
@@ -96,6 +100,9 @@ pub enum FitError {
     Empty,
     /// The source would have to be enlarged by `scale` (> [`MAX_UPSCALE`]) to fill the slot.
     TooSmall { slot: Slot, width: u32, height: u32, scale: f64 },
+    /// The source is so far from the slot's shape that contain-and-pad would leave a sliver of art
+    /// in a sea of blur (a banner for the portrait slot).
+    UnsuitableShape { slot: Slot, width: u32, height: u32 },
     Encode(String),
 }
 
@@ -110,6 +117,9 @@ impl fmt::Display for FitError {
                 "{width}x{height} is too small for the {} slot (would need {scale:.2}x enlargement, limit {MAX_UPSCALE}x)",
                 slot.name()
             ),
+            FitError::UnsuitableShape { slot, width, height } => {
+                write!(f, "{width}x{height} has the wrong shape for the {} slot", slot.name())
+            }
             FitError::Encode(e) => write!(f, "could not encode the image: {e}"),
         }
     }
@@ -135,6 +145,18 @@ impl Fitted {
         self
     }
 
+    /// True when the image has the size its slot requires: exact for portrait, wide, hero; inside
+    /// 1280x720 (and at least [`LOGO_MIN_SIDE`] long) for the logo; square between [`ICON_MIN_SIDE`]
+    /// and 512 for the icon. The grid writer refuses anything else, since the fields are public.
+    pub fn fits_slot(&self) -> bool {
+        let (w, h) = self.image.dimensions();
+        match self.slot {
+            Slot::Portrait | Slot::Wide | Slot::Hero => (w, h) == self.slot.size(),
+            Slot::Logo => w >= 1 && h >= 1 && w <= LOGO_MAX.0 && h <= LOGO_MAX.1 && w.max(h) >= LOGO_MIN_SIDE,
+            Slot::Icon => w == h && (ICON_MIN_SIDE..=ICON_SIZE.0).contains(&w),
+        }
+    }
+
     pub fn to_png(&self) -> Result<Vec<u8>, FitError> {
         let mut out = Vec::new();
         self.image.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).map_err(|e| FitError::Encode(e.to_string()))?;
@@ -142,7 +164,8 @@ impl Fitted {
     }
 }
 
-/// Decodes PNG, JPEG or WebP bytes with a size guard.
+/// Decodes PNG, JPEG or WebP bytes with a size guard (4096 px per side covers 4K art). EXIF rotation
+/// is not applied: a sideways phone photo stays sideways.
 pub fn decode(bytes: &[u8]) -> Result<DynamicImage, FitError> {
     let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(|e| FitError::Decode(e.to_string()))?;
     let mut limits = Limits::default();
@@ -168,7 +191,7 @@ pub fn fit(slot: Slot, source: &DynamicImage) -> Result<Fitted, FitError> {
     let (image, generated) = match slot {
         Slot::Portrait => portrait(slot, &rgba)?,
         Slot::Wide | Slot::Hero => cover(slot, &rgba)?,
-        Slot::Logo => (logo(&rgba), false),
+        Slot::Logo => (logo(slot, &rgba)?, false),
         Slot::Icon => icon(slot, &rgba)?,
     };
     Ok(Fitted { slot, image, source: String::new(), generated })
@@ -275,6 +298,9 @@ fn portrait(slot: Slot, img: &RgbaImage) -> Result<(RgbaImage, bool), FitError> 
     let scale = f64::min(f64::from(tw) / f64::from(w), f64::from(th) / f64::from(h));
     check_scale(slot, w, h, scale)?;
     let (mut fw, mut fh) = scaled(w, h, scale);
+    if f64::from(fw) * f64::from(fh) < PORTRAIT_MIN_FILL * f64::from(tw) * f64::from(th) {
+        return Err(FitError::UnsuitableShape { slot, width: w, height: h });
+    }
     // The limiting side lands exactly on the slot; rounding must not push the other past it.
     fw = fw.min(tw);
     fh = fh.min(th);
@@ -306,14 +332,17 @@ fn backdrop(img: &RgbaImage, target: (u32, u32)) -> RgbaImage {
     imageops::resize(&blurred, target.0, target.1, FilterType::Triangle)
 }
 
-fn logo(img: &RgbaImage) -> RgbaImage {
+fn logo(slot: Slot, img: &RgbaImage) -> Result<RgbaImage, FitError> {
     let (w, h) = img.dimensions();
+    if w.max(h) < LOGO_MIN_SIDE {
+        return Err(FitError::TooSmall { slot, width: w, height: h, scale: f64::from(LOGO_MIN_SIDE) / f64::from(w.max(h)) });
+    }
     let scale = f64::min(f64::from(LOGO_MAX.0) / f64::from(w), f64::from(LOGO_MAX.1) / f64::from(h));
     if scale >= 1.0 {
-        return img.clone();
+        return Ok(img.clone());
     }
     let (nw, nh) = scaled(w, h, scale);
-    resize(img, nw.min(LOGO_MAX.0), nh.min(LOGO_MAX.1))
+    Ok(resize(img, nw.min(LOGO_MAX.0), nh.min(LOGO_MAX.1)))
 }
 
 fn icon(slot: Slot, img: &RgbaImage) -> Result<(RgbaImage, bool), FitError> {
@@ -414,6 +443,10 @@ mod tests {
         }
         let wide = fit(Slot::Wide, &src).unwrap().image;
         assert_eq!(*wide.get_pixel(460, 215), Rgba([0, 255, 0, 255]));
+        // Scaled to 518 rows the middle band spans rows 110..407; a centered 430-row crop starts at row 44,
+        // so red shows above and blue below. A top- or bottom-anchored crop would not.
+        assert!(wide.get_pixel(460, 10)[0] > 200, "top of the wide crop should still be the red band");
+        assert!(wide.get_pixel(460, 420)[2] > 200, "bottom of the wide crop should still be the blue band");
     }
 
     #[test]
@@ -516,14 +549,21 @@ mod tests {
     #[test]
     fn every_accepted_source_gives_the_exact_slot_size() {
         let sizes = [(600, 900), (450, 600), (1000, 1000), (1920, 1080), (1081, 1919), (700, 1200)];
+        let mut accepted = 0;
         for (w, h) in sizes {
             let src = solid(w, h, [90, 90, 90, 255]);
             for slot in [Slot::Portrait, Slot::Wide, Slot::Hero, Slot::Icon] {
-                if let Ok(out) = fit(slot, &src) {
-                    assert_eq!(dims(&out), slot.size(), "{w}x{h} into {}", slot.name());
+                match fit(slot, &src) {
+                    Ok(out) => {
+                        accepted += 1;
+                        assert_eq!(dims(&out), slot.size(), "{w}x{h} into {}", slot.name());
+                    }
+                    Err(FitError::TooSmall { .. }) => {}
+                    Err(e) => panic!("{w}x{h} into {}: {e}", slot.name()),
                 }
             }
         }
+        assert!(accepted >= 12, "only {accepted} of 24 combinations were accepted");
     }
 
     #[test]
@@ -545,6 +585,41 @@ mod tests {
         assert_eq!(dims(&fit_bytes(Slot::Portrait, &png).unwrap()), (600, 900));
         assert!(matches!(fit_bytes(Slot::Portrait, b"not an image"), Err(FitError::Decode(_))));
         assert!(matches!(fit_bytes(Slot::Portrait, b""), Err(FitError::Decode(_))));
+    }
+
+    #[test]
+    fn oversized_sources_are_refused_by_the_decode_guard() {
+        let strip = |w| {
+            Fitted { slot: Slot::Logo, image: RgbaImage::from_pixel(w, 1, Rgba([1, 2, 3, 255])), source: String::new(), generated: false }
+                .to_png()
+                .unwrap()
+        };
+        assert!(matches!(decode(&strip(MAX_SOURCE_SIDE + 1)), Err(FitError::Decode(_))));
+        assert!(decode(&strip(MAX_SOURCE_SIDE)).is_ok());
+    }
+
+    #[test]
+    fn a_banner_is_not_squeezed_into_a_sliver_of_art_on_the_portrait_slot() {
+        assert!(matches!(fit(Slot::Portrait, &solid(2000, 300, [1, 1, 1, 255])), Err(FitError::UnsuitableShape { slot: Slot::Portrait, .. })));
+        assert!(matches!(fit(Slot::Portrait, &solid(1, 1000, [1, 1, 1, 255])), Err(FitError::UnsuitableShape { .. })));
+        // 3:1 still gives a usable strip (600x200 on the slot).
+        assert!(fit(Slot::Portrait, &solid(1200, 400, [1, 1, 1, 255])).is_ok());
+    }
+
+    #[test]
+    fn a_tiny_logo_is_refused() {
+        assert!(matches!(fit(Slot::Logo, &solid(16, 16, [255, 255, 255, 255])), Err(FitError::TooSmall { slot: Slot::Logo, .. })));
+        assert!(fit(Slot::Logo, &solid(64, 20, [255, 255, 255, 255])).is_ok());
+    }
+
+    #[test]
+    fn fits_slot_checks_the_size_each_slot_requires() {
+        let f = |slot, w, h| Fitted { slot, image: RgbaImage::new(w, h), source: String::new(), generated: false }.fits_slot();
+        assert!(f(Slot::Portrait, 600, 900) && !f(Slot::Portrait, 400, 200) && !f(Slot::Portrait, 900, 600));
+        assert!(f(Slot::Wide, 920, 430) && !f(Slot::Wide, 920, 431));
+        assert!(f(Slot::Hero, 1920, 620) && !f(Slot::Hero, 1920, 1080));
+        assert!(f(Slot::Logo, 1280, 720) && f(Slot::Logo, 300, 100) && !f(Slot::Logo, 1281, 720) && !f(Slot::Logo, 10, 10) && !f(Slot::Logo, 0, 0));
+        assert!(f(Slot::Icon, 512, 512) && f(Slot::Icon, 32, 32) && !f(Slot::Icon, 513, 513) && !f(Slot::Icon, 256, 128) && !f(Slot::Icon, 16, 16));
     }
 
     #[test]

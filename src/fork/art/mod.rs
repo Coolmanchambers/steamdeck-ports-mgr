@@ -21,6 +21,20 @@
 //! // art.problems and report.slots say what to show the user per slot.
 //! ```
 //!
+//! Things the caller should know:
+//!
+//! * `report.icon_path` is `grid_dir.join(..)`: pass an absolute `grid_dir` and it is absolute.
+//! * `write_art` calls are serialized inside the process; a second process writing the same folder at
+//!   once is not guarded against.
+//! * `report.manifest_error` is set when the provenance record could not be saved. The files are on
+//!   disk but later runs will treat them as the user's. Show it.
+//! * A slot image must have its slot's size (`Fitted::fits_slot`), or the writer fails that slot.
+//!   `Slot::size()` is a bounding box for the logo, not an exact size.
+//! * Limits worth surfacing to the user: sources over 4096 px a side are refused (as `Decode`),
+//!   EXIF rotation is ignored, and a logo under 64 px or a portrait source wider than about 4:1 is
+//!   refused.
+//! * The app does not cache catalog icons yet; pass the bytes straight to `catalog::catalog_art`.
+//!
 //! Library only: nothing in the app calls it yet, and nothing here downloads anything.
 
 pub mod catalog;

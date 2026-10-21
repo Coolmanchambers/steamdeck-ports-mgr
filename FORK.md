@@ -119,7 +119,16 @@ Library only; nothing calls it yet and nothing here downloads anything. Document
   overwritten or deleted. A corrupt manifest is renamed `.corrupt` and everything then counts as the user's.
 - **Logo position file** `<id>.json` is created with `create_new` only when our logo is in place; an existing one is
   never touched. Unverified on a real Deck (research report: one community bug report).
-- **Not verified:** that Steam shows the art on a Deck, and what Steam does with a slot left empty.
+- **Manifest limits:** a file is renamed into place and recorded afterwards. If the record cannot be saved the
+  report carries `manifest_error` and the file counts as the user's from then on; a crash in that window does the
+  same, with no repair step. One `write_art` runs at a time inside the process; another process writing the same
+  folder is not guarded against. `place_artwork` re-lists the folder before it removes other extensions of our own
+  art, so a file Steam writes in that millisecond window could be removed.
+- **Refused sources:** over 4096 px a side (reported as `Decode`), a portrait source wider than about 4:1, a logo
+  under 64 px, anything needing more than 1.5x enlargement. EXIF rotation is not applied. The writer also fails a
+  slot whose image is not the slot's size.
+- **Not verified:** that Steam shows the art on a Deck (and whether it needs a restart), that Steam's `icon` field
+  accepts a 256 px PNG path, and what Steam does with a slot left empty.
 
 ## What still comes from upstream at runtime
 

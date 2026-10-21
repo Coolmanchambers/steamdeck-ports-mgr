@@ -12,20 +12,30 @@
 //!   extension): it is the user's choice. It is never overwritten or deleted, and the slot reports
 //!   [`SlotOutcome::SkippedUserArt`].
 //!
-//! The manifest is `.dpm-art-manifest.json` in the same folder (a dotfile Steam ignores). If it is
-//! unreadable it is renamed to `.dpm-art-manifest.json.corrupt` and treated as empty, which means every
-//! existing file counts as the user's: the safe direction.
+//! The manifest is `.dpm-art-manifest.json` in the same folder (a dotfile Steam ignores). If it cannot
+//! be parsed, or is from an unknown version, it is renamed to `.dpm-art-manifest.json.corrupt` and
+//! treated as empty, which means every existing file counts as the user's: the safe direction. (A
+//! manifest that cannot be read at all, say for permissions, is treated as empty without the rename and
+//! replaced by the next save.)
+//!
+//! A file is renamed into place first and recorded afterwards. If the record cannot be saved (disk
+//! full) the report says so in `manifest_error` and the file stays, unrecorded, so later runs treat it
+//! as the user's. A crash in that window has the same effect; there is no repair step.
 //!
 //! The logo only shows in Steam with a position file `<id>.json`. It is written when the logo slot
 //! ends up holding our logo and the file does not exist yet; an existing one is never touched.
 //!
-//! Steam does not need to be closed to write here, but it usually shows new art only after a restart.
+//! Steam does not need to be closed to write here. Community reports say new art appears only after a
+//! Steam restart; that is unverified.
+//!
+//! Staging copies live in a dot-folder inside the grid folder, so no temp folder elsewhere is needed.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde_json::{json, Value};
 
@@ -105,10 +115,11 @@ pub enum SlotOutcome {
 }
 
 impl SlotOutcome {
-    /// The path of our file now in the slot, if there is one.
+    /// The path of our file now in the slot, if there is one. `SkippedExisting` counts: it is only
+    /// reported after the file was proven to be ours.
     pub fn our_path(&self) -> Option<&Path> {
         match self {
-            SlotOutcome::Written(p) | SlotOutcome::Unchanged(p) => Some(p),
+            SlotOutcome::Written(p) | SlotOutcome::Unchanged(p) | SlotOutcome::SkippedExisting(p) => Some(p),
             _ => None,
         }
     }
@@ -133,9 +144,26 @@ pub struct WriteReport {
     /// means: leave the `icon` field alone.
     pub icon_path: Option<PathBuf>,
     pub logo_position: LogoPositionOutcome,
+    /// Set when the manifest could not be saved (disk full, read-only folder). The files listed above
+    /// are on disk anyway; the ones not recorded count as the user's on later runs, so they will not be
+    /// refreshed. Show it to the user rather than ignoring it.
+    pub manifest_error: Option<String>,
 }
 
 impl WriteReport {
+    /// True when at least one file (an image or the position file) was newly written.
+    pub fn wrote_anything(&self) -> bool {
+        self.slots.iter().any(|(_, o)| matches!(o, SlotOutcome::Written(_))) || matches!(self.logo_position, LogoPositionOutcome::Written(_))
+    }
+
+    /// Slots that failed, with the reason.
+    pub fn failures(&self) -> Vec<(Slot, &str)> {
+        self.slots
+            .iter()
+            .filter_map(|(s, o)| if let SlotOutcome::Failed(why) = o { Some((*s, why.as_str())) } else { None })
+            .collect()
+    }
+
     pub fn outcome(&self, slot: Slot) -> Option<&SlotOutcome> {
         self.slots.iter().find(|(s, _)| *s == slot).map(|(_, o)| o)
     }
@@ -144,16 +172,12 @@ impl WriteReport {
 #[derive(Debug)]
 pub enum GridError {
     CreateFolder { path: PathBuf, source: io::Error },
-    /// The manifest could not be saved. Files already written stay, but are not recorded, so a later
-    /// run will treat them as the user's.
-    ManifestWrite { path: PathBuf, source: io::Error },
 }
 
 impl fmt::Display for GridError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             GridError::CreateFolder { path, source } => write!(f, "could not create {}: {source}", path.display()),
-            GridError::ManifestWrite { path, source } => write!(f, "could not save the artwork record {}: {source}", path.display()),
         }
     }
 }
@@ -284,62 +308,90 @@ impl Manifest {
 /// Writes the slots in `art` for `app_id` into `grid_dir` (a user's `config/grid/` folder; created if
 /// missing). See the module docs for what is and is not overwritten. A failure in one slot is
 /// reported in its outcome and does not stop the others.
+///
+/// Calls are serialized inside the process (the manifest is read, changed and saved whole), so two
+/// shortcuts can be written from different threads. Another process writing the same folder at the
+/// same time is not guarded against.
 pub fn write_art(grid_dir: &Path, app_id: u32, art: &ArtSet, options: &WriteOptions) -> Result<WriteReport, GridError> {
+    static WRITE_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if art.is_empty() {
+        return Ok(WriteReport { slots: Vec::new(), icon_path: None, logo_position: LogoPositionOutcome::NotNeeded, manifest_error: None });
+    }
     fs::create_dir_all(grid_dir).map_err(|source| GridError::CreateFolder { path: grid_dir.to_path_buf(), source })?;
     let mut manifest = Manifest::load(grid_dir);
+    let mut manifest_error = None;
     let mut slots = Vec::new();
     for slot in Slot::ALL {
         let Some(image) = art.get(slot) else { continue };
-        let outcome = write_slot(grid_dir, app_id, image, options, &mut manifest)?;
+        let outcome = write_slot(grid_dir, app_id, image, options, &mut manifest);
+        if matches!(outcome, SlotOutcome::Written(_)) {
+            save_manifest(&manifest, grid_dir, &mut manifest_error);
+        }
         slots.push((slot, outcome));
     }
     let outcome_of = |slot: Slot| slots.iter().find(|(s, _)| *s == slot).map(|(_, o)| o);
     let icon_path = outcome_of(Slot::Icon).and_then(SlotOutcome::our_path).map(Path::to_path_buf);
     let logo_position = if outcome_of(Slot::Logo).and_then(SlotOutcome::our_path).is_some() {
-        write_logo_position(grid_dir, app_id, art.logo.as_ref().map_or("", |l| l.source.as_str()), &mut manifest)?
+        let source = art.logo.as_ref().map_or("", |l| l.source.as_str());
+        let outcome = write_logo_position(grid_dir, app_id, source, &mut manifest);
+        if matches!(outcome, LogoPositionOutcome::Written(_)) {
+            save_manifest(&manifest, grid_dir, &mut manifest_error);
+        }
+        outcome
     } else {
         LogoPositionOutcome::NotNeeded
     };
-    Ok(WriteReport { slots, icon_path, logo_position })
+    Ok(WriteReport { slots, icon_path, logo_position, manifest_error })
 }
 
-fn save_manifest(manifest: &Manifest, grid_dir: &Path) -> Result<(), GridError> {
-    manifest.save(grid_dir).map_err(|source| GridError::ManifestWrite { path: grid_dir.join(MANIFEST_FILE), source })
+/// Each save holds every entry so far, so a failed save is healed by the next successful one; only
+/// an error that is still standing after the last save is reported.
+fn save_manifest(manifest: &Manifest, grid_dir: &Path, error: &mut Option<String>) {
+    *error = manifest.save(grid_dir).err().map(|e| format!("could not save {}: {e}", grid_dir.join(MANIFEST_FILE).display()));
 }
 
-fn write_slot(grid_dir: &Path, app_id: u32, image: &Fitted, options: &WriteOptions, manifest: &mut Manifest) -> Result<SlotOutcome, GridError> {
+fn write_slot(grid_dir: &Path, app_id: u32, image: &Fitted, options: &WriteOptions, manifest: &mut Manifest) -> SlotOutcome {
     let kind = image.slot.kind();
+    if !image.fits_slot() {
+        let (w, h) = image.image.dimensions();
+        return SlotOutcome::Failed(format!("a {w}x{h} image does not fit the {} slot", image.slot.name()));
+    }
     let png = match image.to_png() {
         Ok(png) => png,
-        Err(e) => return Ok(SlotOutcome::Failed(e.to_string())),
+        Err(e) => return SlotOutcome::Failed(e.to_string()),
     };
     let existing = match existing_artwork(grid_dir, app_id, kind) {
         Ok(existing) => existing,
-        Err(e) => return Ok(SlotOutcome::Failed(format!("could not list {}: {e}", grid_dir.display()))),
+        Err(e) => return SlotOutcome::Failed(format!("could not list {}: {e}", grid_dir.display())),
     };
     if let Some(theirs) = existing.iter().find(|p| !manifest.is_ours(p)) {
-        return Ok(SlotOutcome::SkippedUserArt(theirs.clone()));
+        return SlotOutcome::SkippedUserArt(theirs.clone());
     }
     if let Some(first) = existing.first() {
         if !options.refresh_own {
-            return Ok(SlotOutcome::SkippedExisting(first.clone()));
+            return SlotOutcome::SkippedExisting(first.clone());
         }
         if existing.len() == 1 && fs::read(first).is_ok_and(|bytes| bytes == png) {
-            return Ok(SlotOutcome::Unchanged(first.clone()));
+            return SlotOutcome::Unchanged(first.clone());
         }
     }
 
-    let staging = match tempfile::Builder::new().prefix("dpm-art-").tempdir() {
+    let staging = match tempfile::Builder::new().prefix(".dpm-art-").tempdir_in(grid_dir) {
         Ok(dir) => dir,
-        Err(e) => return Ok(SlotOutcome::Failed(format!("could not create a temporary folder: {e}"))),
+        Err(e) => return SlotOutcome::Failed(format!("could not create a staging folder in {}: {e}", grid_dir.display())),
     };
     let staged = staging.path().join("slot.png");
     if let Err(e) = fs::write(&staged, &png) {
-        return Ok(SlotOutcome::Failed(format!("could not stage the image: {e}")));
+        return SlotOutcome::Failed(format!("could not stage the image: {e}"));
     }
+    // `replace` is only set when every existing file was just proven to be ours. `place_artwork` lists
+    // the folder again before it deletes other extensions, so a file that appeared in between (a custom
+    // cover chosen in Steam at that very moment) could be removed: a window of milliseconds, accepted.
     let dest = match place_artwork(grid_dir, app_id, kind, &staged, !existing.is_empty()) {
         Ok(dest) => dest,
-        Err(e) => return Ok(SlotOutcome::Failed(e.to_string())),
+        Err(e) => return SlotOutcome::Failed(e.to_string()),
     };
     for old in &existing {
         if !old.exists() {
@@ -347,26 +399,24 @@ fn write_slot(grid_dir: &Path, app_id: u32, image: &Fitted, options: &WriteOptio
         }
     }
     manifest.record(&dest, app_id, image.slot.name(), &image.source, image.generated, &png);
-    save_manifest(manifest, grid_dir)?;
-    Ok(SlotOutcome::Written(dest))
+    SlotOutcome::Written(dest)
 }
 
-fn write_logo_position(grid_dir: &Path, app_id: u32, source: &str, manifest: &mut Manifest) -> Result<LogoPositionOutcome, GridError> {
+fn write_logo_position(grid_dir: &Path, app_id: u32, source: &str, manifest: &mut Manifest) -> LogoPositionOutcome {
     let path = grid_dir.join(format!("{app_id}.json"));
     let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
         Ok(file) => file,
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(LogoPositionOutcome::AlreadyPresent(path)),
-        Err(e) => return Ok(LogoPositionOutcome::Failed(format!("could not create {}: {e}", path.display()))),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return LogoPositionOutcome::AlreadyPresent(path),
+        Err(e) => return LogoPositionOutcome::Failed(format!("could not create {}: {e}", path.display())),
     };
     let written = file.write_all(LOGO_POSITION_JSON.as_bytes()).and_then(|()| file.sync_all());
     drop(file);
     if let Err(e) = written {
         let _ = fs::remove_file(&path);
-        return Ok(LogoPositionOutcome::Failed(format!("could not write {}: {e}", path.display())));
+        return LogoPositionOutcome::Failed(format!("could not write {}: {e}", path.display()));
     }
     manifest.record(&path, app_id, "logo-position", source, false, LOGO_POSITION_JSON.as_bytes());
-    save_manifest(manifest, grid_dir)?;
-    Ok(LogoPositionOutcome::Written(path))
+    LogoPositionOutcome::Written(path)
 }
 
 #[cfg(test)]
@@ -615,10 +665,111 @@ mod tests {
     }
 
     #[test]
-    fn no_staging_files_are_left_behind() {
+    fn an_image_that_does_not_fit_its_slot_is_refused_at_the_writer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut set = ArtSet::default();
+        set.set(fitted(Slot::Portrait, 400, 200, 1));
+        set.set(fitted(Slot::Icon, 600, 600, 1));
+        set.set(fitted(Slot::Hero, 1920, 620, 1));
+        let report = write_art(tmp.path(), ID, &set, &WriteOptions::default()).unwrap();
+        assert!(matches!(report.outcome(Slot::Portrait), Some(SlotOutcome::Failed(_))));
+        assert!(matches!(report.outcome(Slot::Icon), Some(SlotOutcome::Failed(_))));
+        assert!(matches!(report.outcome(Slot::Hero), Some(SlotOutcome::Written(_))));
+        assert_eq!(report.failures().len(), 2);
+        assert!(report.wrote_anything());
+        assert_eq!(report.icon_path, None);
+        assert!(!tmp.path().join(format!("{ID}p.png")).exists());
+    }
+
+    #[test]
+    fn user_art_with_a_jpeg_or_upper_case_extension_is_protected_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let jpeg = tmp.path().join(format!("{ID}p.jpeg"));
+        let upper = tmp.path().join(format!("{ID}_hero.PNG"));
+        fs::write(&jpeg, b"theirs").unwrap();
+        fs::write(&upper, b"theirs too").unwrap();
+        let report = write_art(tmp.path(), ID, &full_set(50), &WriteOptions::default()).unwrap();
+        assert!(matches!(report.outcome(Slot::Portrait), Some(SlotOutcome::SkippedUserArt(_))));
+        assert!(matches!(report.outcome(Slot::Hero), Some(SlotOutcome::SkippedUserArt(_))));
+        assert_eq!(fs::read(&jpeg).unwrap(), b"theirs");
+        assert_eq!(fs::read(&upper).unwrap(), b"theirs too");
+        assert!(!tmp.path().join(format!("{ID}p.png")).exists());
+    }
+
+    #[test]
+    fn only_the_expected_files_are_left_in_the_folder() {
         let tmp = tempfile::tempdir().unwrap();
         write_art(tmp.path(), ID, &full_set(50), &WriteOptions::default()).unwrap();
-        assert!(names(tmp.path()).iter().all(|n| !n.contains("tmp") && !n.contains("stage")));
+        write_art(tmp.path(), ID, &full_set(90), &WriteOptions::default()).unwrap();
+        // Five images, the position file and the manifest.
+        assert_eq!(names(tmp.path()).len(), 7, "{:?}", names(tmp.path()));
+        assert!(names(tmp.path()).iter().all(|n| !n.starts_with(".dpm-art-") || n == MANIFEST_FILE));
+    }
+
+    #[test]
+    fn refresh_own_off_still_reports_our_icon_and_writes_a_missing_position_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_art(tmp.path(), ID, &full_set(50), &WriteOptions::default()).unwrap();
+        fs::remove_file(tmp.path().join(format!("{ID}.json"))).unwrap();
+        let report = write_art(tmp.path(), ID, &full_set(200), &WriteOptions { refresh_own: false }).unwrap();
+        assert_eq!(report.icon_path, Some(tmp.path().join(format!("{ID}_icon.png"))));
+        assert!(matches!(report.logo_position, LogoPositionOutcome::Written(_)));
+        // A user's own icon still gives no path.
+        let other = 4_000_000_001u32;
+        fs::write(tmp.path().join(format!("{other}_icon.png")), b"theirs").unwrap();
+        let mut set = ArtSet::default();
+        set.set(fitted(Slot::Icon, 512, 512, 3));
+        assert_eq!(write_art(tmp.path(), other, &set, &WriteOptions { refresh_own: false }).unwrap().icon_path, None);
+    }
+
+    #[test]
+    fn a_manifest_that_cannot_be_saved_is_reported_with_the_files_that_were_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A folder where the manifest file belongs makes every save fail.
+        fs::create_dir(tmp.path().join(MANIFEST_FILE)).unwrap();
+        let report = write_art(tmp.path(), ID, &full_set(50), &WriteOptions::default()).unwrap();
+        assert!(report.manifest_error.is_some());
+        assert!(matches!(report.outcome(Slot::Portrait), Some(SlotOutcome::Written(_))));
+        assert_eq!(report.icon_path, Some(tmp.path().join(format!("{ID}_icon.png"))));
+    }
+
+    #[test]
+    fn two_shortcuts_written_from_different_threads_both_stay_recorded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let ids = [ID, ID + 1, ID + 2, ID + 3];
+        let handles: Vec<_> = ids
+            .into_iter()
+            .map(|id| {
+                let dir = dir.clone();
+                std::thread::spawn(move || write_art(&dir, id, &full_set(50), &WriteOptions::default()).unwrap())
+            })
+            .collect();
+        for h in handles {
+            assert!(h.join().unwrap().manifest_error.is_none());
+        }
+        let manifest = Manifest::load(&dir);
+        for id in ids {
+            assert!(manifest.is_ours(&dir.join(format!("{id}p.png"))), "{id}");
+        }
+    }
+
+    #[test]
+    fn another_shortcuts_manifest_entries_survive_a_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_art(tmp.path(), ID, &full_set(50), &WriteOptions::default()).unwrap();
+        write_art(tmp.path(), ID + 1, &full_set(60), &WriteOptions::default()).unwrap();
+        let manifest = Manifest::load(tmp.path());
+        assert!(manifest.is_ours(&tmp.path().join(format!("{ID}p.png"))));
+        assert!(manifest.is_ours(&tmp.path().join(format!("{}p.png", ID + 1))));
+    }
+
+    #[test]
+    fn an_empty_set_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let grid = tmp.path().join("grid");
+        let report = write_art(&grid, ID, &ArtSet::default(), &WriteOptions::default()).unwrap();
+        assert!(report.slots.is_empty() && !grid.exists());
     }
 
     #[test]
