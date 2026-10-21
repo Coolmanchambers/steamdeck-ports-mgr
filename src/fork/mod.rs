@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub mod app_id;
+pub mod art;
 pub mod artwork;
 pub mod shortcuts;
 pub mod store;

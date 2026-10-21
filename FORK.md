@@ -57,6 +57,9 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/shortcuts.rs` | List, add and update-in-place (app ID kept) shortcuts in a parsed file |
 | 2026-10-21 | `src/fork/store.rs` | Load and save `shortcuts.vdf`: refuses while Steam runs, backup first, atomic write, read-back check |
 | 2026-10-21 | `src/fork/artwork.rs` | Artwork file names and placement in `config/grid/`, plus Steam folder layout helpers |
+| 2026-10-21 | `src/fork/art/fit.rs` | Fits any image into a Steam art slot: portrait 600x900 (contain over a blurred copy), wide 920x430 and hero 1920x620 (cover-crop), logo inside 1280x720 (alpha kept), icon 512x512; refuses sources needing more than 1.5x enlargement |
+| 2026-10-21 | `src/fork/art/grid.rs` | Writes slot images into `config/grid/` through `place_artwork`; provenance manifest `.dpm-art-manifest.json`; never overwrites art the user chose; writes the logo position file once |
+| 2026-10-21 | `src/fork/art/catalog.rs` | Turns a catalog entry's cached `image` and `icon` into the portrait and icon slots |
 
 ## Steam shortcuts library (`src/fork/`)
 
@@ -100,6 +103,23 @@ when the change is reverted.
 - **Side effects to know.** The `~` fix also means the Save Backup button (global backup) now
   includes upstream's `~/...` Linux save paths (about 32 catalog entries), installed or not. AppImage
   cleanup only recognizes names that differ by version numbers, so a renamed scheme keeps the old file.
+
+## Steam artwork pipeline, no-key half (`src/fork/art/`)
+
+Library only; nothing calls it yet and nothing here downloads anything. Documented in `src/fork/art/mod.rs`.
+
+- **Fit** (`fit.rs`): exact sizes, typed `FitError` (never a panic). A source that would be enlarged by more than 1.5x
+  is refused (`TooSmall`). The logo is never enlarged or cropped and keeps its alpha; portrait, wide and hero come out
+  opaque (transparency is flattened over black). Resizing premultiplies alpha so transparent edges do not fringe dark.
+- **Icons:** catalog icons are 48, 128 or 256 px (most are 256), so a strict 512x512 rule with the 1.5x limit would
+  refuse nearly all of them. `fit_icon_keep_size` keeps a square icon of 32 to 512 px at its own size; `fit(Slot::Icon)`
+  is the strict 512x512 version for other sources.
+- **Writer** (`grid.rs`): a slot is written only if no artwork exists for that ID and slot, or every existing file (any
+  extension) is in the manifest with an unchanged content fingerprint. Anything else is the user's and is skipped, not
+  overwritten or deleted. A corrupt manifest is renamed `.corrupt` and everything then counts as the user's.
+- **Logo position file** `<id>.json` is created with `create_new` only when our logo is in place; an existing one is
+  never touched. Unverified on a real Deck (research report: one community bug report).
+- **Not verified:** that Steam shows the art on a Deck, and what Steam does with a slot left empty.
 
 ## What still comes from upstream at runtime
 
