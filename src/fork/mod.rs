@@ -20,6 +20,7 @@ pub mod rom_library;
 pub mod rom_screens;
 pub mod save_notes;
 pub mod screens;
+pub mod self_update;
 pub mod settings;
 pub mod shortcuts;
 pub mod steam_sync;

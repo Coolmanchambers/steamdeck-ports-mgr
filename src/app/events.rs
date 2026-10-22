@@ -24,7 +24,8 @@ pub(crate) enum AppEvent {
     InstallError { key: String, message: String },
     ExtraInstallDone { key: String, result: Result<(), String> },
     PlayUpdateChecked { port: Box<Port>, available: bool },
-    SelfUpdateAvailable,
+    // Fork: carries what raised the flag, so a later start can tell whether it still applies (O4).
+    SelfUpdateAvailable(crate::fork::self_update::Offer),
     VersionsFetched { key: String, releases: Vec<Value> },
     VersionsFetchError { key: String, message: String },
     ImageCached { folder: String },
@@ -161,7 +162,11 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                     launch_flow(app, router, &port);
                 }
             }
-            AppEvent::SelfUpdateAvailable => {
+            AppEvent::SelfUpdateAvailable(offer) => {
+                let mut settings = crate::fork::settings::ForkSettings::load(&app.paths.config_dir.join(crate::fork::settings::FILE_NAME));
+                if let Err(e) = crate::fork::self_update::save_offer(&mut settings, &offer) {
+                    eprintln!("self-update: could not remember the offer ({e})");
+                }
                 app.window().set_self_update_available(true);
                 app.state.borrow_mut().set_launcher_update_available(true);
             }

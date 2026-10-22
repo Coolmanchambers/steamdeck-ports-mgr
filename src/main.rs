@@ -70,6 +70,8 @@ fn main() {
     if state.borrow().last_launcher_update_check.is_empty() {
         state.borrow_mut().mark_launcher_update_check();
     }
+    // Fork (upstream bug O4): clear a saved Update flag that no longer applies, and check again at once.
+    let recheck_self_update = app::sync::settle_self_update_flag(&mut state.borrow_mut(), &bdir);
 
     let library_dir = bdir.join("Library");
     let cache_dir = bdir.join("cache");
@@ -217,7 +219,7 @@ fn main() {
         repeat(Duration::from_millis(100), move || poll_app_events(&app, &router))
     };
 
-    start_self_update_check(&app);
+    start_self_update_check(&app, recheck_self_update);
     start_catalog_sync(&app);
     start_themes_sync(&app);
 

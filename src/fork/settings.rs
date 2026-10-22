@@ -87,6 +87,16 @@ impl ForkSettings {
         self.save()
     }
 
+    /// A key owned by another fork feature (it documents its own format).
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.map.get(key)
+    }
+
+    pub fn set(&mut self, key: &str, value: Value) -> io::Result<()> {
+        self.map.insert(key.to_string(), value);
+        self.save()
+    }
+
     /// Writes the file with the keys it has, plus an empty `adopt_folders` list so the user finds the
     /// place to add folders.
     pub fn save(&mut self) -> io::Result<()> {

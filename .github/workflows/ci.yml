@@ -190,6 +190,7 @@ jobs:
           {
             echo "Rolling build of \`main\` at ${GITHUB_SHA::7}, built $(date -u '+%Y-%m-%d %H:%M') UTC."
             echo
+            # The app's self-update check reads the commit from this line (src/fork/self_update.rs); keep its form.
             echo "Source for this build: https://github.com/$GH_REPO/tree/$GITHUB_SHA"
             echo
             echo "A testing and validation fork of [Nyaldee/Ports-Launcher](https://github.com/Nyaldee/Ports-Launcher)."

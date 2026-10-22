@@ -3,11 +3,16 @@ use super::dialogs::{open_message_dialog, tr};
 use super::events::{lock, AppEvent};
 use super::state::AppState;
 use crate::core::catalog_sync::{self, CatalogUpdate};
-use crate::core::version::{is_newer_date, APP_VERSION, SELF_REPO};
+use crate::core::asset_select::RECENT_RELEASES_DEPTH;
+use crate::core::state::StateManager;
+use crate::core::version::{APP_VERSION, SELF_REPO};
+use crate::fork::self_update;
+use crate::fork::settings::ForkSettings;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::Tr;
 use slint::ComponentHandle;
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 
 #[cfg(target_os = "windows")]
@@ -27,21 +32,41 @@ pub(crate) fn launch_self_update(app: &Rc<AppState>, router: &Rc<RefCell<Gamepad
     }
 }
 
-pub(crate) fn start_self_update_check(app: &AppState) {
+/// Fork (upstream bug O4): run once at startup, before the footer shows the saved flag. A flag that no
+/// longer applies to the build now running (it was updated by copying files over, or `state.json` came
+/// from another copy) is cleared. Returns true when a check should run now instead of waiting a day.
+pub(crate) fn settle_self_update_flag(state: &mut StateManager, config_dir: &Path) -> bool {
+    if !state.launcher_update_available {
+        return false;
+    }
+    let running = self_update::running(config_dir, APP_VERSION);
+    let settings = ForkSettings::load(&config_dir.join(crate::fork::settings::FILE_NAME));
+    if self_update::flag_still_applies(&running, self_update::saved_offer(&settings).as_ref()) {
+        return false;
+    }
+    eprintln!("self-update: the saved Update flag does not apply to this build; checking again");
+    state.set_launcher_update_available(false);
+    state.release_sync
+}
+
+/// `force` skips the once-a-day throttle (used after `settle_self_update_flag` cleared a stale flag).
+pub(crate) fn start_self_update_check(app: &AppState, force: bool) {
     let github_token = {
         let mut state = app.state.borrow_mut();
-        if !state.should_check_launcher_update() {
+        if !(force && state.release_sync) && !state.should_check_launcher_update() {
             return;
         }
         state.mark_launcher_update_check();
         state.github_token.clone()
     };
+    let running = self_update::running(&app.paths.config_dir, APP_VERSION);
     let events = app.events.clone();
     std::thread::spawn(move || {
-        if let Ok((_, Some(latest_date))) = crate::core::github_api::fetch_latest_tag_and_date(SELF_REPO, github_token.as_deref()) {
-            if is_newer_date(&latest_date, APP_VERSION) {
-                lock(&events).push(AppEvent::SelfUpdateAvailable);
-            }
+        // Fork (upstream bug O5): compare commits (BUILD_INFO vs the release notes), dates only as a fallback.
+        match crate::core::github_api::list_releases(SELF_REPO, github_token.as_deref(), RECENT_RELEASES_DEPTH).and_then(self_update::offer_from_releases) {
+            Ok(offer) if self_update::is_update(&running, &offer) => lock(&events).push(AppEvent::SelfUpdateAvailable(offer)),
+            Ok(_) => {}
+            Err(e) => eprintln!("self-update check failed: {}", e.message()),
         }
     });
 }

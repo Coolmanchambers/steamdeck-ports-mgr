@@ -43,10 +43,6 @@ pub fn latest_installable_release(repo: &str, token: Option<&str>, preferred: Op
     asset_select::latest_installable_release(releases, preferred, pick_release_asset)
 }
 
-pub fn fetch_latest_tag_and_date(repo: &str, token: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
-    fetch_latest_tag_and_date_preferring(repo, token, None)
-}
-
 pub fn fetch_latest_tag_and_date_preferring(repo: &str, token: Option<&str>, preferred: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
     latest_tag_and_date(list_releases(repo, token, RECENT_RELEASES_DEPTH)?, preferred)
 }
