@@ -8,10 +8,14 @@
 # appended after the ELF (it still runs, but has a different hash), the same updater with a marker
 # line, a different BUILD_INFO, and the old install's own catalogs. No second cargo build: the
 # updater is binary-agnostic, so what is under test is the path app -> updater -> swap -> restart,
-# and the hash and BUILD_INFO tell the two builds apart. (It does not prove an old release's code
-# can be updated by a new one; the real-release run in scripts/update_e2e does that by hand.)
+# and the hash and BUILD_INFO tell the two builds apart.
+# Compatibility gap: the "old" updater here is the new script (plus a marker line), and the "old"
+# program is the new program, so a change of package layout between releases (a renamed or moved
+# file in the tarball, a new required file) is NOT caught. It does not prove an old release's code
+# can be updated by a new one; the real-release run in scripts/update_e2e does that by hand.
 #
-# Case 1: a good release. Checks that the app closes, updater.log ends with "=== done", BUILD_INFO,
+# Case 1: a good release. Checks that the app quits by itself with exit 0 (an updater SIGTERM or
+#   SIGKILL after its 10 s wait would not pass), updater.log ends with "=== done", BUILD_INFO,
 #   the program, 7zzs and the updater now match the new package, .previous/ holds the old program,
 #   the restarted process runs the new file, and Library, saves, catalogs and state are untouched
 #   (state.json is rewritten by the app itself, so it is compared as JSON apart from the timestamp
@@ -22,6 +26,9 @@
 # Not covered on purpose: the automatic "update found at startup" path asks the GitHub API for the
 # latest release, which is neither offline nor deterministic. Unit tests cover its decision
 # (is_newer_date, should_check_launcher_update); the seeded state.json here switches that check off.
+# Also not covered: an updater that starts the app twice. The app's single-instance lock (a socket
+# in XDG_RUNTIME_DIR) makes the second copy exit at once, which would mask it here; that case is
+# covered by tools/test-fork-updater.sh.
 #
 # Run it locally (Linux, or WSL; needs xvfb, x11-utils, xdotool, imagemagick, curl, python3):
 #   bash tools/test-app-update.sh <packaged folder, e.g. dist/steamdeck-ports-mgr> [output folder]
@@ -36,18 +43,24 @@ PKG=steamdeck-ports-mgr
 ASSET="$PKG-linux-x86_64.tar.gz"
 
 setup_fail() { echo "SETUP FAILED: $1"; exit 2; }
-for tool in Xvfb xdpyinfo xdotool import curl tar sha256sum pgrep python3 mktemp; do
+for tool in Xvfb xdpyinfo xwininfo xdotool import curl tar sha256sum pgrep python3 mktemp; do
     command -v "$tool" >/dev/null || setup_fail "$tool is not installed"
 done
 for f in ports_launcher 7zzs ports_launcher_updater.sh ports.json themes.json; do
     [ -f "$BIN_DIR/$f" ] || setup_fail "$f is missing in $BIN_DIR"
 done
 mkdir -p "$OUT" || setup_fail "can't create $OUT"
-W="$(mktemp -d)" || setup_fail "mktemp"
+W="$(mktemp -d)" && W="$(readlink -f "$W")" || setup_fail "mktemp"
 
 # How many Down presses reach "Force update" in the Settings list: its position in SETTINGS_ENTRIES.
-DOWNS=$(awk '/const SETTINGS_ENTRIES/ {on=1; next} on && /SettingsEntry::ForceUpdate/ {print n; exit} on && /SettingsEntry::/ {n++}' "$SRC_DIALOGS" 2>/dev/null)
-if ! [ "${DOWNS:-}" -ge 0 ] 2>/dev/null; then DOWNS=9; echo "note: could not read the Settings order from the source, assuming $DOWNS"; fi
+# Read from the source when it is next to this script. If the source is there but the list can't be
+# read (the code was restructured), that is a setup failure, not a reason to guess.
+if [ -f "$SRC_DIALOGS" ]; then
+    DOWNS=$(awk '/const SETTINGS_ENTRIES/ {on=1; next} on && /SettingsEntry::ForceUpdate/ {print n+0; exit} on && /SettingsEntry::/ {n++}' "$SRC_DIALOGS")
+    { [ "${DOWNS:-0}" -ge 1 ] 2>/dev/null; } || setup_fail "could not find ForceUpdate in SETTINGS_ENTRIES in $SRC_DIALOGS (got '${DOWNS:-}'); update the awk in this script"
+else
+    DOWNS=9; echo "note: $SRC_DIALOGS is not here (package tested without the source), assuming $DOWNS"
+fi
 echo "Force update is $DOWNS Down presses into the Settings list"
 
 APP=""; XVFB=""
@@ -104,7 +117,8 @@ install_old() {  # $1 = folder
  "installed": {"dpm-test-port": {"installed_tag": "v1", "installed_at": "2026-01-01T00:00:00+00:00", "favorite_exe": null, "update": true, "playtime_seconds": 42, "last_played_at": ""}}}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" > "$d/state.json"
 }
-protected_sums() { (cd "$1" && find Library "Saves Backup" cache ports.json themes.json ports.local.json -type f -exec sha256sum {} + | sort); }
+# The seeded files, named one by one (a missing one makes sha256sum fail and the comparison with it).
+protected_sums() { (cd "$1" && sha256sum Library/game/save.dat "Saves Backup/game/backup.zip" cache/entry ports.json themes.json ports.local.json 2>&1); }
 state_same() {  # $1 = state.json, $2 = a saved copy; equal as JSON apart from the launch-time stamp
     python3 -I -c 'import json,sys
 a, b = (json.load(open(p)) for p in sys.argv[1:3])
@@ -130,7 +144,8 @@ done
 echo "virtual display $DISPLAY"
 
 fail=0
-check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; fi; }
+case_fail=0
+check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; case_fail=1; fi; }
 wait_for() { local t=$1; shift; for _ in $(seq 1 $((t * 5))); do eval "$@" && return 0; sleep 0.2; done; return 1; }
 shot() { import -window root "$OUT/$CASE/$1.png" 2>/dev/null; }
 sha() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -152,18 +167,21 @@ count_pids() {
     echo "$n"
 }
 main_win() { xdotool search --name '^Ports Launcher$' 2>/dev/null | head -1; }
-dialog_win() {
-    local w name
-    for w in $(xdotool search --onlyvisible --name . 2>/dev/null); do
-        name=$(xdotool getwindowname "$w" 2>/dev/null)
-        [ -n "$name" ] && [ "$name" != "Ports Launcher" ] && echo "$w"
-    done | tail -1
-}
+settings_win() { xdotool search --onlyvisible --name '^Settings$' 2>/dev/null | tail -1; }
 last_line() { tail -n 1 "$APP/updater.log" 2>/dev/null; }
 
 launch() {  # $1 = DPM_RELEASE_BASE; a bare session like Game Mode: no D-Bus, so no tray host
     env -i HOME="$W/$CASE/home" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$W/$CASE/run" RUST_BACKTRACE=1 DPM_RELEASE_BASE="$1" \
         "$APP/ports_launcher" >>"$OUT/$CASE/app.log" 2>&1 &
+    OLD_PID=$!   # env execs the program, so this is the app's own PID and a child of this shell (wait works)
+}
+
+# The old app must quit by itself and exit 0 (the updater would otherwise SIGTERM it after 10 s).
+old_app_quit_cleanly() {
+    wait_for 20 "! alive $OLD_PID" || return 1
+    wait "$OLD_PID"; OLD_EXIT=$?
+    echo "      (old app exit code $OLD_EXIT)"
+    [ "$OLD_EXIT" -eq 0 ]
 }
 
 open_settings_and_force_update() {
@@ -171,11 +189,12 @@ open_settings_and_force_update() {
     local dlg="" try
     for try in 1 2 3 4; do   # the title bar's Settings button; retried in case the first click beats the event loop
         xdotool mousemove $((X + WIDTH - 70)) $((Y + 16)) click 1
-        wait_for 3 'dlg=$(dialog_win); [ -n "$dlg" ]' && break
+        wait_for 3 'dlg=$(settings_win); [ -n "$dlg" ]' && break
     done
+    xdotool mousemove 0 0   # park the pointer so hovering can't move the list selection
     shot settings
     echo "settings dialog window: ${dlg:-none} ($(xdotool getwindowname "$dlg" 2>/dev/null))"
-    [ -n "$dlg" ] || return 1
+    [ -n "$dlg" ] && [ "$(xdotool getwindowname "$dlg" 2>/dev/null)" = "Settings" ] || return 1
     xdotool windowfocus "$dlg"; sleep 0.4
     local keys="" i
     for i in $(seq 1 "$DOWNS"); do keys="$keys Down"; done
@@ -200,12 +219,12 @@ begin_case() {  # $1 = name, $2 = release folder
     install_old "$APP"
     OLD_SHA=$(sha "$APP/ports_launcher"); OLD_7Z=$(sha "$APP/7zzs")
     protected_sums "$APP" > "$W/$CASE.protected"
+    case_fail=0
     launch "file://$2"
     wait_for 30 '[ -n "$(main_win)" ]' || { diagnostics; setup_fail "the old app showed no window within 30 s (see $OUT/$CASE/app.log)"; }
     sleep 3   # let it finish its first frames before clicking
-    [ -n "$(our_pid)" ] || { diagnostics; setup_fail "the old app is not running"; }
-    OLD_PID=$(our_pid)
-    echo "old app pid $(our_pid), hash ${OLD_SHA:0:12}, new package hash ${NEW_SHA:0:12}"
+    [ "$(our_pid)" = "$OLD_PID" ] || { diagnostics; setup_fail "the old app (pid $OLD_PID) is not running"; }
+    echo "old app pid $OLD_PID, hash ${OLD_SHA:0:12}, new package hash ${NEW_SHA:0:12}"
     [ "$OLD_SHA" != "$NEW_SHA" ] || setup_fail "old and new programs are identical"
 }
 
@@ -213,7 +232,7 @@ end_case() {
     local p; p=$(our_pid); [ -n "$p" ] && kill "$p" 2>/dev/null
     [ -n "$p" ] && wait_for 10 "! alive $p"; sleep 0.5
     cp "$APP/updater.log" "$APP/update-failed.txt" "$APP/BUILD_INFO" "$OUT/$CASE/" 2>/dev/null
-    [ "$fail" -eq 0 ] || diagnostics | tee "$OUT/$CASE/diagnostics.txt"
+    [ "$case_fail" -eq 0 ] || diagnostics | tee "$OUT/$CASE/diagnostics.txt"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -221,11 +240,13 @@ echo "== case 1: Force update from the UI with a good release"
 begin_case case1-good "$REL_GOOD"
 shot before
 if open_settings_and_force_update; then
-    check "the app closed for the update" 'wait_for 20 "! alive $OLD_PID"'
+    check "the app quit by itself with exit 0 for the update" 'old_app_quit_cleanly'
     cp "$APP/state.json" "$W/state.after-close"   # the old app has written its state for the last time
+    check "no panic in the old app's output" '! grep -q panicked "$OUT/$CASE/app.log"'
     check "updater.log ends with '=== done'" 'wait_for 60 "[ \"\$(last_line)\" = \"=== done\" ]"'
     check "the app was restarted (one new copy)" 'wait_for 30 "[ \"\$(count_pids)\" -eq 1 ] && [ \"\$(our_pid)\" != \"$OLD_PID\" ]"'
-    wait_for 30 '[ -n "$(main_win)" ]'; sleep 3; shot after
+    check "the restarted app shows its window" 'wait_for 30 "[ -n \"\$(main_win)\" ]"'
+    sleep 3; shot after
     check "BUILD_INFO matches the new package" 'cmp -s "$APP/BUILD_INFO" "$PK/BUILD_INFO"'
     check "the program file is the new one" '[ "$(sha "$APP/ports_launcher")" = "$NEW_SHA" ]'
     check "7zzs is the new one" '[ "$(sha "$APP/7zzs")" = "$NEW_7Z" ]'
@@ -247,12 +268,14 @@ echo "== case 2: tampered checksum, nothing may change"
 begin_case case2-badsum "$REL_BAD"
 shot before
 if open_settings_and_force_update; then
-    check "the app closed for the update" 'wait_for 20 "! alive $OLD_PID"'
+    check "the app quit by itself with exit 0 for the update" 'old_app_quit_cleanly'
     cp "$APP/state.json" "$W/state.after-close"
+    check "no panic in the old app's output" '! grep -q panicked "$OUT/$CASE/app.log"'
     check "update-failed.txt written" 'wait_for 60 "[ -s \"$APP/update-failed.txt\" ]"'
     check "update-failed.txt says the checksum did not match" 'grep -qi "checksum does not match" "$APP/update-failed.txt"'
     check "the app reopened (one new copy)" 'wait_for 40 "[ \"\$(count_pids)\" -eq 1 ] && [ \"\$(our_pid)\" != \"$OLD_PID\" ]"'
-    wait_for 30 '[ -n "$(main_win)" ]'; sleep 3; shot after
+    check "the reopened app shows its window" 'wait_for 30 "[ -n \"\$(main_win)\" ]"'
+    sleep 3; shot after
     check "updater.log records the failure and never says done" 'grep -q "^FAILED: checksum does not match" "$APP/updater.log" && ! grep -q "^=== done" "$APP/updater.log"'
     check "the program file is still the old one" '[ "$(sha "$APP/ports_launcher")" = "$OLD_SHA" ]'
     check "7zzs and the updater are still the old ones" '[ "$(sha "$APP/7zzs")" = "$OLD_7Z" ] && tail -n 1 "$APP/ports_launcher_updater.sh" | grep -q "^# old updater$"'

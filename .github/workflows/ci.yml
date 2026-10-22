@@ -106,7 +106,7 @@ jobs:
       # against a fake release on file:// (no GitHub), then a tampered-checksum case. Offline; a
       # failure here also blocks the release. Reuses the packages the smoke test installed.
       - name: In-app update test (Force update from the UI, offline)
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: bash tools/test-app-update.sh dist/steamdeck-ports-mgr app-update-out
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

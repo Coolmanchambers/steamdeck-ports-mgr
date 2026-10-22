@@ -79,11 +79,36 @@ if [ "$alive" = yes ]; then
             gf_alive=no; kill -0 "$APP" 2>/dev/null && gf_alive=yes
             check "Game files screen opens and the app keeps running" '[ "$gf_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$(xdotool search --name "^Game files$" 2>/dev/null)" ]'
         fi
+        # The steps above can leave a dialog open (Game files). With no window manager, an Escape sent
+        # while it is open can land in the dialog and close only that, so close dialogs first and wait
+        # for each to go, then focus the main window explicitly.
+        visible_windows() { xdotool search --onlyvisible --name . 2>/dev/null; }
+        other_windows() {
+            local w name
+            for w in $(visible_windows); do
+                name=$(xdotool getwindowname "$w" 2>/dev/null)
+                [ -n "$name" ] && [ "$name" != "Ports Launcher" ] && echo "$w"
+            done
+        }
+        for _try in 1 2 3; do
+            dlg=$(other_windows | tail -1)
+            [ -n "$dlg" ] || break
+            echo "closing dialog $dlg: $(xdotool getwindowname "$dlg" 2>/dev/null)" >>"$OUT/focus.log"
+            xdotool windowfocus "$dlg" 2>/dev/null; sleep 0.3; xdotool key Escape
+            for _wait in $(seq 1 15); do visible_windows | grep -qx "$dlg" || break; sleep 0.2; done
+        done
+        echo "windows still open besides the main one: [$(other_windows | tr '\n' ' ')]" >>"$OUT/focus.log"
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
+        echo "focus before the final Escape: $(xdotool getwindowfocus getwindowname 2>&1)" >>"$OUT/focus.log"
         # Escape is Close in the windowed view.
         xdotool key Escape
     fi
     for _ in $(seq 1 25); do kill -0 "$APP" 2>/dev/null || break; sleep 0.2; done
     if kill -0 "$APP" 2>/dev/null; then
+        # Keep what is needed to see why (app.log and windows.txt are already in the output folder).
+        xwininfo -root -tree >"$OUT/windows-at-close.txt" 2>&1
+        import -window root "$OUT/close-failed.png" 2>/dev/null
+        { echo "focus when Close did not quit: $(xdotool getwindowfocus getwindowname 2>&1)"; } >>"$OUT/focus.log"
         check "Close quits when there is no tray" 'false'
     else
         wait "$APP"; code=$?
