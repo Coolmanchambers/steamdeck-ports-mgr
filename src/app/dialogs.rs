@@ -631,7 +631,7 @@ enum SettingsEntry {
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 13] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 14] = [
     SettingsEntry::Themes,
     SettingsEntry::Language,
     SettingsEntry::Files,
