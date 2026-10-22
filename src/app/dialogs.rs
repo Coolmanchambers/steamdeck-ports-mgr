@@ -372,11 +372,15 @@ pub(crate) fn open_uninstall_confirm_dialog(app: &Rc<AppState>, router: &Router,
     let window = app.window();
     let tr = window.global::<Tr>();
     let name: slint::SharedString = port.name.clone().into();
+    // Fork (O1): saves with no known Linux location are not kept by the uninstall; say so before it runs.
+    let game_dir = crate::core::path_safety::safe_join(&app.paths.library_dir, &port.folder).ok();
+    let unknown = game_dir.is_some_and(|dir| crate::core::save_backup::save_folder_unknown_on_linux(&port, &dir));
+    let note = if unknown { crate::fork::save_notes::UNINSTALL_NOTE } else { "" };
     open_confirm_dialog(
         app,
         router,
         tr.invoke_dialog_title_uninstall_port(name.clone()),
-        tr.invoke_message_uninstall_confirm(name),
+        format!("{}{note}", tr.invoke_message_uninstall_confirm(name)).into(),
         tr.invoke_confirm_uninstall(),
         move |app, router| delete_port(app, router, &port),
     );
@@ -468,9 +472,12 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     dialog.set_game_folder_enabled(installed);
     dialog.set_save_folder_enabled(save.is_some());
     dialog.set_save_folder2_enabled(save2.is_some());
-    // Fork: say so when the catalog only knows another OS's save folder (upstream bug O1).
-    if game_dir.as_deref().is_some_and(|dir| crate::core::save_backup::save_folder_unknown_on_linux(port, dir)) {
-        dialog.set_save_note_text(crate::fork::save_notes::INFO_NOTE.into());
+    // Fork: for an installed port, say so when a save folder has no known Linux location (upstream bug O1).
+    if let Some(dir) = installed_dir.as_deref() {
+        let (save_unknown, save2_unknown) = crate::core::save_backup::unknown_on_linux_fields(port, dir);
+        if let Some(note) = crate::fork::save_notes::info_note(save_unknown, save2_unknown) {
+            dialog.set_save_note_text(note.into());
+        }
     }
     dialog.set_mods_enabled(mods.is_some());
     dialog.set_website_enabled(website.is_some());

@@ -56,14 +56,18 @@ fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, d
     if !is_within(&src, saves_backup_dir) || !src.exists() {
         return;
     }
-    if let Some(dst) = save_folder.and_then(|v| resolve_save_folder(v, dest_dir)) {
-        if !is_within(&dst, dest_dir) {
-            return;
-        }
-        let _ = fs::remove_dir_all(&dst);
-        if copy_non_empty(&src, &dst).is_err() {
-            return;
-        }
+    // Fork: with no folder to restore into (no save field, or no known Linux location) the kept copy stays;
+    // upstream deleted it here, losing the only copy of the saves.
+    let Some(dst) = save_folder.and_then(|v| resolve_save_folder(v, dest_dir)) else {
+        eprintln!("save restore: no save folder for {field} of {folder_name} here; kept {}", src.display());
+        return;
+    };
+    if !is_within(&dst, dest_dir) {
+        return;
+    }
+    let _ = fs::remove_dir_all(&dst);
+    if copy_non_empty(&src, &dst).is_err() {
+        return;
     }
     let _ = fs::remove_dir_all(&src);
 }
@@ -100,6 +104,8 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
         })
         .collect();
     if save_folder_unknown_on_linux(port, game_dir) {
+        // Logged too: the progress dialog shows only the last message of each 100 ms batch.
+        eprintln!("update backup: no Linux save folder is known for {}, so those saves are not backed up", port.name);
         on_progress("No Linux save folder is known for this port, so those saves are not backed up.");
     }
     if sources.is_empty() {
@@ -135,9 +141,15 @@ pub struct GlobalBackupSummary {
     pub no_linux_folder: Vec<String>,
 }
 
-// Fork: true when a save field of this port names a folder for another OS only (see `SaveLocation`).
+// Fork: for `save` and `save2`, whether it has no known Linux location (see `SaveLocation`).
+pub fn unknown_on_linux_fields(port: &Port, game_dir: &Path) -> (bool, bool) {
+    let unknown = |v: Option<&Value>| v.is_some_and(|v| save_location(v, game_dir) == SaveLocation::UnknownOnLinux);
+    (unknown(port.save.as_ref()), unknown(port.save2.as_ref()))
+}
+
 pub fn save_folder_unknown_on_linux(port: &Port, game_dir: &Path) -> bool {
-    save_fields(port).iter().any(|(save_folder, _)| save_folder.is_some_and(|v| save_location(v, game_dir) == SaveLocation::UnknownOnLinux))
+    let (save, save2) = unknown_on_linux_fields(port, game_dir);
+    save || save2
 }
 
 fn zip_staging_dir(staging: &Path, zip_path: &Path) -> Result<(), String> {
@@ -484,5 +496,57 @@ mod tests {
         assert!(save_folder_unknown_on_linux(&port, &game_dir));
         let known = port_with_save_folders("Known", Some("saves"), None);
         assert!(!save_folder_unknown_on_linux(&known, &game_dir));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_kept_copy_survives_a_reinstall_when_there_is_no_folder_to_restore_into() {
+        let dir = temp_dir("restore_unknown_keeps_copy");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let dest_dir = dir.join("Osu");
+        fs::create_dir_all(&dest_dir).unwrap();
+        for field in ["save_folder", "save_folder2"] {
+            let pending = pending_restore_dir(&saves_backup_dir, "Osu", field);
+            fs::create_dir_all(&pending).unwrap();
+            fs::write(pending.join("slot1.dat"), b"precious").unwrap();
+        }
+        let port = port_from_json(serde_json::json!({"name": "Osu", "folder": "Osu", "source": "https://example.com/x.zip", "save": {"windows": "%APPDATA%\\osu"}}));
+
+        restore_all_after_install(&port, &saves_backup_dir, &dest_dir);
+
+        assert_eq!(fs::read_to_string(pending_restore_dir(&saves_backup_dir, "Osu", "save_folder").join("slot1.dat")).unwrap(), "precious");
+        assert_eq!(fs::read_to_string(pending_restore_dir(&saves_backup_dir, "Osu", "save_folder2").join("slot1.dat")).unwrap(), "precious", "no save2 field either");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_windows_only_folder_inside_the_game_is_preserved_and_restored_on_linux() {
+        let dir = temp_dir("relative_windows_only");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let dest_dir = dir.join("zelda3");
+        fs::create_dir_all(dest_dir.join("saves")).unwrap();
+        fs::write(dest_dir.join("saves").join("sram.dat"), b"precious").unwrap();
+        let port = port_from_json(serde_json::json!({"name": "zelda3", "folder": "zelda3", "source": "https://example.com/x.zip", "save": {"windows": "saves", "android": "Android/data/com.dishii.zelda3/files"}}));
+
+        assert!(!save_folder_unknown_on_linux(&port, &dest_dir));
+        assert!(preserve_all_before_uninstall(&port, &saves_backup_dir, &dest_dir));
+        assert_eq!(fs::read_to_string(pending_restore_dir(&saves_backup_dir, "zelda3", "save_folder").join("sram.dat")).unwrap(), "precious");
+        fs::remove_dir_all(&dest_dir).unwrap();
+        fs::create_dir_all(&dest_dir).unwrap();
+        restore_all_after_install(&port, &saves_backup_dir, &dest_dir);
+        assert_eq!(fs::read_to_string(dest_dir.join("saves").join("sram.dat")).unwrap(), "precious");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_known_save_with_an_unknown_save2_is_still_named() {
+        let dir = temp_dir("save2_unknown");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        fs::create_dir_all(library_dir.join("Game")).unwrap();
+        let port = port_from_json(serde_json::json!({"name": "Game", "folder": "Game", "source": "https://example.com/x.zip", "save": "saves", "save2": {"windows": "%LOCALAPPDATA%\\Game"}}));
+        assert_eq!(unknown_on_linux_fields(&port, &library_dir.join("Game")), (false, true));
+        let summary = run_global_backup(&[port], &library_dir, &saves_backup_dir, "2026-10-21", &mut |_| {});
+        assert_eq!(summary.no_linux_folder, vec!["Game".to_string()]);
     }
 }

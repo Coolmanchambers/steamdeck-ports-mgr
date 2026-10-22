@@ -144,10 +144,23 @@ pub enum SaveLocation {
     /// No save field, or an empty one.
     NotListed,
     Known(PathBuf),
-    /// Linux only: the catalog gives a save folder for another OS only (a per-OS value with no `linux`
-    /// key), or a path whose `%VAR%` is not set here (`%APPDATA%`). Upstream used the Windows or
-    /// Android value anyway, which pointed at a folder that cannot exist, so backups silently did nothing.
+    /// Linux only: the catalog gives only another OS's own save path (a per-OS value with no `linux`
+    /// key whose Windows value is a drive, `%VAR%` or home path, or an Android path), or a path whose
+    /// `%VAR%` is not set here (`%APPDATA%`). Upstream used that value anyway, which pointed at a folder
+    /// that cannot exist, so backups silently did nothing.
     UnknownOnLinux,
+}
+
+/// A plain relative folder inside the game (`saves`, `save\card0`): no `%VAR%`, no `~`, no drive
+/// letter, no leading slash or backslash, no `..`. Such a Windows value names the same folder on Linux.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn is_in_game_relative(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('%')
+        && !s.starts_with(['~', '/', '\\'])
+        && s.as_bytes().get(1) != Some(&b':')
+        && !Path::new(s).is_absolute()
+        && !s.split(['/', '\\']).any(|part| part == "..")
 }
 
 #[cfg(target_os = "linux")]
@@ -155,11 +168,14 @@ fn save_value_for_this_os(save_folder: &Value) -> Result<Option<Value>, ()> {
     let Some(obj) = save_folder.as_object() else {
         return Ok(Some(save_folder.clone()));
     };
-    match obj.get("linux") {
-        Some(v) => Ok(Some(v.clone())),
-        None if obj.values().any(is_truthy) => Err(()),
-        None => Ok(None),
+    if let Some(v) = obj.get("linux") {
+        return Ok(Some(v.clone()));
     }
+    // Fork (O1): a Windows value that is a folder inside the game is OS-neutral; Android values never are.
+    if let Some(windows) = obj.get("windows").and_then(Value::as_str).filter(|w| is_in_game_relative(w)) {
+        return Ok(Some(Value::String(windows.replace('\\', "/"))));
+    }
+    if obj.values().any(is_truthy) { Err(()) } else { Ok(None) }
 }
 
 #[cfg(target_os = "windows")]
@@ -306,12 +322,26 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    fn save_location_linux_never_falls_back_to_windows_or_android() {
+    fn save_location_linux_never_uses_windows_os_paths_or_android() {
         let game = Path::new("/library/Game");
+        for windows in ["%APPDATA%\\x", "C:\\Saves\\x", "c:x", "~/x", "/abs/x", "\\\\server\\x", "..\\outside", "a/../../b"] {
+            assert_eq!(save_location(&json!({"windows": windows}), game), SaveLocation::UnknownOnLinux, "{windows}");
+        }
         assert_eq!(save_location(&json!({"windows": "%APPDATA%\\x", "android": "Android/data/x"}), game), SaveLocation::UnknownOnLinux);
         assert_eq!(save_location(&json!({"android": "/sdcard/x"}), game), SaveLocation::UnknownOnLinux);
-        assert_eq!(save_location(&json!({"windows": "saves", "android": "Android/data/x"}), game), SaveLocation::UnknownOnLinux);
-        assert_eq!(resolve_save_folder(&json!({"windows": "saves"}), game), None);
+        assert_eq!(save_location(&json!({"android": "Android/data/x"}), game), SaveLocation::UnknownOnLinux, "a relative Android path is still Android's");
+        assert_eq!(save_location(&json!({"windows": "", "android": "Android/data/x"}), game), SaveLocation::UnknownOnLinux);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn save_location_linux_uses_a_windows_folder_inside_the_game() {
+        // Ikemen-GO, luanti, Open-Nectar, zelda3-PL and WarioWareTwistedRecomp in upstream's catalog.
+        let game = Path::new("/library/Game");
+        assert_eq!(save_location(&json!({"windows": "saves", "android": "Android/data/x"}), game), SaveLocation::Known(game.join("saves")));
+        assert_eq!(save_location(&json!({"windows": "save/card0", "android": ""}), game), SaveLocation::Known(game.join("save/card0")));
+        assert_eq!(save_location(&json!({"windows": "save\\card0"}), game), SaveLocation::Known(game.join("save/card0")));
+        assert_eq!(resolve_save_folder(&json!({"windows": "worlds"}), game), Some(game.join("worlds")));
     }
 
     #[test]
