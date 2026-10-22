@@ -60,6 +60,17 @@ fn scan(proc_root: &std::path::Path, folders: &[PathBuf], own_pid: u32) -> Vec<F
     found
 }
 
+/// Tests: a freshly spawned child shows the test thread's name until its exec has happened; wait for it.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn wait_until_named(pid: u32, name: &str) {
+    for _ in 0..200 {
+        if std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == name) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -71,6 +82,7 @@ mod tests {
             let game = dir.path().join("Library/Game");
             std::fs::create_dir_all(game.join("bin")).unwrap();
             let mut child = std::process::Command::new("sleep").arg("30").current_dir(game.join("bin")).spawn().unwrap();
+            wait_until_named(child.id(), "sleep");
             let found = processes_under(std::slice::from_ref(&game));
             let elsewhere = processes_under(&[dir.path().join("Library/Other")]);
             let _ = child.kill();

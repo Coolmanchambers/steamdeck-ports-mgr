@@ -722,6 +722,7 @@ fn a_program_running_from_the_game_folder_refuses_the_restore() {
         let (game, dir, save) = played_on(&fx);
         let later = snapshot(&save);
         let mut child = std::process::Command::new("sleep").arg("30").current_dir(&dir).spawn().unwrap();
+        running::wait_until_named(child.id(), "sleep");
         let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
         let result = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {});
         let _ = child.kill();
