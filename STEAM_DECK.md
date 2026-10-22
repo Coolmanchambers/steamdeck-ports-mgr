@@ -253,8 +253,9 @@ SteamGridDB does most of the work and is the one to set up.
 3. In the app: Settings > Artwork sources... > the **SteamGridDB** row. A text box opens. Paste the key (Ctrl+V in
    Desktop Mode; in Game Mode press Steam + X for the on-screen keyboard), move down to **Save**, press A or Enter.
 4. Choose **Test the SteamGridDB key**. It makes one call and says OK, Invalid or Offline.
-5. Choose **Fetch artwork for installed ports now**. It looks each installed port up (3 to 8 requests per port, one at a
-   time, with a Stop row; Stop ends it within a second or two and keeps what was fetched), saves what it finds in the
+5. Choose **Fetch artwork for installed ports now**. It looks each installed port up (a few requests per port, one at a
+   time: a title search, a list for each kind of picture and a download for each picture, up to about 20 in the worst
+   case and none for pictures it already has; there is a Stop row; Stop ends it within a second or two and keeps what was fetched), saves what it finds in the
    app's `cache/` folder and tells you what it found per slot. If the Deck is offline it says so; run Fetch again when it
    is back online, nothing that was fetched is lost.
 6. Use **Add to Steam** as before (or apply a queued change). It places the art Fetch saved, together with the catalog's portrait

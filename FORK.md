@@ -93,10 +93,8 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it. A failed check prints the copy count, the processes under the test folder and the log tail (since 2026-10-21) |
-| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), and quits on Close. CI runs it and blocks the release on failure |
-| 2026-10-21 | `tools/test-app-update.sh` | Offline in-app update test: the packaged app, started from an old copy (marker appended to the program, old `BUILD_INFO`), runs Settings > Force update from the UI against a fake release on `file://`; checks the swap, `.previous/`, the restart on the new file and that saves, catalogs and state survive, then a tampered-checksum case (nothing changes, `update-failed.txt`, app reopens). CI runs it after the smoke test and blocks the release on failure |
-| 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
 | 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), opens Settings > Artwork sources and its Back row, and quits on Close. CI runs it and blocks the release on failure |
+| 2026-10-21 | `tools/test-app-update.sh` | Offline in-app update test: the packaged app, started from an old copy (marker appended to the program, old `BUILD_INFO`), runs Settings > Force update from the UI against a fake release on `file://`; checks the swap, `.previous/`, the restart on the new file and that saves, catalogs and state survive, then a tampered-checksum case (nothing changes, `update-failed.txt`, app reopens). CI runs it after the smoke test and blocks the release on failure |
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
@@ -546,7 +544,7 @@ pictures are replaced when a real one is cached (`refresh_own`). A queued change
 example answers; nothing here has run against a live key (no key was available to the builders). Not verified: ScreenScraper's
 JSON field names and system ids, TheGamesDB's `API/Limit` endpoint, that `types=static` leaves no animated art, that Steam
 shows the art, and how the Steam on-screen keyboard behaves with the key box in Game Mode. Animated art is off. Videos are
-never fetched. Fetching uses the calling thread's time: about 3 to 8 requests per port.
+never fetched. Fetching uses the calling thread's time: a few requests per port (one title search, a list per picture type, a download per picture), at most about 20 with SteamGridDB alone when nothing is cached.
 
 ## What still comes from upstream at runtime
 
