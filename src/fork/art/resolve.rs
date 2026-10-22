@@ -865,6 +865,20 @@ pub fn slots_needing_art(grid_dir: &Path, app_id: u32) -> Vec<Slot> {
         .collect()
 }
 
+/// What to resolve for a shortcut: the slots that want art (see [`slots_needing_art`]) plus the portrait
+/// and the icon. Those two come from the catalog without any lookup, and the Add to Steam step needs the
+/// icon's path back even when our own icon is already in place; the writer still leaves anything the user
+/// chose alone.
+pub fn slots_to_resolve(grid_dir: &Path, app_id: u32) -> Vec<Slot> {
+    let mut slots = slots_needing_art(grid_dir, app_id);
+    for always in [Slot::Portrait, Slot::Icon] {
+        if !slots.contains(&always) {
+            slots.push(always);
+        }
+    }
+    slots
+}
+
 /// The one-call form for a screen: the catalog portrait and icon (from the files the app cached),
 /// improved by whatever sources are set up. With no source set up, and nothing cached, the result is
 /// exactly what [`catalog_art_from_files`] gives.
@@ -893,7 +907,7 @@ impl Session {
         req.sgdb_id = id_field(local.as_ref(), "sgdb_id");
         req.tgdb_id = id_field(local.as_ref(), "tgdb_id");
         if let Some((grid_dir, app_id)) = grid {
-            req.need = slots_needing_art(grid_dir, app_id);
+            req.need = slots_to_resolve(grid_dir, app_id);
         }
         if self.configured(SourceId::ScreenScraper) {
             let scan = self.scan.borrow_mut().get_or_insert_with(|| load_scan(config_dir).map(Rc::new)).clone();

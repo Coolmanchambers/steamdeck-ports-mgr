@@ -68,6 +68,9 @@ pub struct PortRow {
     pub key: String,
     /// The catalog folder, which names the port's cached artwork.
     pub folder: String,
+    /// The catalog's setup text, which says which game files the port needs (the art sources use it to
+    /// find the user's ROM of the original game).
+    pub instructions: String,
     pub wanted: Result<WantedShortcut, String>,
     pub plan: Option<PlanItem>,
     pub selected: bool,
@@ -170,6 +173,7 @@ impl SteamScreen {
                 name: port.display_name().to_string(),
                 key: port.key().to_string(),
                 folder: port.folder.clone(),
+                instructions: port.instructions.clone(),
                 wanted,
                 plan,
                 selected: false,
@@ -363,16 +367,25 @@ pub struct ApplyOutcome {
     pub wrote: bool,
 }
 
-/// Places the catalog artwork the app has cached for each wanted shortcut and returns what happened,
-/// one line per port that needs mentioning. Sets `WantedShortcut::icon` when an icon of ours is in
-/// place. Never overwrites art the user chose (the writer decides), never touches `shortcuts.vdf`.
-/// A port with nothing cached yet gets a note, not an error: the images are fetched in the background
-/// when the screen opens. Only a shortcut with no icon of its own gets ours; an existing one is kept.
+/// Places the artwork for each wanted shortcut and returns what happened, one line per port that needs
+/// mentioning. Sets `WantedShortcut::icon` when an icon of ours is in place. Never overwrites art the user
+/// chose (the writer decides), never touches `shortcuts.vdf`.
+///
+/// The pictures come from the art resolver (`art::resolve`) in `Mode::CacheOnly`: the catalog's cached
+/// portrait and icon, plus, when an art source is set up under Settings > Artwork sources, whatever its
+/// Fetch step saved (hero, logo, wide, better portrait and icon). This runs on the UI thread, so it never
+/// touches the network; a port nothing was fetched for just gets the catalog art, exactly as before. With
+/// no source set up the resolver returns the catalog art unchanged. One `Session` serves the whole batch.
+/// A port with nothing cached at all gets a note, not an error: the catalog images are fetched in the
+/// background when the screen opens. Only a shortcut with no icon of its own gets ours; an existing one is kept.
 fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], taken_ids: &[u32], wanted: &mut [WantedShortcut], no_art: &[String]) -> Vec<String> {
     let Some(cache_dir) = &screen.cache_dir else { return Vec::new() };
     if !grid_dir.is_absolute() {
         return vec!["  skipped: the Steam folder path is not absolute".to_string()];
     }
+    // `cache/` sits in the app folder, next to `secrets.json` and `ports.local.json`.
+    let config_dir = cache_dir.parent().unwrap_or(cache_dir);
+    let session = art::resolve::Session::open(art::resolve::ArtDirs { config_dir, cache_dir }, art::resolve::Mode::CacheOnly);
     let mut notes = Vec::new();
     for item in items {
         if !item.changes_the_file() || no_art.contains(&item.wanted.port_key) {
@@ -386,13 +399,19 @@ fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], 
         let Some(row) = screen.rows.iter().find(|r| r.key == item.wanted.port_key) else { continue };
         let portrait = art::catalog::cached_portrait_path(cache_dir, &row.folder);
         let icon = crate::core::image_cache::cached_image_path(cache_dir, &format!("{}_icon", row.folder)).ok().filter(|p| p.is_file());
-        if portrait.is_none() && icon.is_none() {
+        let reference = art::resolve::PortRef { key: &row.key, folder: &row.folder, name: &row.name, instructions: Some(&row.instructions) };
+        // Passing the grid folder and app ID limits the lookup to the slots that want art. Art the user
+        // chose for a slot is never touched, and a hero they chose means no hero is resolved and so no
+        // wide capsule is cropped from one either (a wide image from a source of its own is still placed).
+        let found = session.resolve_port(config_dir, reference, portrait.as_deref(), icon.as_deref(), Some((grid_dir, app_id)));
+        if found.set.is_empty() && found.problems.is_empty() && portrait.is_none() && icon.is_none() {
             notes.push(format!("  {}: no cached artwork yet", row.name));
             continue;
         }
-        let found = art::catalog::catalog_art_from_files(portrait.as_deref(), icon.as_deref());
         let mut problems: Vec<String> = found.problems.iter().map(|(slot, e)| format!("{}: {e}", slot.name())).collect();
-        match art::grid::write_art(grid_dir, app_id, &found.set, &art::grid::WriteOptions::default()) {
+        // `refresh_own`: a picture this app composed earlier may be replaced by a better one; anything
+        // the user put there is never replaced, whatever the option says.
+        match art::grid::write_art(grid_dir, app_id, &found.set, &art::grid::WriteOptions { refresh_own: true }) {
             Ok(report) => {
                 if let Some(slot) = wanted.iter_mut().find(|w| w.port_key == item.wanted.port_key) {
                     if let Some(icon_path) = report.icon_path.as_ref().and_then(|p| p.to_str()).filter(|p| !p.contains('"')) {
@@ -997,6 +1016,144 @@ mod tests {
         fs::write(grid.join(format!("{id}p.png")), b"the user's own cover").unwrap();
         apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
         assert_eq!(fs::read(grid.join(format!("{id}p.png"))).unwrap(), b"the user's own cover");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    // -- Online art sources ----------------------------------------------------------------------
+
+    fn png_bytes(w: u32, h: u32, c: [u8; 4]) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::RgbaImage::from_pixel(w, h, image::Rgba(c)).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    }
+
+    /// What an earlier Fetch leaves behind for Dusklight: its SteamGridDB game id and a hero, a wide
+    /// capsule and a logo in the image cache. A key is saved only when `with_key`.
+    fn fetched_art(home: &Path, cache: &Path, portrait_key: &str, with_key: bool) {
+        use super::super::art::cache::{ArtCache, IdEntry, IdOrigin, IdTable};
+        use super::super::art::fit::Slot;
+        use super::super::art::source::SourceId;
+        use super::super::art::title::Confidence;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let art_cache = ArtCache::new(cache);
+        let mut logo = image::RgbaImage::from_pixel(800, 300, image::Rgba([255, 255, 255, 255]));
+        for x in 0..800 {
+            logo.put_pixel(x, 0, image::Rgba([0, 0, 0, 0]));
+        }
+        let mut logo_png = Vec::new();
+        logo.write_to(&mut std::io::Cursor::new(&mut logo_png), image::ImageFormat::Png).unwrap();
+        art_cache.image_put(SourceId::SteamGridDb, 900001, Slot::Hero, &png_bytes(1920, 620, [9, 90, 9, 255]), 1, now).unwrap();
+        art_cache.image_put(SourceId::SteamGridDb, 900001, Slot::Wide, &png_bytes(920, 430, [90, 9, 9, 255]), 2, now).unwrap();
+        art_cache.image_put(SourceId::SteamGridDb, 900001, Slot::Logo, &logo_png, 3, now).unwrap();
+        let mut table = IdTable::load(&art_cache.ids_path());
+        table.set_found(portrait_key, SourceId::SteamGridDb, IdEntry { id: 900001, name: "Dusklight".into(), origin: IdOrigin::Search, confidence: Confidence::High }, now);
+        table.save().unwrap();
+        if with_key {
+            let mut secrets = super::super::secrets::Secrets::load(&home.join("secrets.json"));
+            secrets.set(super::super::secrets::Field::SteamGridDbKey, Some("sgdb-test-key-abcdef123456")).unwrap();
+        }
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with(".dpm-art-")).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn with_a_key_set_up_add_to_steam_places_the_fetched_hero_logo_and_wide_beside_the_catalog_art() {
+        let (home, library, path) = fake_home("art_fetched");
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("dusklight.png"), png_bytes(600, 900, [200, 30, 30, 255])).unwrap();
+        fs::write(cache.join("dusklight_icon.png"), png_bytes(128, 128, [30, 30, 200, 255])).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        fetched_art(&home, &cache, &screen.rows[0].key.clone(), true);
+        screen.cache_dir = Some(cache);
+        apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        let saved = super::super::shortcuts::list(&ShortcutsFile::load(&path).unwrap().doc);
+        let dusk = saved.iter().find(|s| s.app_name == "Dusklight").unwrap();
+        let id = dusk.app_id.unwrap();
+        let grid = path.parent().unwrap().join("grid");
+        assert_eq!(files_in(&grid), vec![format!("{id}.json"), format!("{id}.png"), format!("{id}_hero.png"), format!("{id}_icon.png"), format!("{id}_logo.png"), format!("{id}p.png")]);
+        assert_eq!(image::image_dimensions(grid.join(format!("{id}_hero.png"))).unwrap(), (1920, 620));
+        assert_eq!(image::image_dimensions(grid.join(format!("{id}.png"))).unwrap(), (920, 430));
+        assert_eq!(dusk.icon, grid.join(format!("{id}_icon.png")).to_str().unwrap(), "the icon still goes into the shortcut");
+        let manifest = super::super::art::grid::Manifest::load(&grid);
+        assert_eq!(manifest.entries()[&format!("{id}_hero.png")].source, "steamgriddb");
+        assert_eq!(manifest.entries()[&format!("{id}p.png")].source, "catalog");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn with_no_key_the_same_cache_gives_exactly_the_old_catalog_art_and_nothing_else() {
+        let (home, library, path) = fake_home("art_nokey");
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("dusklight.png"), png_bytes(600, 900, [200, 30, 30, 255])).unwrap();
+        fs::write(cache.join("dusklight_icon.png"), png_bytes(128, 128, [30, 30, 200, 255])).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        fetched_art(&home, &cache, &screen.rows[0].key.clone(), false);
+        screen.cache_dir = Some(cache.clone());
+        apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        let saved = super::super::shortcuts::list(&ShortcutsFile::load(&path).unwrap().doc);
+        let id = saved.iter().find(|s| s.app_name == "Dusklight").unwrap().app_id.unwrap();
+        let grid = path.parent().unwrap().join("grid");
+        assert_eq!(files_in(&grid), vec![format!("{id}_icon.png"), format!("{id}p.png")], "no hero, logo or wide without a key");
+        let old = art::catalog::catalog_art_from_files(Some(&cache.join("dusklight.png")), Some(&cache.join("dusklight_icon.png")));
+        assert_eq!(fs::read(grid.join(format!("{id}p.png"))).unwrap(), old.portrait().unwrap().to_png().unwrap(), "byte for byte what the catalog-only code placed");
+        assert_eq!(fs::read(grid.join(format!("{id}_icon.png"))).unwrap(), old.icon().unwrap().to_png().unwrap());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_hero_the_user_chose_is_kept_and_no_wide_capsule_is_cropped_from_the_fetched_one() {
+        let (home, library, path) = fake_home("art_user_hero");
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("dusklight.png"), png_bytes(600, 900, [200, 30, 30, 255])).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        fetched_art(&home, &cache, &screen.rows[0].key.clone(), true);
+        // Take the fetched wide capsule away: the only way to get a wide would be to crop the hero.
+        let _ = fs::remove_file(cache.join("art/images/steamgriddb/900001-wide.img"));
+        let _ = fs::remove_file(cache.join("art/images/steamgriddb/900001-wide.json"));
+        screen.cache_dir = Some(cache);
+        let wanted = screen.rows[0].wanted.as_ref().unwrap();
+        let id = super::super::app_id::shortcut_app_id(&format!("\"{}\"", wanted.exe), "Dusklight");
+        let grid = path.parent().unwrap().join("grid");
+        fs::create_dir_all(&grid).unwrap();
+        fs::write(grid.join(format!("{id}_hero.jpg")), b"the user's own hero").unwrap();
+        apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        assert_eq!(fs::read(grid.join(format!("{id}_hero.jpg"))).unwrap(), b"the user's own hero");
+        assert!(!grid.join(format!("{id}_hero.png")).exists());
+        assert!(!grid.join(format!("{id}.png")).exists(), "no wide capsule cropped from a hero that is not the user's");
+        assert!(grid.join(format!("{id}_logo.png")).is_file() && grid.join(format!("{id}p.png")).is_file());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_composed_picture_of_ours_is_replaced_when_a_real_one_has_been_fetched() {
+        let (home, library, path) = fake_home("art_refresh");
+        let cache = home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("dusklight.png"), png_bytes(600, 900, [200, 30, 30, 255])).unwrap();
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        let key = screen.rows[0].key.clone();
+        let wanted = screen.rows[0].wanted.as_ref().unwrap();
+        let id = super::super::app_id::shortcut_app_id(&format!("\"{}\"", wanted.exe), "Dusklight");
+        let grid = path.parent().unwrap().join("grid");
+        // An earlier run composed a wide capsule (a crop of wider art) and recorded it as ours.
+        let composed = art::fit::fit(art::fit::Slot::Wide, &image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(1920, 1080, image::Rgba([1, 2, 3, 255])))).unwrap().with_source("steamgriddb");
+        let mut set = art::grid::ArtSet::default();
+        set.set(composed);
+        art::grid::write_art(&grid, id, &set, &art::grid::WriteOptions::default()).unwrap();
+        let before = fs::read(grid.join(format!("{id}.png"))).unwrap();
+        fetched_art(&home, &cache, &key, true);
+        screen.cache_dir = Some(cache);
+        apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
+        let after = fs::read(grid.join(format!("{id}.png"))).unwrap();
+        assert_ne!(before, after, "the composed wide capsule was replaced by the real one");
+        assert_eq!(image::load_from_memory(&after).unwrap().to_rgba8().get_pixel(3, 3)[0], 90);
         let _ = fs::remove_dir_all(home);
     }
 

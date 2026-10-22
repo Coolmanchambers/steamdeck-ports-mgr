@@ -257,7 +257,9 @@ SteamGridDB does most of the work and is the one to set up.
    time, with a Stop row; Stop ends it within a second or two and keeps what was fetched), saves what it finds in the
    app's `cache/` folder and tells you what it found per slot. If the Deck is offline it says so; run Fetch again when it
    is back online, nothing that was fetched is lost.
-6. Use **Add to Steam** as before. The artwork is placed with the shortcuts it adds. Pictures you chose yourself in Steam
+6. Use **Add to Steam** as before (or apply a queued change). It places the art Fetch saved, together with the catalog's portrait
+   and icon, for the shortcuts it adds or updates; it never goes online itself, so run Fetch first. A change queued with "no
+   art" places none. Pictures you chose yourself in Steam
    are never replaced; art this app composed (a crop of a wider picture) may be replaced later by a better one.
 7. Restart Steam to see it (Steam reads the grid folder when the library draws).
 

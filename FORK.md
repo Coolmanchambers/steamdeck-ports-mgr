@@ -533,11 +533,14 @@ source, no keys, no addresses), `images/<source>/<game id>-<slot>.img` plus a `.
 oldest trimmed past 300 MB) and `.none` markers (a slot a source had nothing for, believed for 3 days). Source images are
 never committed, bundled or released.
 
-**Wiring.** The resolver is reached through `art::resolve::art_for_port` (one call, same `set` and `problems` shape as
-`catalog_art_from_files`) or `Session::resolve_port` for a batch. With no source set up it returns exactly the catalog art.
-The screen's "Fetch artwork for installed ports now" runs a batch on a worker thread and fills the cache and the id
-table; `Mode::CacheOnly` then places that art without any network call. The Add to Steam apply step still calls
-`catalog_art_from_files` until its call site is switched (see `HANDOFF.md`).
+**Wiring.** Add to Steam (and the Game Mode queue's apply, which shares it: `screens::apply_selected_with`) places art through
+`art::resolve` in `place_catalog_art`, in `Mode::CacheOnly`: one `Session` for the whole batch, no network, so it is safe on the
+UI thread. It places the catalog's cached portrait and icon exactly as before, and, when a source is set up, what the screen's
+"Fetch artwork for installed ports now" saved (hero, logo, wide, a native portrait or icon in place of a composed one). With no
+source set up the result is byte for byte the old catalog-only art (a test compares the files). Slots holding the user's own art
+are not resolved at all, so a hero the user chose also means no wide capsule is cropped from a fetched hero; our own composed
+pictures are replaced when a real one is cached (`refresh_own`). A queued change that asks for no art (`none`) places none.
+
 
 **Limits and not verified.** The three clients are written to the documented API shapes and tested only against saved
 example answers; nothing here has run against a live key (no key was available to the builders). Not verified: ScreenScraper's
