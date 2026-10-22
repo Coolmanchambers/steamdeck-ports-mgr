@@ -152,9 +152,12 @@ mod tests {
         // Fork (O2): upstream walked down to the 2023 release here and flagged an update every day.
         let mut port = severed_chains();
         port.preferred_asset = None;
-        let mut releases = severed_chains_releases("2026-10-20T08:00:00Z");
+        let mut releases = severed_chains_releases("2026-10-17T01:16:08Z");
         assert!(!check(&port, &releases));
         releases[0]["tag_name"] = "release-3.1.0".into();
         assert!(check(&port, &releases), "a new tag that needs the file picker is still offered");
+        // The release's date is its newest candidate file (both Linux tarballs), not published_at.
+        let replaced = severed_chains_releases("2026-10-20T08:00:00Z");
+        assert!(check(&port, &replaced), "a candidate file re-uploaded after the install is an update");
     }
 }

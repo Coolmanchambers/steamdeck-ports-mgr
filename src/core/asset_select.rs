@@ -126,9 +126,21 @@ fn is_prerelease(release: &Value) -> bool {
     release.get("prerelease").and_then(Value::as_bool).unwrap_or(false)
 }
 
-/// Fork (upstream bug O3): GitHub prereleases (betas) are left out unless none of the listed releases is
-/// stable, so a port follows its main release. GitLab releases carry no such flag and pass unchanged.
+pub fn is_draft(release: &Value) -> bool {
+    release.get("draft").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// Fork (O3): true when every listed release is a prerelease, so `releases/latest` is worth asking for an
+/// older stable one (see `github_api::candidate_releases`).
+pub fn needs_latest_stable(releases: &[Value]) -> bool {
+    !releases.is_empty() && releases.iter().all(is_prerelease)
+}
+
+/// Fork (upstream bug O3): drafts are dropped, and GitHub prereleases (betas) are left out unless none of
+/// the listed releases is stable, so a port follows its main release. GitLab releases carry no such flags
+/// and pass unchanged. "Select version" in Info still lists every release, prereleases included.
 pub fn prefer_stable(releases: Vec<Value>) -> Vec<Value> {
+    let releases: Vec<Value> = releases.into_iter().filter(|r| !is_draft(r)).collect();
     if releases.iter().all(is_prerelease) {
         return releases;
     }
@@ -464,6 +476,33 @@ mod tests {
         let releases = vec![tagged("nightly-2", &[&file], true), tagged("nightly-1", &[&file], true)];
         let (release, _) = latest_installable_release(releases, None, pick_from_release).unwrap();
         assert_eq!(release["tag_name"], "nightly-2");
+    }
+
+    #[test]
+    fn a_prerelease_is_not_used_when_stable_releases_have_no_file_for_this_system() {
+        let os = get_platform_key();
+        let releases = vec![
+            tagged("v3-beta", &[&format!("app-{os}.{}", preferred_ext(os))], true),
+            tagged("v2", &["app-android.apk"], false),
+            tagged("v1", &["app-mac.dmg"], false),
+        ];
+        // The stable releases decide even when they have nothing for this system: no install, never the beta.
+        assert!(latest_installable_release(releases.clone(), None, pick_from_release).is_err());
+        assert!(matches!(choose_release(releases, None, pick_from_release), Err(_)));
+    }
+
+    #[test]
+    fn drafts_are_dropped_and_all_prerelease_lists_ask_for_the_latest_stable() {
+        let os = get_platform_key();
+        let file = format!("app-{os}.{}", preferred_ext(os));
+        let mut draft = tagged("v9", &[&file], false);
+        draft["draft"] = true.into();
+        let releases = vec![draft.clone(), tagged("v2-beta", &[&file], true), tagged("v1", &[&file], false)];
+        assert_eq!(prefer_stable(releases).iter().map(|r| r["tag_name"].as_str().unwrap()).collect::<Vec<_>>(), ["v1"]);
+        assert!(needs_latest_stable(&[tagged("b2", &[&file], true), tagged("b1", &[&file], true)]));
+        assert!(!needs_latest_stable(&[tagged("b2", &[&file], true), tagged("v1", &[&file], false)]));
+        assert!(!needs_latest_stable(&[]));
+        assert!(prefer_stable(vec![draft]).is_empty());
     }
 
     #[test]

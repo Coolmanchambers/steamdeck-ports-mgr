@@ -108,6 +108,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 let was_play = app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key);
                 if let Some(port) = app.find_port(&key) {
                     let labels = json_field_labels(&assets, "name");
+                    let installed = port.clone();
                     open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_file(), labels, move |app, router, idx| {
                         if let Some(chosen) = assets.get(idx) {
                             if was_play {
@@ -116,6 +117,17 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                             start_install(app, router, port.clone(), Some(chosen.clone()), release_override.clone());
                         }
                     });
+                    // Fork: Play found an update whose file must be picked (O2); closing the picker without a
+                    // choice launches the installed game, like a failed update does.
+                    if was_play {
+                        if let DialogSlot::Picker(d) = &*app.dialog_nav.dialogs.borrow() {
+                            let (app, router) = (app.clone(), router.clone());
+                            d.on_close_requested(move || {
+                                close_current_dialog(&app, &router);
+                                launch_flow(&app, &router, &installed);
+                            });
+                        }
+                    }
                 }
             }
             AppEvent::VersionsFetched { key, releases } => {
