@@ -22,7 +22,7 @@ SRC="$(dirname "$(readlink -f "$0")")/installer.sh"
 #!/usr/bin/env xdg-open
 [Desktop Entry]
 Type=Application
-Version=1.5
+Version=1.0
 Name=Install Deck Ports Manager
 Comment=Installs or updates Deck Ports Manager in ~/Applications and opens it
 Icon=system-software-install
