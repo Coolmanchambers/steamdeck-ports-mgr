@@ -468,6 +468,10 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     dialog.set_game_folder_enabled(installed);
     dialog.set_save_folder_enabled(save.is_some());
     dialog.set_save_folder2_enabled(save2.is_some());
+    // Fork: say so when the catalog only knows another OS's save folder (upstream bug O1).
+    if game_dir.as_deref().is_some_and(|dir| crate::core::save_backup::save_folder_unknown_on_linux(port, dir)) {
+        dialog.set_save_note_text(crate::fork::save_notes::INFO_NOTE.into());
+    }
     dialog.set_mods_enabled(mods.is_some());
     dialog.set_website_enabled(website.is_some());
 
@@ -875,6 +879,6 @@ fn start_save_backup(app: &Rc<AppState>, router: &Router) {
     std::thread::spawn(move || {
         let mut on_progress = |name: &str| lock(&events).push(AppEvent::SaveBackupProgress { name: name.to_string() });
         let summary = crate::core::save_backup::run_global_backup(&catalog, &library_dir, &saves_backup_dir, &date, &mut on_progress);
-        lock(&events).push(AppEvent::SaveBackupDone { copied: summary.copied, skipped: summary.skipped, failed: summary.failed });
+        lock(&events).push(AppEvent::SaveBackupDone { copied: summary.copied, skipped: summary.skipped, failed: summary.failed, no_linux_folder: summary.no_linux_folder });
     });
 }

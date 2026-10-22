@@ -34,7 +34,7 @@ pub(crate) enum AppEvent {
     RemoteThemesFetched,
     ThemesCheckDone { etag: String },
     SaveBackupProgress { name: String },
-    SaveBackupDone { copied: usize, skipped: usize, failed: usize },
+    SaveBackupDone { copied: usize, skipped: usize, failed: usize, no_linux_folder: Vec<String> },
     // Fork: the Deck-ready list finished a background check.
     DeckReadyFetched(Box<crate::fork::deck_ready::sync::Outcome>),
 }
@@ -184,11 +184,13 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 crate::ui::theme::load(&app.paths.themes_path, &mut app.theme.theme_config.borrow_mut(), &active);
                 apply_theme(&app.window(), &app.theme.theme_config.borrow(), app.window_geometry.border_width.get());
             }
-            AppEvent::SaveBackupDone { copied, skipped, failed } => {
+            AppEvent::SaveBackupDone { copied, skipped, failed, no_linux_folder } => {
                 close_current_dialog(app, router);
                 let window = app.window();
                 let tr = window.global::<Tr>();
                 let summary = tr.invoke_message_backup_summary(copied as i32, skipped as i32, failed as i32);
+                // Fork: name the installed ports whose catalog entry gives no Linux save folder.
+                let summary = format!("{summary}{}", crate::fork::save_notes::no_linux_folder_note(&no_linux_folder));
                 open_message_dialog(app, router, &tr.invoke_dialog_title_saves_backup(), &summary);
             }
             AppEvent::BringToForeground => chrome::restore_window(app.window().window()),

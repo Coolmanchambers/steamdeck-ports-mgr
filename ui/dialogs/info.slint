@@ -19,6 +19,8 @@ export component InfoDialog inherits Window {
     in property <string> update-status-text: "";
     in property <string> playtime-status-text: "";
     in property <string> last-played-status-text: "";
+    // Fork: set when the catalog gives no Linux save folder for this port.
+    in property <string> save-note-text: "";
     in property <string> instructions-text: "";
     in property <string> instructions-link: "";
     in property <bool> change-version-enabled: false;
@@ -170,9 +172,22 @@ export component InfoDialog inherits Window {
                 height: root.reset-playtime-enabled ? status-line-height : 0px;
             }
 
+            save-note := Text {
+                text: root.save-note-text;
+                visible: root.save-note-text != "";
+                color: Theme.list-text;
+                font-size: root.item-font-px;
+                vertical-alignment: center;
+                overflow: elide;
+                x: root.gutter;
+                y: playtime-status.y + playtime-status.height;
+                width: content-width;
+                height: root.save-note-text != "" ? status-line-height : 0px;
+            }
+
             action-row := ButtonRow {
                 x: root.gutter;
-                y: playtime-status.y + playtime-status.height + row-spacing;
+                y: save-note.y + save-note.height + row-spacing;
                 content-width: content-width;
                 button-padding: button-padding;
                 row-spacing: row-spacing;

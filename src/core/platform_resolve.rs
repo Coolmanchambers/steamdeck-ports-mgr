@@ -93,7 +93,15 @@ fn split_tilde<'a>(path: &'a str, home: Option<&str>) -> Option<(String, &'a str
     (rest.is_empty() || rest.starts_with(['/', '\\'])).then(|| (home.to_string(), rest))
 }
 
+// Fork: only the tests still call the unchecked form; `save_location` needs to know about unset variables.
+#[cfg(test)]
 pub fn expand_env_path(path: &str) -> PathBuf {
+    expand_env_path_checked(path).0
+}
+
+// Fork: the bool is true when a `%VAR%` was left as is because the variable is not set.
+fn expand_env_path_checked(path: &str) -> (PathBuf, bool) {
+    let mut unresolved = false;
     let mut out = String::with_capacity(path.len());
     let mut rest = path;
     if let Some((home, remainder)) = split_tilde(path, std::env::var(HOME_VAR).ok().as_deref()) {
@@ -118,6 +126,7 @@ pub fn expand_env_path(path: &str) -> PathBuf {
         match std::env::var(var_name) {
             Ok(value) => out.push_str(&value),
             Err(_) => {
+                unresolved = true;
                 out.push('%');
                 out.push_str(var_name);
                 out.push('%');
@@ -126,14 +135,58 @@ pub fn expand_env_path(path: &str) -> PathBuf {
         rest = after_var;
     }
     out.push_str(rest);
-    PathBuf::from(out)
+    (PathBuf::from(out), unresolved)
+}
+
+/// Fork: where a port keeps its saves on this OS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveLocation {
+    /// No save field, or an empty one.
+    NotListed,
+    Known(PathBuf),
+    /// Linux only: the catalog gives a save folder for another OS only (a per-OS value with no `linux`
+    /// key), or a path whose `%VAR%` is not set here (`%APPDATA%`). Upstream used the Windows or
+    /// Android value anyway, which pointed at a folder that cannot exist, so backups silently did nothing.
+    UnknownOnLinux,
+}
+
+#[cfg(target_os = "linux")]
+fn save_value_for_this_os(save_folder: &Value) -> Result<Option<Value>, ()> {
+    let Some(obj) = save_folder.as_object() else {
+        return Ok(Some(save_folder.clone()));
+    };
+    match obj.get("linux") {
+        Some(v) => Ok(Some(v.clone())),
+        None if obj.values().any(is_truthy) => Err(()),
+        None => Ok(None),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn save_value_for_this_os(save_folder: &Value) -> Result<Option<Value>, ()> {
+    Ok(resolve_per_platform(save_folder))
+}
+
+pub fn save_location(save_folder: &Value, game_dir: &Path) -> SaveLocation {
+    let resolved = match save_value_for_this_os(save_folder) {
+        Ok(v) => v,
+        Err(()) => return SaveLocation::UnknownOnLinux,
+    };
+    let Some(s) = resolved.as_ref().and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+        return SaveLocation::NotListed;
+    };
+    let (expanded, unresolved) = expand_env_path_checked(s);
+    if unresolved && cfg!(target_os = "linux") {
+        return SaveLocation::UnknownOnLinux;
+    }
+    SaveLocation::Known(if expanded.is_absolute() { expanded } else { game_dir.join(expanded) })
 }
 
 pub fn resolve_save_folder(save_folder: &Value, game_dir: &Path) -> Option<PathBuf> {
-    let resolved = resolve_per_platform(save_folder)?;
-    let s = resolved.as_str().filter(|s| !s.is_empty())?;
-    let expanded = expand_env_path(s);
-    Some(if expanded.is_absolute() { expanded } else { game_dir.join(expanded) })
+    match save_location(save_folder, game_dir) {
+        SaveLocation::Known(path) => Some(path),
+        SaveLocation::NotListed | SaveLocation::UnknownOnLinux => None,
+    }
 }
 
 pub fn resolve_preferred_asset(preferred_asset: &Value) -> Option<String> {
@@ -249,6 +302,53 @@ mod tests {
         let home = std::env::var("HOME").expect("HOME");
         let save_folder = json!({"windows": "%APPDATA%\\x", "linux": "~/.local/share/lasrecomp"});
         assert_eq!(resolve_save_folder(&save_folder, Path::new("/library/Game")), Some(PathBuf::from(home).join(".local/share/lasrecomp")));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn save_location_linux_never_falls_back_to_windows_or_android() {
+        let game = Path::new("/library/Game");
+        assert_eq!(save_location(&json!({"windows": "%APPDATA%\\x", "android": "Android/data/x"}), game), SaveLocation::UnknownOnLinux);
+        assert_eq!(save_location(&json!({"android": "/sdcard/x"}), game), SaveLocation::UnknownOnLinux);
+        assert_eq!(save_location(&json!({"windows": "saves", "android": "Android/data/x"}), game), SaveLocation::UnknownOnLinux);
+        assert_eq!(resolve_save_folder(&json!({"windows": "saves"}), game), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn save_location_linux_empty_values_are_not_listed() {
+        let game = Path::new("/library/Game");
+        assert_eq!(save_location(&json!({"windows": "", "android": ""}), game), SaveLocation::NotListed);
+        assert_eq!(save_location(&json!({"android": ""}), game), SaveLocation::NotListed);
+        assert_eq!(save_location(&json!({"windows": "%APPDATA%\\x", "linux": ""}), game), SaveLocation::NotListed);
+        assert_eq!(save_location(&json!(""), game), SaveLocation::NotListed);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn save_location_linux_leftover_variable_is_unknown() {
+        let game = Path::new("/library/Game");
+        assert_eq!(save_location(&json!("%PL_DOES_NOT_EXIST_SAVE%\\osu"), game), SaveLocation::UnknownOnLinux);
+        assert_eq!(save_location(&json!({"windows": "x", "linux": "%PL_DOES_NOT_EXIST_SAVE%/x"}), game), SaveLocation::UnknownOnLinux);
+        assert_eq!(resolve_save_folder(&json!("%PL_DOES_NOT_EXIST_SAVE%\\osu"), game), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn save_location_linux_key_and_plain_values_still_resolve() {
+        let home = std::env::var("HOME").expect("HOME");
+        let game = Path::new("/library/Game");
+        assert_eq!(save_location(&json!({"windows": "%APPDATA%\\x", "linux": "%HOME%/.local/share/x"}), game), SaveLocation::Known(PathBuf::from(&home).join(".local/share/x")));
+        assert_eq!(save_location(&json!("saves"), game), SaveLocation::Known(game.join("saves")));
+        assert_eq!(save_location(&json!("100%save"), game), SaveLocation::Known(game.join("100%save")));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn save_location_windows_keeps_upstream_fallbacks() {
+        let game = Path::new("C:\\Library\\Game");
+        assert_eq!(save_location(&json!({"windows": "saves", "android": "x"}), game), SaveLocation::Known(game.join("saves")));
+        assert_eq!(save_location(&json!({"android": "x"}), game), SaveLocation::Known(game.join("x")));
     }
 
     #[test]

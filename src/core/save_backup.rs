@@ -2,7 +2,7 @@
 use super::installer::{run_7z, sevenzip_exe_path};
 use super::models::Port;
 use super::path_safety::{is_within, safe_join};
-use super::platform_resolve::resolve_save_folder;
+use super::platform_resolve::{resolve_save_folder, save_location, SaveLocation};
 use serde_json::Value;
 use std::ffi::OsStr;
 use std::fs;
@@ -99,6 +99,9 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
             (!is_within(game_dir, &src) && !is_within(saves_backup_dir, &src)).then_some((src, field))
         })
         .collect();
+    if save_folder_unknown_on_linux(port, game_dir) {
+        on_progress("No Linux save folder is known for this port, so those saves are not backed up.");
+    }
     if sources.is_empty() {
         return Ok(None);
     }
@@ -128,6 +131,13 @@ pub struct GlobalBackupSummary {
     pub copied: usize,
     pub skipped: usize,
     pub failed: usize,
+    // Fork: installed ports whose save folder is not known on Linux (also counted in `skipped`).
+    pub no_linux_folder: Vec<String>,
+}
+
+// Fork: true when a save field of this port names a folder for another OS only (see `SaveLocation`).
+pub fn save_folder_unknown_on_linux(port: &Port, game_dir: &Path) -> bool {
+    save_fields(port).iter().any(|(save_folder, _)| save_folder.is_some_and(|v| save_location(v, game_dir) == SaveLocation::UnknownOnLinux))
 }
 
 fn zip_staging_dir(staging: &Path, zip_path: &Path) -> Result<(), String> {
@@ -159,6 +169,9 @@ pub fn run_global_backup(
         on_progress(&port.name);
         let Ok(game_dir) = safe_join(library_dir, &port.folder) else { continue };
         let Ok(port_staging) = safe_join(staging.path(), &port.folder) else { continue };
+        if game_dir.is_dir() && save_folder_unknown_on_linux(port, &game_dir) {
+            summary.no_linux_folder.push(port.name.clone());
+        }
         for (save_folder, field) in save_fields(port) {
             match save_folder.and_then(|v| resolve_save_folder(v, &game_dir)).filter(|src| src.exists()) {
                 Some(src) => match copy_non_empty(&src, &port_staging.join(field)) {
@@ -384,7 +397,7 @@ mod tests {
         let summary = run_global_backup(&[port], &library_dir, &saves_backup_dir, "2026-08-23", &mut |name| seen.push(name.to_string()));
 
         assert_eq!(seen, vec!["MyGame".to_string()]);
-        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0 });
+        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![] });
         let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
         assert_eq!(read_zip_entry(&zip_path, "MyGame/save_folder/slot1.dat"), "precious");
     }
@@ -401,7 +414,7 @@ mod tests {
 
         let summary = run_global_backup(&[port], &library_dir, &saves_backup_dir, "2026-08-23", &mut |_| {});
 
-        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0 });
+        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![] });
         let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
         assert_eq!(read_zip_entry(&zip_path, "MyGame/save_folder2/slot1.dat"), "precious");
     }
@@ -428,5 +441,48 @@ mod tests {
         let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
         assert_eq!(read_zip_entry(&zip_path, "GameB/save_folder/slot1.dat"), "b");
         assert!(!zip_path.with_extension("extracted").join("GameA").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn port_from_json(value: serde_json::Value) -> Port {
+        super::super::models::port_from_value(&value).unwrap()
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn run_global_backup_names_installed_ports_with_no_linux_save_folder() {
+        let dir = temp_dir("global_no_linux_folder");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        fs::create_dir_all(library_dir.join("Osu")).unwrap();
+        // A folder literally named like the Windows path must not be picked up as the save folder any more.
+        fs::create_dir_all(library_dir.join("Osu").join("%APPDATA%\\osu")).unwrap();
+        fs::write(library_dir.join("Osu").join("%APPDATA%\\osu").join("x.dat"), b"x").unwrap();
+        let installed = port_from_json(serde_json::json!({"name": "Osu", "folder": "Osu", "source": "https://example.com/x.zip", "save": {"windows": "%APPDATA%\\osu", "android": "/sdcard/osu"}}));
+        let not_installed = port_from_json(serde_json::json!({"name": "Other", "folder": "Other", "source": "https://example.com/x.zip", "save": "%APPDATA%\\other"}));
+
+        let summary = run_global_backup(&[installed, not_installed], &library_dir, &saves_backup_dir, "2026-10-21", &mut |_| {});
+
+        assert_eq!(summary, GlobalBackupSummary { copied: 0, skipped: 4, failed: 0, no_linux_folder: vec!["Osu".to_string()] });
+        assert!(!saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-10-21.zip").exists());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn backup_before_update_says_when_no_linux_save_folder_is_known() {
+        let dir = temp_dir("update_no_linux_folder");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let game_dir = dir.join("Library").join("Osu");
+        fs::create_dir_all(&game_dir).unwrap();
+        let port = port_from_json(serde_json::json!({"name": "Osu", "folder": "Osu", "source": "https://example.com/x.zip", "save": {"windows": "%APPDATA%\\osu"}}));
+
+        let mut messages = Vec::new();
+        let result = backup_before_update(&port, &saves_backup_dir, &game_dir, "stamp", &mut |m| messages.push(m.to_string()));
+
+        assert_eq!(result, Ok(None));
+        assert_eq!(messages, vec!["No Linux save folder is known for this port, so those saves are not backed up.".to_string()]);
+        assert!(save_folder_unknown_on_linux(&port, &game_dir));
+        let known = port_with_save_folders("Known", Some("saves"), None);
+        assert!(!save_folder_unknown_on_linux(&known, &game_dir));
     }
 }

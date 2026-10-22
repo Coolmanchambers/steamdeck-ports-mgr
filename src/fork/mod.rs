@@ -18,6 +18,7 @@ pub mod backups;
 pub mod deck_ready;
 pub mod rom_library;
 pub mod rom_screens;
+pub mod save_notes;
 pub mod screens;
 pub mod settings;
 pub mod shortcuts;
