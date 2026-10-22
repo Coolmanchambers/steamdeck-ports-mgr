@@ -3,6 +3,7 @@ use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
 use super::install_launch::{delete_port, open_favorite_exe_picker, open_version_picker, start_extra_install, start_install};
 use super::playtime::{format_last_played, format_playtime, LastPlayed};
+use super::save_restore_screen::open_from_info as open_restore_saves;
 use super::state::AppState;
 use super::sync::launch_self_update;
 use crate::core::launch::{is_web_url, open_file, open_folder, open_url};
@@ -481,6 +482,7 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     }
     dialog.set_mods_enabled(mods.is_some());
     dialog.set_website_enabled(website.is_some());
+    dialog.set_restore_saves_enabled(port.save.is_some() || port.save2.is_some());
 
     let favorite_exe = info.as_ref().and_then(|i| i.favorite_exe.clone());
     dialog.set_favorite_exe_status_text(match favorite_exe {
@@ -521,6 +523,7 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     on_port_action!(on_update_toggle_requested, open_update_toggle_dialog);
     on_port_action!(on_reset_playtime_requested, open_reset_playtime_dialog);
     on_port_action!(on_extra_requested, open_extra_install_confirm_dialog);
+    on_port_action!(on_restore_saves_requested, open_restore_saves);
     wire_dialog_close!(dialog, app, router);
     wire_nav_hovered!(dialog, app, info_nav_index);
     wire_keyboard_nav!(dialog, app, horizontal);
@@ -620,13 +623,14 @@ enum SettingsEntry {
     AdoptPorts,
     GameFiles,
     BackupSaves,
+    RestoreSaves,
     CheckUpdates,
     ForceUpdate,
     DiscordRpc,
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 12] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 13] = [
     SettingsEntry::Themes,
     SettingsEntry::Language,
     SettingsEntry::Files,
@@ -635,6 +639,7 @@ const SETTINGS_ENTRIES: [SettingsEntry; 12] = [
     SettingsEntry::AdoptPorts,
     SettingsEntry::GameFiles,
     SettingsEntry::BackupSaves,
+    SettingsEntry::RestoreSaves,
     SettingsEntry::CheckUpdates,
     SettingsEntry::ForceUpdate,
     SettingsEntry::DiscordRpc,
@@ -656,6 +661,7 @@ fn settings_labels(app: &AppState) -> Vec<String> {
             SettingsEntry::AdoptPorts => "Adopt installed ports...".into(),
             SettingsEntry::GameFiles => "Game files...".into(),
             SettingsEntry::BackupSaves => tr.invoke_label_backup_saves(),
+            SettingsEntry::RestoreSaves => "Restore saves...".into(),
             SettingsEntry::CheckUpdates if state.release_sync => tr.invoke_label_check_updates_on(),
             SettingsEntry::CheckUpdates => tr.invoke_label_check_updates_off(),
             SettingsEntry::ForceUpdate => tr.invoke_label_force_update(),
@@ -698,6 +704,7 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                         SettingsEntry::AdoptPorts => super::steam_screens::open_adopt_screen(&app, &router),
                         SettingsEntry::GameFiles => super::rom_screens::open_game_files(&app, &router),
                         SettingsEntry::BackupSaves => start_save_backup(&app, &router),
+                        SettingsEntry::RestoreSaves => super::save_restore_screen::open_from_settings(&app, &router),
                         SettingsEntry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
                         _ => launch_self_update(&app, &router),
                     }

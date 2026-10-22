@@ -1,5 +1,5 @@
 import { Theme, ThemedScrollbar } from "../shared.slint";
-import { ButtonRow, ButtonRowItem, DialogChrome } from "chrome.slint";
+import { ButtonRow, ButtonRowItem, DialogButton, DialogChrome } from "chrome.slint";
 
 export component InfoDialog inherits Window {
     no-frame: true;
@@ -33,6 +33,8 @@ export component InfoDialog inherits Window {
     in property <bool> save-folder2-enabled: false;
     in property <bool> mods-enabled: false;
     in property <bool> website-enabled: false;
+    // Fork: "Restore saves..." (button index 10), shown only for ports that name a save folder.
+    in property <bool> restore-saves-enabled: false;
     in property <int> selected-index: -1;
     callback change-version-requested();
     callback update-toggle-requested();
@@ -44,6 +46,7 @@ export component InfoDialog inherits Window {
     callback save-folder2-requested();
     callback mods-requested();
     callback website-requested();
+    callback restore-saves-requested();
     callback instructions-link-requested();
     callback close-requested();
     callback nav-hovered(int);
@@ -219,7 +222,7 @@ export component InfoDialog inherits Window {
                 x: root.gutter;
                 y: action-row.y + action-row.height + root.gutter;
                 width: content-width;
-                height: chrome.content-height - self.y - root.gutter * 2 - shortcut-row.height;
+                height: chrome.content-height - self.y - root.gutter * 2 - shortcut-row.height - restore-button.height - (root.restore-saves-enabled ? row-spacing : 0px);
 
                 ContextMenuArea {
                     Menu {
@@ -283,6 +286,21 @@ export component InfoDialog inherits Window {
                     visible-height: instructions-flick.height;
                     viewport-y <=> instructions-flick.content-y;
                 }
+            }
+
+            restore-button := DialogButton {
+                visible: root.restore-saves-enabled;
+                text: @tr("Restore saves...");
+                enabled: root.restore-saves-enabled;
+                selected: root.selected-index == 10;
+                border-px: root.border-px;
+                font-size: root.item-font-px;
+                width: self.text-preferred-width + button-padding * 2;
+                height: root.restore-saves-enabled ? row-height : 0px;
+                x: root.gutter + (content-width - self.width) / 2;
+                y: shortcut-row.y - self.height - (root.restore-saves-enabled ? row-spacing : 0px);
+                clicked => { root.restore-saves-requested(); }
+                hovered => { root.nav-hovered(10); }
             }
 
             shortcut-row := ButtonRow {

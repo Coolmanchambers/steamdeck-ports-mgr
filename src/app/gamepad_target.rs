@@ -8,7 +8,8 @@ use slint::Model;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub(crate) const INFO_BUTTON_COUNT: usize = 10;
+// Fork: 11th button, "Restore saves..." (src/app/save_restore_screen.rs).
+pub(crate) const INFO_BUTTON_COUNT: usize = 11;
 
 pub(crate) fn info_buttons_enabled(d: &InfoDialog) -> [bool; INFO_BUTTON_COUNT] {
     [
@@ -22,6 +23,7 @@ pub(crate) fn info_buttons_enabled(d: &InfoDialog) -> [bool; INFO_BUTTON_COUNT] 
         d.get_save_folder2_enabled(),
         d.get_mods_enabled(),
         d.get_website_enabled(),
+        d.get_restore_saves_enabled(),
     ]
 }
 
@@ -36,6 +38,7 @@ fn invoke_info_button(d: &InfoDialog, index: i32) {
         6 => d.invoke_save_folder_requested(),
         7 => d.invoke_save_folder2_requested(),
         8 => d.invoke_mods_requested(),
+        10 => d.invoke_restore_saves_requested(),
         _ => d.invoke_website_requested(),
     }
 }
