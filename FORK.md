@@ -123,25 +123,39 @@ Files added by this fork:
   `shortcuts.vdf`, from Desktop Mode with Steam closed. It goes through the library's safe save
   (refuse while Steam runs, verified backup, atomic write, read-back), then prunes old backups. This is
   the Desktop Mode route (chosen 2026-10-21; no Decky plugin).
-- **Queue from Game Mode** (`steam_queue.rs`): Steam always runs in Game Mode, so with Steam up the
-  review row becomes "Queue N changes for Desktop Mode...". The choice (port key, Steam account, whether
-  a name-only match may be repointed, catalog art or none) is saved to `steam-queue.json` next to the app
-  (`"version": 1`, temp file + fsync + rename; an empty queue removes the file). Re-queuing a port for the
-  same account replaces its entry. Shortly after startup and then every 30 s, when no dialog is open and
-  no game started from the app runs, a non-empty queue with Steam closed brings up "N Steam changes
-  queued from Game Mode: apply now?"; a declined offer comes back only after Steam was seen running and
-  closed again (or on the next start). The screen also has an "apply now" row and a "View or remove
-  queued changes..." list (remove one, clear all, Back). Applying plans again from the current
-  `shortcuts.vdf` and writes through `screens::apply_selected_with` (same Steam re-checks, backup,
-  atomic write, read-back, `art::grid::write_art`), one write per account: an entry already in Steam
-  counts as done, a port that left the catalog or was uninstalled, an unknown account, a blocked plan or
-  a name-only match that was not approved when queuing is reported and dropped; if Steam comes back
-  before the rename (or `shortcuts.vdf` cannot be read) that account's entries stay queued and the file
-  is not rewritten. A queue file that cannot be read (bad JSON, not text, unknown version, a bad entry)
-  is renamed to `steam-queue.json.corrupt-<time>` and the user is told; the queue starts empty. Game Mode
-  is detected from `XDG_CURRENT_DESKTOP` containing "gamescope" or `GAMESCOPE_WAYLAND_DISPLAY` (unverified
-  on a Deck) and only changes the wording. Not verified on a Deck: the whole flow; whether a Game Mode
-  launch sees Steam in `/proc` (expected yes).
+- **Queue from Game Mode** (`steam_queue.rs`): Steam always runs in Game Mode, so there the review row
+  is always "Queue N changes for Desktop Mode..." and nothing is ever offered or written, whatever the
+  `/proc` check says (Game Mode = `XDG_CURRENT_DESKTOP` containing "gamescope" or
+  `GAMESCOPE_WAYLAND_DISPLAY` set; unverified on a Deck; logged at startup as `game mode: yes|no (...)`).
+  In Desktop Mode with Steam running the row is "Queue N changes until Steam is closed...". The choice
+  (port key, Steam account id and label, whether a name-only match may be repointed, catalog art or
+  none, queued in Game Mode or not) is saved to `steam-queue.json` next to the app (`"version": 1`,
+  temp file + fsync + rename + folder fsync; an empty queue removes the file). Re-queuing a port for the
+  same account replaces its entry.
+- **Offer:** shortly after startup and then every 30 s, outside Game Mode, when no dialog is open, no
+  game started from the app runs and the window is not hidden to the tray or minimized, a non-empty
+  queue with Steam closed brings up "N Steam changes queued from Game Mode: apply now?" ("queued while
+  Steam was running" unless every entry came from Game Mode), with Cancel preselected. It names ports
+  whose catalog art is not downloaded yet (the prefetch runs when the offer appears or the screen
+  opens) and says Cancel keeps them queued. A declined offer comes back only after Steam was seen running
+  and closed again (or on the next start); a skipped look leaves that memory alone. Log lines:
+  `steam queue: offering N`, `steam queue: <problem>`. The screen also has an "apply now" row and a
+  "View or remove queued changes..." list (remove one, after which the list reopens on Back; clear all,
+  after which the screen reopens). Accounts are named when the device or the queue has several.
+- **Applying** plans again from the current `shortcuts.vdf` and writes through
+  `screens::apply_selected_with` (same Steam re-checks, backup, atomic write, read-back,
+  `art::grid::write_art`), one write per account: an entry already in Steam counts as done; a port that
+  left the catalog, was uninstalled or is Android only, an unknown account (when others exist), a blocked
+  plan or a name-only match that was not approved when queuing is reported and dropped. If Steam comes
+  back before the rename, only the entries that were going to be written for that account (and every
+  entry of later accounts) stay queued. With no Steam account folder at all the whole queue stays; with
+  an unreadable `shortcuts.vdf` that account's entries (and later accounts') stay, and nothing of theirs
+  is dropped. An unchanged queue file is not rewritten.
+- **Queue file problems:** one that can be read but not parsed (bad JSON, not text, unknown version, a
+  bad entry) is renamed to `steam-queue.json.corrupt-<time>` and the user is told; the queue starts
+  empty. One that cannot be opened (permissions, a folder in its place) or cannot be moved aside is left
+  alone, and queuing and applying refuse until it is fixed, so it is never silently replaced. Not
+  verified on a Deck: the whole flow, the Game Mode signals.
 - **Matching:** an existing shortcut is the port's when it has the same program, else the same name
   (ignoring case). It is updated in place, so its app ID stays. Two matches, or an entry with no stored
   app ID that needs a change, are blocked and shown as skipped, never guessed.

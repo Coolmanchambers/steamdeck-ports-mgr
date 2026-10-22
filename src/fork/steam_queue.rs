@@ -1,22 +1,28 @@
-//! Steam changes queued from Game Mode, applied later in Desktop Mode with Steam closed.
+//! Steam changes queued while Steam runs (always, in Game Mode), applied later with Steam closed.
 //!
 //! `shortcuts.vdf` is only written while Steam is closed (Steam rewrites it from memory when it exits),
 //! and in Game Mode Steam is always running. So the Add to Steam screen can save the chosen adds and
-//! updates to `steam-queue.json` next to the app instead. When the app sees Steam closed with a non-empty
-//! queue it offers to apply it, through the same safe path as the screen (`screens::apply_selected_with`:
-//! refuse while Steam runs, re-checked before the rename, verified backup, atomic write, read-back).
+//! updates to `steam-queue.json` next to the app instead. When the app sees Steam closed outside Game
+//! Mode with a non-empty queue it offers to apply it, through the same safe path as the screen
+//! (`screens::apply_selected_with`: refuse while Steam runs, re-checked before the rename, verified
+//! backup, atomic write, read-back). In Game Mode nothing is ever offered or written, whatever the
+//! process check says.
 //!
 //! The queue stores what the user chose, not the plan: the port key, the Steam account, whether a
 //! shortcut found by name only may be repointed, and whether catalog artwork is placed. The plan is made
 //! again from the current `shortcuts.vdf` when applying, so applying twice never adds a port twice, and
 //! a port that left the catalog (or was uninstalled) since queuing is reported and dropped.
 //!
-//! The file is versioned JSON written atomically. A file that cannot be read is moved aside to
-//! `steam-queue.json.corrupt-<time>` (never deleted) and the caller is told; the queue then starts empty.
+//! The file is versioned JSON written atomically. A file that can be read but not parsed is moved aside
+//! to `steam-queue.json.corrupt-<time>` (never deleted) and the caller is told; the queue then starts
+//! empty. A file that cannot be opened at all (permissions, a folder in its place) is left alone, and
+//! queuing and applying refuse until it is fixed, so it is never silently replaced.
 
+use super::artwork;
 use super::screens::{self, listed, SteamScreen};
 use super::settings::ForkSettings;
 use super::steam_sync::Action;
+use super::steam_user;
 use super::store::{backup_stamp, SteamProcessCheck};
 use crate::core::models::Port;
 use serde_json::{json, Map, Value};
@@ -66,6 +72,8 @@ impl ArtChoice {
 pub struct QueuedChange {
     /// The Steam account folder under `userdata/`.
     pub account_id: u32,
+    /// How the account was named when queued (persona or login name), for messages.
+    pub account_label: String,
     pub port_key: String,
     /// The port's name when it was queued, for messages (the catalog may have dropped it since).
     pub name: String,
@@ -75,6 +83,8 @@ pub struct QueuedChange {
     /// found at apply time is skipped, never repointed silently.
     pub repoint_by_name: bool,
     pub art: ArtChoice,
+    /// Queued in Game Mode (only changes the wording of the offer).
+    pub from_game_mode: bool,
     pub queued_at: String,
 }
 
@@ -82,11 +92,13 @@ impl QueuedChange {
     fn to_json(&self) -> Value {
         json!({
             "account_id": self.account_id,
+            "account_label": self.account_label,
             "port_key": self.port_key,
             "name": self.name,
             "kind": self.kind.as_str(),
             "repoint_by_name": self.repoint_by_name,
             "art": self.art.as_str(),
+            "from_game_mode": self.from_game_mode,
             "queued_at": self.queued_at,
         })
     }
@@ -110,20 +122,31 @@ impl QueuedChange {
             Some(_) => return Err("an entry has an unknown art choice".into()),
         };
         let text = |key: &str| obj.get(key).and_then(Value::as_str).map(str::to_string);
+        let flag = |key: &str| obj.get(key).and_then(Value::as_bool).unwrap_or(false);
         Ok(QueuedChange {
             account_id,
+            account_label: text("account_label").unwrap_or_default(),
             name: text("name").filter(|n| !n.is_empty()).unwrap_or_else(|| port_key.clone()),
             port_key,
             kind,
-            repoint_by_name: obj.get("repoint_by_name").and_then(Value::as_bool).unwrap_or(false),
+            repoint_by_name: flag("repoint_by_name"),
             art,
+            from_game_mode: flag("from_game_mode"),
             queued_at: text("queued_at").unwrap_or_default(),
         })
     }
 
-    /// `  Dusklight (add)`, for lists in dialogs.
-    pub fn line(&self) -> String {
-        format!("  {} ({})", self.name, self.kind.as_str())
+    pub fn account_text(&self) -> String {
+        if self.account_label.is_empty() { format!("account {}", self.account_id) } else { self.account_label.clone() }
+    }
+
+    /// `  Dusklight (add)`, or with the account when several are involved, for lists in dialogs.
+    pub fn line(&self, show_account: bool) -> String {
+        if show_account {
+            format!("  {} ({}, {})", self.name, self.kind.as_str(), self.account_text())
+        } else {
+            format!("  {} ({})", self.name, self.kind.as_str())
+        }
     }
 }
 
@@ -167,6 +190,16 @@ impl SteamQueue {
         out
     }
 
+    /// Whether lists should name the account: the queue spans several, or the device has several.
+    pub fn show_accounts(&self, device_accounts: usize) -> bool {
+        device_accounts > 1 || self.accounts().len() > 1
+    }
+
+    /// "from Game Mode" when every entry was queued there, else "while Steam was running".
+    pub fn origin(&self) -> &'static str {
+        if !self.is_empty() && self.entries.iter().all(|e| e.from_game_mode) { "from Game Mode" } else { "while Steam was running" }
+    }
+
     fn to_json(&self) -> Value {
         json!({ "version": VERSION, "entries": self.entries.iter().map(QueuedChange::to_json).collect::<Vec<_>>() })
     }
@@ -194,27 +227,36 @@ pub fn queue_path(config_dir: &Path) -> PathBuf {
 #[derive(Debug)]
 pub struct LoadOutcome {
     pub queue: SteamQueue,
-    /// Where an unreadable file was moved, if it was.
+    /// Where a file that could not be parsed was moved, if it was.
     pub set_aside: Option<PathBuf>,
-    /// What to tell the user when the file could not be read.
+    /// What to tell the user when the file could not be read or parsed.
     pub problem: Option<String>,
+    /// The file exists but could not be opened (or could not be moved aside): it must not be replaced.
+    pub unreadable: bool,
 }
 
-/// Reads the queue. A missing file is an empty queue. A file that cannot be read or understood is moved
-/// aside (`.corrupt-<stamp>`, never over another file) and the queue starts empty; `problem` says so.
+/// Reads the queue. A missing file is an empty queue. A file that can be read but not understood is
+/// moved aside (`.corrupt-<stamp>`, never over another file) and the queue starts empty; `problem` says
+/// so. A file that cannot be opened is left as it is and `unreadable` is set.
 pub fn load(path: &Path) -> LoadOutcome {
-    let empty = |set_aside, problem| LoadOutcome { queue: SteamQueue::default(), set_aside, problem };
+    let empty = |set_aside, problem, unreadable| LoadOutcome { queue: SteamQueue::default(), set_aside, problem, unreadable };
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return empty(None, None),
-        Err(e) => return empty(None, Some(format!("Could not read the queue of Steam changes ({}): {e}. It was left as it is.", path.display()))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return empty(None, None, false),
+        Err(e) => {
+            return empty(
+                None,
+                Some(format!("Could not open the queue of Steam changes ({}): {e}.\nIt was left as it is; nothing can be queued or applied until it is fixed or removed.", path.display())),
+                true,
+            )
+        }
     };
     let parsed = std::str::from_utf8(&bytes)
         .map_err(|_| "it is not text".to_string())
         .and_then(|t| serde_json::from_str::<Value>(t.strip_prefix('\u{FEFF}').unwrap_or(t)).map_err(|e| format!("it is not valid JSON ({e})")))
         .and_then(|v| SteamQueue::from_json(&v));
     let why = match parsed {
-        Ok(queue) => return LoadOutcome { queue, set_aside: None, problem: None },
+        Ok(queue) => return LoadOutcome { queue, set_aside: None, problem: None, unreadable: false },
         Err(why) => why,
     };
     match set_aside(path) {
@@ -223,9 +265,14 @@ pub fn load(path: &Path) -> LoadOutcome {
             empty(
                 Some(aside),
                 Some(format!("The queue of Steam changes could not be read: {why}.\nIt was kept as {name} and the queue starts empty.\nQueue the changes again from Settings > Add to Steam.")),
+                false,
             )
         }
-        Err(e) => empty(None, Some(format!("The queue of Steam changes could not be read: {why}.\nIt could not be moved aside either ({e}), so it is ignored."))),
+        Err(e) => empty(
+            None,
+            Some(format!("The queue of Steam changes could not be read: {why}.\nIt could not be moved aside either ({e}); nothing can be queued or applied until it is fixed or removed.")),
+            true,
+        ),
     }
 }
 
@@ -245,8 +292,8 @@ fn set_aside(path: &Path) -> io::Result<PathBuf> {
     Err(io::Error::new(io::ErrorKind::AlreadyExists, "too many set-aside copies"))
 }
 
-/// Writes the queue atomically (temp file in the same folder, synced, renamed over). An empty queue
-/// removes the file, so "is anything queued" is a cheap existence check.
+/// Writes the queue atomically (temp file in the same folder, synced, renamed over, folder synced). An
+/// empty queue removes the file, so "is anything queued" is a cheap existence check.
 pub fn save(path: &Path, queue: &SteamQueue) -> io::Result<()> {
     if queue.is_empty() {
         return match fs::remove_file(path) {
@@ -263,12 +310,27 @@ pub fn save(path: &Path, queue: &SteamQueue) -> io::Result<()> {
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&temp, path)
+        fs::rename(&temp, path)?;
+        sync_parent(path);
+        Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
     result
+}
+
+/// Makes the rename itself durable. Best effort: the rename already happened, and Windows cannot open a
+/// folder this way.
+fn sync_parent(path: &Path) {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -284,6 +346,18 @@ pub fn is_game_mode(current_desktop: Option<&str>, gamescope_display: Option<&st
 pub fn game_mode_from_env() -> bool {
     let var = |name| std::env::var(name).ok();
     is_game_mode(var("XDG_CURRENT_DESKTOP").as_deref(), var("GAMESCOPE_WAYLAND_DISPLAY").as_deref())
+}
+
+/// The startup log line, so a Deck report shows what the detection saw.
+pub fn game_mode_log_line() -> String {
+    let var = |name| std::env::var(name).ok();
+    let (desktop, display) = (var("XDG_CURRENT_DESKTOP"), var("GAMESCOPE_WAYLAND_DISPLAY"));
+    format!(
+        "game mode: {} (XDG_CURRENT_DESKTOP={:?}, GAMESCOPE_WAYLAND_DISPLAY={:?})",
+        if is_game_mode(desktop.as_deref(), display.as_deref()) { "yes" } else { "no" },
+        desktop.unwrap_or_default(),
+        display.unwrap_or_default()
+    )
 }
 
 /// Why nothing is written now and when the `count` queued changes will be, for the given mode.
@@ -307,15 +381,51 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// Names of queued ports whose catalog artwork is wanted but not downloaded yet.
+pub fn missing_art(queue: &SteamQueue, catalog: &[Port], cache_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for entry in queue.entries.iter().filter(|e| e.art == ArtChoice::Catalog) {
+        let Some(port) = catalog.iter().find(|p| p.key() == entry.port_key) else { continue };
+        let portrait_missing = port.image.is_some() && super::art::catalog::cached_portrait_path(cache_dir, &port.folder).is_none();
+        let icon_missing = port.icon.is_some()
+            && !crate::core::image_cache::cached_image_path(cache_dir, &format!("{}_icon", port.folder)).is_ok_and(|p| p.is_file());
+        if (portrait_missing || icon_missing) && !names.contains(&entry.name) {
+            names.push(entry.name.clone());
+        }
+    }
+    names
+}
+
 /// The question asked at startup, after Steam closes, or from the screen's first row.
-pub fn offer_text(queue: &SteamQueue) -> String {
-    let lines: Vec<String> = queue.entries.iter().map(QueuedChange::line).collect();
-    format!(
-        "{} queued from Game Mode: apply now?\n\n{}\n\nSteam is closed, so {} can be written now. shortcuts.vdf is backed up first.",
+pub fn offer_text(queue: &SteamQueue, show_accounts: bool, missing_art: &[String]) -> String {
+    let lines: Vec<String> = queue.entries.iter().map(|e| e.line(show_accounts)).collect();
+    let mut text = format!(
+        "{} queued {}: apply now?\n\n{}\n\n",
         plural(queue.len(), "Steam change", "Steam changes"),
-        listed(&lines),
+        queue.origin(),
+        listed(&lines)
+    );
+    if !missing_art.is_empty() {
+        text.push_str(&format!(
+            "Artwork for {} is not downloaded yet. Cancel and wait a minute to add it with the artwork, or Apply without it.\n\n",
+            missing_art.join(", ")
+        ));
+    }
+    text.push_str(&format!(
+        "Steam is closed, so {} can be written now. shortcuts.vdf is backed up first.\n\
+         Cancel keeps them queued: apply later from Settings > Add to Steam, or this asks again after Steam has run and been closed.",
         if queue.len() == 1 { "it" } else { "they" }
-    )
+    ));
+    text
+}
+
+/// How many Steam accounts this device has (the folder `SteamScreen::load` would use).
+pub fn device_account_count(home: &Path) -> usize {
+    artwork::existing_steam_roots(home)
+        .iter()
+        .filter_map(|root| steam_user::discover_accounts(root).ok())
+        .find(|accounts| !accounts.is_empty())
+        .map_or(0, |accounts| accounts.len())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -331,20 +441,23 @@ pub fn changes_from_screen(screen: &SteamScreen, queued_at: &str) -> Vec<QueuedC
         .into_iter()
         .map(|item| QueuedChange {
             account_id: account.account_id,
+            account_label: account.label(),
             name: item.wanted.app_name.clone(),
             kind: if matches!(item.action, Action::Add) { QueuedKind::Add } else { QueuedKind::Update },
             repoint_by_name: matches!(item.action, Action::Update { by_name: true, .. }),
             port_key: item.wanted.port_key,
             art,
+            from_game_mode: screen.game_mode,
             queued_at: queued_at.to_string(),
         })
         .collect()
 }
 
-/// Text of the confirmation before queuing.
-pub fn queue_confirm_text(changes: &[QueuedChange], game_mode: bool) -> String {
-    let lines: Vec<String> = changes.iter().map(QueuedChange::line).collect();
-    format!("{}\n\nQueue for Desktop Mode:\n{}", when_applied_text(game_mode, changes.len()), listed(&lines))
+/// Title and text of the confirmation before queuing.
+pub fn queue_confirm(changes: &[QueuedChange], game_mode: bool, show_accounts: bool) -> (&'static str, String) {
+    let lines: Vec<String> = changes.iter().map(|c| c.line(show_accounts)).collect();
+    let title = if game_mode { "Queue for Desktop Mode" } else { "Queue until Steam is closed" };
+    (title, format!("{}\n\n{title}:\n{}", when_applied_text(game_mode, changes.len()), listed(&lines)))
 }
 
 /// Adds the changes to the queue file. Returns the message to show.
@@ -353,6 +466,9 @@ pub fn queue_changes(path: &Path, changes: Vec<QueuedChange>, game_mode: bool) -
         return Err("Nothing is selected.".into());
     }
     let loaded = load(path);
+    if loaded.unreadable {
+        return Err(format!("{}\n\nNothing was queued.", loaded.problem.unwrap_or_default()));
+    }
     let mut queue = loaded.queue;
     let added = changes.len();
     for change in changes {
@@ -386,14 +502,14 @@ pub fn manage_lines(queue: &SteamQueue) -> Vec<ManageLine> {
     lines
 }
 
-pub fn manage_labels(queue: &SteamQueue) -> Vec<String> {
-    let several_accounts = queue.accounts().len() > 1;
+pub fn manage_labels(queue: &SteamQueue, show_accounts: bool) -> Vec<String> {
+    let show_accounts = show_accounts || queue.accounts().len() > 1;
     manage_lines(queue)
         .into_iter()
         .map(|line| match line {
             ManageLine::Entry(i) => {
                 let e = &queue.entries[i];
-                let account = if several_accounts { format!(", account {}", e.account_id) } else { String::new() };
+                let account = if show_accounts { format!(", {}", e.account_text()) } else { String::new() };
                 format!("Remove: {} ({}{account})", e.name, e.kind.as_str())
             }
             ManageLine::Clear => format!("Clear the queue ({})...", plural(queue.len(), "change", "changes")),
@@ -415,6 +531,8 @@ pub struct ApplyInputs<'a> {
     /// Where catalog images are cached; `None` places no artwork.
     pub cache_dir: Option<PathBuf>,
     pub settings: &'a ForkSettings,
+    /// Running under gamescope: never write, whatever the process check says.
+    pub game_mode: bool,
 }
 
 #[derive(Debug)]
@@ -423,15 +541,20 @@ pub struct QueueApplyOutcome {
     /// What is still queued: entries of an account whose write was refused or failed.
     pub remaining: SteamQueue,
     pub wrote: bool,
-    /// The write was refused or failed (Steam came back, the file could not be read, ...).
+    /// The write was refused or failed (Game Mode, Steam came back, no Steam folder, unreadable files).
     pub refused: bool,
 }
 
 /// Applies every queued change, one write per Steam account. An entry that is already in Steam counts as
-/// done; one that cannot be applied any more (port left the catalog, uninstalled, blocked, a name-only
-/// match that was not approved) is reported and dropped. If a write is refused (Steam started again) or
-/// fails, that account's entries and those of any later account stay queued.
+/// done; one that cannot be applied any more (port left the catalog, uninstalled, Android only, blocked,
+/// an unknown account, a name-only match that was not approved) is reported and dropped. If a write is
+/// refused (Steam started again) or fails, the entries that were going to be written for that account,
+/// and every entry of the accounts after it, stay queued. In Game Mode, or with no Steam account folder
+/// at all, nothing is touched and everything stays queued.
 pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamProcessCheck, now: SystemTime) -> QueueApplyOutcome {
+    if inputs.game_mode {
+        return QueueApplyOutcome { text: when_applied_text(true, queue.len()), remaining: queue.clone(), wrote: false, refused: true };
+    }
     let mut remaining = SteamQueue::default();
     let mut sections: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
@@ -447,13 +570,20 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
         }
         let mut screen = SteamScreen::load(inputs.home, inputs.library_dir, inputs.catalog, inputs.settings, inputs.favorite_exe);
         screen.cache_dir = inputs.cache_dir.clone();
+        if screen.accounts.is_empty() {
+            // No Steam folder at all (not signed in yet, or a card that is not mounted): keep everything.
+            sections.push(screen.load_error.clone().unwrap_or_else(|| "No Steam account folder was found.".into()));
+            remaining.entries.extend(entries.into_iter().cloned());
+            refused = true;
+            continue;
+        }
         let Some(index) = screen.accounts.iter().position(|a| a.account_id == account_id) else {
-            skipped.extend(entries.iter().map(|e| format!("  {}: Steam account {account_id} is not on this device any more", e.name)));
+            skipped.extend(entries.iter().map(|e| format!("  {}: Steam {} is not on this device any more", e.name, e.account_text())));
             continue;
         };
         screen.set_account(index, inputs.library_dir, inputs.catalog, inputs.favorite_exe);
         if let Some(e) = &screen.load_error {
-            sections.push(format!("Could not read shortcuts.vdf for account {account_id}: {e}"));
+            sections.push(format!("Could not read shortcuts.vdf for {}: {e}", entries[0].account_text()));
             remaining.entries.extend(entries.into_iter().cloned());
             refused = true;
             continue;
@@ -462,10 +592,14 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
             row.selected = false;
         }
         let mut no_art: Vec<String> = Vec::new();
-        let mut selected = 0;
+        let mut to_write: Vec<QueuedChange> = Vec::new();
         for entry in &entries {
-            if !inputs.catalog.iter().any(|p| p.key() == entry.port_key) {
+            let Some(port) = inputs.catalog.iter().find(|p| p.key() == entry.port_key) else {
                 skipped.push(format!("  {}: no longer in the catalog", entry.name));
+                continue;
+            };
+            if port.is_android_only() {
+                skipped.push(format!("  {}: Android only, not added to Steam", entry.name));
                 continue;
             }
             let Some(row) = screen.rows.iter_mut().find(|r| r.key == entry.port_key) else {
@@ -482,7 +616,7 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
                 )),
                 (_, Some(_)) => {
                     row.selected = true;
-                    selected += 1;
+                    to_write.push((*entry).clone());
                     if entry.art == ArtChoice::None {
                         no_art.push(entry.port_key.clone());
                     }
@@ -490,7 +624,7 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
                 (_, None) => skipped.push(format!("  {}: skipped", entry.name)),
             }
         }
-        if selected == 0 {
+        if to_write.is_empty() {
             continue;
         }
         match screens::apply_selected_with(&screen, steam, inputs.settings, now, &no_art) {
@@ -500,7 +634,8 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
             }
             Err(message) => {
                 sections.push(message);
-                remaining.entries.extend(entries.into_iter().cloned());
+                // Only what was going to be written stays; dropped and already-done entries are gone.
+                remaining.entries.extend(to_write);
                 refused = true;
             }
         }
@@ -533,6 +668,10 @@ fn push_block(text: &mut String, block: &str) {
 /// Loads, applies and saves what is left. The caller shows `text`.
 pub fn apply_queue_file(path: &Path, inputs: &ApplyInputs, steam: &dyn SteamProcessCheck, now: SystemTime) -> QueueApplyOutcome {
     let loaded = load(path);
+    if loaded.unreadable {
+        let text = loaded.problem.unwrap_or_default();
+        return QueueApplyOutcome { text, remaining: SteamQueue::default(), wrote: false, refused: true };
+    }
     let mut outcome = apply_queue(&loaded.queue, inputs, steam, now);
     // An unchanged queue is not rewritten, so a refusal leaves the file exactly as it was.
     if outcome.remaining != loaded.queue {
@@ -559,8 +698,12 @@ pub enum WatchAction {
 /// One look by the startup/30-second check. `offered` remembers that the offer was made during this
 /// stretch of Steam being closed, so a declined offer is not repeated every 30 seconds; it comes back
 /// once Steam has been seen running and then closed again (or when the queue empties and refills).
-/// The caller skips the look entirely while another dialog is open.
-pub fn watch_step(queue_len: usize, steam: &io::Result<Vec<String>>, offered: &mut bool) -> WatchAction {
+/// In Game Mode it never offers and leaves `offered` alone, whatever the process check says. The caller
+/// skips the look entirely while another dialog is open or the window is hidden or minimized.
+pub fn watch_step(queue_len: usize, steam: &io::Result<Vec<String>>, offered: &mut bool, game_mode: bool) -> WatchAction {
+    if game_mode {
+        return WatchAction::Nothing;
+    }
     if queue_len == 0 {
         *offered = false;
         return WatchAction::Nothing;
@@ -661,7 +804,7 @@ mod tests {
 
         fn apply(&self, catalog: &[Port], steam: &dyn SteamProcessCheck) -> QueueApplyOutcome {
             let settings = self.settings();
-            let inputs = ApplyInputs { home: &self.home, library_dir: &self.library, catalog, favorite_exe: &|_| None, cache_dir: None, settings: &settings };
+            let inputs = ApplyInputs { home: &self.home, library_dir: &self.library, catalog, favorite_exe: &|_| None, cache_dir: None, settings: &settings, game_mode: false };
             apply_queue_file(&self.queue, &inputs, steam, SystemTime::now())
         }
 
@@ -679,11 +822,13 @@ mod tests {
     fn change(account_id: u32, key: &str, kind: QueuedKind) -> QueuedChange {
         QueuedChange {
             account_id,
+            account_label: String::new(),
             port_key: key.into(),
             name: key.rsplit('/').next().unwrap().into(),
             kind,
             repoint_by_name: false,
             art: ArtChoice::Catalog,
+            from_game_mode: true,
             queued_at: "20261021-120000".into(),
         }
     }
@@ -699,6 +844,8 @@ mod tests {
         let mut soh = change(1234, "a/soh", QueuedKind::Update);
         soh.repoint_by_name = true;
         soh.art = ArtChoice::None;
+        soh.account_label = "Deck Player (deckuser)".into();
+        soh.from_game_mode = false;
         queue.upsert(soh);
         queue.upsert(change(5678, "a/dusk", QueuedKind::Add));
         save(&path, &queue).unwrap();
@@ -789,6 +936,9 @@ mod tests {
         assert_eq!((dusk.account_id, dusk.kind, dusk.repoint_by_name, dusk.art), (1234, QueuedKind::Add, false, ArtChoice::Catalog));
         let soh = changes.iter().find(|c| c.port_key == "a/soh").unwrap();
         assert_eq!((soh.kind, soh.repoint_by_name), (QueuedKind::Update, true));
+        assert_eq!((soh.account_label.as_str(), soh.from_game_mode), ("Account 1234", false));
+        screen.game_mode = true;
+        assert!(changes_from_screen(&screen, "T").iter().all(|c| c.from_game_mode));
 
         let before = fs::read(&f.vdf).unwrap();
         let text = queue_changes(&f.queue, changes, true).unwrap();
@@ -1010,7 +1160,7 @@ mod tests {
             c.art = art;
             q.upsert(c);
             save(&f.queue, &q).unwrap();
-            let inputs = ApplyInputs { home: &f.home, library_dir: &f.library, catalog: &cat, favorite_exe: &|_| None, cache_dir: Some(cache.clone()), settings: &settings };
+            let inputs = ApplyInputs { home: &f.home, library_dir: &f.library, catalog: &cat, favorite_exe: &|_| None, cache_dir: Some(cache.clone()), settings: &settings, game_mode: false };
             let out = apply_queue_file(&f.queue, &inputs, &no_steam, SystemTime::now());
             assert!(out.wrote, "{vdf_name}: {}", out.text);
         };
@@ -1031,27 +1181,164 @@ mod tests {
         let closed: io::Result<Vec<String>> = Ok(Vec::new());
         let up: io::Result<Vec<String>> = Ok(vec!["1 steam".into()]);
         let broken: io::Result<Vec<String>> = Err(io::Error::other("no /proc"));
-        assert_eq!(watch_step(0, &closed, &mut offered), WatchAction::Nothing, "empty queue");
-        assert_eq!(watch_step(2, &up, &mut offered), WatchAction::Nothing, "Game Mode: Steam up");
-        assert_eq!(watch_step(2, &broken, &mut offered), WatchAction::Nothing, "cannot tell");
-        assert_eq!(watch_step(2, &closed, &mut offered), WatchAction::Offer, "Steam closed");
-        assert_eq!(watch_step(2, &closed, &mut offered), WatchAction::Nothing, "declined: not every 30 s");
-        assert_eq!(watch_step(2, &up, &mut offered), WatchAction::Nothing);
-        assert_eq!(watch_step(2, &closed, &mut offered), WatchAction::Offer, "closed again");
-        assert_eq!(watch_step(0, &closed, &mut offered), WatchAction::Nothing);
-        assert_eq!(watch_step(1, &closed, &mut offered), WatchAction::Offer, "queue refilled");
+        assert_eq!(watch_step(0, &closed, &mut offered, false), WatchAction::Nothing, "empty queue");
+        assert_eq!(watch_step(2, &up, &mut offered, false), WatchAction::Nothing, "Game Mode: Steam up");
+        assert_eq!(watch_step(2, &broken, &mut offered, false), WatchAction::Nothing, "cannot tell");
+        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Offer, "Steam closed");
+        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Nothing, "declined: not every 30 s");
+        assert_eq!(watch_step(2, &up, &mut offered, false), WatchAction::Nothing);
+        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Offer, "closed again");
+        assert_eq!(watch_step(0, &closed, &mut offered, false), WatchAction::Nothing);
+        assert_eq!(watch_step(1, &closed, &mut offered, false), WatchAction::Offer, "queue refilled");
     }
 
     #[test]
     fn manage_labels_list_entries_then_clear_and_back() {
         let mut q = SteamQueue::default();
-        assert_eq!(manage_labels(&q), ["Back"]);
+        assert_eq!(manage_labels(&q, false), ["Back"]);
         q.upsert(change(1234, "a/dusk", QueuedKind::Add));
         q.upsert(change(1234, "a/soh", QueuedKind::Update));
-        assert_eq!(manage_labels(&q), ["Remove: dusk (add)", "Remove: soh (update)", "Clear the queue (2 changes)...", "Back"]);
+        assert_eq!(manage_labels(&q, false), ["Remove: dusk (add)", "Remove: soh (update)", "Clear the queue (2 changes)...", "Back"]);
         q.upsert(change(5678, "a/dusk", QueuedKind::Add));
-        assert_eq!(manage_labels(&q)[2], "Remove: dusk (add, account 5678)");
+        assert_eq!(manage_labels(&q, false)[2], "Remove: dusk (add, account 5678)");
         assert_eq!(manage_lines(&q)[3], ManageLine::Clear);
-        assert!(offer_text(&q).starts_with("3 Steam changes queued from Game Mode: apply now?"));
+        assert!(offer_text(&q, false, &[]).starts_with("3 Steam changes queued from Game Mode: apply now?"));
+    }
+
+    // -- review fixes -----------------------------------------------------------------------------
+
+    #[test]
+    fn in_game_mode_the_watch_never_offers_whatever_the_process_check_says() {
+        let mut offered = false;
+        let closed: io::Result<Vec<String>> = Ok(Vec::new());
+        let up: io::Result<Vec<String>> = Ok(vec!["1 steam".into()]);
+        assert_eq!(watch_step(2, &closed, &mut offered, true), WatchAction::Nothing);
+        assert!(!offered, "offered stays false in Game Mode");
+        assert_eq!(watch_step(2, &up, &mut offered, true), WatchAction::Nothing);
+        assert!(!offered);
+        // Leaving Game Mode (a restart in Desktop Mode) offers at once.
+        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Offer);
+    }
+
+    #[test]
+    fn in_game_mode_apply_writes_nothing_even_if_steam_looks_closed() {
+        let f = Fixture::new("apply_game_mode");
+        queue_two(&f);
+        let (vdf, queue) = (fs::read(&f.vdf).unwrap(), fs::read(&f.queue).unwrap());
+        let settings = f.settings();
+        let cat = catalog();
+        let inputs = ApplyInputs { home: &f.home, library_dir: &f.library, catalog: &cat, favorite_exe: &|_| None, cache_dir: None, settings: &settings, game_mode: true };
+        let out = apply_queue_file(&f.queue, &inputs, &no_steam, SystemTime::now());
+        assert!(out.refused && !out.wrote);
+        assert!(out.text.contains("Steam can't be closed in Game Mode"), "{}", out.text);
+        assert_eq!(fs::read(&f.vdf).unwrap(), vdf);
+        assert_eq!(fs::read(&f.queue).unwrap(), queue);
+        assert!(backups::list_backups(&f.vdf).unwrap().is_empty());
+    }
+
+    #[test]
+    fn with_no_steam_folder_everything_stays_queued_and_the_reason_is_shown() {
+        let f = Fixture::new("no_steam_folder");
+        queue_two(&f);
+        let mut q = load(&f.queue).queue;
+        q.upsert(change(5678, "gone/port", QueuedKind::Add));
+        save(&f.queue, &q).unwrap();
+        let queue = fs::read(&f.queue).unwrap();
+        fs::remove_dir_all(f.home.join(".local/share/Steam")).unwrap();
+        let out = f.apply(&catalog(), &no_steam);
+        assert!(out.refused && !out.wrote);
+        assert!(out.text.contains("No Steam account folder"), "{}", out.text);
+        assert!(!out.text.contains("Dropped"), "nothing is dropped: {}", out.text);
+        assert_eq!(out.remaining.len(), 3);
+        assert_eq!(fs::read(&f.queue).unwrap(), queue, "the queue file is untouched");
+    }
+
+    #[test]
+    fn dropped_entries_do_not_come_back_when_the_write_is_refused() {
+        let f = Fixture::new("dropped_on_refusal");
+        queue_two(&f);
+        let mut q = load(&f.queue).queue;
+        q.upsert(change(1234, "gone/port", QueuedKind::Add));
+        save(&f.queue, &q).unwrap();
+        let out = f.apply(&catalog(), &running);
+        assert!(out.refused, "{}", out.text);
+        assert!(out.text.contains("Dropped from the queue (1):\n  port: no longer in the catalog"), "{}", out.text);
+        let keys: Vec<&str> = out.remaining.entries.iter().map(|e| e.port_key.as_str()).collect();
+        assert_eq!(keys, ["a/dusk", "a/soh"]);
+        assert_eq!(load(&f.queue).queue, out.remaining);
+    }
+
+    #[test]
+    fn an_unopenable_queue_file_is_never_replaced() {
+        let f = Fixture::new("unopenable");
+        // A folder where the file should be: reading it fails (EISDIR on Linux, access denied on Windows).
+        fs::create_dir_all(f.queue.join("inside")).unwrap();
+        let loaded = load(&f.queue);
+        assert!(loaded.unreadable && loaded.set_aside.is_none());
+        assert!(loaded.problem.as_deref().unwrap().contains("left as it is"));
+        let err = queue_changes(&f.queue, vec![change(1234, "a/dusk", QueuedKind::Add)], true).unwrap_err();
+        assert!(err.contains("Nothing was queued"), "{err}");
+        let out = f.apply(&catalog(), &no_steam);
+        assert!(out.refused && !out.wrote);
+        assert!(f.queue.join("inside").is_dir(), "left exactly as it was");
+    }
+
+    #[test]
+    fn the_offer_names_missing_artwork_says_where_it_came_from_and_what_cancel_does() {
+        let f = Fixture::new("offer_text");
+        let cache = f.home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let cat: Vec<Port> = [json!({"name": "Dusklight", "folder": "dusklight", "source": "https://github.com/a/dusk", "image": "https://example.com/d.png"})]
+            .iter()
+            .map(|v| port_from_value(v).unwrap())
+            .collect();
+        let mut q = SteamQueue::default();
+        let mut dusk = change(1234, "a/dusk", QueuedKind::Add);
+        dusk.name = "Dusklight".into();
+        q.upsert(dusk);
+        assert_eq!(missing_art(&q, &cat, &cache), ["Dusklight"]);
+        let text = offer_text(&q, false, &missing_art(&q, &cat, &cache));
+        assert!(text.starts_with("1 Steam change queued from Game Mode: apply now?"), "{text}");
+        assert!(text.contains("Artwork for Dusklight is not downloaded yet. Cancel and wait a minute to add it with the artwork, or Apply without it."), "{text}");
+        assert!(text.contains("so it can be written now"));
+        assert!(text.contains("Cancel keeps them queued: apply later from Settings > Add to Steam, or this asks again after Steam has run and been closed."));
+        image::RgbaImage::from_pixel(60, 90, image::Rgba([1, 2, 3, 255])).save(cache.join("dusklight.png")).unwrap();
+        assert!(missing_art(&q, &cat, &cache).is_empty());
+        q.entries[0].art = ArtChoice::None;
+        fs::remove_file(cache.join("dusklight.png")).unwrap();
+        assert!(missing_art(&q, &cat, &cache).is_empty(), "no art wanted, none missing");
+        // Queued from Desktop Mode while Steam ran: no Game Mode wording.
+        q.entries[0].from_game_mode = false;
+        assert!(offer_text(&q, false, &[]).starts_with("1 Steam change queued while Steam was running: apply now?"));
+    }
+
+    #[test]
+    fn accounts_are_named_when_the_device_or_the_queue_has_several() {
+        let mut q = SteamQueue::default();
+        let mut c = change(1234, "a/dusk", QueuedKind::Add);
+        c.account_label = "Deck Player".into();
+        q.upsert(c);
+        assert!(!q.show_accounts(1));
+        assert!(q.show_accounts(2));
+        assert_eq!(manage_labels(&q, true)[0], "Remove: dusk (add, Deck Player)");
+        assert_eq!(manage_labels(&q, false)[0], "Remove: dusk (add)");
+        assert!(offer_text(&q, true, &[]).contains("  dusk (add, Deck Player)"));
+        let (title, text) = queue_confirm(&q.entries, false, true);
+        assert_eq!(title, "Queue until Steam is closed");
+        assert!(text.contains("Queue until Steam is closed:\n  dusk (add, Deck Player)"), "{text}");
+        assert_eq!(queue_confirm(&q.entries, true, false).0, "Queue for Desktop Mode");
+    }
+
+    #[test]
+    fn an_android_only_port_is_dropped_with_that_reason() {
+        let f = Fixture::new("android");
+        let mut cat = catalog();
+        cat[1] = port_from_value(&json!({"name": "Dusklight", "folder": "dusklight", "source": "https://github.com/a/dusk", "executable": "dusk", "tags": ["android_only"]})).unwrap();
+        let mut q = SteamQueue::default();
+        q.upsert(change(1234, "a/dusk", QueuedKind::Add));
+        save(&f.queue, &q).unwrap();
+        let out = f.apply(&cat, &no_steam);
+        assert!(out.text.contains("dusk: Android only, not added to Steam"), "{}", out.text);
+        assert!(!f.queue.exists());
     }
 }

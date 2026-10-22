@@ -78,11 +78,14 @@ A shortcut that only shares the port's name but points at another program shows 
 `same name as a shortcut for <program>, will repoint it` and starts switched off.
 Choosing a row switches it on or off; **Review N changes...** shows the list and asks before writing.
 (Backing out of the review or the account list with B returns to the main window; reopen the screen.)
+Applying, queuing, or applying the queue from this screen also ends on the main window once you close
+the result message; reopen the screen to see the new state.
 
 - **Close Steam first.** Steam rewrites its shortcut list when it exits, so the app only writes while
-  Steam is closed. If Steam is running, the last row reads **Queue N changes for Desktop Mode...**
-  instead of Review (see the next section), and nothing is written. Steam cannot be closed in Game
-  Mode; in Desktop Mode, Steam menu > Exit, wait a few seconds, then reopen the screen to write now.
+  Steam is closed. If Steam is running, the last row reads **Queue N changes until Steam is closed...**
+  (in Game Mode: **Queue N changes for Desktop Mode...**) instead of Review (see the next section), and
+  nothing is written. Steam cannot be closed in Game Mode; in Desktop Mode, Steam menu > Exit, wait a
+  few seconds, then reopen the screen to write now.
 - **Backup:** every write first copies `shortcuts.vdf` to `shortcuts.vdf.bak-<date>-<time>` in the
   same folder (`userdata/<id>/config/`). The newest 10 are kept (set `steam_backups_keep` in
   `fork-settings.json`); anything from the last hour is never removed.
@@ -103,32 +106,51 @@ backup is the state after the latest write, not before it.
 
 ### Queue from Game Mode, apply in Desktop Mode
 
-In Game Mode Steam is always running, so Add to Steam cannot write there. Instead:
+In Game Mode Steam is always running, so Add to Steam never writes there (even if the Steam check
+somehow finds no Steam). Instead:
 
-1. In Game Mode, open Settings > **Add to Steam...**, pick the ports as usual and choose
+1. In Game Mode, open Settings > **Add to Steam...**. The status row reads "Game Mode: Steam can't be
+   closed here, so changes are queued for Desktop Mode". Pick the ports as usual and choose
    **Queue N changes for Desktop Mode...**. The confirmation says Steam can't be closed in Game Mode and
    the change will apply next time you open this app in Desktop Mode with Steam closed. Choose
    **Queue**. Nothing in Steam changes yet; the choice is saved in `steam-queue.json` next to the app
-   (port, Steam account, whether a same-name shortcut may be repointed, artwork).
+   (port, Steam account and its name, whether a same-name shortcut may be repointed, artwork).
 2. In Desktop Mode, close Steam (Steam menu > Exit) and open the app. Within a couple of seconds of
-   starting, or within 30 seconds if the app was already open when Steam closed, it asks
-   **"N Steam changes queued from Game Mode: apply now?"**. **Apply** writes them the same way as the
-   screen does (backup first, Steam checked again just before the write) and lists what happened.
-   Cancel and it asks again the next time Steam has been running and is closed again, or on the next
-   start. It never asks while another dialog is open or a game started from the app is running.
+   starting, or within 30 seconds if the app was already open when Steam closed (or if another message
+   was showing), it asks **"N Steam changes queued from Game Mode: apply now?"**. If a port's artwork
+   has not been downloaded yet, the question says so: Cancel and wait a minute to get the artwork, or
+   Apply without it. **Apply** writes them the same way as the screen does (backup first, Steam
+   checked again just before the write) and lists what happened. When this question pops up by itself,
+   Cancel is preselected.
 3. Start Steam again: the shortcuts are under Non-Steam games.
+
+Cancel keeps them queued: apply them later from Settings > Add to Steam, or the question comes back
+after Steam has run and been closed again (or at the next start). It never pops up while another dialog
+is open, while a game started from the app is running, or while the window is hidden to the tray or
+minimized.
+
+In Desktop Mode with Steam running, the same screen offers **Queue N changes until Steam is closed...**;
+those are offered as "queued while Steam was running" once Steam is closed.
 
 The Add to Steam screen shows the queue too: the first row applies it now (or says why it has to wait),
 **View or remove queued changes...** lists each one (choose a row to remove it, or clear them all), and
-ports already queued are marked `(queued)`. Queuing the same port again replaces its entry.
+ports already queued are marked `(queued)`. After a removal the list reopens with Back selected; after
+clearing you are back on the Add to Steam screen. Queuing the same port again replaces its entry. When
+the Deck has more than one Steam account, or the queue covers more than one, each line names the account.
 
 When applying, each port is planned again against the shortcuts as they are then: one already in Steam
 is left alone, one that is in Steam with old details is updated in place (never a second shortcut), and
 one that left the catalog or was uninstalled since queuing is listed under "Dropped from the queue" and
 skipped. A port that now only matches a different program's shortcut by name is skipped unless you had
 switched that repoint on when queuing. If Steam starts again before the write, nothing is written and
-the queue stays. If `steam-queue.json` is damaged, the app keeps it as
-`steam-queue.json.corrupt-<date>-<time>`, says so, and starts with an empty queue.
+the changes that were going to be written stay queued. If no Steam account folder is found at all (not
+signed in yet, say), nothing is written and the whole queue stays. If `steam-queue.json` cannot be
+parsed (damaged or from another version), the app keeps it as `steam-queue.json.corrupt-<date>-<time>`,
+says so, and starts with an empty queue. If it cannot be opened at all (permissions, or a folder in its
+place), it is left alone and nothing can be queued or applied until you fix or remove it.
+
+The app's log has a line `game mode: yes` or `game mode: no` at startup with the two values it went by,
+and `steam queue: offering N` whenever it asks.
 
 ## Adopt ports you installed elsewhere (Desktop Mode)
 

@@ -204,8 +204,11 @@ impl SteamScreen {
             SteamLine::ApplyQueue => {
                 let n = self.queue.len();
                 let changes = if n == 1 { "1 Steam change".to_string() } else { format!("{n} Steam changes") };
+                if self.game_mode {
+                    return format!("{changes} queued: will apply next time in Desktop Mode with Steam closed");
+                }
                 match steam.running_steam_processes() {
-                    Ok(p) if p.is_empty() => format!("{changes} queued from Game Mode: apply now..."),
+                    Ok(p) if p.is_empty() => format!("{changes} queued {}: apply now...", self.queue.origin()),
                     Ok(_) => format!("{changes} queued: applied once Steam is closed"),
                     Err(_) => format!("{changes} queued: could not tell if Steam is running"),
                 }
@@ -217,9 +220,9 @@ impl SteamScreen {
                 None if self.accounts.is_empty() => "No Steam account found".to_string(),
                 None => "Choose your Steam account".to_string(),
             },
+            SteamLine::Status if self.game_mode => "Game Mode: Steam can't be closed here, so changes are queued for Desktop Mode".to_string(),
             SteamLine::Status => match steam.running_steam_processes() {
                 Ok(p) if p.is_empty() => "Steam is closed: ready to write".to_string(),
-                Ok(_) if self.game_mode => "Steam is running (Game Mode): changes can be queued for Desktop Mode".to_string(),
                 Ok(_) => "Steam is running: close it to write, or queue the changes".to_string(),
                 Err(_) => "Could not tell if Steam is running: nothing will be written".to_string(),
             },
@@ -251,7 +254,10 @@ impl SteamScreen {
                 (None, _) if self.account.is_none() => "Choose a Steam account first".to_string(),
                 (None, 0) if self.rows.is_empty() => "No installed ports to add".to_string(),
                 (None, 0) => "Nothing selected to add or update".to_string(),
-                (None, n) if self.can_queue(steam) => format!("Queue {n} change{} for Desktop Mode...", if n == 1 { "" } else { "s" }),
+                (None, n) if self.can_queue(steam) => {
+                    let until = if self.game_mode { "for Desktop Mode" } else { "until Steam is closed" };
+                    format!("Queue {n} change{} {until}...", if n == 1 { "" } else { "s" })
+                }
                 (None, 1) => "Review 1 change...".to_string(),
                 (None, n) => format!("Review {n} changes..."),
             },
@@ -296,11 +302,12 @@ impl SteamScreen {
 
     /// Steam is up (as in Game Mode), so the selected changes can be queued for later instead of written.
     /// Not when the check itself fails: there is no telling when Steam would be closed.
+    /// In Game Mode always: nothing is written there, whatever the process check says.
     pub fn can_queue(&self, steam: &dyn SteamProcessCheck) -> bool {
         self.load_error.is_none()
             && self.account.is_some()
             && self.selected_count() > 0
-            && steam.running_steam_processes().is_ok_and(|p| !p.is_empty())
+            && (self.game_mode || steam.running_steam_processes().is_ok_and(|p| !p.is_empty()))
     }
 
     /// The text of the confirmation: what will be added, what will change, where the backup goes.
@@ -1003,29 +1010,35 @@ mod tests {
         let running = || -> std::io::Result<Vec<String>> { Ok(vec!["5 steam".into()]) };
         let broken = || -> std::io::Result<Vec<String>> { Err(std::io::Error::other("no /proc")) };
         assert!(screen.can_queue(&running) && !screen.can_queue(&no_steam) && !screen.can_queue(&broken));
-        assert_eq!(screen.label(SteamLine::Review, &running), "Queue 1 change for Desktop Mode...");
+        assert_eq!(screen.label(SteamLine::Review, &running), "Queue 1 change until Steam is closed...");
         assert_eq!(screen.label(SteamLine::Review, &no_steam), "Review 1 change...");
         assert_eq!(screen.label(SteamLine::Review, &broken), "Review 1 change...", "a failed check does not offer a queue");
         assert_eq!(screen.lines()[0], SteamLine::Account, "no queue rows while nothing is queued");
 
         screen.queue.upsert(QueuedChange {
             account_id: 1234,
+            account_label: String::new(),
             port_key: "a/dusk".into(),
             name: "Dusklight".into(),
             kind: QueuedKind::Add,
             repoint_by_name: false,
             art: ArtChoice::Catalog,
+            from_game_mode: false,
             queued_at: String::new(),
         });
         assert_eq!(screen.lines()[..3], [SteamLine::ApplyQueue, SteamLine::ManageQueue, SteamLine::Account]);
-        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued from Game Mode: apply now...");
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued while Steam was running: apply now...");
         assert_eq!(screen.label(SteamLine::ApplyQueue, &running), "1 Steam change queued: applied once Steam is closed");
         let labels = screen.labels(&running);
         assert!(labels.contains(&"[x] Dusklight: will add (queued)".to_string()), "{labels:?}");
         screen.queue_note = Some("kept aside".into());
         assert_eq!(screen.lines()[0], SteamLine::QueueNote);
         screen.game_mode = true;
-        assert_eq!(screen.label(SteamLine::Status, &running), "Steam is running (Game Mode): changes can be queued for Desktop Mode");
+        let game = "Game Mode: Steam can't be closed here, so changes are queued for Desktop Mode";
+        assert_eq!((screen.label(SteamLine::Status, &running), screen.label(SteamLine::Status, &no_steam)), (game.to_string(), game.to_string()));
+        assert!(screen.can_queue(&no_steam) && screen.can_queue(&broken), "Game Mode queues even if /proc shows no Steam");
+        assert_eq!(screen.label(SteamLine::Review, &no_steam), "Queue 1 change for Desktop Mode...");
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued: will apply next time in Desktop Mode with Steam closed");
         let _ = fs::remove_dir_all(home);
     }
 
