@@ -9,6 +9,7 @@ use super::art;
 use super::artwork;
 use super::backups;
 use super::settings::ForkSettings;
+use super::steam_queue::SteamQueue;
 use super::steam_sync::{self, Action, PlanItem, WantedShortcut};
 use super::steam_user::{self, SteamAccount};
 use super::store::{backup_stamp, check_steam, ShortcutsFile, SteamProcessCheck, StoreError};
@@ -49,6 +50,12 @@ pub fn short_path(path: &Path, home: &Path) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SteamLine {
+    /// Why the queue file could not be read (it was kept aside).
+    QueueNote,
+    /// "N Steam changes queued from Game Mode: apply now..." (or, with Steam up, that they wait).
+    ApplyQueue,
+    /// View the queue, remove items or clear it.
+    ManageQueue,
     Account,
     Status,
     Port(usize),
@@ -67,12 +74,12 @@ pub struct PortRow {
 }
 
 impl PortRow {
-    fn can_change(&self) -> bool {
+    pub(crate) fn can_change(&self) -> bool {
         self.plan.as_ref().is_some_and(PlanItem::changes_the_file)
     }
 
     /// An existing shortcut found by name only: it points at some other program today.
-    fn by_name(&self) -> bool {
+    pub(crate) fn by_name(&self) -> bool {
         matches!(self.plan.as_ref().map(|p| &p.action), Some(Action::Update { by_name: true, .. }))
     }
 }
@@ -87,12 +94,18 @@ pub struct SteamScreen {
     /// Where the app caches catalog images (`<folder>.png`, `<folder>_icon.png`). Artwork is only
     /// placed from files found here.
     pub cache_dir: Option<PathBuf>,
+    /// Changes queued from Game Mode (`steam-queue.json`); the app fills this after `load`.
+    pub queue: SteamQueue,
+    /// Set when the queue file could not be read and was moved aside.
+    pub queue_note: Option<String>,
+    /// Running under gamescope (Game Mode), where Steam cannot be closed; only changes the wording.
+    pub game_mode: bool,
 }
 
 impl SteamScreen {
     /// `favorite_exe` answers, per port key, which program the user picked in the port's info.
     pub fn load(home: &Path, library_dir: &Path, catalog: &[Port], settings: &ForkSettings, favorite_exe: &dyn Fn(&str) -> Option<String>) -> SteamScreen {
-        let mut screen = SteamScreen { steam_root: None, accounts: Vec::new(), account: None, rows: Vec::new(), load_error: None, cache_dir: None };
+        let mut screen = SteamScreen { steam_root: None, accounts: Vec::new(), account: None, rows: Vec::new(), load_error: None, cache_dir: None, queue: SteamQueue::default(), queue_note: None, game_mode: false };
         for root in artwork::existing_steam_roots(home) {
             if let Ok(accounts) = steam_user::discover_accounts(&root) {
                 if !accounts.is_empty() {
@@ -168,7 +181,14 @@ impl SteamScreen {
     }
 
     pub fn lines(&self) -> Vec<SteamLine> {
-        let mut lines = vec![SteamLine::Account, SteamLine::Status];
+        let mut lines = Vec::new();
+        if self.queue_note.is_some() {
+            lines.push(SteamLine::QueueNote);
+        }
+        if !self.queue.is_empty() {
+            lines.extend([SteamLine::ApplyQueue, SteamLine::ManageQueue]);
+        }
+        lines.extend([SteamLine::Account, SteamLine::Status]);
         lines.extend((0..self.rows.len()).map(SteamLine::Port));
         lines.push(SteamLine::Review);
         lines
@@ -180,6 +200,17 @@ impl SteamScreen {
 
     pub fn label(&self, line: SteamLine, steam: &dyn SteamProcessCheck) -> String {
         match line {
+            SteamLine::QueueNote => "The saved queue could not be read and was kept aside (choose for details)".to_string(),
+            SteamLine::ApplyQueue => {
+                let n = self.queue.len();
+                let changes = if n == 1 { "1 Steam change".to_string() } else { format!("{n} Steam changes") };
+                match steam.running_steam_processes() {
+                    Ok(p) if p.is_empty() => format!("{changes} queued from Game Mode: apply now..."),
+                    Ok(_) => format!("{changes} queued: applied once Steam is closed"),
+                    Err(_) => format!("{changes} queued: could not tell if Steam is running"),
+                }
+            }
+            SteamLine::ManageQueue => "View or remove queued changes...".to_string(),
             SteamLine::Account => match self.active_account() {
                 Some(a) if self.accounts.len() > 1 => format!("Steam account: {} (choose another)", a.label()),
                 Some(a) => format!("Steam account: {}", a.label()),
@@ -188,7 +219,8 @@ impl SteamScreen {
             },
             SteamLine::Status => match steam.running_steam_processes() {
                 Ok(p) if p.is_empty() => "Steam is closed: ready to write".to_string(),
-                Ok(_) => "Steam is running: close it before applying".to_string(),
+                Ok(_) if self.game_mode => "Steam is running (Game Mode): changes can be queued for Desktop Mode".to_string(),
+                Ok(_) => "Steam is running: close it to write, or queue the changes".to_string(),
                 Err(_) => "Could not tell if Steam is running: nothing will be written".to_string(),
             },
             SteamLine::Port(i) => {
@@ -208,13 +240,18 @@ impl SteamScreen {
                     (_, Some(Action::Blocked(reason))) => format!("skipped, {reason}"),
                     (_, None) => "skipped".to_string(),
                 };
-                format!("{mark}{}: {what}", row.name)
+                let queued = match self.active_account() {
+                    Some(a) if self.queue.contains(a.account_id, &row.key) => " (queued)",
+                    _ => "",
+                };
+                format!("{mark}{}: {what}{queued}", row.name)
             }
             SteamLine::Review => match (&self.load_error, self.selected_count()) {
                 (Some(_), _) => "Could not read shortcuts.vdf: see the message".to_string(),
                 (None, _) if self.account.is_none() => "Choose a Steam account first".to_string(),
                 (None, 0) if self.rows.is_empty() => "No installed ports to add".to_string(),
                 (None, 0) => "Nothing selected to add or update".to_string(),
+                (None, n) if self.can_queue(steam) => format!("Queue {n} change{} for Desktop Mode...", if n == 1 { "" } else { "s" }),
                 (None, 1) => "Review 1 change...".to_string(),
                 (None, n) => format!("Review {n} changes..."),
             },
@@ -257,6 +294,15 @@ impl SteamScreen {
         }
     }
 
+    /// Steam is up (as in Game Mode), so the selected changes can be queued for later instead of written.
+    /// Not when the check itself fails: there is no telling when Steam would be closed.
+    pub fn can_queue(&self, steam: &dyn SteamProcessCheck) -> bool {
+        self.load_error.is_none()
+            && self.account.is_some()
+            && self.selected_count() > 0
+            && steam.running_steam_processes().is_ok_and(|p| !p.is_empty())
+    }
+
     /// The text of the confirmation: what will be added, what will change, where the backup goes.
     pub fn review_text(&self) -> String {
         let mut added = Vec::new();
@@ -295,7 +341,7 @@ fn program_name(path: &str) -> &str {
 /// At most `MAX_LISTED` lines, so a long list cannot outgrow its dialog.
 const MAX_LISTED: usize = 6;
 
-fn listed(lines: &[String]) -> String {
+pub(crate) fn listed(lines: &[String]) -> String {
     if lines.len() <= MAX_LISTED {
         return lines.join("\n");
     }
@@ -315,14 +361,14 @@ pub struct ApplyOutcome {
 /// place. Never overwrites art the user chose (the writer decides), never touches `shortcuts.vdf`.
 /// A port with nothing cached yet gets a note, not an error: the images are fetched in the background
 /// when the screen opens. Only a shortcut with no icon of its own gets ours; an existing one is kept.
-fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], taken_ids: &[u32], wanted: &mut [WantedShortcut]) -> Vec<String> {
+fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], taken_ids: &[u32], wanted: &mut [WantedShortcut], no_art: &[String]) -> Vec<String> {
     let Some(cache_dir) = &screen.cache_dir else { return Vec::new() };
     if !grid_dir.is_absolute() {
         return vec!["  skipped: the Steam folder path is not absolute".to_string()];
     }
     let mut notes = Vec::new();
     for item in items {
-        if !item.changes_the_file() {
+        if !item.changes_the_file() || no_art.contains(&item.wanted.port_key) {
             continue;
         }
         let Some(app_id) = steam_sync::expected_app_id(item) else { continue };
@@ -363,6 +409,11 @@ fn place_catalog_art(screen: &SteamScreen, grid_dir: &Path, items: &[PlanItem], 
 /// Writes the selected rows. Loads the file again, so edits Steam or another tool made since the
 /// screen opened are not lost; the plan is rebuilt from that fresh copy.
 pub fn apply_selected(screen: &SteamScreen, steam: &dyn SteamProcessCheck, settings: &ForkSettings, now: SystemTime) -> Result<ApplyOutcome, String> {
+    apply_selected_with(screen, steam, settings, now, &[])
+}
+
+/// `apply_selected`, placing no artwork for the port keys in `no_art` (a queued change can ask for none).
+pub fn apply_selected_with(screen: &SteamScreen, steam: &dyn SteamProcessCheck, settings: &ForkSettings, now: SystemTime, no_art: &[String]) -> Result<ApplyOutcome, String> {
     let path = screen.shortcuts_path().ok_or("No Steam account is selected.")?;
     let mut wanted: Vec<WantedShortcut> = screen
         .rows
@@ -386,7 +437,7 @@ pub fn apply_selected(screen: &SteamScreen, steam: &dyn SteamProcessCheck, setti
     if let Some(grid) = screen.grid_dir() {
         let first = steam_sync::plan(&file.doc, &wanted);
         let taken: Vec<u32> = super::shortcuts::list(&file.doc).iter().filter_map(|s| s.app_id).collect();
-        art_notes = place_catalog_art(screen, &grid, &first, &taken, &mut wanted);
+        art_notes = place_catalog_art(screen, &grid, &first, &taken, &mut wanted, no_art);
     }
     let items = steam_sync::plan(&file.doc, &wanted);
 
@@ -706,7 +757,7 @@ mod tests {
         let before = fs::read(&path).unwrap();
         let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
         let running = || -> std::io::Result<Vec<String>> { Ok(vec!["99 steam".into()]) };
-        assert_eq!(screen.label(SteamLine::Status, &running), "Steam is running: close it before applying");
+        assert_eq!(screen.label(SteamLine::Status, &running), "Steam is running: close it to write, or queue the changes");
         let err = apply_selected(&screen, &running, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap_err();
         assert!(err.starts_with(CLOSE_STEAM_HELP));
         assert!(err.contains("Still running: 99 steam"), "{err}");
@@ -939,6 +990,42 @@ mod tests {
         fs::write(grid.join(format!("{id}p.png")), b"the user's own cover").unwrap();
         apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
         assert_eq!(fs::read(grid.join(format!("{id}p.png"))).unwrap(), b"the user's own cover");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    // -- Game Mode queue ------------------------------------------------------------------------
+
+    #[test]
+    fn with_steam_running_review_becomes_queue_and_queued_ports_are_marked() {
+        use super::super::steam_queue::{ArtChoice, QueuedChange, QueuedKind};
+        let (home, library, _) = fake_home("queue_lines");
+        let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
+        let running = || -> std::io::Result<Vec<String>> { Ok(vec!["5 steam".into()]) };
+        let broken = || -> std::io::Result<Vec<String>> { Err(std::io::Error::other("no /proc")) };
+        assert!(screen.can_queue(&running) && !screen.can_queue(&no_steam) && !screen.can_queue(&broken));
+        assert_eq!(screen.label(SteamLine::Review, &running), "Queue 1 change for Desktop Mode...");
+        assert_eq!(screen.label(SteamLine::Review, &no_steam), "Review 1 change...");
+        assert_eq!(screen.label(SteamLine::Review, &broken), "Review 1 change...", "a failed check does not offer a queue");
+        assert_eq!(screen.lines()[0], SteamLine::Account, "no queue rows while nothing is queued");
+
+        screen.queue.upsert(QueuedChange {
+            account_id: 1234,
+            port_key: "a/dusk".into(),
+            name: "Dusklight".into(),
+            kind: QueuedKind::Add,
+            repoint_by_name: false,
+            art: ArtChoice::Catalog,
+            queued_at: String::new(),
+        });
+        assert_eq!(screen.lines()[..3], [SteamLine::ApplyQueue, SteamLine::ManageQueue, SteamLine::Account]);
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued from Game Mode: apply now...");
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &running), "1 Steam change queued: applied once Steam is closed");
+        let labels = screen.labels(&running);
+        assert!(labels.contains(&"[x] Dusklight: will add (queued)".to_string()), "{labels:?}");
+        screen.queue_note = Some("kept aside".into());
+        assert_eq!(screen.lines()[0], SteamLine::QueueNote);
+        screen.game_mode = true;
+        assert_eq!(screen.label(SteamLine::Status, &running), "Steam is running (Game Mode): changes can be queued for Desktop Mode");
         let _ = fs::remove_dir_all(home);
     }
 

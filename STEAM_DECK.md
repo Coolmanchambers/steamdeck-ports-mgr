@@ -80,9 +80,9 @@ Choosing a row switches it on or off; **Review N changes...** shows the list and
 (Backing out of the review or the account list with B returns to the main window; reopen the screen.)
 
 - **Close Steam first.** Steam rewrites its shortcut list when it exits, so the app only writes while
-  Steam is closed. If Steam is running, **Review** shows a message (naming the Steam processes still
-  found) instead of the Apply button, and nothing changes. Steam cannot be closed in Game Mode: switch
-  to Desktop Mode, Steam menu > Exit, wait a few seconds, then try again.
+  Steam is closed. If Steam is running, the last row reads **Queue N changes for Desktop Mode...**
+  instead of Review (see the next section), and nothing is written. Steam cannot be closed in Game
+  Mode; in Desktop Mode, Steam menu > Exit, wait a few seconds, then reopen the screen to write now.
 - **Backup:** every write first copies `shortcuts.vdf` to `shortcuts.vdf.bak-<date>-<time>` in the
   same folder (`userdata/<id>/config/`). The newest 10 are kept (set `steam_backups_keep` in
   `fork-settings.json`); anything from the last hour is never removed.
@@ -100,6 +100,35 @@ Choosing a row switches it on or off; **Review N changes...** shows the list and
 To undo, close Steam and copy the backup from before that write (the one named for the time of the
 write, listed in the result) over `shortcuts.vdf`. Each write makes its own backup, so the newest
 backup is the state after the latest write, not before it.
+
+### Queue from Game Mode, apply in Desktop Mode
+
+In Game Mode Steam is always running, so Add to Steam cannot write there. Instead:
+
+1. In Game Mode, open Settings > **Add to Steam...**, pick the ports as usual and choose
+   **Queue N changes for Desktop Mode...**. The confirmation says Steam can't be closed in Game Mode and
+   the change will apply next time you open this app in Desktop Mode with Steam closed. Choose
+   **Queue**. Nothing in Steam changes yet; the choice is saved in `steam-queue.json` next to the app
+   (port, Steam account, whether a same-name shortcut may be repointed, artwork).
+2. In Desktop Mode, close Steam (Steam menu > Exit) and open the app. Within a couple of seconds of
+   starting, or within 30 seconds if the app was already open when Steam closed, it asks
+   **"N Steam changes queued from Game Mode: apply now?"**. **Apply** writes them the same way as the
+   screen does (backup first, Steam checked again just before the write) and lists what happened.
+   Cancel and it asks again the next time Steam has been running and is closed again, or on the next
+   start. It never asks while another dialog is open or a game started from the app is running.
+3. Start Steam again: the shortcuts are under Non-Steam games.
+
+The Add to Steam screen shows the queue too: the first row applies it now (or says why it has to wait),
+**View or remove queued changes...** lists each one (choose a row to remove it, or clear them all), and
+ports already queued are marked `(queued)`. Queuing the same port again replaces its entry.
+
+When applying, each port is planned again against the shortcuts as they are then: one already in Steam
+is left alone, one that is in Steam with old details is updated in place (never a second shortcut), and
+one that left the catalog or was uninstalled since queuing is listed under "Dropped from the queue" and
+skipped. A port that now only matches a different program's shortcut by name is skipped unless you had
+switched that repoint on when queuing. If Steam starts again before the write, nothing is written and
+the queue stays. If `steam-queue.json` is damaged, the app keeps it as
+`steam-queue.json.corrupt-<date>-<time>`, says so, and starts with an empty queue.
 
 ## Adopt ports you installed elsewhere (Desktop Mode)
 

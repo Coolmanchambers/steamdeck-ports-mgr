@@ -67,6 +67,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/state/throttles.rs` | O6: `defer_catalog_check`, `defer_themes_check` (back-date the last check so the next one is due after the backoff); O7: self-update interval 24 h -> 12 h; 1 test |
 | 2026-10-21 | `src/core/catalog_sync.rs` | O6: `SyncError` with `Retry-After` (seconds or HTTP date), `retry_delay` (1 h default, 1 min to 1 day); 4xx/5xx read as responses (`http_status_as_error(false)`) so the header can be read; `fetch_with` takes the agent so 2 tests talk plain HTTP to a local fake (429 with `Retry-After`, 404); 4 tests |
 | 2026-10-21 | `src/ui/linux_chrome.rs` | O8: the single-instance socket is named per install folder (`ports_launcher-<FNV-1a of the folder>.sock`); the old shared `ports_launcher.sock` gets the hand-over only when `/proc` shows its listener runs from this folder (a copy from before the fix); a hand-over prints a line; 5 tests |
+| 2026-10-22 | `src/main.rs` | One line starting the Game Mode queue watch (`steam_screens::start_queue_watch`, a timer held for the app's life) |
 
 Files added by this fork:
 
@@ -105,6 +106,7 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
 | 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
+| 2026-10-22 | `src/fork/steam_queue.rs` | Steam changes queued from Game Mode: `steam-queue.json` (versioned, atomic), applying it through the screen's safe write, the startup/30-second offer decision, the mode wording; tested without UI |
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
 | 2026-10-22 | `src/fork/rom_screens/` | The logic of the game-files screens (R2): folder browser, background job runner, scan and report, results by system, Connect step, connected ports, the after-install offer; tested without UI |
 | 2026-10-22 | `src/app/rom_screens.rs` | The screens themselves: list dialogs, a timer that polls the worker thread |
@@ -119,9 +121,27 @@ Files added by this fork:
 
 - **Add to Steam** writes one shortcut per selected installed port to the chosen account's
   `shortcuts.vdf`, from Desktop Mode with Steam closed. It goes through the library's safe save
-  (refuse while Steam runs, verified backup, atomic write, read-back), then prunes old backups. The
-  Steam route decision (Desktop Mode write or a Decky plugin) is still open; this is the Desktop Mode
-  route and the library underneath serves either.
+  (refuse while Steam runs, verified backup, atomic write, read-back), then prunes old backups. This is
+  the Desktop Mode route (chosen 2026-10-21; no Decky plugin).
+- **Queue from Game Mode** (`steam_queue.rs`): Steam always runs in Game Mode, so with Steam up the
+  review row becomes "Queue N changes for Desktop Mode...". The choice (port key, Steam account, whether
+  a name-only match may be repointed, catalog art or none) is saved to `steam-queue.json` next to the app
+  (`"version": 1`, temp file + fsync + rename; an empty queue removes the file). Re-queuing a port for the
+  same account replaces its entry. Shortly after startup and then every 30 s, when no dialog is open and
+  no game started from the app runs, a non-empty queue with Steam closed brings up "N Steam changes
+  queued from Game Mode: apply now?"; a declined offer comes back only after Steam was seen running and
+  closed again (or on the next start). The screen also has an "apply now" row and a "View or remove
+  queued changes..." list (remove one, clear all, Back). Applying plans again from the current
+  `shortcuts.vdf` and writes through `screens::apply_selected_with` (same Steam re-checks, backup,
+  atomic write, read-back, `art::grid::write_art`), one write per account: an entry already in Steam
+  counts as done, a port that left the catalog or was uninstalled, an unknown account, a blocked plan or
+  a name-only match that was not approved when queuing is reported and dropped; if Steam comes back
+  before the rename (or `shortcuts.vdf` cannot be read) that account's entries stay queued and the file
+  is not rewritten. A queue file that cannot be read (bad JSON, not text, unknown version, a bad entry)
+  is renamed to `steam-queue.json.corrupt-<time>` and the user is told; the queue starts empty. Game Mode
+  is detected from `XDG_CURRENT_DESKTOP` containing "gamescope" or `GAMESCOPE_WAYLAND_DISPLAY` (unverified
+  on a Deck) and only changes the wording. Not verified on a Deck: the whole flow; whether a Game Mode
+  launch sees Steam in `/proc` (expected yes).
 - **Matching:** an existing shortcut is the port's when it has the same program, else the same name
   (ignoring case). It is updated in place, so its app ID stays. Two matches, or an entry with no stored
   app ID that needs a change, are blocked and shown as skipped, never guessed.
@@ -134,7 +154,7 @@ Files added by this fork:
   the shortcut when it has no icon of its own (an existing icon is kept). Art the user chose is never
   replaced (the writer's rule). Not done: art for a shortcut
   that is already in Steam, wide/hero/logo art.
-- **Not done:** the collection, Game Mode queueing, repointing a moved port's shortcut on its own,
+- **Not done:** the collection, repointing a moved port's shortcut on its own,
   Windows (no `/proc` check: it refuses).
 - **Screen text is English only**, built from the upstream picker dialog.
 

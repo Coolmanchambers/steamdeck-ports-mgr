@@ -234,6 +234,7 @@ fn main() {
             start_themes_sync(&app);
         })
     };
+    let _steam_queue_watch = app::steam_screens::start_queue_watch(&app, &router); // Fork: Steam changes queued from Game Mode
 
     // Fork: with no tray host (Game Mode) the tray is skipped and Close quits instead of hiding.
     let _tray = start_tray(&app, &router);
