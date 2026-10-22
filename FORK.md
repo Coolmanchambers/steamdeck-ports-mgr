@@ -284,7 +284,11 @@ change is reverted.
   backups quietly did nothing (about 45 catalog ports). On Linux these now count as "no Linux save
   folder known". A Windows value that is a plain folder inside the game (`"windows": "saves"`: no
   `%VAR%`, `~`, drive letter, leading slash or backslash, or `..`) still counts on Linux, so Ikemen-GO,
-  luanti, Open-Nectar, zelda3-PL and WarioWareTwistedRecomp are backed up and preserved as before.
+  luanti, Open-Nectar, zelda3-PL and WarioWareTwistedRecomp are backed up and preserved as before. On
+  Linux the backslashes of such a folder are separators (`saves\slots` is `<game>/saves/slots`), for
+  backup, uninstall and restore alike. One catalog entry is a file, not a folder (DBZ Burst Limit,
+  `.\burstlimit.toml`): it now resolves on Linux, so as on Windows the uninstall refuses to run because
+  a file save cannot be copied first.
   What a user sees for the others: Info of an installed port says "Save folder: unknown on Linux, no
   backup" (or "Save folder 2" / "Save folders"), the uninstall confirmation says saves are not kept,
   and Save Backup names the installed ports concerned. The update backup only logs it (its progress
