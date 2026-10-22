@@ -293,10 +293,13 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   (`save`, `save2`) each holds. The zip's table of contents is read directly (no unpacking); a zip
   that cannot be read, holds a name with `..`, a leading `/` or `\`, a drive letter, or a link entry is
   listed as "cannot be used".
-- **Which save folder:** the app's own resolver (`resolve_save_folder`), plus our own guard so it
-  never guesses: a per-system value with no entry for this system, a `%VARIABLE%` left after expansion,
-  or (on Linux) a Windows-style path means "no save folder known for Linux", and no restore is
-  offered. Also refused: the game folder itself or anything holding it, a relative path leading out
+- **Which save folder:** a plain relative path inside the game folder (no `%VARIABLE%`, no `~`, no
+  drive letter, no leading `/` or `\`) counts on every system, also when the catalog lists it only
+  under `windows` (coordinator ruling 2026-10-22, same as O1); on Linux its `\` separators become `/`.
+  Everything else goes through the app's own resolver (`resolve_save_folder`) plus our own guard so it
+  never guesses: a per-system value whose only entries are real paths for other systems (a Windows
+  drive or `%VARIABLE%` path, an Android path), a `%VARIABLE%` left after expansion, or (on Linux) a
+  Windows-style path means "no save folder known for Linux", and no restore is offered. Also refused: the game folder itself or anything holding it, a relative path leading out
   of the game folder, the home folder or anything above it, anything overlapping `Saves Backup`, and a
   path with fewer than two folder levels.
 - **Order of a restore:** refuse while the port's game runs (and while it installs, or another

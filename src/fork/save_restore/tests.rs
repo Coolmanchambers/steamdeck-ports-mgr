@@ -169,6 +169,47 @@ fn a_port_with_no_save_folder_for_this_system_gets_no_target() {
 }
 
 #[test]
+fn a_windows_only_relative_save_folder_counts_on_every_system_and_restores() {
+    let fx = Fixture::new();
+    let game = port("RelGame", Some(json!({"windows": "saves\\slots"})), Some(json!({"windows": "..\\Outside"})));
+    let dir = fx.game_dir(&game);
+    let targets = save_targets(&game, &dir, &fx.saves_backup, None);
+    let save = dir.join("saves").join("slots");
+    assert_eq!(targets[0].target, Target::Folder(save.clone()));
+    assert!(matches!(targets[1].target, Target::Refused(_)), "{:?}", targets[1].target);
+    let dot = port("DotGame", Some(json!({"windows": "."})), None);
+    assert!(matches!(save_targets(&dot, &fx.game_dir(&dot), &fx.saves_backup, None)[0].target, Target::Refused(_)));
+
+    write(&save.join("slot1.sav"), b"later");
+    let zip = fx.saves_backup.join(UPDATE_BACKUPS_DIR).join("RelGame").join("2026-10-20_12-00-00.zip");
+    fs::create_dir_all(zip.parent().unwrap()).unwrap();
+    write_stored_zip(&zip, &[("save_folder/slot1.sav", b"from the backup"), ("save_folder/sub/a.dat", b"a")]);
+    let backup = list_backups(&fx.saves_backup, "RelGame").remove(0);
+    let done = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap();
+    assert_eq!(done.folders.len(), 1);
+    assert_eq!(snapshot(&save), BTreeMap::from([("slot1.sav".to_string(), b"from the backup".to_vec()), ("sub/a.dat".to_string(), b"a".to_vec())]));
+}
+
+#[test]
+fn a_windows_only_appdata_save_folder_is_not_restorable_on_linux() {
+    #[cfg(not(windows))]
+    {
+        let fx = Fixture::new();
+        let game = port("AppDataGame", Some(json!({"windows": "%APPDATA%\\AppDataGame"})), None);
+        let dir = fx.game_dir(&game);
+        assert_eq!(save_targets(&game, &dir, &fx.saves_backup, None)[0].target, Target::NotForThisSystem);
+        let zip = fx.saves_backup.join(UPDATE_BACKUPS_DIR).join("AppDataGame").join("2026-10-20_12-00-00.zip");
+        fs::create_dir_all(zip.parent().unwrap()).unwrap();
+        write_stored_zip(&zip, &[("save_folder/slot1.sav", b"from the backup")]);
+        let backup = list_backups(&fx.saves_backup, "AppDataGame").remove(0);
+        let err = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap_err();
+        assert!(matches!(&err, RestoreError::NothingToRestore(why) if why.contains("no save folder known for Linux")), "{err:?}");
+        assert!(!fx.saves_backup.join(RESTORE_BACKUPS_DIR).exists());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "nothing written in the game folder");
+    }
+}
+
+#[test]
 fn folders_that_are_too_broad_are_refused() {
     let fx = Fixture::new();
     let home = fx.root.join("home");

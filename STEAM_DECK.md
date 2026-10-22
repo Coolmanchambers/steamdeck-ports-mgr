@@ -227,8 +227,10 @@ saves at once. To put one of those back:
    swap worked.
 5. To undo a restore, pick the newest **Before restore** backup in the same list.
 
-If the catalog names a save folder only for Windows (or another system), the app says **no save
-folder known for Linux** and offers no restore rather than guessing. A backup holding a file name that
+A save folder inside the game's own folder works on the Deck even when the catalog lists it only for
+Windows. If the catalog only gives a real Windows location (a drive or `%APPDATA%`-style path) or an
+Android one, the app says **no save folder known for Linux** and offers no restore rather than
+guessing. A backup holding a file name that
 points outside its folder (`../...` or `/...`) is listed as "cannot be used" and never unpacked. The
 backups are plain zips, so you can also open them in Dolphin.
 

@@ -14,9 +14,11 @@
 //! swap succeeded are the old folders removed. Names in the zip are checked before 7-Zip sees the
 //! file, so an entry like `../x` or `/x` refuses the whole backup.
 //!
-//! A save folder is only used when it is known for this system: a catalog value that only names a
-//! Windows (or other) location, or still holds a `%VARIABLE%` after expansion, means "no save folder
-//! known", and nothing is offered rather than a guess.
+//! A save folder is only used when it is known for this system. A plain relative path inside the game
+//! folder counts on every system, even when the catalog lists it only under `windows`. A value that only
+//! names a real location on another system (a Windows drive or `%VARIABLE%` path, an Android path), or
+//! still holds a `%VARIABLE%` after expansion, means "no save folder known", and nothing is offered
+//! rather than a guess.
 
 pub mod view;
 pub mod zip_index;
@@ -133,21 +135,46 @@ fn looks_like_windows_path(text: &str) -> bool {
     cfg!(not(windows)) && (text.contains('\\') || (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()))
 }
 
+/// A plain path inside the game folder: no `%VAR%`, no `~`, no drive letter, no leading `/` or `\`.
+fn is_plain_relative(s: &str) -> bool {
+    let b = s.as_bytes();
+    !s.is_empty() && !s.contains('%') && !s.starts_with(['~', '/', '\\']) && !(b.len() >= 2 && b[1] == b':') && !Path::new(s).is_absolute()
+}
+
+/// A save value that is a plain relative path counts on every system (coordinator ruling 2026-10-22), also
+/// when the catalog only lists it under `windows`. Returned with `/` separators off Windows.
+fn os_neutral_relative(value: &Value) -> Option<String> {
+    let s = match value {
+        Value::String(s) => s.as_str(),
+        Value::Object(obj) => match obj.get(get_platform_key()).and_then(Value::as_str).filter(|s| !s.is_empty()) {
+            Some(own) => own,
+            None => obj.get("windows").and_then(Value::as_str)?,
+        },
+        _ => return None,
+    };
+    is_plain_relative(s).then(|| if cfg!(windows) { s.to_string() } else { s.replace('\\', "/") })
+}
+
 fn resolve_target(value: &Value, game_dir: &Path, saves_backup_dir: &Path, home: Option<&Path>) -> Target {
-    // A per-system object with no entry for this system: do not borrow another system's path.
-    if let Some(obj) = value.as_object() {
-        if !obj.get(get_platform_key()).and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
+    let (path, from_relative) = if let Some(rel) = os_neutral_relative(value) {
+        (normalize(&game_dir.join(rel)), true)
+    } else {
+        // A per-system object with no entry for this system: do not borrow another system's real path
+        // (a Windows drive or %VAR% path, an Android path).
+        if let Some(obj) = value.as_object() {
+            if !obj.get(get_platform_key()).and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
+                return Target::NotForThisSystem;
+            }
+        }
+        let Some(path) = resolve_save_folder(value, game_dir) else { return Target::NotForThisSystem };
+        let text = path.to_string_lossy();
+        if has_unexpanded_variable(&text) || looks_like_windows_path(&text) {
             return Target::NotForThisSystem;
         }
-    }
-    let Some(path) = resolve_save_folder(value, game_dir) else { return Target::NotForThisSystem };
-    let text = path.to_string_lossy();
-    if has_unexpanded_variable(&text) || looks_like_windows_path(&text) {
-        return Target::NotForThisSystem;
-    }
-    let raw = resolve_per_platform(value).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    let path = normalize(&path);
-    if !expand_env_path(&raw).is_absolute() && !is_within(&path, game_dir) {
+        let raw = resolve_per_platform(value).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+        (normalize(&path), !expand_env_path(&raw).is_absolute())
+    };
+    if from_relative && !is_within(&path, game_dir) {
         return Target::Refused("points outside the game folder".into());
     }
     if is_within(game_dir, &path) {
