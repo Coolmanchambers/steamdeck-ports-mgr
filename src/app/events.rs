@@ -34,6 +34,9 @@ pub(crate) enum AppEvent {
     PortsCheckDone { etag: String },
     RemoteThemesFetched,
     ThemesCheckDone { etag: String },
+    // Fork (upstream bug O6): a failed catalog or themes check, retried after `retry_in`.
+    PortsCheckFailed { retry_in: std::time::Duration },
+    ThemesCheckFailed { retry_in: std::time::Duration },
     SaveBackupProgress { name: String },
     SaveBackupDone { copied: usize, skipped: usize, failed: usize, no_linux_folder: Vec<String> },
     // Fork: the Deck-ready list finished a background check.
@@ -184,6 +187,8 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             }
             AppEvent::PortsCheckDone { etag } => app.state.borrow_mut().mark_catalog_check(etag),
             AppEvent::ThemesCheckDone { etag } => app.state.borrow_mut().mark_themes_check(etag),
+            AppEvent::PortsCheckFailed { retry_in } => app.state.borrow_mut().defer_catalog_check(retry_in),
+            AppEvent::ThemesCheckFailed { retry_in } => app.state.borrow_mut().defer_themes_check(retry_in),
             AppEvent::RemoteThemesFetched => {
                 let active = app.state.borrow().active_theme.clone();
                 crate::ui::theme::load(&app.paths.themes_path, &mut app.theme.theme_config.borrow_mut(), &active);

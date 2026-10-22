@@ -39,21 +39,55 @@ fn interpret(
     Ok(CatalogUpdate::Updated { text, etag: etag_header.to_string() })
 }
 
-fn fetch_if_changed(url: &str, known_etag: &str, validate: impl FnOnce(&str) -> Result<(), String>) -> Result<CatalogUpdate, String> {
+/// Fork (upstream bug O6): a failed check, with how long the server asked us to wait (`Retry-After`).
+#[derive(Debug)]
+pub struct SyncError {
+    pub message: String,
+    pub retry_after: Option<Duration>,
+}
+
+impl From<String> for SyncError {
+    fn from(message: String) -> Self {
+        SyncError { message, retry_after: None }
+    }
+}
+
+/// Fork: when to try again after a failure: the server's `Retry-After` (kept between 1 minute and 1 day),
+/// otherwise 1 hour.
+pub fn retry_delay(error: &SyncError) -> Duration {
+    const DEFAULT: Duration = Duration::from_secs(60 * 60);
+    error.retry_after.map_or(DEFAULT, |d| d.clamp(Duration::from_secs(60), Duration::from_secs(24 * 60 * 60)))
+}
+
+/// `Retry-After` is either a number of seconds or an HTTP date.
+fn parse_retry_after(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    Some(at.with_timezone(&chrono::Utc).signed_duration_since(now).to_std().unwrap_or(Duration::ZERO))
+}
+
+fn fetch_if_changed(url: &str, known_etag: &str, validate: impl FnOnce(&str) -> Result<(), String>) -> Result<CatalogUpdate, SyncError> {
     let agent = http::agent(Duration::from_secs(30));
-    let mut req = agent.get(url);
+    // Fork: 4xx and 5xx come back as responses so `Retry-After` can be read; `classify` turns them into errors.
+    let mut req = agent.get(url).config().http_status_as_error(false).build();
     if !known_etag.is_empty() {
         req = req.header("If-None-Match", known_etag);
     }
     match req.call() {
         Ok(mut resp) => {
             let status = resp.status().as_u16();
-            let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let header = |name: &str| resp.headers().get(name).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let etag = header("etag");
+            let retry_after = parse_retry_after(&header("retry-after"), chrono::Utc::now());
             interpret(status, !known_etag.is_empty(), &etag, || resp.body_mut().read_to_string().map_err(|e| e.to_string()), validate)
+                .map_err(|message| SyncError { message, retry_after })
         }
         // Not reached with ureq 3 (a 304 is an `Ok` response); kept in case the agent is ever set to treat 3xx as errors.
         Err(ureq::Error::StatusCode(304)) if !known_etag.is_empty() => Ok(CatalogUpdate::NotModified),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e.to_string().into()),
     }
 }
 
@@ -82,11 +116,11 @@ pub fn etag_to_record(saved: bool, new_etag: String, known_etag: String) -> Stri
     if saved { new_etag } else { known_etag }
 }
 
-pub fn fetch_ports_if_changed(known_etag: &str) -> Result<CatalogUpdate, String> {
+pub fn fetch_ports_if_changed(known_etag: &str) -> Result<CatalogUpdate, SyncError> {
     fetch_if_changed(PORTS_RAW_URL, known_etag, validate_ports)
 }
 
-pub fn fetch_themes_if_changed(known_etag: &str) -> Result<CatalogUpdate, String> {
+pub fn fetch_themes_if_changed(known_etag: &str) -> Result<CatalogUpdate, SyncError> {
     fetch_if_changed(THEMES_RAW_URL, known_etag, validate_themes)
 }
 
@@ -165,6 +199,26 @@ mod tests {
         assert_eq!(classify(200), Ok(true));
         assert_eq!(classify(304), Ok(false));
         assert!(classify(500).is_err() && classify(404).is_err() && classify(302).is_err());
+    }
+
+    #[test]
+    fn retry_after_seconds_or_http_date() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-21T07:28:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert_eq!(parse_retry_after("120", now), Some(Duration::from_secs(120)));
+        assert_eq!(parse_retry_after(" 7 ", now), Some(Duration::from_secs(7)));
+        assert_eq!(parse_retry_after("Wed, 21 Oct 2026 08:28:00 GMT", now), Some(Duration::from_secs(3600)));
+        assert_eq!(parse_retry_after("Wed, 21 Oct 2026 06:00:00 GMT", now), Some(Duration::ZERO));
+        assert_eq!(parse_retry_after("", now), None);
+        assert_eq!(parse_retry_after("soon", now), None);
+    }
+
+    #[test]
+    fn retry_delay_is_an_hour_unless_the_server_says_otherwise() {
+        let error = |retry_after| SyncError { message: "HTTP 429".into(), retry_after };
+        assert_eq!(retry_delay(&error(None)), Duration::from_secs(3600));
+        assert_eq!(retry_delay(&error(Some(Duration::from_secs(7200)))), Duration::from_secs(7200));
+        assert_eq!(retry_delay(&error(Some(Duration::ZERO))), Duration::from_secs(60));
+        assert_eq!(retry_delay(&error(Some(Duration::from_secs(10 * 24 * 3600)))), Duration::from_secs(24 * 3600));
     }
 
     /// Against the real server: a second request with the ETag of the first must come back unchanged.

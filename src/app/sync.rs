@@ -94,7 +94,12 @@ pub(crate) fn start_catalog_sync(app: &AppState) {
                 events.push(AppEvent::PortsCheckDone { etag: catalog_sync::etag_to_record(saved, etag, known_etag) });
                 events.push(AppEvent::RemoteCatalogFetched(ports));
             }
-            Err(_) => {}
+            // Fork (upstream bug O6): say why, and wait an hour (or what the server asked) before asking again.
+            Err(e) => {
+                let retry_in = catalog_sync::retry_delay(&e);
+                eprintln!("catalog check failed: {} (next try in {} min)", e.message, retry_in.as_secs() / 60);
+                lock(&events).push(AppEvent::PortsCheckFailed { retry_in });
+            }
         }
     });
 }
@@ -121,7 +126,11 @@ pub(crate) fn start_themes_sync(app: &AppState) {
                     events.push(AppEvent::RemoteThemesFetched);
                 }
             }
-            Err(_) => {}
+            Err(e) => {
+                let retry_in = catalog_sync::retry_delay(&e);
+                eprintln!("themes check failed: {} (next try in {} min)", e.message, retry_in.as_secs() / 60);
+                lock(&events).push(AppEvent::ThemesCheckFailed { retry_in });
+            }
         }
     });
 }

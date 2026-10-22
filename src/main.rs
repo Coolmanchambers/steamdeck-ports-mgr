@@ -25,6 +25,8 @@ slint::include_modules!();
 
 const DISCORD_URL: &str = "https://discord.com/invite/5GYmst9twA";
 const DUPLICATE_CLICK_MS: u128 = 50;
+// Fork: how often an open app asks whether a throttled check is due (the checks themselves run at most every 12 h).
+const RECHECK_TICK_SECS: u64 = 15 * 60;
 
 fn base_dir() -> PathBuf {
     std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."))
@@ -222,6 +224,16 @@ fn main() {
     start_self_update_check(&app, recheck_self_update);
     start_catalog_sync(&app);
     start_themes_sync(&app);
+    // Fork (upstream bug O7): an app left open (tray, Desktop Mode) runs the same checks whenever they
+    // fall due (every 12 h, or after a failure's backoff); each one is still throttled by state.json.
+    let _recheck_timer = {
+        let app = app.clone();
+        repeat(Duration::from_secs(RECHECK_TICK_SECS), move || {
+            start_self_update_check(&app, false);
+            start_catalog_sync(&app);
+            start_themes_sync(&app);
+        })
+    };
 
     // Fork: with no tray host (Game Mode) the tray is skipped and Close quits instead of hiding.
     let _tray = start_tray(&app, &router);
