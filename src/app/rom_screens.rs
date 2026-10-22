@@ -59,6 +59,7 @@ fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
 
 /// A list that stays open (cursor where it was) when an information row is chosen. Rows that lead
 /// somewhere replace it by opening the next dialog, which closes this one.
+/// Every action row must open a dialog (which closes this one) or close it explicitly.
 fn open_list(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) {
     let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
     {
@@ -217,9 +218,8 @@ fn run_job<T: Send + 'static>(
 
 /// Settings > Game files...
 pub(crate) fn open_game_files(app: &Rc<AppState>, router: &Router) {
-    if dialog_is_open(app) {
-        return;
-    }
+    // No "dialog already open" guard: the Back and Cancel rows of the deeper lists call this while their
+    // own list is still up, and showing the menu replaces whatever is open.
     let Some(store) = load_store(app, router) else { return };
     show_menu(app, router, store);
 }
