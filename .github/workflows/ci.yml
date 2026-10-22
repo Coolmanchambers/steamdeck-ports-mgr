@@ -86,6 +86,9 @@ jobs:
           } > "dist/$pkg/BUILD_INFO"
           tar -C dist -czf "dist/$pkg-linux-x86_64.tar.gz" "$pkg"
           tar -tzvf "dist/$pkg-linux-x86_64.tar.gz"
+          # The one-file installer (a .desktop launcher with tools/installer.sh embedded). It always
+          # fetches the newest package, so it is the same file from build to build.
+          bash tools/build-installer.sh "dist/$pkg-installer.desktop"
 
       # The packaged app must survive startup with no tray host and no desktop session (a failure
       # here also blocks the release job). Mesa's software GL stands in for the Deck's GPU.
@@ -117,10 +120,23 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      # The installer, run through its own Exec line in fake home folders against this package on
+      # file:// (no GitHub): fresh install, update keeping user files byte-identical, tampered checksum,
+      # no network, running copy, launch, dialogs; then the real app on Xvfb (from the smoke test's
+      # packages) must keep the installer's menu entry. A failure here also blocks the release.
+      - name: Installer test (one-file .desktop installer, offline)
+        timeout-minutes: 5
+        run: |
+          sudo apt-get install -y --no-install-recommends desktop-file-utils python3-gi gir1.2-glib-2.0
+          bash tools/test-installer.sh dist/steamdeck-ports-mgr-installer.desktop \
+            dist/steamdeck-ports-mgr-linux-x86_64.tar.gz "$RUNNER_TEMP/installer-test"
+
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: steamdeck-ports-mgr-linux-x86_64
-          path: dist/steamdeck-ports-mgr-linux-x86_64.tar.gz
+          path: |
+            dist/steamdeck-ports-mgr-linux-x86_64.tar.gz
+            dist/steamdeck-ports-mgr-installer.desktop
           retention-days: 30
           if-no-files-found: error
 
@@ -185,8 +201,11 @@ jobs:
             echo "::warning::Build date $build_date is not today (UTC); not publishing. The next push to main will."
             exit 0
           fi
+          installer=steamdeck-ports-mgr-installer.desktop
+          test -s "$installer"
           sha256sum "$asset" > "$asset.sha256"
-          cat "$asset.sha256"
+          sha256sum "$installer" > "$installer.sha256"
+          cat "$asset.sha256" "$installer.sha256"
           {
             echo "Rolling build of \`main\` at ${GITHUB_SHA::7}, built $(date -u '+%Y-%m-%d %H:%M') UTC."
             echo
@@ -194,6 +213,7 @@ jobs:
             echo "Source for this build: https://github.com/$GH_REPO/tree/$GITHUB_SHA"
             echo
             echo "A testing and validation fork of [Nyaldee/Ports-Launcher](https://github.com/Nyaldee/Ports-Launcher)."
+            echo "Install on a Steam Deck: download [$installer](https://github.com/$GH_REPO/releases/latest/download/$installer) in Desktop Mode and double-click it."
             echo "Install and test steps: [STEAM_DECK.md](https://github.com/$GH_REPO/blob/main/STEAM_DECK.md)."
           } > notes.md
           # Full release (not pre-release): the updater downloads from releases/latest.
@@ -201,10 +221,10 @@ jobs:
           # Between the two uploads the pair can mismatch for a few seconds; the updater then refuses.
           if gh release view rolling >/dev/null 2>&1; then
             gh api -X PATCH "repos/$GH_REPO/git/refs/tags/rolling" -f sha="$GITHUB_SHA" -F force=true --jq .object.sha
-            gh release upload rolling "$asset" "$asset.sha256" --clobber
+            gh release upload rolling "$asset" "$asset.sha256" "$installer" "$installer.sha256" --clobber
             gh release edit rolling --title "Rolling build (main)" --notes-file notes.md --latest
           else
-            gh release create rolling "$asset" "$asset.sha256" --target "$GITHUB_SHA" \
+            gh release create rolling "$asset" "$asset.sha256" "$installer" "$installer.sha256" --target "$GITHUB_SHA" \
               --title "Rolling build (main)" --notes-file notes.md --latest
           fi
           # gh release view has no "is latest" field; ask the API which release /releases/latest serves.

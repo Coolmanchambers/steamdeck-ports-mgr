@@ -8,7 +8,9 @@
 > Everything after this note is upstream's README, unchanged. Same license (GPL-3.0-or-later);
 > every change from upstream is logged in [FORK.md](FORK.md).
 >
-> **Install and test on a Steam Deck:** see [STEAM_DECK.md](STEAM_DECK.md).
+> **Install and test on a Steam Deck:** in Desktop Mode, download
+> [steamdeck-ports-mgr-installer.desktop](https://github.com/Coolmanchambers/steamdeck-ports-mgr/releases/latest/download/steamdeck-ports-mgr-installer.desktop)
+> and double-click it; details and test steps in [STEAM_DECK.md](STEAM_DECK.md).
 >
 > | # | Item added by this fork | Status |
 > |---|---|---|

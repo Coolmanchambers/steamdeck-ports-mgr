@@ -9,6 +9,45 @@ account is needed to download it.
 
 ## Install (Desktop Mode)
 
+1. **Download the installer:**
+   [steamdeck-ports-mgr-installer.desktop](https://github.com/Coolmanchambers/steamdeck-ports-mgr/releases/latest/download/steamdeck-ports-mgr-installer.desktop)
+   (one small file, about 20 KB). It lands in your Downloads folder.
+2. **Double-click it** in Dolphin (Downloads). It is the same kind of launcher file that Decky Loader
+   and EmuDeck use.
+3. **Confirm the one security question.** Because the file came from the internet, KDE asks once
+   whether to run it: a warning that this is an untrusted (not executable) application launcher, with
+   a button to go ahead (Continue or Execute) and Cancel. Choose the go-ahead button. *The exact
+   wording and button names of that prompt are not confirmed on a Deck yet.*
+4. **Wait for the app to open.** A progress window shows each step (download, checksum, install).
+   Then Deck Ports Manager opens and a message says where it was installed. The first time, the
+   window lists 400+ ports within a few seconds.
+
+That's all: no unpacking, no moving folders, no ticking "Is executable". The installer:
+
+- downloads the newest rolling build (about 10 MB) from this repository's release and checks its
+  SHA-256; if the download or the check fails, it says so and **nothing is changed**;
+- installs it in `~/Applications/steamdeck-ports-mgr` (it creates `Applications` if needed);
+- adds **Ports Launcher** to the app menu (under Games; the app itself writes the same entry when it
+  starts) and a **Deck Ports Manager** icon on the desktop;
+- starts the app. Closing the installer's message does not close the app.
+
+It never asks for a password, never uses `sudo`, writes nothing outside your home folder and does
+not touch Steam. Its log is `~/.cache/steamdeck-ports-mgr-installer.log`. Everything it runs is plain
+bash inside the downloaded file itself (open it in a text editor to read it); it does not download
+and run any other script.
+
+**Run the installer again to update.** On an existing install it replaces only the program files
+(`ports_launcher`, `7zzs`, `ports_launcher_updater.sh`, `BUILD_INFO`), keeps the old program in
+`.previous/`, and never touches `Library/`, `Saves Backup/`, `state.json`, `secrets.json`,
+`fork-settings.json`, `steam-queue.json`, `ports.local.json`, the catalogs or `cache/`. If the app
+is open, it asks you to quit it (tray icon > Quit) or closes it for you, then opens it again. This
+is the same swap Settings > Force update does.
+
+### Manual install (fallback)
+
+If the installer does not run (for example the security prompt has no way to go ahead), install by
+hand:
+
 1. **Download the build:**
    [steamdeck-ports-mgr-linux-x86_64.tar.gz](https://github.com/Coolmanchambers/steamdeck-ports-mgr/releases/latest/download/steamdeck-ports-mgr-linux-x86_64.tar.gz)
    (about 10 MB).
@@ -21,6 +60,12 @@ account is needed to download it.
    "Is executable". Do the same for `7zzs` if needed.
 5. **Launch it.** Double-click `ports_launcher` > Execute. A dark window opens and, within a few
    seconds, lists 400+ ports.
+
+Another way to run the installer by hand, from Konsole:
+`bash <(sed -n '/^#BEGIN_DPM_INSTALLER/,/^#END_DPM_INSTALLER/s/^#|//p' ~/Downloads/steamdeck-ports-mgr-installer.desktop)`.
+
+The app's menu entry is named "Ports Launcher", the same name the original Ports Launcher uses for
+its own: with both installed, the menu entry opens whichever of the two was started last.
 
 The app keeps everything next to itself: `Library/` (installed ports), `Saves Backup/`,
 `state.json` and a cache. Uninstalling the app means deleting that folder, which also deletes the
@@ -52,10 +97,11 @@ still open from the same folder is recognized too; quit old copies from the tray
 - **What changes:** only `ports_launcher`, `7zzs`, the updater itself and `BUILD_INFO` (the exact
   commit and build date). `Library/`, saves, `state.json`, `ports.local.json` and the catalogs are
   never touched. The previous program files are kept in `.previous/`.
+- **Or run the installer again** (Install above): the same swap, from outside the app.
 - **Builds from before the updater** have no `ports_launcher_updater.sh`, so they can't update
-  themselves, and their Update button only shows an error. Quit from the tray, then copy the files
-  from a fresh download over the old ones (this keeps `Library/` and `state.json`). Force update
-  works from then on.
+  themselves, and their Update button only shows an error. Run the installer (it adds the updater),
+  or quit from the tray and copy the files from a fresh download over the old ones (this keeps
+  `Library/` and `state.json`). Force update works from then on.
 
 ## Play from Game Mode
 
@@ -300,6 +346,8 @@ to your device, never uploads or shares them, and the credits are in the screen'
 
 | Area | Pass looks like |
 |---|---|
+| Installer | Download, double-click, one security prompt, progress window, the app opens; menu entry and desktop icon appear |
+| Installer again | Says "updated" (or "reinstalled"), the app reopens, ports and saves are still there, `.previous/` holds the old program |
 | First launch | The catalog fills; typing filters it |
 | Install a port | Progress, then installed, with a Linux build under `Library/` |
 | Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |

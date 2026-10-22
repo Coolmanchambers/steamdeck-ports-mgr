@@ -79,13 +79,14 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `ui/dialogs/picker.slint` | `SearchListDialog` gets `in property <bool> password` and sets the text box's `input-type` from it, so a ScreenScraper password shows as dots. Two lines; no change while the property is false |
 | 2026-10-21 | `src/app/mod.rs` | One line registering `art_screens` |
 | 2026-10-21 | `.gitignore` | `secrets.json` added to the Secrets block (it holds the user's API keys; it is never committed) |
+| 2026-10-22 | `README.md` | The install pointer in the top note names the one-file installer |
 
 Files added by this fork:
 
 | Date | File | Purpose |
 |---|---|---|
 | 2026-10-20 | `.gitignore` | Keeps build output, game files, keys and firmware out of the repo |
-| 2026-10-20 | `.github/workflows/ci.yml` | Builds the Linux x86_64 release and runs the tests on every push; publishes the rolling release from `main`. Since 2026-10-21 also test-builds and runs the tests on Windows (upstream's other platform), without gating the release; skipped inside upstream-sync |
+| 2026-10-20 | `.github/workflows/ci.yml` | Builds the Linux x86_64 release and runs the tests on every push; publishes the rolling release from `main` (since 2026-10-22 with the one-file installer). Since 2026-10-21 also test-builds and runs the tests on Windows (upstream's other platform), without gating the release; skipped inside upstream-sync |
 | 2026-10-20 | `.github/workflows/upstream-sync.yml` | Daily merge of upstream changes (see below) |
 | 2026-10-20 | `FORK.md` | This file |
 | 2026-10-21 | `src/core/contract_tests.rs` | Test-only module that pins the upstream behavior our features rely on (asset choice for our ports' real release names, update decision with a recycled tag, local-entry merge, `state.json` keys) |
@@ -95,6 +96,9 @@ Files added by this fork:
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it. A failed check prints the copy count, the processes under the test folder and the log tail (since 2026-10-21) |
 | 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), opens Settings > Artwork sources and its Back row, and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-21 | `tools/test-app-update.sh` | Offline in-app update test: the packaged app, started from an old copy (marker appended to the program, old `BUILD_INFO`), runs Settings > Force update from the UI against a fake release on `file://`; checks the swap, `.previous/`, the restart on the new file and that saves, catalogs and state survive, then a tampered-checksum case (nothing changes, `update-failed.txt`, app reopens). CI runs it after the smoke test and blocks the release on failure |
+| 2026-10-22 | `tools/installer.sh` | The one-file installer's script: downloads the rolling release, checks its SHA-256, installs into `~/Applications/steamdeck-ports-mgr` or updates an existing install exactly like the updater, writes the app-menu entry (same bytes as the app's own) and a desktop shortcut, starts the app. Not shipped on its own (see Builds) |
+| 2026-10-22 | `tools/build-installer.sh` | Builds `steamdeck-ports-mgr-installer.desktop`: a desktop-entry launcher with `tools/installer.sh` embedded as comment lines, which its Exec line extracts from its own file (`%k`) and runs |
+| 2026-10-22 | `tools/test-installer.sh` | Offline installer test in fake home folders, run through the .desktop file's own Exec line: fresh install, update with user files byte-identical, tampered checksum, no network, running copy, detached launch, path escaping, kdialog/zenity calls, GLib's launcher, and the real app keeping the menu entry. CI runs it and blocks the release on failure |
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
@@ -663,3 +667,49 @@ keeps the previous program files in `.previous/`, replaces only `ports_launcher`
 own folder. On any failure it changes nothing, writes `update-failed.txt`, and reopens the version
 that was running. Upstream's updater scripts stay in the repo unchanged but are not shipped,
 because they install upstream's release.
+
+### The one-file installer
+
+CI also builds `steamdeck-ports-mgr-installer.desktop` (`tools/build-installer.sh`) and the release
+job publishes it, with its `.sha256`, next to the package, so its link is
+`releases/latest/download/steamdeck-ports-mgr-installer.desktop`. It is the same pattern Decky Loader
+(`decky_installer.desktop`) and EmuDeck (`EmuDeck.desktop`) use on the Deck: a desktop-entry file the
+user downloads and double-clicks, and KDE asks once whether to run an untrusted launcher. Unlike
+those two, it does not download and run a script (theirs `curl` one and pipe or run it): the whole
+installer is `tools/installer.sh`, embedded as comment lines between `#BEGIN_DPM_INSTALLER` and
+`#END_DPM_INSTALLER`, each prefixed with `#|`. The Exec line is
+
+    Exec=bash -c "bash <(sed -n '/^#BEGIN_DPM_INSTALLER/,/^#END_DPM_INSTALLER/s/^#|//p' -- \\"\\$1\\") \\"\\$1\\"" steamdeck-ports-mgr-installer %k
+
+`%k` is the desktop file's own path (KIO expands it to the entry's path; it stands alone, unquoted, as
+the spec requires). After the spec's string unescape and quoting rules this runs
+`bash -c 'bash <(sed ... -- "$1") "$1"' steamdeck-ports-mgr-installer <file>`: the installer lines are
+pulled out of the very file the user clicked and run by bash. A POSIX shell reads the same value to the
+same arguments, so a launcher that hands Exec to `sh` behaves the same. Readers of the desktop entry
+ignore comment lines, so the script cannot change how the launcher is read.
+
+`Terminal=false`, with dialogs instead: `kdialog` (KDE's own; progress bar driven over D-Bus with
+`dbus-send`), else `zenity` (which Decky's installer relies on, so SteamOS has it), else the same text
+steps in a Konsole or xterm window, else only the log (`~/.cache/steamdeck-ports-mgr-installer.log`).
+A terminal-first launcher (what Decky and EmuDeck do) shows a console full of text and closes when
+the script ends; dialogs give a progress bar and a result box that stays until it is read.
+
+What it changes: on a fresh install, the whole package moved into place in one rename (temporary
+files sit in a hidden folder beside the install folder, inside `$HOME`); on an existing install, only
+what the updater replaces, with `.previous/` and the same running-copy handling (asks first in the
+dialogs, then waits, then stops only a copy whose program is in that folder). Then
+`~/.local/share/applications/ports_launcher.desktop` with exactly the text `register_desktop_entry`
+writes (so the app's own write at startup is a no-op), and on a fresh install
+`~/Desktop/steamdeck-ports-mgr.desktop` ("Deck Ports Manager", executable so Plasma trusts it),
+unless another launcher on the desktop already points at the program; an update only refreshes that
+shortcut if it is still there. The app is started with `setsid`, so it outlives the installer. It
+refuses an install folder outside `$HOME` and never uses `sudo`.
+
+Test switches: `DPM_RELEASE_BASE` (https:// or file:// only), `DPM_INSTALL_DIR` (inside `$HOME`),
+`DPM_NO_LAUNCH=1`, `DPM_UI=kdialog|zenity|text`.
+
+Known limits: the KDE prompt's wording, kdialog on SteamOS (assumed present with Plasma; zenity is the
+fallback) and the desktop shortcut's trust are unverified until a Deck test; a launcher that does
+not expand `%k` (GLib's `gio launch` up to at least 2.72) runs nothing; the menu entry's name is
+shared with the original Ports Launcher (each app writes it at startup, so the last one started owns
+it).
