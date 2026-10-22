@@ -57,16 +57,16 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `src/app/events.rs` | After an install that is not followed by a launch, one call to `rom_screens::offer_after_install` (the once-per-port offer to connect game files) |
 | 2026-10-22 | `src/app/mod.rs` | One line registering `rom_screens` |
 | 2026-10-22 | `README.md` | Item 7 (game files folder) set to "Testing" |
-| 2026-10-21 | `src/core/platform_resolve.rs` | O1: `save_location` / `SaveLocation`; on Linux a save value never falls back to the `windows` or `android` key and a path with an unset `%VAR%` is `UnknownOnLinux`; `resolve_save_folder` returns no folder for it; `expand_env_path` is now test-only (`expand_env_path_checked` reports unset variables); Windows unchanged; 5 tests |
-| 2026-10-21 | `src/core/save_backup.rs` | O1: `save_folder_unknown_on_linux`; `GlobalBackupSummary::no_linux_folder` (installed ports concerned); `backup_before_update` says so in its progress text; 2 tests |
-| 2026-10-21 | `src/app/dialogs.rs`, `ui/dialogs/info.slint`, `src/app/events.rs` | O1: Info shows a `save-note-text` line ("Save folder: unknown on Linux, no backup"); the Save Backup summary appends the names (`SaveBackupDone` carries them) |
-| 2026-10-21 | `src/core/asset_select.rs` | O2/O3: `choose_release` (`ReleaseChoice::AskForNewest` when the newest release has several files for this system, instead of walking down), `prefer_stable` (prereleases skipped unless none is stable), `newest_release`; `latest_installable_release` wraps it; 7 tests |
-| 2026-10-21 | `src/core/github_api.rs`, `src/core/gitlab_api.rs` | O2/O3: `most_recent_release` returns the release `choose_release` asked about; the update check compares against the newest release even when it needs the picker; `fetch_latest_tag_and_date` removed from both (no caller left) |
+| 2026-10-21 | `src/core/platform_resolve.rs` | O1: `save_location` / `SaveLocation`; on Linux a save value never uses a Windows OS path (drive, `%VAR%`, home, absolute) or any Android value, and a path with an unset `%VAR%` is `UnknownOnLinux`; a Windows value that is a plain folder inside the game (`is_in_game_relative`) counts on Linux; `resolve_save_folder` returns no folder for an unknown one; `expand_env_path` is now test-only (`expand_env_path_checked` reports unset variables); Windows unchanged; 6 tests |
+| 2026-10-21 | `src/core/save_backup.rs` | O1: `unknown_on_linux_fields`, `save_folder_unknown_on_linux`; `GlobalBackupSummary::no_linux_folder` (installed ports concerned); `backup_before_update` logs it; `restore_after_install` keeps the Pending Restore copy when there is no folder to restore into (upstream deleted it); 5 tests |
+| 2026-10-21 | `src/app/dialogs.rs`, `ui/dialogs/info.slint`, `src/app/events.rs` | O1: for an installed port, Info shows a `save-note-text` line ("Save folder: unknown on Linux, no backup", or "Save folder 2" / "Save folders"); the uninstall confirmation says saves are not kept; the Save Backup summary appends the names (`SaveBackupDone` carries them). O2: closing the file picker of a Play-triggered update launches the installed game |
+| 2026-10-21 | `src/core/asset_select.rs` | O2/O3: `choose_release` (`ReleaseChoice::AskForNewest` when the newest release has several files for this system, instead of walking down), `prefer_stable` (drafts dropped, prereleases skipped unless none is stable), `is_draft`, `needs_latest_stable`, `newest_release`; `latest_installable_release` wraps it; 9 tests |
+| 2026-10-21 | `src/core/github_api.rs`, `src/core/gitlab_api.rs` | O2/O3: `candidate_releases` (5 newest without drafts, plus `releases/latest` when all 5 are prereleases); `most_recent_release` returns the release `choose_release` asked about; the update check compares against the newest release even when it needs the picker, dated by its newest candidate file (`ask_for_newest_date`); `fetch_latest_tag_and_date` removed from both (no caller left); 2 tests |
 | 2026-10-21 | `src/core/jobs.rs`, `src/core/contract_tests.rs` | O2: test renamed and re-asserted (`update_check_without_preferred_asset_compares_the_newest_release_not_an_older_one`); contract test `severed_chains_without_preferred_asset_walks_down_to_the_2023_zip` replaced by `..._asks_for_a_file_of_the_newest_release`, plus a main-release and a devbuild-prerelease test |
 | 2026-10-21 | `src/app/sync.rs`, `src/app/events.rs`, `src/main.rs` | O4/O5: `settle_self_update_flag` at startup (clears a flag that no longer applies, then checks at once); the check compares commits through `fork::self_update`; `SelfUpdateAvailable` carries the offer, saved in `fork-settings.json`. O6: catalog and themes failures are logged and deferred (`PortsCheckFailed`, `ThemesCheckFailed`). O7: a 15-minute timer runs whichever check is due |
 | 2026-10-21 | `src/core/state/throttles.rs` | O6: `defer_catalog_check`, `defer_themes_check` (back-date the last check so the next one is due after the backoff); O7: self-update interval 24 h -> 12 h; 1 test |
-| 2026-10-21 | `src/core/catalog_sync.rs` | O6: `SyncError` with `Retry-After` (seconds or HTTP date), `retry_delay` (1 h default, 1 min to 1 day); 4xx/5xx read as responses (`http_status_as_error(false)`) so the header can be read; 2 tests |
-| 2026-10-21 | `src/ui/linux_chrome.rs` | O8: the single-instance socket is named per install folder (`ports_launcher-<FNV-1a of the folder>.sock`); a hand-over prints a line; 2 tests |
+| 2026-10-21 | `src/core/catalog_sync.rs` | O6: `SyncError` with `Retry-After` (seconds or HTTP date), `retry_delay` (1 h default, 1 min to 1 day); 4xx/5xx read as responses (`http_status_as_error(false)`) so the header can be read; `fetch_with` takes the agent so 2 tests talk plain HTTP to a local fake (429 with `Retry-After`, 404); 4 tests |
+| 2026-10-21 | `src/ui/linux_chrome.rs` | O8: the single-instance socket is named per install folder (`ports_launcher-<FNV-1a of the folder>.sock`); the old shared `ports_launcher.sock` gets the hand-over only when `/proc` shows its listener runs from this folder (a copy from before the fix); a hand-over prints a line; 5 tests |
 
 Files added by this fork:
 
@@ -282,21 +282,31 @@ change is reverted.
   Linux when the catalog had no `linux` one (and the first value, sometimes Android's, when there was
   no Windows one either), and kept an unset `%APPDATA%` literally, so the folder could not exist and
   backups quietly did nothing (about 45 catalog ports). On Linux these now count as "no Linux save
-  folder known": Info says "Save folder: unknown on Linux, no backup", Save Backup names the installed
-  ports concerned, and the update backup says so in its progress. A Linux path in `ports.local.json`
-  fixes a port. Windows keeps upstream's fallbacks. Note: catalog entries whose Windows value is a
-  relative folder inside the game (`"windows": "saves"`, 5 ports such as Ikemen-GO and zelda3) also
-  count as unknown now, because nothing says the Linux build uses the same folder.
+  folder known". A Windows value that is a plain folder inside the game (`"windows": "saves"`: no
+  `%VAR%`, `~`, drive letter, leading slash or backslash, or `..`) still counts on Linux, so Ikemen-GO,
+  luanti, Open-Nectar, zelda3-PL and WarioWareTwistedRecomp are backed up and preserved as before.
+  What a user sees for the others: Info of an installed port says "Save folder: unknown on Linux, no
+  backup" (or "Save folder 2" / "Save folders"), the uninstall confirmation says saves are not kept,
+  and Save Backup names the installed ports concerned. The update backup only logs it (its progress
+  line is replaced at once). Uninstall never touched folders outside the game folder and still does
+  not. A Linux path in `ports.local.json` fixes a port. Windows keeps upstream's fallbacks.
+- **A kept save copy is no longer deleted (O1 review).** Upstream's restore after a reinstall deleted
+  the `Pending Restore` copy when the port had no save folder to restore into, which lost the only copy
+  of those saves. The copy now stays.
 - **Newest release, not an older one (O2).** When the newest release offers several files for this
   system (Severed Chains without `preferred_asset`: two Linux tarballs), Install now shows the file
   picker for that release. Upstream walked down to the first older release with one clear file and
   installed it without a word (the 2023 zip for Severed Chains). A newest release with no file for
-  this system still walks down. The update check compares against that newest release too, so a new
-  release is offered and Install asks for the file.
-- **Prereleases (O3).** GitHub prereleases are skipped unless none of the 5 listed releases is stable.
-  A recycled tag such as the `devbuild` of Severed Chains is not a prerelease and is listed below
-  `release-3.0.0` (GitHub orders by creation date), so `preferred_asset` plus this order keeps the
-  main release.
+  this system still walks down. The update check compares against that newest release too (dated by
+  its newest candidate file), so a new release, or a file replaced in place, is offered and Install
+  asks for the file. Closing that picker when Play started the update launches the installed game.
+- **Prereleases (O3).** Drafts are dropped and GitHub prereleases are skipped unless none of the 5
+  listed releases is stable; then `releases/latest` (the newest stable release) is added, so an older
+  stable release still wins over betas. When the stable releases have no file for this system, the
+  install fails rather than taking a beta. "Select version" in Info still lists every release,
+  prereleases included. A recycled tag such as the `devbuild` of Severed Chains is not a prerelease and
+  is listed below `release-3.0.0` (GitHub orders by creation date), so `preferred_asset` plus this
+  order keeps the main release.
 - **Self-update by commit (O5) and a stale flag (O4).** See Builds. The flag's cause is kept in
   `fork-settings.json` (`self_update_offer`); at start, a flag that no longer applies is cleared and
   a check runs at once.
@@ -306,7 +316,9 @@ change is reverted.
   they fall due (every 12 hours).
 - **One instance per install folder (O8).** The single-instance socket is named after the install
   folder, so this fork and the original, or two copies in different folders, run side by side. The
-  same folder started twice still hands over to the open copy.
+  same folder started twice still hands over to the open copy. A copy from before this fix (old shared
+  socket name) gets the hand-over too when it runs from the same folder; that is read from `/proc`
+  without connecting, because a copy on the old name comes to the front on any connection.
 - **Side effects to know.** The `~` fix also means the Save Backup button (global backup) now
   includes upstream's `~/...` Linux save paths (about 32 catalog entries), installed or not. AppImage
   cleanup only recognizes names that differ by version numbers, so a renamed scheme keeps the old file.

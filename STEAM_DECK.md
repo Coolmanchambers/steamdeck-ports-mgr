@@ -28,8 +28,10 @@ ports installed under `Library/`, so back up anything you want first.
 
 Keep it on the internal drive or an ext4 SD card (the format SteamOS uses). It can run next to the
 original Ports Launcher, or next to a second copy in another folder: each install folder has its own
-single-instance lock. Starting the same folder twice brings the open copy to the front instead (the
-second start prints "already running from this folder" and quits).
+single-instance lock. Starting the same folder twice hands over to the open copy instead: the second
+start prints "this app is already running from this folder" and quits (bringing the open window to
+the front is best effort, especially on Wayland). A copy of this app from before 2026-10-21 that is
+still open from the same folder is recognized too; quit old copies from the tray before updating.
 
 ## Updating
 
@@ -191,7 +193,7 @@ the app never deletes game files.
 | No tray in Game Mode | Expected: the app runs without a tray icon there, and its X button quits instead of hiding | If it closes at start, or X hides it and Steam keeps showing it running, send the log: it says whether a tray was expected |
 | Desktop Mode copy still open | Game Mode launch of the same folder returns to Steam at once (it brought the open copy forward, which Game Mode may not show) | Quit from the tray in Desktop Mode first |
 | Force update in Game Mode untested | Steam may close the updater with the app, so nothing changes and the app doesn't return | Check `updater.log`; update from Desktop Mode until this is confirmed |
-| Update not offered | Footer stays "GitHub" | Under 12 h since the last check: use Force update |
+| Update not offered | Footer stays "GitHub" | Under 12 h since the last check, or no `BUILD_INFO` and the newer build is from the same UTC day: use Force update. Offline, the log says `self-update check failed` |
 
 ## Reporting a result
 
