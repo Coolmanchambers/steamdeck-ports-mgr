@@ -258,9 +258,16 @@ fn restore_refuses_when_no_folder_is_known_for_this_system() {
     fx.update_backup(&real, "2026-10-20_12-00-00");
     let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
 
-    let elsewhere = port("MyGame", Some(json!({"android": "/sdcard/MyGame"})), None);
-    let err = restore(&fx.input(&elsewhere, &dir, &backup, "s"), &mut |_| {}).unwrap_err();
-    assert!(matches!(&err, RestoreError::NothingToRestore(why) if why.contains("no save folder known")), "{err:?}");
+    // Linux only: on Windows the app's resolver keeps upstream's fallback to another system's value.
+    #[cfg(target_os = "linux")]
+    {
+        let elsewhere = port("MyGame", Some(json!({"android": "/sdcard/MyGame"})), None);
+        let err = restore(&fx.input(&elsewhere, &dir, &backup, "s"), &mut |_| {}).unwrap_err();
+        assert!(matches!(&err, RestoreError::NothingToRestore(why) if why.contains("no save folder known")), "{err:?}");
+    }
+    let unlisted = port("MyGame", Some(json!("")), None);
+    let err = restore(&fx.input(&unlisted, &dir, &backup, "s"), &mut |_| {}).unwrap_err();
+    assert!(matches!(&err, RestoreError::NothingToRestore(why) if why.contains("does not say")), "{err:?}");
     assert!(!fx.saves_backup.join(RESTORE_BACKUPS_DIR).exists());
 }
 
