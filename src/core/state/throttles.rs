@@ -15,7 +15,8 @@ fn is_older_than(timestamp: &str, hours: i64) -> bool {
 // The stamp that makes `is_older_than(stamp, interval_hours)` turn true `retry_in` from now.
 fn deferred_check_stamp(interval_hours: i64, retry_in: std::time::Duration) -> String {
     let retry_in = Duration::from_std(retry_in).unwrap_or_else(|_| Duration::hours(interval_hours));
-    (Utc::now() - Duration::hours(interval_hours) + retry_in).to_rfc3339()
+    // Same form as `now_timestamp`.
+    (Utc::now() - Duration::hours(interval_hours) + retry_in).format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 pub fn is_stale_for_update_check(installed_at: &str) -> bool {

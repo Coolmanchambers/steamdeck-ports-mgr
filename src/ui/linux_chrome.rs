@@ -44,17 +44,74 @@ fn instance_socket_path_for(runtime_dir: Option<PathBuf>, user: &str, install_fo
     }
 }
 
+fn install_folder() -> PathBuf {
+    std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)).unwrap_or_default()
+}
+
 fn instance_socket_path() -> PathBuf {
-    let install_folder = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)).unwrap_or_default();
-    instance_socket_path_for(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from), &std::env::var("USER").unwrap_or_default(), &install_folder)
+    instance_socket_path_for(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from), &std::env::var("USER").unwrap_or_default(), &install_folder())
+}
+
+/// The one name every copy used before this fix (and upstream's copies still use).
+fn legacy_socket_path() -> PathBuf {
+    match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|dir| dir.is_dir()) {
+        Some(dir) => dir.join("ports_launcher.sock"),
+        None => std::env::temp_dir().join(format!("ports_launcher-{}.sock", std::env::var("USER").unwrap_or_default())),
+    }
+}
+
+/// The inode of the listening socket bound at `path`, from the text of `/proc/net/unix`
+/// (`Num RefCount Protocol Flags Type St Inode Path`; a listening socket has flag `00010000`).
+fn listening_inode(table: &str, path: &Path) -> Option<String> {
+    table.lines().skip(1).find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let listening = fields.get(3).and_then(|f| u32::from_str_radix(f, 16).ok()).is_some_and(|flags| flags & 0x0001_0000 != 0);
+        (fields.len() >= 8 && listening && Path::new(fields[7]) == path).then(|| fields[6].to_string())
+    })
+}
+
+/// The program of the process holding socket `inode`, when this user can see it.
+fn socket_owner_exe(inode: &str) -> Option<PathBuf> {
+    let needle = format!("socket:[{inode}]");
+    fs::read_dir("/proc").ok()?.flatten().find_map(|entry| {
+        let is_pid = entry.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit());
+        let fds = fs::read_dir(entry.path().join("fd")).ok().filter(|_| is_pid)?;
+        let owns = fds.flatten().any(|fd| fs::read_link(fd.path()).is_ok_and(|target| target.as_os_str() == needle.as_str()));
+        owns.then(|| fs::read_link(entry.path().join("exe")).ok()).flatten()
+    })
+}
+
+/// Hand over to a copy on the old socket name only when it runs from this folder (a copy from before the
+/// fix, still open); one from another folder (upstream's app) is left alone. Unknown owner: hand over, as
+/// two copies of one folder would both write its state.json.
+fn hand_over_to_legacy(owner_exe: Option<&Path>, our_folder: &Path) -> bool {
+    owner_exe.is_none_or(|exe| exe.parent() == Some(our_folder))
+}
+
+fn signal_running_copy(path: &Path, what: &str) {
+    use std::os::unix::net::UnixStream;
+    match UnixStream::connect(path).and_then(|mut stream| stream.write_all(&[0])) {
+        Ok(()) => eprintln!("{what} is already running from this folder; asked it to come to the front, quitting ({})", path.display()),
+        Err(e) => eprintln!("{what} is already running from this folder but did not answer ({e}); quitting ({})", path.display()),
+    }
 }
 
 pub fn claim_single_instance(on_activate: impl Fn() + Send + 'static) -> bool {
     use std::os::unix::net::{UnixListener, UnixStream};
     let path = instance_socket_path();
-    if let Ok(mut stream) = UnixStream::connect(&path) {
-        let _ = stream.write_all(&[0]);
-        eprintln!("already running from this folder; brought that copy to the front and quit ({})", path.display());
+    if UnixStream::connect(&path).is_ok() {
+        signal_running_copy(&path, "this app");
+        return false;
+    }
+    // Fork: decided from /proc without connecting, because a copy listening there brings itself to the
+    // front on any connection, and upstream's app in another folder must be left alone.
+    let legacy = legacy_socket_path();
+    let legacy_from_here = match fs::read_to_string("/proc/net/unix") {
+        Ok(table) => listening_inode(&table, &legacy).is_some_and(|inode| hand_over_to_legacy(socket_owner_exe(&inode).as_deref(), &install_folder())),
+        Err(_) => UnixStream::connect(&legacy).is_ok(),
+    };
+    if legacy_from_here {
+        signal_running_copy(&legacy, "an older copy of this app");
         return false;
     }
     let _ = fs::remove_file(&path);
@@ -491,6 +548,36 @@ mod tests {
         assert!(UnixStream::connect(instance_socket_path_for(Some(dir.clone()), "u", Path::new("/opt/a"))).is_ok());
         assert!(UnixStream::connect(instance_socket_path_for(Some(dir.clone()), "u", Path::new("/opt/b"))).is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_listening_socket_is_found_in_proc_net_unix() {
+        let table = "Num       RefCount Protocol Flags    Type St Inode Path\n\
+            0000000000000000: 00000003 00000000 00000000 0001 03 51234 /run/user/1000/ports_launcher.sock\n\
+            0000000000000000: 00000002 00000000 00010000 0001 01 51200 /run/user/1000/ports_launcher.sock\n\
+            0000000000000000: 00000002 00000000 00010000 0001 01 51300 /run/user/1000/other.sock\n";
+        assert_eq!(listening_inode(table, Path::new("/run/user/1000/ports_launcher.sock")).as_deref(), Some("51200"));
+        assert_eq!(listening_inode(table, Path::new("/run/user/1000/missing.sock")), None);
+    }
+
+    #[test]
+    fn the_owner_of_a_live_socket_is_this_test_binary() {
+        let dir = std::env::temp_dir().join(format!("dpm_legacy_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ports_launcher.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let inode = listening_inode(&fs::read_to_string("/proc/net/unix").unwrap(), &path).expect("listening socket listed");
+        assert_eq!(socket_owner_exe(&inode), std::env::current_exe().ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_copy_from_this_folder_on_the_old_socket_gets_the_hand_over() {
+        let ours = Path::new("/home/deck/Applications/steamdeck-ports-mgr");
+        assert!(hand_over_to_legacy(Some(&ours.join("ports_launcher")), ours));
+        assert!(!hand_over_to_legacy(Some(Path::new("/home/deck/Applications/Ports-Launcher/ports_launcher")), ours));
+        assert!(hand_over_to_legacy(None, ours), "unknown owner: hand over");
     }
 
     #[test]

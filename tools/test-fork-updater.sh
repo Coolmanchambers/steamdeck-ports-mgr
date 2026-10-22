@@ -13,7 +13,7 @@ check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 app_running() { for p in $(pgrep -x ports_launcher); do [ "$(readlink -f /proc/$p/exe)" = "$T/app/ports_launcher" ] && return 0; done; return 1; }
 count_app() { n=0; for p in $(pgrep -x ports_launcher); do [ "$(readlink -f /proc/$p/exe)" = "$T/app/ports_launcher" ] && n=$((n+1)); done; echo $n; }
 
-# On a failed check: what was running at that moment (CI flaked once on the copy count, 2026-10-22, and the
+# On a failed check: what was running at that moment (CI flaked once on the copy count, 2026-10-21, and the
 # old output could not say why). Every process whose program or working folder is under $T, with its age.
 diag() {
   echo "    count_app=$(count_app)"

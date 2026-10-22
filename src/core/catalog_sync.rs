@@ -70,7 +70,11 @@ fn parse_retry_after(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<
 }
 
 fn fetch_if_changed(url: &str, known_etag: &str, validate: impl FnOnce(&str) -> Result<(), String>) -> Result<CatalogUpdate, SyncError> {
-    let agent = http::agent(Duration::from_secs(30));
+    fetch_with(&http::agent(Duration::from_secs(30)), url, known_etag, validate)
+}
+
+// Fork: the agent is a parameter so a test can talk plain HTTP to a local fake (the app's agent is HTTPS-only).
+fn fetch_with(agent: &ureq::Agent, url: &str, known_etag: &str, validate: impl FnOnce(&str) -> Result<(), String>) -> Result<CatalogUpdate, SyncError> {
     // Fork: 4xx and 5xx come back as responses so `Retry-After` can be read; `classify` turns them into errors.
     let mut req = agent.get(url).config().http_status_as_error(false).build();
     if !known_etag.is_empty() {
@@ -219,6 +223,42 @@ mod tests {
         assert_eq!(retry_delay(&error(Some(Duration::from_secs(7200)))), Duration::from_secs(7200));
         assert_eq!(retry_delay(&error(Some(Duration::ZERO))), Duration::from_secs(60));
         assert_eq!(retry_delay(&error(Some(Duration::from_secs(10 * 24 * 3600)))), Duration::from_secs(24 * 3600));
+    }
+
+    /// Serves one canned HTTP response on a local port and returns its URL.
+    fn fake_server(response: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/ports.json", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        url
+    }
+
+    fn plain_http_agent() -> ureq::Agent {
+        ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into()
+    }
+
+    #[test]
+    fn a_429_with_retry_after_carries_the_wait() {
+        let url = fake_server("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let Err(e) = fetch_with(&plain_http_agent(), &url, "", validate_ports) else { panic!("a 429 is a failure") };
+        assert_eq!(e.retry_after, Some(Duration::from_secs(120)), "{}", e.message);
+        assert_eq!(retry_delay(&e), Duration::from_secs(120));
+    }
+
+    #[test]
+    fn a_404_has_no_wait_and_backs_off_an_hour() {
+        let url = fake_server("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let Err(e) = fetch_with(&plain_http_agent(), &url, "", validate_ports) else { panic!("a 404 is a failure") };
+        assert_eq!(e.retry_after, None);
+        assert!(e.message.contains("404"), "{}", e.message);
+        assert_eq!(retry_delay(&e), Duration::from_secs(3600));
     }
 
     /// Against the real server: a second request with the ETag of the first must come back unchanged.
