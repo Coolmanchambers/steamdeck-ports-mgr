@@ -3,7 +3,6 @@ use super::dialogs::{open_message_dialog, tr};
 use super::events::{lock, AppEvent};
 use super::state::AppState;
 use crate::core::catalog_sync::{self, CatalogUpdate};
-use crate::core::asset_select::RECENT_RELEASES_DEPTH;
 use crate::core::state::StateManager;
 use crate::core::version::{APP_VERSION, SELF_REPO};
 use crate::fork::self_update;
@@ -63,7 +62,7 @@ pub(crate) fn start_self_update_check(app: &AppState, force: bool) {
     let events = app.events.clone();
     std::thread::spawn(move || {
         // Fork (upstream bug O5): compare commits (BUILD_INFO vs the release notes), dates only as a fallback.
-        match crate::core::github_api::list_releases(SELF_REPO, github_token.as_deref(), RECENT_RELEASES_DEPTH).and_then(self_update::offer_from_releases) {
+        match crate::core::github_api::candidate_releases(SELF_REPO, github_token.as_deref()).and_then(self_update::offer_from_releases) {
             Ok(offer) if self_update::is_update(&running, &offer) => lock(&events).push(AppEvent::SelfUpdateAvailable(offer)),
             Ok(_) => {}
             Err(e) => eprintln!("self-update check failed: {}", e.message()),
@@ -133,4 +132,70 @@ pub(crate) fn start_themes_sync(app: &AppState) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RUNNING: &str = "a2ec28a0f7f3c1a1b2c3d4e5f60718293a4b5c6d";
+    const OTHER: &str = "21fc151d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b";
+
+    /// A fake install folder: BUILD_INFO with RUNNING, state.json with the flag set, and optionally the
+    /// saved offer. Returns the folder and the loaded state.
+    fn install(name: &str, release_sync: bool, offer_commit: Option<&str>) -> (std::path::PathBuf, StateManager) {
+        let dir = std::env::temp_dir().join(format!("dpm_settle_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(self_update::BUILD_INFO), format!("commit={RUNNING}\nbuild_date={APP_VERSION}\n")).unwrap();
+        std::fs::write(dir.join("state.json"), format!(r#"{{"launcher_update_available": true, "release_sync": {release_sync}}}"#)).unwrap();
+        if let Some(commit) = offer_commit {
+            let settings = format!(r#"{{"self_update_offer": {{"commit": "{commit}", "date": "{APP_VERSION}T23:59:59Z"}}}}"#);
+            std::fs::write(dir.join(crate::fork::settings::FILE_NAME), settings).unwrap();
+        }
+        let state = StateManager::load(&dir.join("state.json"));
+        assert!(state.launcher_update_available);
+        (dir, state)
+    }
+
+    #[test]
+    fn the_offered_build_running_clears_the_flag_and_checks_again() {
+        let (dir, mut state) = install("same", true, Some(RUNNING));
+        assert!(settle_self_update_flag(&mut state, &dir));
+        assert!(!state.launcher_update_available);
+        assert!(!StateManager::load(&dir.join("state.json")).launcher_update_available, "saved");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_different_build_offered_the_same_day_keeps_the_flag() {
+        let (dir, mut state) = install("other", true, Some(OTHER));
+        assert!(!settle_self_update_flag(&mut state, &dir));
+        assert!(state.launcher_update_available);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_release_sync_off_a_stale_flag_is_cleared_without_a_check() {
+        let (dir, mut state) = install("nosync", false, Some(RUNNING));
+        assert!(!settle_self_update_flag(&mut state, &dir));
+        assert!(!state.launcher_update_available);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_flag_with_no_saved_offer_is_cleared() {
+        let (dir, mut state) = install("nooffer", true, None);
+        assert!(settle_self_update_flag(&mut state, &dir));
+        assert!(!state.launcher_update_available);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_flag_means_nothing_to_do() {
+        let (dir, mut state) = install("noflag", true, Some(OTHER));
+        state.launcher_update_available = false;
+        assert!(!settle_self_update_flag(&mut state, &dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

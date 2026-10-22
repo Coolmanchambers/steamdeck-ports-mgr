@@ -37,9 +37,10 @@ fn is_commit(s: &str) -> bool {
     (7..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+// Compares bytes, so a non-ASCII value (a hand-edited settings file) can never split a character.
 fn same_commit(a: &str, b: &str) -> bool {
     let n = a.len().min(b.len());
-    n >= 7 && a[..n].eq_ignore_ascii_case(&b[..n])
+    is_commit(a) && is_commit(b) && a.as_bytes()[..n].eq_ignore_ascii_case(&b.as_bytes()[..n])
 }
 
 pub fn parse_build_info(text: &str) -> Option<String> {
@@ -53,7 +54,9 @@ pub fn running(dir: &Path, build_date: &str) -> Running {
 
 /// The commit in the release notes' "Source for this build: https://github.com/<repo>/tree/<sha>" line.
 pub fn release_commit(body: &str) -> Option<String> {
-    body.split("/tree/").skip(1).find_map(|rest| {
+    body.lines().find_map(|line| {
+        let url = line.trim().strip_prefix("Source for this build:")?.trim();
+        let (_, rest) = url.split_once("/tree/")?;
         let sha: String = rest.chars().take_while(char::is_ascii_hexdigit).collect();
         (sha.len() == 40).then(|| sha.to_ascii_lowercase())
     })
@@ -61,18 +64,24 @@ pub fn release_commit(body: &str) -> Option<String> {
 
 /// The offer of the newest release (stable first), from `github_api::list_releases`.
 pub fn offer_from_releases(releases: Vec<Value>) -> Result<Offer, AssetSelectionError> {
-    let (release, asset) = match asset_select::choose_release(releases, None, crate::core::github_api::pick_release_asset)? {
-        ReleaseChoice::Picked { release, asset } => (release, Some(asset)),
-        ReleaseChoice::AskForNewest { release, .. } => (release, None),
+    let (release, date) = match asset_select::choose_release(releases, None, crate::core::github_api::pick_release_asset)? {
+        ReleaseChoice::Picked { release, asset } => {
+            let date = asset.get("updated_at").or_else(|| release.get("published_at")).and_then(Value::as_str).map(str::to_string);
+            (release, date)
+        }
+        ReleaseChoice::AskForNewest { release, candidates } => {
+            let date = crate::core::github_api::ask_for_newest_date(&release, &candidates);
+            (release, date)
+        }
     };
-    let date = asset.as_ref().and_then(|a| a.get("updated_at")).or_else(|| release.get("published_at")).and_then(Value::as_str).map(str::to_string);
     let commit = release.get("body").and_then(Value::as_str).and_then(release_commit);
     Ok(Offer { commit, date })
 }
 
 /// Whether the offer is a different, not older build than the one running.
 pub fn is_update(running: &Running, offer: &Offer) -> bool {
-    match (&running.commit, &offer.commit) {
+    let valid = |c: &Option<String>| c.clone().filter(|c| is_commit(c));
+    match (&valid(&running.commit), &valid(&offer.commit)) {
         // A different commit is an update unless the release is from an earlier day than this build (a
         // branch build being tested must not be "updated" back to main).
         (Some(mine), Some(theirs)) => !same_commit(mine, theirs) && offer.date.as_deref().is_none_or(|d| d.get(..10).unwrap_or(d) >= running.build_date.as_str()),
@@ -83,7 +92,8 @@ pub fn is_update(running: &Running, offer: &Offer) -> bool {
 pub fn saved_offer(settings: &ForkSettings) -> Option<Offer> {
     let value = settings.get(KEY_OFFER)?;
     let field = |k: &str| value.get(k).and_then(Value::as_str).map(str::to_string);
-    Some(Offer { commit: field("commit"), date: field("date") })
+    // A commit that is not hex (a hand-edited or damaged file) is dropped; the date then decides.
+    Some(Offer { commit: field("commit").filter(|c| is_commit(c)), date: field("date") })
 }
 
 pub fn save_offer(settings: &mut ForkSettings, offer: &Offer) -> std::io::Result<()> {
@@ -125,6 +135,9 @@ mod tests {
         assert_eq!(release_commit(&body), Some(SHA_A.to_string()));
         assert_eq!(release_commit("Rolling build of `main` at a2ec28a."), None);
         assert_eq!(release_commit("see https://github.com/o/r/tree/main"), None);
+        let two = format!("Compare with https://github.com/o/r/tree/{SHA_B}\nSource for this build: https://github.com/o/r/tree/{SHA_A}");
+        assert_eq!(release_commit(&two), Some(SHA_A.to_string()), "only the Source line counts");
+        assert_eq!(release_commit(&format!("Built from https://github.com/o/r/tree/{SHA_A}")), None);
     }
 
     #[test]
@@ -183,6 +196,18 @@ mod tests {
         let offered = offer(Some(SHA_B), Some("2026-10-21T18:00:00Z"));
         save_offer(&mut settings, &offered).unwrap();
         assert_eq!(saved_offer(&ForkSettings::load(&path)), Some(offered));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_damaged_commit_in_fork_settings_never_panics() {
+        let path = std::env::temp_dir().join(format!("dpm_self_update_bad_{}.json", std::process::id()));
+        std::fs::write(&path, r#"{"self_update_offer": {"commit": "ééééé", "date": "2026-10-21T18:00:00Z"}}"#).unwrap();
+        let saved = saved_offer(&ForkSettings::load(&path)).unwrap();
+        assert_eq!(saved.commit, None);
+        assert!(!flag_still_applies(&running_at(Some(SHA_A), "2026-10-21"), Some(&saved)), "falls back to the date: same day");
+        assert!(!is_update(&running_at(Some("abcdef0"), "2026-10-21"), &offer(Some("ééééé"), Some("2026-10-21T18:00:00Z"))));
+        assert!(!same_commit("ééééé", "abcdef0") && !same_commit("abcdef0", "ééé") && !same_commit("abcdefé", "abcdef0"));
         let _ = std::fs::remove_file(&path);
     }
 
