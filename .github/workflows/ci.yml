@@ -102,6 +102,21 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      # The packaged app, started from an old copy, runs its own updater from Settings > Force update
+      # against a fake release on file:// (no GitHub), then a tampered-checksum case. Offline; a
+      # failure here also blocks the release. Reuses the packages the smoke test installed.
+      - name: In-app update test (Force update from the UI, offline)
+        timeout-minutes: 5
+        run: bash tools/test-app-update.sh dist/steamdeck-ports-mgr app-update-out
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: app-update-test
+          path: app-update-out
+          retention-days: 14
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: steamdeck-ports-mgr-linux-x86_64
