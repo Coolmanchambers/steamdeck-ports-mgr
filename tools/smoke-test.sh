@@ -98,6 +98,8 @@ if [ "$alive" = yes ]; then
             for _wait in $(seq 1 15); do visible_windows | grep -qx "$dlg" || break; sleep 0.2; done
         done
         echo "windows still open besides the main one: [$(other_windows | tr '\n' ' ')]" >>"$OUT/focus.log"
+        # Closing dialogs must not have ended the app, or the Close check below would pass for the wrong reason.
+        check "still running after closing dialogs" 'kill -0 "$APP" 2>/dev/null'
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
         echo "focus before the final Escape: $(xdotool getwindowfocus getwindowname 2>&1)" >>"$OUT/focus.log"
         # Escape is Close in the windowed view.
@@ -109,6 +111,7 @@ if [ "$alive" = yes ]; then
         xwininfo -root -tree >"$OUT/windows-at-close.txt" 2>&1
         import -window root "$OUT/close-failed.png" 2>/dev/null
         { echo "focus when Close did not quit: $(xdotool getwindowfocus getwindowname 2>&1)"; } >>"$OUT/focus.log"
+        echo "--- focus.log"; cat "$OUT/focus.log"
         check "Close quits when there is no tray" 'false'
     else
         wait "$APP"; code=$?

@@ -56,8 +56,8 @@ W="$(mktemp -d)" && W="$(readlink -f "$W")" || setup_fail "mktemp"
 # Read from the source when it is next to this script. If the source is there but the list can't be
 # read (the code was restructured), that is a setup failure, not a reason to guess.
 if [ -f "$SRC_DIALOGS" ]; then
-    DOWNS=$(awk '/const SETTINGS_ENTRIES/ {on=1; next} on && /SettingsEntry::ForceUpdate/ {print n+0; exit} on && /SettingsEntry::/ {n++}' "$SRC_DIALOGS")
-    { [ "${DOWNS:-0}" -ge 1 ] 2>/dev/null; } || setup_fail "could not find ForceUpdate in SETTINGS_ENTRIES in $SRC_DIALOGS (got '${DOWNS:-}'); update the awk in this script"
+    DOWNS=$(awk '/const SETTINGS_ENTRIES/ {on=1; next} on && /^\];/ {exit} on && /SettingsEntry::ForceUpdate/ {print n+0; exit} on && /SettingsEntry::/ {n++}' "$SRC_DIALOGS")
+    { [ -n "$DOWNS" ] && [ "$DOWNS" -ge 0 ] 2>/dev/null; } || setup_fail "could not find ForceUpdate in SETTINGS_ENTRIES in $SRC_DIALOGS (got '${DOWNS:-}'); update the awk in this script"
 else
     DOWNS=9; echo "note: $SRC_DIALOGS is not here (package tested without the source), assuming $DOWNS"
 fi
