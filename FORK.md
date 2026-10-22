@@ -133,7 +133,8 @@ Files added by this fork:
   temp file + fsync + rename + folder fsync; an empty queue removes the file). Re-queuing a port for the
   same account replaces its entry.
 - **Offer:** shortly after startup and then every 30 s, outside Game Mode, when no dialog is open, no
-  game started from the app runs and the window is not hidden to the tray or minimized, a non-empty
+  game started from the app runs and the window is not hidden to the tray, or minimized on X11 (winit
+  reports "minimized" as unknown on Wayland, so a hand-minimized window there can still get it), a non-empty
   queue with Steam closed brings up "N Steam changes queued from Game Mode: apply now?" ("queued while
   Steam was running" unless every entry came from Game Mode), with Cancel preselected. It names ports
   whose catalog art is not downloaded yet (the prefetch runs when the offer appears or the screen

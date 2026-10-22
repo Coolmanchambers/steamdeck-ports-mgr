@@ -326,7 +326,8 @@ pub(crate) fn start_queue_watch(app: &Rc<AppState>, router: &Router) -> slint::T
     timer
 }
 
-/// The user is not looking at the app: hidden to the tray, minimized, or put away for a game.
+/// The user is not looking at the app: hidden to the tray, minimized (X11 only: winit reports it as
+/// unknown on Wayland), or put away for a game.
 fn window_away(app: &AppState) -> bool {
     if app.install_runtime.minimized_for_game.get() {
         return true;

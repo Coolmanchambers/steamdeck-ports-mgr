@@ -836,6 +836,39 @@ mod tests {
     // -- the file -------------------------------------------------------------------------------
 
     #[test]
+    fn a_first_format_file_without_account_label_or_origin_still_loads() {
+        // Exactly what the first queue version (commit 9f998d4) wrote.
+        let dir = temp_dir("old_format");
+        let path = dir.join(FILE_NAME);
+        fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "entries": [
+    {
+      "account_id": 1234,
+      "port_key": "example/testport",
+      "name": "Test Port",
+      "kind": "add",
+      "repoint_by_name": false,
+      "art": "catalog",
+      "queued_at": "20261021-193133"
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+        let loaded = load(&path);
+        assert!(loaded.problem.is_none() && !loaded.unreadable && path.exists());
+        let e = &loaded.queue.entries[0];
+        assert_eq!((e.account_id, e.port_key.as_str(), e.kind, e.art), (1234, "example/testport", QueuedKind::Add, ArtChoice::Catalog));
+        assert_eq!((e.account_label.as_str(), e.from_game_mode), ("", false));
+        assert_eq!(e.account_text(), "account 1234");
+        assert!(offer_text(&loaded.queue, false, &[]).starts_with("1 Steam change queued while Steam was running"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn the_queue_round_trips_through_the_file() {
         let dir = temp_dir("roundtrip");
         let path = dir.join(FILE_NAME);

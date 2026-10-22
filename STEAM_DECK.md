@@ -126,8 +126,8 @@ somehow finds no Steam). Instead:
 
 Cancel keeps them queued: apply them later from Settings > Add to Steam, or the question comes back
 after Steam has run and been closed again (or at the next start). It never pops up while another dialog
-is open, while a game started from the app is running, or while the window is hidden to the tray or
-minimized.
+is open, while a game started from the app is running, or while the window is hidden to the tray, or
+minimized on X11 (on Wayland the app cannot tell it is minimized, so the question can still appear).
 
 In Desktop Mode with Steam running, the same screen offers **Queue N changes until Steam is closed...**;
 those are offered as "queued while Steam was running" once Steam is closed.
