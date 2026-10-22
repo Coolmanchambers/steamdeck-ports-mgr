@@ -68,6 +68,11 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/catalog_sync.rs` | O6: `SyncError` with `Retry-After` (seconds or HTTP date), `retry_delay` (1 h default, 1 min to 1 day); 4xx/5xx read as responses (`http_status_as_error(false)`) so the header can be read; `fetch_with` takes the agent so 2 tests talk plain HTTP to a local fake (429 with `Retry-After`, 404); 4 tests |
 | 2026-10-21 | `src/ui/linux_chrome.rs` | O8: the single-instance socket is named per install folder (`ports_launcher-<FNV-1a of the folder>.sock`); the old shared `ports_launcher.sock` gets the hand-over only when `/proc` shows its listener runs from this folder (a copy from before the fix); a hand-over prints a line; 5 tests |
 | 2026-10-22 | `src/main.rs` | One line starting the Game Mode queue watch (`steam_screens::start_queue_watch`, a timer held for the app's life) |
+| 2026-10-22 | `ui/dialogs/info.slint` | Restore saves: one `DialogButton` "Restore saves..." above the shortcut row (button index 10), shown only when `restore-saves-enabled`; the instructions box shrinks by its height. Property, callback, import of `DialogButton` |
+| 2026-10-22 | `src/app/gamepad_target.rs` | `INFO_BUTTON_COUNT` 10 to 11; the new button in `info_buttons_enabled` and `invoke_info_button` |
+| 2026-10-22 | `src/app/dialogs.rs` | Info dialog: `restore-saves-enabled` set when the port names `save` or `save2`, wired to `save_restore_screen::open_from_info` (one import, two lines). One Settings entry, "Restore saves..." (list, label and menu match; English text) |
+| 2026-10-22 | `src/app/mod.rs` | One line registering `save_restore_screen` |
+| 2026-10-22 | `README.md` | Item 6 now reads "Save backups before every update, and restoring a backup" (still "Testing") |
 
 Files added by this fork:
 
@@ -110,6 +115,8 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
 | 2026-10-22 | `src/fork/rom_screens/` | The logic of the game-files screens (R2): folder browser, background job runner, scan and report, results by system, Connect step, connected ports, the after-install offer; tested without UI |
 | 2026-10-22 | `src/app/rom_screens.rs` | The screens themselves: list dialogs, a timer that polls the worker thread |
+| 2026-10-22 | `src/fork/save_restore/` | Restore saves: list a port's backups (before update, Backup Saves, before restore), resolve its save folders for this system without guessing, and restore one (safety zip first, zip-slip check, swap by rename); `zip_index.rs` reads a zip's table of contents; `view.rs` holds the screen text; tested without UI |
+| 2026-10-22 | `src/app/save_restore_screen.rs` | The Restore saves screens (Info button and Settings entry): list dialogs, confirm, a progress dialog polling the worker thread |
 | 2026-10-21 | `src/fork/deck_ready/index.rs` | Reads `index/deck-ready.json` (schema 1); unusable entries are skipped, an unusable file is refused |
 | 2026-10-21 | `src/fork/deck_ready/sync.rs` | Fetches the list from this repo with an ETag, at most every 12 hours, and keeps the saved copy in `cache/` |
 | 2026-10-21 | `src/fork/deck_ready/view.rs` | Rows, filters, sorting, matching to ports the app already has, and the Info and confirm text; tested without UI |
@@ -274,6 +281,38 @@ screens. The text is English only.
   when opened); "Use original" does not pass the path to the port, it only records it and says where the file is.
 - **Not verified on a Deck:** fullscreen layout, controller input through Steam Input, SD card start points
   (`/run/media/...`), exFAT link refusal, copy speed on the SD card.
+
+## Restore saves (`src/fork/save_restore/`, `src/app/save_restore_screen.rs`)
+
+Upstream makes save backups (Settings > Backup Saves, and this fork adds one before every update) but
+has no way to put one back. Info > **Restore saves...** and Settings > **Restore saves...** do that.
+
+- **What is listed:** `Saves Backup/Update Backups/<folder>/*.zip`, the port's part of every
+  `Saves Backup/Global Backups/*.zip`, and `Saves Backup/Restore Backups/<folder>/*.zip` (made by a
+  restore, so a restore can be undone). Newest first by file time, with size and the save folders
+  (`save`, `save2`) each holds. The zip's table of contents is read directly (no unpacking); a zip
+  that cannot be read, holds a name with `..`, a leading `/` or `\`, a drive letter, or a link entry is
+  listed as "cannot be used".
+- **Which save folder:** the app's own resolver (`resolve_save_folder`), plus our own guard so it
+  never guesses: a per-system value with no entry for this system, a `%VARIABLE%` left after expansion,
+  or (on Linux) a Windows-style path means "no save folder known for Linux", and no restore is
+  offered. Also refused: the game folder itself or anything holding it, a relative path leading out
+  of the game folder, the home folder or anything above it, anything overlapping `Saves Backup`, and a
+  path with fewer than two folder levels.
+- **Order of a restore:** refuse while the port's game runs (and while it installs, or another
+  restore runs); read the zip's names again from disk and refuse on any unsafe one; zip every
+  current save folder of the port to `Restore Backups/<folder>/<stamp>.zip` and check it reads back
+  with every file (refuse to go on if that fails); unpack with 7-Zip into a scratch folder in
+  `Saves Backup`, refusing on any link and on any file count or size that differs from the zip's
+  table; copy each folder to a hidden sibling (`.<name>.restoring-<pid>`), then rename the old
+  folder aside and the new one in, for every folder; if a rename fails, every folder already
+  swapped is put back. Only after every swap worked are the old folders removed. A save folder that
+  is a link keeps the link (its destination is replaced). A save folder that does not exist yet is
+  created (its parent folders too).
+- **Known limits:** a link to a folder inside a save folder is not in the safety zip, so that save
+  folder's old copy is kept beside it (named in the result) instead of being removed. The "Pending
+  Restore" copies kept across an uninstall are not listed (they are put back by the next install).
+  Backups are never pruned. Text is English only. Not yet tried on a Deck.
 
 ## Fixes to upstream behavior
 

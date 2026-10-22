@@ -17,7 +17,7 @@
 > | 3 | Controller and Game Mode checks on the Steam Deck | Testing |
 > | 4 | Adopt ports already installed on the Deck | Testing |
 > | 5 | Add ports to Steam with artwork | In progress |
-> | 6 | Save backups before every update | Testing |
+> | 6 | Save backups before every update, and restoring a backup | Testing |
 > | 7 | Connect ports to your own game files folder | Testing |
 > | 8 | A list of Deck-ready ports | Testing |
 > | 9 | Self-update from this fork's own releases | Testing |

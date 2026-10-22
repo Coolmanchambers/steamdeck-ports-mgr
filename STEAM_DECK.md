@@ -209,6 +209,29 @@ your ROM folder can be on any file system. If the app sits on an exFAT card, it 
 creates nothing: open Connect again and pick Copy. To undo a Link or Copy, delete that file inside the port's folder yourself, then Forget the connection;
 the app never deletes game files.
 
+## Restore saves from a backup
+
+The app zips a port's saves before every update, and Settings > **Backup Saves** zips every port's
+saves at once. To put one of those back:
+
+1. Quit the game first. The app refuses to restore while the port's game is running.
+2. Open the port's **Info** (X) > **Restore saves...** (the button above Game folder / Save folder;
+   only ports that name a save folder have it), or Settings > **Restore saves...**, which lists every
+   port that has a backup.
+3. The list shows the port's save folders, then its backups, newest first: the date, the kind
+   (**Before update**, **Backup Saves (all ports)** or **Before restore**), the size and which save
+   folders it holds. Pick one.
+4. The confirm says which folders are replaced. **Restore** first zips your current saves to
+   `Saves Backup/Restore Backups/<port folder>/`; if that fails, nothing is changed. Then each save
+   folder is rebuilt beside the old one and swapped in, and the old one is removed only after every
+   swap worked.
+5. To undo a restore, pick the newest **Before restore** backup in the same list.
+
+If the catalog names a save folder only for Windows (or another system), the app says **no save
+folder known for Linux** and offers no restore rather than guessing. A backup holding a file name that
+points outside its folder (`../...` or `/...`) is listed as "cannot be used" and never unpacked. The
+backups are plain zips, so you can also open them in Dolphin.
+
 ## What to test
 
 | Area | Pass looks like |
@@ -235,6 +258,7 @@ the app never deletes game files.
 | Update offered | After a newer build is published and 12 h past the last check (relaunch, or leave it open), the footer says Update |
 | Save folder unknown | Info of an installed port whose catalog entry has only a Windows save folder says "Save folder: unknown on Linux, no backup"; Save Backup names it |
 | Side by side | The original Ports Launcher and this fork, open at the same time, both stay open |
+| Restore saves | Info > Restore saves... lists the backups; Restore makes a "Before restore" zip first and the saves match the backup; refused while the game runs |
 
 ## Known issues being tested
 
