@@ -273,7 +273,7 @@ EOF
 cat > "$W/fakebin/zenity" <<'EOF'
 #!/bin/sh
 printf 'zenity' >> "$UILOG"; for a in "$@"; do printf ' [%s]' "$a" >> "$UILOG"; done; echo >> "$UILOG"
-case "$*" in *--progress*) while IFS= read -r l; do echo "zenity-stdin $l" >> "$UILOG"; done ;; esac
+case "$*" in *--progress*) [ -n "${ZENITY_GONE:-}" ] && exit 0; while IFS= read -r l; do echo "zenity-stdin $l" >> "$UILOG"; done ;; esac
 exit 0
 EOF
 chmod 755 "$W/fakebin/"*
@@ -293,6 +293,10 @@ sleep 0.5   # the progress stand-in reads its stdin in the background
 check "zenity used when there is no kdialog; progress fed through stdin up to 100" \
   '[ "$RC" = 0 ] && grep -q "^zenity .*\[--progress\]" "$UILOG" && grep -q "^zenity-stdin # Downloading" "$UILOG" && grep -q "^zenity-stdin 100$" "$UILOG"'
 check "result shown in a zenity info box" 'grep -q "^zenity \[--info\] \[--title=Deck Ports Manager\] \[--width=480\] \[--text=Deck Ports Manager is installed" "$UILOG"'
+new_home h8g; : > "$UILOG"
+PATH="$W/fakebin:$PATH" run_installer "$H" "$W/stubrel" DISPLAY=:77 UILOG="$UILOG" ZENITY_GONE=1
+check "progress window closed by the user (zenity gone): the install still completes" \
+  '[ "$RC" = 0 ] && grep -q "RESULT: installed" "$H/.cache/steamdeck-ports-mgr-installer.log" && [ -x "$H/Applications/$PKG/ports_launcher" ]'
 mv "$W/fakebin/kdialog.off" "$W/fakebin/kdialog"
 
 # A real desktop-entry implementation as a second opinion. (Not `gio launch`: up to at least GLib 2.72 it

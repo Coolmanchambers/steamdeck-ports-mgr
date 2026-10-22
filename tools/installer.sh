@@ -96,7 +96,8 @@ step() { # step <percent> <text>
             kd org.kde.kdialog.ProgressDialog.setLabelText "string:$2"
             kd org.freedesktop.DBus.Properties.Set string:org.kde.kdialog.ProgressDialog string:value "variant:int32:$1"
             ;;
-        zenity) [ -n "$ZEN_FD" ] && printf '%s\n# %s\n' "$1" "$2" >&"$ZEN_FD" 2>/dev/null ;;
+        # In a subshell: if the progress window was closed, the write's SIGPIPE ends only that.
+        zenity) [ -n "$ZEN_FD" ] && (printf '%s\n# %s\n' "$1" "$2" >&"$ZEN_FD") 2>/dev/null ;;
     esac
     return 0
 }
@@ -105,7 +106,7 @@ progress_end() {
         kdialog) kd org.kde.kdialog.ProgressDialog.close; PROG_REF="" ;;
         zenity)
             if [ -n "$ZEN_FD" ]; then
-                printf '100\n' >&"$ZEN_FD" 2>/dev/null
+                (printf '100\n' >&"$ZEN_FD") 2>/dev/null
                 exec {ZEN_FD}>&-
                 ZEN_FD=""
             fi
