@@ -16,10 +16,13 @@
 //! Back
 //! ```
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::cache::{ArtCache, IdTable};
+use super::cache::{confirm_in_file, ArtCache, IdTable};
 use super::net::{self, Fetch};
+use super::resolve::{PortRef, Session};
 use super::screenscraper::{DevCreds, ScreenScraper};
 use super::sgdb::SteamGridDb;
 use super::source::{human_wait, KeyCheck, SourceId, SourceStates};
@@ -61,6 +64,56 @@ pub struct SourceStatus {
     pub last_error: Option<String>,
     /// Seconds left of a back-off, if the source is being left alone.
     pub waiting: Option<(u64, String)>,
+}
+
+/// One waiting look-alike: the port, which source suggested what, and the folder to name in
+/// `ports.local.json` if the user would rather choose by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingChoice {
+    pub port_key: String,
+    pub port_name: String,
+    pub folder: String,
+    pub source: SourceId,
+    pub id: u64,
+    pub name: String,
+}
+
+impl PendingChoice {
+    /// The row that confirms this match.
+    pub fn label(&self) -> String {
+        format!("Use \"{}\" ({}) for {}", short(&self.name, 30), self.id, short(&self.port_name, 28))
+    }
+
+    /// The `ports.local.json` field for this source.
+    fn field(&self) -> &'static str {
+        if self.source == SourceId::TheGamesDb {
+            "tgdb_id"
+        } else {
+            "sgdb_id"
+        }
+    }
+
+    /// The entry to add to `ports.local.json` to choose by hand. Only these two fields: an entry with a
+    /// name or a source would replace the port's catalog entry.
+    pub fn json_entry(&self) -> String {
+        let folder = if self.folder.is_empty() { "<folder>" } else { self.folder.as_str() };
+        format!("{{\"folder\": \"{folder}\", \"{}\": {}}}", self.field(), self.id)
+    }
+
+    /// Text for the list under the "Use this match" rows.
+    pub fn hint(&self) -> String {
+        format!(
+            "Or choose by hand: add this entry to the ports list in ports.local.json (this port is {}, folder {}), with no name and no source, because an entry with either replaces the port's catalog entry:\n{}",
+            self.port_name,
+            if self.folder.is_empty() { "unknown" } else { self.folder.as_str() },
+            self.json_entry()
+        )
+    }
+
+    /// Confirms this match in the saved id table; the waiting row clears.
+    pub fn confirm(&self, cache_dir: &Path) -> std::io::Result<()> {
+        confirm_in_file(cache_dir, &self.port_key, self.source, self.id, &self.name)
+    }
 }
 
 pub struct ArtScreen {
@@ -139,6 +192,9 @@ impl ArtScreen {
         if let Some(problem) = &self.secrets.problem {
             rows.push((Line::Info, short(problem, 70)));
         }
+        if let Some(note) = self.secrets.drive_note() {
+            rows.push((Line::Info, short(note, 70)));
+        }
         for src in SourceId::ALL {
             let st = self.status(src);
             let mut label = format!("{}: {}", src.label(), st.summary);
@@ -214,22 +270,26 @@ impl ArtScreen {
             .to_string()
     }
 
-    /// The text behind the "look-alike matches" row.
-    pub fn pending_text(cache_dir: &std::path::Path) -> String {
+    /// Look-alike matches waiting for a decision, one per candidate, for the "Use this match" rows.
+    pub fn pending_choices(cache_dir: &Path) -> Vec<PendingChoice> {
         let table = IdTable::load(&ArtCache::new(cache_dir).ids_path());
-        let mut lines = Vec::new();
+        let mut out = Vec::new();
         for (port, src, candidates) in table.ports_with_pending() {
-            let names: Vec<String> = candidates.iter().map(|c| format!("{} ({})", short(&c.name, 30), c.id)).collect();
-            lines.push(format!("{port}: {} suggests {}", src.label(), names.join(", ")));
+            let (name, folder) = table.identity(port);
+            for c in candidates {
+                out.push(PendingChoice {
+                    port_key: port.to_string(),
+                    port_name: name.unwrap_or(port).to_string(),
+                    folder: folder.unwrap_or("").to_string(),
+                    source: src,
+                    id: c.id,
+                    name: c.name.clone(),
+                });
+            }
         }
-        if lines.is_empty() {
-            return "No look-alike matches are waiting.".to_string();
-        }
-        format!(
-            "These titles looked close but were not the same, so none was used:\n{}\n\nTo use one, add \"sgdb_id\" (SteamGridDB) or \"tgdb_id\" (TheGamesDB) with its number to the port's entry in ports.local.json.",
-            lines.join("\n")
-        )
+        out
     }
+
 }
 
 /// Breaks `text` into lines of at most `width` characters at word boundaries (paragraph breaks kept as
@@ -265,6 +325,127 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+// ---- the background jobs ------------------------------------------------------------------------------
+
+/// What a running job tells the screen's list: a progress text (first line, second line) and whether
+/// the Stop row was used. The real one is the job runner's `Ctl`; tests use a plain struct.
+pub trait JobCtl {
+    fn cancelled(&self) -> bool;
+    fn set_progress(&self, text: String);
+}
+
+impl JobCtl for crate::fork::rom_screens::job::Ctl {
+    fn cancelled(&self) -> bool {
+        crate::fork::rom_screens::job::Ctl::cancelled(self)
+    }
+
+    fn set_progress(&self, text: String) {
+        crate::fork::rom_screens::job::Ctl::set_progress(self, text)
+    }
+}
+
+/// The rows of a job's list. A job with a Stop row (the batch fetch) has three; a one-request job (Test
+/// key) has two and no Stop row: it ends by itself in seconds, and B abandons it.
+pub fn job_labels(progress: &str, stoppable: bool, stopping: bool) -> Vec<String> {
+    let (line1, line2) = progress.split_once('\n').unwrap_or((progress, ""));
+    let mut rows = vec![if line1.is_empty() { "Working...".to_string() } else { line1.to_string() }, if line2.is_empty() { " ".to_string() } else { short(line2, 60) }];
+    if stoppable {
+        rows.push(if stopping { "Stopping...".to_string() } else { "Stop (what is done is kept)".to_string() });
+    }
+    rows
+}
+
+/// What the Test key list says while its one request runs.
+pub fn test_progress(source: SourceId) -> String {
+    let (what, host) = match source {
+        SourceId::SteamGridDb => ("key", "steamgriddb.com"),
+        SourceId::TheGamesDb => ("key", "api.thegamesdb.net"),
+        SourceId::ScreenScraper => ("login", "api.screenscraper.fr"),
+    };
+    format!("Testing the {} {what}...\nOne request to {host}", source.label())
+}
+
+pub fn fetch_progress(index: usize, total: usize, name: &str) -> String {
+    format!("Port {index} of {total}\n{name}")
+}
+
+/// The labels the Fetch list is sized from: its widest possible progress text, from the real port names.
+pub fn fetch_sizing_labels(ports: &[PortJob]) -> Vec<String> {
+    let longest = ports.iter().map(|p| p.name.as_str()).max_by_key(|n| n.chars().count().min(60)).unwrap_or("");
+    job_labels(&fetch_progress(ports.len(), ports.len(), longest), true, true)
+}
+
+/// An installed port to fetch art for.
+#[derive(Debug, Clone)]
+pub struct PortJob {
+    pub key: String,
+    pub folder: String,
+    pub name: String,
+    pub instructions: String,
+    pub portrait: Option<PathBuf>,
+    pub icon: Option<PathBuf>,
+}
+
+/// At most this many different problems are listed in the summary.
+pub const MAX_PROBLEMS: usize = 6;
+
+#[derive(Debug, Default)]
+pub struct FetchSummary {
+    pub looked_up: usize,
+    pub total: usize,
+    pub found: BTreeMap<&'static str, usize>,
+    pub problems: Vec<String>,
+    pub stopped: bool,
+}
+
+/// Looks every port up on the sources through `session` (which fills the cache and the id table), one
+/// after the other. Stop is checked before each port and, through the session, before each request, so
+/// it is honoured within a second or so; the port it interrupts counts as looked up with what it had, the
+/// rest are not touched, and everything learned so far is saved.
+pub fn fetch_all(session: &Session, config_dir: &Path, ports: &[PortJob], ctl: &dyn JobCtl) -> FetchSummary {
+    let total = ports.len();
+    let mut summary = FetchSummary { total, ..FetchSummary::default() };
+    let cancel = || ctl.cancelled();
+    for (i, port) in ports.iter().enumerate() {
+        if ctl.cancelled() {
+            summary.stopped = true;
+            break;
+        }
+        ctl.set_progress(fetch_progress(i + 1, total, &port.name));
+        let reference = PortRef { key: &port.key, folder: &port.folder, name: &port.name, instructions: Some(&port.instructions) };
+        let art = session.resolve_port_with(config_dir, reference, port.portrait.as_deref(), port.icon.as_deref(), None, &cancel);
+        summary.looked_up += 1;
+        for s in &art.sources {
+            *summary.found.entry(s.slot.name()).or_default() += 1;
+        }
+        for (_, problem) in art.problems {
+            if !summary.problems.contains(&problem) && summary.problems.len() < MAX_PROBLEMS {
+                summary.problems.push(problem);
+            }
+        }
+        if ctl.cancelled() && i + 1 < total {
+            summary.stopped = true;
+            break;
+        }
+    }
+    session.save();
+    summary
+}
+
+pub fn summary_text(s: &FetchSummary) -> String {
+    let mut text = format!("Looked up {} of {} installed ports{}.", s.looked_up, s.total, if s.stopped { " (stopped early)" } else { "" });
+    let found: Vec<String> = ["portrait", "wide", "hero", "logo", "icon"].iter().map(|slot| format!("{slot} {}", s.found.get(slot).copied().unwrap_or(0))).collect();
+    text.push_str(&format!("\nArtwork ready to place, by slot: {}.", found.join(", ")));
+    if !s.problems.is_empty() {
+        text.push_str(&format!("\nProblems: {}", s.problems.join("; ")));
+        if s.problems.iter().any(|p| p.contains("offline")) {
+            text.push_str("\nRun Fetch again when the Deck is back online; nothing that was fetched is lost.");
+        }
+    }
+    text.push_str("\n\nAdd to Steam places this artwork for the ports it adds. Art you chose yourself is never replaced.");
+    text
+}
+
 /// One cheap authenticated call for the source, as the screen's Test rows run it. With nothing to
 /// test (no key, no developer credentials) the answer says so without any network call.
 pub fn check_source(source: SourceId, secrets: &Secrets, build: &BuildCreds, fetch: &dyn Fetch, sleep: &dyn Fn(Duration)) -> KeyCheck {
@@ -290,8 +471,9 @@ pub fn check_source(source: SourceId, secrets: &Secrets, build: &BuildCreds, fet
 
 /// Text for the dialog after a test; nothing in it can carry a key.
 pub fn check_message(source: SourceId, check: &KeyCheck, secrets: &[String]) -> String {
-    let text = net::redact(&net::strip_query(&check.text()), secrets);
+    let text = net::cap(&net::redact(&net::strip_query(&check.text()), secrets), net::MAX_SERVER_TEXT);
     let hint = match check {
+        KeyCheck::Invalid(_) if source == SourceId::ScreenScraper => "\n\nCheck the user name and password for typing mistakes and enter them again.",
         KeyCheck::Invalid(_) => "\n\nCheck the key for typing mistakes and paste it again.",
         KeyCheck::Offline(_) => "\n\nThe key was not checked. Try again when the Deck is online.",
         KeyCheck::Unknown(_) => "\n\nThe key may be fine; the service is limiting or failing right now.",
@@ -304,6 +486,7 @@ pub fn check_message(source: SourceId, check: &KeyCheck, secrets: &[String]) -> 
 mod tests {
     use super::super::net::fake::Fake;
     use super::*;
+    use std::rc::Rc;
 
     fn temp_dirs(name: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
         let root = std::env::temp_dir().join(format!("dpm_artscreen_{}_{}", std::process::id(), name));
@@ -444,17 +627,155 @@ mod tests {
     }
 
     #[test]
-    fn pending_matches_are_listed_with_how_to_choose() {
+    fn waiting_look_alikes_become_use_this_match_rows_and_confirming_one_clears_the_row() {
         let (root, config, cache) = temp_dirs("pending");
-        assert_eq!(ArtScreen::pending_text(&cache), "No look-alike matches are waiting.");
+        assert!(ArtScreen::pending_choices(&cache).is_empty());
         let mut table = IdTable::load(&ArtCache::new(&cache).ids_path());
+        table.set_identity("owner/port", "Doom", "doom-port");
         table.set_pending("owner/port", SourceId::SteamGridDb, vec![super::super::cache::Pending { id: 42, name: "Doom II".into(), confidence: super::super::title::Confidence::Medium }], 1);
         table.save().unwrap();
-        let text = ArtScreen::pending_text(&cache);
-        assert!(text.contains("owner/port") && text.contains("Doom II (42)") && text.contains("sgdb_id"), "{text}");
+        let choices = ArtScreen::pending_choices(&cache);
+        assert_eq!(choices.len(), 1);
+        assert_eq!(choices[0].label(), "Use \"Doom II\" (42) for Doom");
+        assert_eq!(choices[0].json_entry(), r#"{"folder": "doom-port", "sgdb_id": 42}"#);
+        let hint = choices[0].hint();
+        assert!(hint.contains("no name and no source") && hint.contains("doom-port") && hint.contains(&choices[0].json_entry()), "{hint}");
         let screen = ArtScreen::load(&config, &cache, BuildCreds::none(), 1);
         assert!(screen.lines().contains(&Line::Pending));
+        choices[0].confirm(&cache).unwrap();
+        assert!(ArtScreen::pending_choices(&cache).is_empty());
+        assert!(!ArtScreen::load(&config, &cache, BuildCreds::none(), 1).lines().contains(&Line::Pending), "the row clears");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_hand_written_entry_names_the_right_field_for_each_source() {
+        let c = PendingChoice { port_key: "k".into(), port_name: "P".into(), folder: String::new(), source: SourceId::TheGamesDb, id: 7, name: "N".into() };
+        assert_eq!(c.json_entry(), r#"{"folder": "<folder>", "tgdb_id": 7}"#);
+        assert!(c.hint().contains("folder unknown"));
+    }
+
+    struct Shared(Rc<Fake>);
+
+    impl Fetch for Shared {
+        fn get(&self, url: &str, headers: &[(&str, &str)], max_bytes: u64) -> Result<super::super::net::Response, super::super::net::NetError> {
+            self.0.get(url, headers, max_bytes)
+        }
+    }
+
+    struct TestCtl {
+        stop: Box<dyn Fn() -> bool>,
+        progress: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl JobCtl for TestCtl {
+        fn cancelled(&self) -> bool {
+            (self.stop)()
+        }
+        fn set_progress(&self, text: String) {
+            self.progress.borrow_mut().push(text);
+        }
+    }
+
+    fn ctl(stop: impl Fn() -> bool + 'static) -> TestCtl {
+        TestCtl { stop: Box::new(stop), progress: std::cell::RefCell::new(Vec::new()) }
+    }
+
+    fn jobs(n: usize) -> Vec<PortJob> {
+        (0..n)
+            .map(|i| PortJob { key: format!("owner/port{i}"), folder: format!("port{i}"), name: format!("Ship of Harkinian {i}"), instructions: String::new(), portrait: None, icon: None })
+            .collect()
+    }
+
+    fn session_with(dir: &std::path::Path, fake: &Rc<Fake>, key: Option<&str>) -> Session {
+        let mut secrets = Secrets::load(&dir.join("secrets.json"));
+        if let Some(k) = key {
+            secrets.set(Field::SteamGridDbKey, Some(k)).unwrap();
+        }
+        Session::with_parts(Box::new(Shared(fake.clone())), secrets, BuildCreds::none(), &dir.join("cache"), crate::fork::art::resolve::Mode::Online, 1_000, Box::new(|_| {}))
+    }
+
+    #[test]
+    fn stop_after_the_first_port_leaves_the_rest_untouched_and_keeps_what_was_learned() {
+        let dir = tempfile::tempdir().unwrap();
+        let search = r#"{"success":true,"data":[{"id":900001,"name":"Ship of Harkinian 0","types":[],"verified":true}]}"#;
+        let fake = Rc::new(Fake::new().on_json("/search/autocomplete/", 200, search).on_json("/heroes/", 200, r#"{"success":true,"data":[]}"#).on_json("/grids/", 200, r#"{"success":true,"data":[]}"#));
+        let session = session_with(dir.path(), &fake, Some("sgdb-test-key-0001"));
+        let stop_fake = fake.clone();
+        let c = ctl(move || stop_fake.count("/heroes/") >= 1);
+        let summary = fetch_all(&session, dir.path(), &jobs(3), &c);
+        assert_eq!((summary.looked_up, summary.total, summary.stopped), (1, 3, true));
+        assert_eq!(fake.count("/search/autocomplete/"), 1, "the second port was never searched");
+        assert_eq!(c.progress.borrow().len(), 1);
+        let table = IdTable::load(&dir.path().join("cache/art/ids.json"));
+        assert_eq!(table.identity("owner/port0"), (Some("Ship of Harkinian 0"), Some("port0")));
+        assert_eq!(table.usable("owner/port0", SourceId::SteamGridDb).map(|e| e.id), Some(900001), "the id found before Stop is saved");
+        assert!(summary_text(&summary).contains("stopped early"));
+    }
+
+    #[test]
+    fn stop_before_anything_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Rc::new(Fake::new());
+        let session = session_with(dir.path(), &fake, Some("sgdb-test-key-0001"));
+        let summary = fetch_all(&session, dir.path(), &jobs(2), &ctl(|| true));
+        assert_eq!((summary.looked_up, summary.stopped), (0, true));
+        assert!(fake.requests().is_empty());
+    }
+
+    #[test]
+    fn a_rejected_key_gives_one_problem_however_many_ports_there_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Rc::new(Fake::new().on_json("/search/autocomplete/", 401, "{}"));
+        let session = session_with(dir.path(), &fake, Some("sgdb-test-key-0001"));
+        let summary = fetch_all(&session, dir.path(), &jobs(5), &ctl(|| false));
+        assert_eq!((summary.looked_up, summary.stopped), (5, false));
+        assert_eq!(summary.problems.len(), 1, "{:?}", summary.problems);
+        assert!(summary.problems[0].contains("key was not accepted"));
+        assert_eq!(fake.count("/search/autocomplete/"), 1);
+    }
+
+    #[test]
+    fn the_problem_list_is_capped_and_never_repeats_a_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Rc::new(Fake::new());
+        let session = session_with(dir.path(), &fake, None);
+        let mut ports = jobs(10);
+        for p in &mut ports {
+            p.portrait = Some(dir.path().join(format!("missing-{}.png", p.folder)));
+        }
+        let summary = fetch_all(&session, dir.path(), &ports, &ctl(|| false));
+        assert_eq!(summary.looked_up, 10);
+        assert_eq!(summary.problems.len(), MAX_PROBLEMS);
+        let mut unique = summary.problems.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), MAX_PROBLEMS);
+    }
+
+    #[test]
+    fn an_offline_summary_tells_the_user_to_run_fetch_again() {
+        let mut s = FetchSummary { looked_up: 1, total: 1, ..FetchSummary::default() };
+        s.problems.push("SteamGridDB: offline (could not connect)".into());
+        let text = summary_text(&s);
+        assert!(text.contains("Run Fetch again when the Deck is back online; nothing that was fetched is lost."), "{text}");
+        assert!(text.contains("portrait 0, wide 0, hero 0, logo 0, icon 0"));
+    }
+
+    #[test]
+    fn job_rows_have_a_stop_row_only_for_a_batch_and_are_sized_from_real_text() {
+        assert_eq!(job_labels("Port 1 of 3\nShip of Harkinian", true, false), vec!["Port 1 of 3", "Ship of Harkinian", "Stop (what is done is kept)"]);
+        assert_eq!(job_labels("", true, true), vec!["Working...", " ", "Stopping..."]);
+        let test = test_progress(SourceId::SteamGridDb);
+        assert_eq!(job_labels(&test, false, false), vec!["Testing the SteamGridDB key...", "One request to steamgriddb.com"]);
+        assert_eq!(job_labels(&test_progress(SourceId::ScreenScraper), false, false)[0], "Testing the ScreenScraper login...");
+        let mut ports = jobs(3);
+        ports[1].name = "A rather long port name that decides the width of the list".into();
+        let sizing = fetch_sizing_labels(&ports);
+        assert_eq!(sizing.len(), 3);
+        assert!(sizing[1].starts_with("A rather long port name"), "{sizing:?}");
+        assert!(!sizing.iter().any(|l| l.contains("keeps going")), "no made-up filler line");
+        assert_eq!(fetch_sizing_labels(&[]).len(), 3);
     }
 
     #[test]

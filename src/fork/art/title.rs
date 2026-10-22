@@ -76,6 +76,53 @@ pub fn confidence(query: &str, candidate: &str) -> Confidence {
     Confidence::Low
 }
 
+/// The text inside the brackets of a title, lowercased and squeezed: "DOOM (2016)" gives "2016".
+fn bracket_text(title: &str) -> String {
+    let mut depth = 0u32;
+    let mut out = String::new();
+    for c in title.chars() {
+        match c {
+            '(' | '[' => {
+                depth += 1;
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+            }
+            ')' | ']' => depth = depth.saturating_sub(1),
+            c if depth > 0 => out.extend(c.to_lowercase()),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// [`confidence`] for each of `names`, with one more rule: when the query carries no bracket text and two
+/// or more candidates are the same title but with different bracket texts ("DOOM (2016)" and "Doom
+/// (1993)"), nobody can say which game was meant, so those candidates are [`Confidence::Medium`] and go
+/// to the user instead of being picked. One plain "Doom" next to one "Doom (Unofficial)" is not such a
+/// tie: only two or more different non-empty bracket texts are.
+pub fn confidences(query: &str, names: &[&str]) -> Vec<Confidence> {
+    let mut out: Vec<Confidence> = names.iter().map(|n| confidence(query, n)).collect();
+    if !bracket_text(query).is_empty() {
+        return out;
+    }
+    let mut texts: Vec<String> = names
+        .iter()
+        .zip(&out)
+        .filter(|(_, c)| **c == Confidence::High)
+        .map(|(n, _)| bracket_text(n))
+        .filter(|t| !t.is_empty())
+        .collect();
+    texts.sort();
+    texts.dedup();
+    if texts.len() >= 2 {
+        for c in out.iter_mut().filter(|c| **c == Confidence::High) {
+            *c = Confidence::Medium;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +144,22 @@ mod tests {
         assert_eq!(confidence("", "Doom"), Confidence::Low);
         assert_eq!(confidence("Doom", "Doom II"), Confidence::Medium);
         assert_eq!(confidence("Doom 2", "Doom 3"), Confidence::Low);
+    }
+
+    #[test]
+    fn two_same_titles_with_different_bracket_texts_are_a_tie_and_not_picked() {
+        let c = confidences("Doom", &["DOOM (2016)", "Doom (1993)", "Doom II"]);
+        assert_eq!(c, vec![Confidence::Medium, Confidence::Medium, Confidence::Medium]);
+        // The query names the year: no tie.
+        let c = confidences("Doom (1993)", &["DOOM (2016)", "Doom (1993)"]);
+        assert_eq!(c[1], Confidence::High);
+        // A plain title beside an annotated one is not a tie.
+        let c = confidences("Ship of Harkinian", &["Ship of Harkinian", "Ship of Harkinian (Unofficial)"]);
+        assert_eq!(c, vec![Confidence::High, Confidence::High]);
+        // The same bracket text twice is not different texts.
+        let c = confidences("Doom", &["Doom (1993)", "DOOM (1993)"]);
+        assert_eq!(c, vec![Confidence::High, Confidence::High]);
+        assert_eq!(bracket_text("Zelda (USA) [!]"), "usa !");
     }
 
     #[test]

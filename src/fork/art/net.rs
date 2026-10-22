@@ -20,6 +20,9 @@ pub const MAX_IMAGE_BYTES: u64 = 24 * 1024 * 1024;
 pub struct Response {
     pub status: u16,
     pub body: Vec<u8>,
+    /// Where the answer really came from, after any redirects. Clients refuse an answer from a host the
+    /// source does not own.
+    pub final_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,20 +74,23 @@ impl Fetch for Net {
             return Err(NetError::Refused("only https addresses are used".into()));
         }
         let agent = crate::core::http::agent(self.timeout);
-        let mut request = agent.get(url);
+        // A few redirects are normal for image hosts; credentials never follow them (they are in the
+        // address, which the redirect replaces), and the clients check where the answer came from.
+        let mut request = agent.get(url).config().max_redirects(3).redirect_auth_headers(ureq::config::RedirectAuthHeaders::Never).build();
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
         match request.call() {
             Ok(mut response) => {
                 let status = response.status().as_u16();
+                let final_url = ureq::ResponseExt::get_uri(&response).to_string();
                 match response.body_mut().with_config().limit(max_bytes).read_to_vec() {
-                    Ok(body) => Ok(Response { status, body }),
+                    Ok(body) => Ok(Response { status, body, final_url }),
                     Err(ureq::Error::BodyExceedsLimit(_)) => Err(NetError::TooLarge),
                     Err(e) => Err(offline(&e)),
                 }
             }
-            Err(ureq::Error::StatusCode(status)) => Ok(Response { status, body: Vec::new() }),
+            Err(ureq::Error::StatusCode(status)) => Ok(Response { status, body: Vec::new(), final_url: url.to_string() }),
             Err(e) => Err(offline(&e)),
         }
     }
@@ -143,26 +149,34 @@ pub fn redact(text: &str, secrets: &[String]) -> String {
     out
 }
 
-/// Cuts every `?query` off every web address in `text`, since queries are where keys travel.
+/// Cuts the `?query` off every web address in `text`, since queries are where keys travel. A question
+/// mark in ordinary prose is left alone: only a word that holds `://` is cut.
 pub fn strip_query(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut in_query = false;
-    for c in text.chars() {
-        if in_query {
-            if c.is_whitespace() || matches!(c, '"' | '\'' | ')' | '>') {
-                in_query = false;
-                out.push(c);
+    for piece in text.split_inclusive(char::is_whitespace) {
+        let word = piece.trim_end();
+        match (word.contains("://"), word.find('?')) {
+            (true, Some(at)) => {
+                out.push_str(&word[..at]);
+                out.push_str("?...");
+                out.push_str(&piece[word.len()..]);
             }
-            continue;
+            _ => out.push_str(piece),
         }
-        if c == '?' {
-            in_query = true;
-            out.push_str("?...");
-            continue;
-        }
-        out.push(c);
     }
     out
+}
+
+/// Longest server text kept in a message or in the saved state; the rest is cut.
+pub const MAX_SERVER_TEXT: usize = 200;
+
+/// `text` cut to `max` characters, with `...` when something was removed.
+pub fn cap(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max.saturating_sub(3)).collect();
+    format!("{}...", cut.trim_end())
 }
 
 #[cfg(test)]
@@ -175,12 +189,14 @@ pub(crate) mod fake {
 
     pub enum Reply {
         Ok(u16, Vec<u8>),
+        /// A 200 that came from another address after a redirect.
+        Redirected(String, Vec<u8>),
         Offline,
         TooLarge,
     }
 
     pub struct Fake {
-        rules: Vec<(String, Reply, bool)>,
+        rules: Vec<(String, Reply)>,
         pub seen: RefCell<Vec<(String, Vec<(String, String)>)>>,
     }
 
@@ -191,7 +207,7 @@ pub(crate) mod fake {
 
         /// Answers any URL containing `pattern` (every time).
         pub fn on(mut self, pattern: &str, status: u16, body: impl Into<Vec<u8>>) -> Fake {
-            self.rules.push((pattern.to_string(), Reply::Ok(status, body.into()), false));
+            self.rules.push((pattern.to_string(), Reply::Ok(status, body.into())));
             self
         }
 
@@ -199,13 +215,19 @@ pub(crate) mod fake {
             self.on(pattern, status, body.as_bytes().to_vec())
         }
 
+        /// Answers 200 as if the request had been redirected to `final_url`.
+        pub fn redirected_on(mut self, pattern: &str, final_url: &str, body: impl Into<Vec<u8>>) -> Fake {
+            self.rules.push((pattern.to_string(), Reply::Redirected(final_url.to_string(), body.into())));
+            self
+        }
+
         pub fn offline_on(mut self, pattern: &str) -> Fake {
-            self.rules.push((pattern.to_string(), Reply::Offline, false));
+            self.rules.push((pattern.to_string(), Reply::Offline));
             self
         }
 
         pub fn too_large_on(mut self, pattern: &str) -> Fake {
-            self.rules.push((pattern.to_string(), Reply::TooLarge, false));
+            self.rules.push((pattern.to_string(), Reply::TooLarge));
             self
         }
 
@@ -231,10 +253,11 @@ pub(crate) mod fake {
                 return Err(NetError::Refused("only https addresses are used".into()));
             }
             self.seen.borrow_mut().push((url.to_string(), headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()));
-            for (pattern, reply, _) in &self.rules {
+            for (pattern, reply) in &self.rules {
                 if url.contains(pattern.as_str()) {
                     return match reply {
-                        Reply::Ok(status, body) => Ok(Response { status: *status, body: body.clone() }),
+                        Reply::Ok(status, body) => Ok(Response { status: *status, body: body.clone(), final_url: url.to_string() }),
+                        Reply::Redirected(to, body) => Ok(Response { status: 200, body: body.clone(), final_url: to.clone() }),
                         Reply::Offline => Err(NetError::Offline("could not connect".into())),
                         Reply::TooLarge => Err(NetError::TooLarge),
                     };
@@ -287,6 +310,17 @@ mod tests {
         assert_eq!(strip_query("failed: https://a.example/x?apikey=K&b=2 (retrying)"), "failed: https://a.example/x?... (retrying)");
         assert_eq!(strip_query("no queries here"), "no queries here");
         assert!(!strip_query("https://a/x?devpassword=P").contains('P'));
+    }
+
+    #[test]
+    fn a_question_mark_in_prose_survives_and_long_text_is_capped() {
+        assert_eq!(strip_query("Is it ok? yes"), "Is it ok? yes");
+        assert_eq!(strip_query("see https://x.example/y?k=1
+next line?"), "see https://x.example/y?...
+next line?");
+        assert_eq!(cap("short", 200), "short");
+        let long = "x".repeat(500);
+        assert!(cap(&long, 200).chars().count() <= 200 && cap(&long, 200).ends_with("..."));
     }
 
     #[test]

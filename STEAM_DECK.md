@@ -254,13 +254,17 @@ SteamGridDB does most of the work and is the one to set up.
    Desktop Mode; in Game Mode press Steam + X for the on-screen keyboard), move down to **Save**, press A or Enter.
 4. Choose **Test the SteamGridDB key**. It makes one call and says OK, Invalid or Offline.
 5. Choose **Fetch artwork for installed ports now**. It looks each installed port up (3 to 8 requests per port, one at a
-   time, with a Stop row), saves what it finds in the app's `cache/` folder and tells you what it found per slot.
+   time, with a Stop row; Stop ends it within a second or two and keeps what was fetched), saves what it finds in the
+   app's `cache/` folder and tells you what it found per slot. If the Deck is offline it says so; run Fetch again when it
+   is back online, nothing that was fetched is lost.
 6. Use **Add to Steam** as before. The artwork is placed with the shortcuts it adds. Pictures you chose yourself in Steam
    are never replaced; art this app composed (a crop of a wider picture) may be replaced later by a better one.
 7. Restart Steam to see it (Steam reads the grid folder when the library draws).
 
-The key is stored in `secrets.json` next to the app, readable only by your account, shown on screen as `****` plus its
-last four characters, and never sent anywhere but SteamGridDB. It is not in `state.json`, so sending `state.json` in a
+The key is stored in `secrets.json` next to the app, shown on screen as `****` plus its last four characters, and
+never sent anywhere but SteamGridDB. On the Deck's own drive the file can be read only by your account. A memory card
+formatted exFAT or FAT cannot restrict files at all; if the app is on one, the screen says "This drive cannot restrict
+files" and the file is open to anyone who can read the card. The key is not in `state.json`, so sending `state.json` in a
 bug report does not send it. The Remove choice in the key box deletes it.
 
 **What each source does**
@@ -273,9 +277,17 @@ bug report does not send it. The Remove choice in the key box deletes it.
 
 The screen shows each source as set, not set, or "not configured in this build", with the last problem and any waiting
 time. A port is matched to SteamGridDB by title only when the title is the same; a close match ("Sonic Unleashed" for
-"Sonic Unleashed Recompiled") is listed under "Look-alike matches waiting for you" and not used. To pick the right game
-yourself, add `"sgdb_id": 12345` (the number from the game's SteamGridDB page address) to the port's entry in
-`ports.local.json`.
+"Sonic Unleashed Recompiled") is listed under "Look-alike matches waiting for you" and not used. Two games with
+the same title and different years ("DOOM (2016)", "Doom (1993)") are never picked for you either. Open that row: each
+suggestion is a row, "Use \"Doom II\" (42) for Doom", and choosing it confirms it (then Fetch again). To choose by hand,
+add this to the `ports` list in `ports.local.json`, with the port's folder (the list shows it) and the number from the
+game's SteamGridDB page address, and with **no name and no source**; an entry that has either replaces the port's
+whole catalog entry:
+
+    {"folder": "shipwright", "sgdb_id": 12345}
+
+An "Another artwork task is still running" message means a Fetch or Test is still finishing in the background; wait a
+moment.
 
 Pictures that had to be cropped or padded to fit are marked as composed in `config/grid/.dpm-art-manifest.json`. Videos
 and animated pictures are not used. The images belong to their authors and the games' publishers; the app downloads them

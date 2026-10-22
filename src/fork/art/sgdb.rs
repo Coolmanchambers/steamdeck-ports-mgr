@@ -15,12 +15,14 @@ use serde_json::Value;
 use super::fit::Slot;
 use super::net::{self, Fetch, MAX_IMAGE_BYTES, MAX_JSON_BYTES};
 use super::source::{KeyCheck, SourceError};
-use super::title::{confidence, Confidence};
+use super::title::{confidences, Confidence};
 
 const BASE: &str = "https://www.steamgriddb.com/api/v2";
 const IMAGE_HOSTS: [&str; 1] = ["steamgriddb.com"];
 /// Per request, the images listed; the resolver tries the first few.
 const LIST_LIMIT: u32 = 12;
+/// How long a source is left alone after "too many requests" (HTTP 429): minutes, not a day.
+pub const RATE_LIMIT_WAIT_SECS: u64 = 300;
 
 /// A game in SteamGridDB's catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,17 +94,20 @@ impl<'a> SteamGridDb<'a> {
         let url = format!("{BASE}{path_and_query}");
         let bearer = format!("Bearer {}", self.key);
         let response = self.fetch.get(&url, &[("Authorization", bearer.as_str()), ("Accept", "application/json")], MAX_JSON_BYTES)?;
+        if !net::host_allowed(&response.final_url, &IMAGE_HOSTS) {
+            return Err(SourceError::BadResponse("SteamGridDB answered from another address; ignored".into()));
+        }
         match response.status {
             200 | 207 => {}
-            401 | 403 => return Err(SourceError::Invalid("the key was not recognised".into())),
+            401 | 403 => return Err(SourceError::Invalid("the key was not accepted".into())),
             404 => return Err(SourceError::NotFound),
-            429 => return Err(SourceError::Limited("SteamGridDB says too many requests; try again in a few minutes".into())),
+            429 => return Err(SourceError::BackedOff { secs: RATE_LIMIT_WAIT_SECS, reason: "SteamGridDB says too many requests".into() }),
             other => return Err(SourceError::BadResponse(format!("SteamGridDB answered HTTP {other}"))),
         }
         let v: Value = serde_json::from_slice(&response.body).map_err(|_| SourceError::BadResponse("SteamGridDB sent something that is not JSON".into()))?;
         if v.get("success").and_then(Value::as_bool) == Some(false) {
             let why = v.get("errors").and_then(Value::as_array).and_then(|e| e.first()).and_then(Value::as_str).unwrap_or("no reason given");
-            let why = net::strip_query(why);
+            let why = net::cap(&net::strip_query(why), net::MAX_SERVER_TEXT);
             return Err(if why.to_ascii_lowercase().contains("not found") { SourceError::NotFound } else { SourceError::BadResponse(format!("SteamGridDB: {why}")) });
         }
         Ok(v)
@@ -175,22 +180,32 @@ pub(crate) fn download_image(fetch: &dyn Fetch, url: &str, hosts: &[&str], who: 
         return Err(SourceError::BadResponse(format!("{who} pointed at an address it does not own; not downloaded")));
     }
     let response = fetch.get(url, &[], MAX_IMAGE_BYTES)?;
+    if !net::host_allowed(&response.final_url, hosts) {
+        return Err(SourceError::BadResponse(format!("{who} sent the image from another address; ignored")));
+    }
     match response.status {
         200 => Ok(response.body),
         404 => Err(SourceError::NotFound),
-        429 => Err(SourceError::Limited(format!("{who} says too many requests"))),
+        429 => Err(SourceError::BackedOff { secs: RATE_LIMIT_WAIT_SECS, reason: format!("{who} says too many requests") }),
         other => Err(SourceError::BadResponse(format!("{who} image answered HTTP {other}"))),
     }
 }
 
-/// The best game for `title` among `games`, and how sure that is. The first same-title game wins,
-/// a verified one over an unverified one; with no same-title game the first look-alike is returned
-/// with its (lower) confidence.
-pub fn best_match<'g>(title: &str, games: &'g [Game]) -> Option<(&'g Game, Confidence)> {
-    let scored: Vec<(&Game, Confidence)> = games.iter().map(|g| (g, confidence(title, &g.name))).collect();
-    let top = scored.iter().map(|(_, c)| *c).max()?;
-    scored.into_iter().filter(|(_, c)| *c == top).min_by_key(|(g, _)| !g.verified)
+/// Every game ranked for `title`, best first: the same title before a look-alike, a verified game before
+/// an unverified one, SteamGridDB's own order otherwise. Two same-title games with different bracket
+/// texts are a tie and rank as look-alikes (see [`confidences`]).
+pub fn ranked<'g>(title: &str, games: &'g [Game]) -> Vec<(&'g Game, Confidence)> {
+    let names: Vec<&str> = games.iter().map(|g| g.name.as_str()).collect();
+    let mut all: Vec<(&Game, Confidence)> = games.iter().zip(confidences(title, &names)).collect();
+    all.sort_by_key(|(g, c)| (std::cmp::Reverse(*c), !g.verified));
+    all
 }
+
+/// The best game for `title` among `games`, and how sure that is.
+pub fn best_match<'g>(title: &str, games: &'g [Game]) -> Option<(&'g Game, Confidence)> {
+    ranked(title, games).into_iter().next()
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -245,7 +260,7 @@ mod tests {
         assert!(matches!(sgdb_with(401), Err(SourceError::Invalid(_))));
         assert!(matches!(sgdb_with(403), Err(SourceError::Invalid(_))));
         assert_eq!(sgdb_with(404), Err(SourceError::NotFound));
-        assert!(matches!(sgdb_with(429), Err(SourceError::Limited(_))));
+        assert!(matches!(sgdb_with(429), Err(SourceError::BackedOff { secs: 300, .. })));
         assert!(matches!(sgdb_with(500), Err(SourceError::BadResponse(_))));
         assert!(matches!(sgdb_with(430), Err(SourceError::BadResponse(_))));
     }
@@ -296,6 +311,15 @@ mod tests {
         assert_eq!(fake.requests().len(), 1);
         let gone = Fake::new().on("steamgriddb.com", 404, Vec::new());
         assert_eq!(SteamGridDb::new(&gone, "k-123456789").download("https://cdn2.steamgriddb.com/x.png"), Err(SourceError::NotFound));
+    }
+
+    #[test]
+    fn an_answer_that_was_redirected_to_another_host_is_ignored() {
+        let fake = Fake::new().redirected_on("steamgriddb.com", "https://evil.example/x.png", b"PNG".to_vec());
+        assert!(matches!(SteamGridDb::new(&fake, "k-123456789").download("https://cdn2.steamgriddb.com/img/a.png"), Err(SourceError::BadResponse(_))));
+        assert!(matches!(SteamGridDb::new(&fake, "k-123456789").search("x"), Err(SourceError::BadResponse(_))));
+        let fake = Fake::new().redirected_on("steamgriddb.com", "https://cdn3.steamgriddb.com/x.png", b"PNG".to_vec());
+        assert!(SteamGridDb::new(&fake, "k-123456789").download("https://cdn2.steamgriddb.com/img/a.png").is_ok(), "a redirect inside the source's own hosts is fine");
     }
 
     #[test]

@@ -387,7 +387,7 @@ fn a_rejected_key_stops_that_source_for_the_whole_session_and_says_so_once() {
     let fake = Rc::new(Fake::new().on_json("/search/autocomplete/", 401, "{}"));
     let s = session(dir.path(), &fake, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
     let first = s.resolve(&request("Ship of Harkinian"));
-    assert!(first.problems.iter().any(|(_, p)| p.contains("SteamGridDB") && p.contains("key rejected")), "{:?}", first.problems);
+    assert!(first.problems.iter().any(|(_, p)| p.contains("SteamGridDB") && p.contains("key was not accepted")), "{:?}", first.problems);
     let second = s.resolve(&Request::new("other/port", "Another Port"));
     assert_eq!(fake.count("/search/autocomplete/"), 1, "the second port made no call");
     assert!(second.problems.is_empty());
@@ -699,4 +699,150 @@ fn art_for_port_with_no_source_set_up_is_the_catalog_art_and_touches_nothing_els
     let art = art_for_port(dirs, port, Some(&cache.join("nope.png")), None, None, Mode::CacheOnly);
     assert_eq!(art.problems.len(), 1);
     assert!(art.set.is_empty());
+}
+
+#[test]
+fn too_many_requests_backs_a_source_off_for_minutes_not_until_midnight() {
+    let dir = tempfile::tempdir().unwrap();
+    let busy = Rc::new(Fake::new().on_json("/search/autocomplete/", 429, "{}"));
+    let mut req = Request::new("owner/ship", "Ship of Harkinian");
+    req.need = vec![Slot::Hero];
+    let s = session(dir.path(), &busy, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 10_000);
+    let art = s.resolve(&req);
+    assert!(art.problems.iter().any(|(_, p)| p.contains("SteamGridDB") && p.contains("too many requests")), "{:?}", art.problems);
+    // Four minutes later it is still being left alone, without a call.
+    let soon = session(dir.path(), &busy, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 10_240);
+    soon.resolve(&req);
+    assert_eq!(busy.count("/search/autocomplete/"), 1);
+    // Ten minutes later it is asked again.
+    let fine = Rc::new(sgdb_fake());
+    let later = session(dir.path(), &fine, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 10_600);
+    let art = later.resolve(&req);
+    assert!(art.source_of(Slot::Hero).is_some(), "{:?}", art.problems);
+    assert_eq!(fine.count("/search/autocomplete/"), 1);
+}
+
+#[test]
+fn two_same_titles_with_different_years_are_not_picked_and_wait_for_the_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let two = r#"{"success":true,"data":[{"id":71,"name":"DOOM (2016)","types":[],"verified":true},{"id":72,"name":"Doom (1993)","types":[],"verified":true}]}"#;
+    let fake = Rc::new(Fake::new().on_json("/search/autocomplete/", 200, two));
+    let s = session(dir.path(), &fake, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
+    let mut req = Request::new("owner/doom", "Doom");
+    req.folder = "doom-port";
+    req.need = vec![Slot::Hero];
+    let art = s.resolve(&req);
+    assert!(art.set.is_empty());
+    assert_eq!(fake.count("/heroes/"), 0, "neither game was guessed");
+    let pending = s.pending_matches();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].2.iter().map(|c| c.id).collect::<Vec<_>>(), vec![71, 72]);
+    let table = IdTable::load(&dir.path().join("cache/art/ids.json"));
+    assert_eq!(table.identity("owner/doom"), (Some("Doom"), Some("doom-port")), "the folder is saved so the screen can say how to choose");
+}
+
+#[test]
+fn an_override_in_ports_local_json_clears_the_waiting_look_alike() {
+    let dir = tempfile::tempdir().unwrap();
+    let lookalike = r#"{"success":true,"data":[{"id":900002,"name":"Ship of Harkinian: Remastered","types":[],"verified":true}]}"#;
+    let fake = Rc::new(Fake::new().on_json("/search/autocomplete/", 200, lookalike).on_json("/heroes/game/777", 200, r#"{"success":true,"data":[]}"#));
+    let mut req = Request::new("owner/ship", "Ship of Harkinian");
+    req.need = vec![Slot::Hero];
+    let s = session(dir.path(), &fake, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
+    s.resolve(&req);
+    assert_eq!(s.pending_matches().len(), 1);
+    let again = session(dir.path(), &fake, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 2_000);
+    req.sgdb_id = Some(777);
+    again.resolve(&req);
+    assert!(again.pending_matches().is_empty(), "the row clears once the user has chosen");
+    assert_eq!(fake.count("/heroes/game/777"), 1);
+}
+
+#[test]
+fn one_image_that_will_not_download_does_not_end_the_source_but_three_in_a_row_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Rc::new(
+        Fake::new()
+            .on_json("/search/autocomplete/", 200, SGDB_SEARCH)
+            .on_json("/heroes/game/900001", 200, &sgdb_list(&[(1, "bad1.png"), (2, "good2.png")]))
+            .on_json("dimensions=920x430", 200, &sgdb_list(&[(3, "wide3.png")]))
+            .on("/img/bad1.png", 500, Vec::new())
+            .on("/img/good2.png", 200, png(1920, 620, [1, 2, 3, 255]))
+            .on("/img/wide3.png", 200, png(920, 430, [4, 5, 6, 255])),
+    );
+    let s = session(dir.path(), &fake, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
+    let mut req = Request::new("owner/ship", "Ship of Harkinian");
+    req.need = vec![Slot::Hero, Slot::Wide];
+    let art = s.resolve(&req);
+    assert_eq!(art.source_of(Slot::Hero).map(|s| s.source.as_str()), Some("steamgriddb"), "the second hero came through");
+    assert_eq!(art.source_of(Slot::Wide).map(|s| s.source.as_str()), Some("steamgriddb"), "and the source was still in use for the next slot");
+
+    // Three broken images in a row: now the source is given up for the session.
+    let dir2 = tempfile::tempdir().unwrap();
+    let fake2 = Rc::new(
+        Fake::new()
+            .on_json("/search/autocomplete/", 200, SGDB_SEARCH)
+            .on_json("/heroes/game/900001", 200, &sgdb_list(&[(1, "b1.png"), (2, "b2.png"), (3, "b3.png")]))
+            .on_json("/logos/game/900001", 200, &sgdb_list(&[(4, "logo4.png")]))
+            .on("/img/b", 502, Vec::new())
+            .on("/img/logo4.png", 200, logo_png(800, 300)),
+    );
+    let s2 = session(dir2.path(), &fake2, secrets_at(dir2.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
+    let mut req2 = Request::new("owner/ship", "Ship of Harkinian");
+    req2.need = vec![Slot::Hero, Slot::Logo];
+    let art2 = s2.resolve(&req2);
+    assert!(art2.set.hero.is_none() && art2.set.logo.is_none(), "after the third failure SteamGridDB is left alone");
+    assert_eq!(fake2.count("/logos/game"), 0);
+}
+
+#[test]
+fn stop_is_honoured_inside_a_port_between_two_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Rc::new(sgdb_fake());
+    let s = session(dir.path(), &fake, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
+    let stop = Rc::new(std::cell::Cell::new(false));
+    let mut req = Request::new("owner/ship", "Ship of Harkinian");
+    req.need = vec![Slot::Hero, Slot::Wide, Slot::Logo];
+    // Stop is pressed as soon as the title search has been answered.
+    let cancel = {
+        let (stop, fake) = (stop.clone(), fake.clone());
+        move || {
+            if fake.count("/search/autocomplete/") >= 1 {
+                stop.set(true);
+            }
+            stop.get()
+        }
+    };
+    let art = s.resolve_with(&req, &cancel);
+    assert!(art.set.is_empty());
+    assert_eq!(fake.count("/heroes/"), 0);
+    assert_eq!(fake.requests().len(), 1, "only the search went out: {:?}", fake.requests());
+}
+
+#[test]
+fn an_opaque_logo_does_not_use_up_the_download_budget_and_a_game_with_no_images_is_remembered() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Rc::new(
+        Fake::new()
+            .on_json("/search/autocomplete/", 200, SGDB_SEARCH)
+            .on_json("/logos/game/900001", 200, &sgdb_list(&[(1, "o1.png"), (2, "o2.png"), (3, "o3.png"), (4, "real.png")]))
+            .on("/img/o", 200, png(800, 300, [255, 255, 255, 255]))
+            .on("/img/real.png", 200, logo_png(800, 300)),
+    );
+    let s = session(dir.path(), &fake, secrets_at(dir.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
+    let mut req = Request::new("owner/ship", "Ship of Harkinian");
+    req.need = vec![Slot::Logo];
+    assert!(s.resolve(&req).set.logo.is_some(), "the fourth, transparent logo was reached");
+
+    // A 404 for the image list means "none", and is remembered like an empty list.
+    let dir2 = tempfile::tempdir().unwrap();
+    let gone = Rc::new(Fake::new().on_json("/search/autocomplete/", 200, SGDB_SEARCH).on_json("/heroes/game/900001", 404, "{}"));
+    let mut req2 = Request::new("owner/ship", "Ship of Harkinian");
+    req2.need = vec![Slot::Hero];
+    let s2 = session(dir2.path(), &gone, secrets_at(dir2.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 1_000);
+    let art2 = s2.resolve(&req2);
+    assert!(art2.problems.is_empty(), "{:?}", art2.problems);
+    let s3 = session(dir2.path(), &gone, secrets_at(dir2.path(), Some(SGDB_KEY), None), BuildCreds::none(), Mode::Online, 2_000);
+    s3.resolve(&req2);
+    assert_eq!(gone.count("/heroes/"), 1);
 }

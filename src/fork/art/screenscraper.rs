@@ -25,7 +25,7 @@ use serde_json::Value;
 use super::net::{self, Fetch, MAX_JSON_BYTES};
 use super::sgdb::download_image;
 use super::source::{KeyCheck, SourceError};
-use super::title::{confidence, Confidence};
+use super::title::{confidences, Confidence};
 use crate::fork::rom_library::hash::to_hex;
 use crate::fork::rom_library::scan::RomFile;
 use crate::fork::rom_library::system::System;
@@ -99,12 +99,20 @@ impl RomIdentity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Media {
     pub kind: String,
     pub region: String,
     pub format: String,
     pub url: String,
+}
+
+/// The address is left out of debug output: ScreenScraper's media addresses can carry the account's
+/// credentials, and a stray `{:?}` must not put them in a log.
+impl std::fmt::Debug for Media {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Media").field("kind", &self.kind).field("region", &self.region).field("format", &self.format).finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,11 +131,17 @@ pub struct UserInfo {
     pub level: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DevCreds {
     pub id: String,
     pub password: String,
     pub softname: String,
+}
+
+impl std::fmt::Debug for DevCreds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DevCreds").field("softname", &self.softname).finish_non_exhaustive()
+    }
 }
 
 pub struct ScreenScraper<'a> {
@@ -237,11 +251,14 @@ impl<'a> ScreenScraper<'a> {
         loop {
             self.pace();
             let response = self.fetch.get(&url, &[("Accept", "application/json")], MAX_JSON_BYTES)?;
+            if !net::host_allowed(&response.final_url, &IMAGE_HOSTS) {
+                return Err(SourceError::BadResponse("ScreenScraper answered from another address; ignored".into()));
+            }
             match response.status {
                 200 => return self.parse(&response.body),
                 400 => return Err(SourceError::BadResponse("ScreenScraper refused the request as badly formed".into())),
                 401 => return Err(SourceError::BackedOff { secs: 600, reason: "ScreenScraper is closed to this account or its servers are saturated".into() }),
-                403 => return Err(SourceError::Invalid("this app's developer credentials were refused".into())),
+                403 => return Err(SourceError::Invalid("this app's developer credentials were not accepted".into())),
                 404 => return Err(SourceError::NotFound),
                 423 => return Err(SourceError::BackedOff { secs: 3600, reason: "ScreenScraper is closed for a serious problem on their side".into() }),
                 426 => return Err(SourceError::BackedOff { secs: 86_400, reason: "ScreenScraper blocks this version of the app".into() }),
@@ -266,7 +283,7 @@ impl<'a> ScreenScraper<'a> {
             return Err(if lower.contains("non trouv") || lower.contains("not found") {
                 SourceError::NotFound
             } else if lower.contains("identifiant") || lower.contains("login") || lower.contains("password") {
-                SourceError::Invalid("the login was not recognised".into())
+                SourceError::Invalid("the login was not accepted".into())
             } else if lower.contains("ferm") || lower.contains("closed") {
                 SourceError::BackedOff { secs: 600, reason: "ScreenScraper says its API is closed".into() }
             } else {
@@ -325,7 +342,7 @@ impl<'a> ScreenScraper<'a> {
                 Some(u) if u.level > 0 || u.max_per_day > 0 => {
                     KeyCheck::Ok(format!("{} of {} requests used today, {} thread{}", u.requests_today, u.max_per_day, u.max_threads, if u.max_threads == 1 { "" } else { "s" }))
                 }
-                _ => KeyCheck::Invalid("the login was not recognised".into()),
+                _ => KeyCheck::Invalid("the login was not accepted".into()),
             },
             Ok(_) => KeyCheck::Ok("developer credentials accepted; no login set, so the lowest limits apply".into()),
             Err(SourceError::Invalid(why)) => KeyCheck::Invalid(why),
@@ -335,11 +352,19 @@ impl<'a> ScreenScraper<'a> {
     }
 }
 
+/// Every candidate ranked for `title`, best first (ScreenScraper's own order breaks ties).
+pub fn ranked<'g>(title: &str, games: &'g [Game]) -> Vec<(&'g Game, Confidence)> {
+    let names: Vec<&str> = games.iter().map(|g| g.name.as_str()).collect();
+    let mut all: Vec<(&Game, Confidence)> = games.iter().zip(confidences(title, &names)).collect();
+    all.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    all
+}
+
 /// The best candidate for `title` among name-search results, and how sure that is.
 pub fn best_match<'g>(title: &str, games: &'g [Game]) -> Option<(&'g Game, Confidence)> {
-    let top = games.iter().map(|g| confidence(title, &g.name)).max()?;
-    games.iter().find(|g| confidence(title, &g.name) == top).map(|g| (g, top))
+    ranked(title, games).into_iter().next()
 }
+
 
 /// Media of `kind` in the order ES-DE prefers: the user's region, world, US, Europe, Japan, custom,
 /// then anything. Only image formats the decoder reads.
@@ -490,7 +515,7 @@ mod tests {
         impl Fetch for Scripted {
             fn get(&self, _url: &str, _h: &[(&str, &str)], _m: u64) -> Result<Response, NetError> {
                 let status = self.0.borrow_mut().remove(0);
-                Ok(Response { status, body: if status == 200 { INFO.as_bytes().to_vec() } else { Vec::new() } })
+                Ok(Response { status, body: if status == 200 { INFO.as_bytes().to_vec() } else { Vec::new() }, final_url: _url.to_string() })
             }
         }
         let sleeps = Sleeps::new();
@@ -577,6 +602,17 @@ mod tests {
         assert!(matches!(ScreenScraper::new(&fake, dev(), None, &sleep).check_login(), KeyCheck::Offline(_)));
         let fake = Fake::new().on_json("ssinfraInfos.php", 430, "");
         assert!(matches!(ScreenScraper::new(&fake, dev(), None, &sleep).check_login(), KeyCheck::Unknown(_)));
+    }
+
+    #[test]
+    fn debug_output_hides_credentials_and_media_addresses() {
+        let dev = DevCreds { id: "DEVID-SECRET".into(), password: "DEVPASS-SECRET".into(), softname: "soft".into() };
+        let media = Media { kind: "box-2D".into(), region: "us".into(), format: "png".into(), url: "https://www.screenscraper.fr/x?ssid=u&sspassword=SECRETPW".into() };
+        let game = Game { id: 1, name: "G".into(), medias: vec![media.clone()] };
+        let text = format!("{dev:?} {media:?} {game:?}");
+        for secret in ["DEVID-SECRET", "DEVPASS-SECRET", "SECRETPW", "screenscraper.fr"] {
+            assert!(!text.contains(secret), "{text}");
+        }
     }
 
     #[test]

@@ -138,6 +138,8 @@ export component SearchListDialog inherits Window {
     callback move-selection-requested(int);
     callback activate-selection-requested();
     callback search-changed(string);
+    // Fork: the text of the box, settable from Rust so a refused paste can be shown again as it was.
+    in-out property <string> entry-text <=> search-input.text;
     init => { search-input.focus(); }
 
     in property <length> item-font-px-physical: 14px;

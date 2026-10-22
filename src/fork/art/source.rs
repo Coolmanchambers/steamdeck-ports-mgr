@@ -68,7 +68,7 @@ impl fmt::Display for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SourceError::NotConfigured(why) => write!(f, "not configured: {why}"),
-            SourceError::Invalid(why) => write!(f, "key rejected: {why}"),
+            SourceError::Invalid(why) => write!(f, "{why}"),
             SourceError::NotFound => write!(f, "not found"),
             SourceError::BackedOff { secs, reason } => write!(f, "waiting {} before trying again ({reason})", human_wait(*secs)),
             SourceError::Limited(why) => write!(f, "limit reached: {why}"),
@@ -254,7 +254,7 @@ impl SourceStates {
         if matches!(err, SourceError::NotFound) {
             return;
         }
-        let text = net::redact(&net::strip_query(&err.to_string()), secrets);
+        let text = net::cap(&net::redact(&net::strip_query(&err.to_string()), secrets), net::MAX_SERVER_TEXT);
         let wait = err.wait_secs(now);
         let s = self.map.entry(id).or_default();
         s.last_error = Some(text.clone());
@@ -266,7 +266,11 @@ impl SourceStates {
     }
 
     pub fn record_check(&mut self, id: SourceId, check: &KeyCheck, now: u64, secrets: &[String]) {
-        let text = net::redact(&net::strip_query(&check.text()), secrets);
+        // "Nothing to test" is not something that went wrong with the source.
+        if matches!(check, KeyCheck::NotConfigured(_)) {
+            return;
+        }
+        let text = net::cap(&net::redact(&net::strip_query(&check.text()), secrets), net::MAX_SERVER_TEXT);
         let s = self.map.entry(id).or_default();
         s.last_check = Some(text.clone());
         s.last_check_ok = Some(check.is_ok());
@@ -337,6 +341,16 @@ mod tests {
         assert!(states.blocked(SourceId::TheGamesDb, 201).is_none());
         let s = states.get(SourceId::TheGamesDb);
         assert_eq!((s.last_error, s.last_check_ok, s.last_check.as_deref()), (None, Some(true), Some("OK (1,000 left)")));
+    }
+
+    #[test]
+    fn nothing_to_test_is_not_recorded_and_long_server_text_is_capped() {
+        let mut states = SourceStates::in_memory();
+        states.record_check(SourceId::SteamGridDb, &KeyCheck::NotConfigured("paste your key first".into()), 100, &[]);
+        assert_eq!(states.get(SourceId::SteamGridDb), SourceState::default());
+        let long = SourceError::BadResponse("y".repeat(900));
+        states.record_error(SourceId::SteamGridDb, &long, 100, &[]);
+        assert!(states.get(SourceId::SteamGridDb).last_error.unwrap().chars().count() <= net::MAX_SERVER_TEXT);
     }
 
     #[test]

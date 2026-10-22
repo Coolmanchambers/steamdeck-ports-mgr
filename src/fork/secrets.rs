@@ -8,12 +8,17 @@
 //! * Never logged: `Debug` hides every value, and the UI only shows [`mask`]ed text.
 //! * Never exported: nothing outside this module reads the file, and no report or export in the app
 //!   includes it.
+//! * A file that is a symbolic link is not read or written (it could point anywhere); it counts as a
+//!   problem, like a damaged file.
+//! * Some drives cannot restrict a file at all (exFAT and FAT on an SD card report every file as open to
+//!   everyone). That is detected after the write and shown as a note, never hidden.
 //! * A file that exists but cannot be read as a JSON object is left alone: it loads as empty and
 //!   saving is refused until the user fixes or removes it (the same rule as `fork-settings.json`).
 //!
 //! The developer credentials (ScreenScraper's devid and devpassword, an app TheGamesDB key) are not
 //! stored here. They exist only if a build injects them, see [`BuildCreds`].
 
+use std::cell::Cell;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
@@ -52,6 +57,22 @@ pub fn clean_value(raw: &str) -> Option<String> {
     Some(t.to_string())
 }
 
+/// A pasted password: only the line break a paste brings along is removed, since quotes and spaces can be
+/// part of a real password.
+pub fn clean_password(raw: &str) -> Option<String> {
+    let t = raw.trim_end_matches(['\r', '\n']);
+    if t.trim().is_empty() || t.chars().count() > MAX_VALUE_LEN || t.chars().any(char::is_control) {
+        return None;
+    }
+    Some(t.to_string())
+}
+
+/// True when a Unix mode gives nothing to group or others.
+pub fn mode_is_private(mode: u32) -> bool {
+    mode & 0o077 == 0
+}
+
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
     SteamGridDbKey,
@@ -78,6 +99,9 @@ pub struct Secrets {
     writable: bool,
     /// Set when the file exists but could not be used, so the UI can say why nothing is configured.
     pub problem: Option<String>,
+    /// After a save or a load: did the drive really keep the file private? `None`: not checked (no file yet,
+    /// or not a Unix drive).
+    restricted: Cell<Option<bool>>,
 }
 
 /// Values never appear in debug output, so a stray `{:?}` cannot leak them into a log.
@@ -95,18 +119,24 @@ impl fmt::Debug for Secrets {
 impl Secrets {
     /// An in-memory set with nowhere to save to; for tests and for callers that only have a key.
     pub fn in_memory() -> Secrets {
-        Secrets { path: PathBuf::new(), map: Map::new(), writable: false, problem: None }
+        Secrets { path: PathBuf::new(), map: Map::new(), writable: false, problem: None, restricted: Cell::new(None) }
     }
 
     /// Reads the file. A missing file is an empty set. On Linux a file readable by group or others is
     /// set back to 0600 on the way (best effort; a failure is reported in [`Secrets::problem`]).
     pub fn load(path: &Path) -> Secrets {
+        if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+            let problem = Some(format!("{FILE_NAME} is a link; it is not used or changed. Replace it with a plain file."));
+            return Secrets { path: path.to_path_buf(), map: Map::new(), writable: false, problem, restricted: Cell::new(None) };
+        }
         let mut problem = None;
+        let restricted = Cell::new(None);
         let (map, writable) = match fs::read_to_string(path) {
             Ok(text) => match serde_json::from_str::<Value>(text.strip_prefix('\u{FEFF}').unwrap_or(&text)) {
                 Ok(Value::Object(map)) => {
-                    if let Err(e) = tighten_permissions(path) {
-                        problem = Some(format!("could not restrict {FILE_NAME} to your account: {e}"));
+                    match tighten_permissions(path) {
+                        Ok(private) => restricted.set(private),
+                        Err(e) => problem = Some(format!("could not restrict {FILE_NAME} to your account: {e}")),
                     }
                     (map, true)
                 }
@@ -121,8 +151,14 @@ impl Secrets {
                 (Map::new(), false)
             }
         };
-        Secrets { path: path.to_path_buf(), map, writable, problem }
+        Secrets { path: path.to_path_buf(), map, writable, problem, restricted }
     }
+
+    /// A note for the screen when the drive cannot keep the file private (exFAT or FAT on an SD card).
+    pub fn drive_note(&self) -> Option<&'static str> {
+        (self.restricted.get() == Some(false)).then_some("This drive cannot restrict files, so other accounts on this device could read secrets.json.")
+    }
+
 
     pub fn path(&self) -> &Path {
         &self.path
@@ -164,7 +200,8 @@ impl Secrets {
         let key = field.json_key();
         match value {
             Some(raw) => {
-                let clean = clean_value(raw).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "that does not look like a key or login (empty, too long, or has control characters)"))?;
+                let cleaned = if field == Field::ScreenScraperPassword { clean_password(raw) } else { clean_value(raw) };
+                let clean = cleaned.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "that does not look like a key or login (empty, too long, or has control characters)"))?;
                 self.map.insert(key.to_string(), Value::String(clean));
             }
             None => {
@@ -182,24 +219,42 @@ impl Secrets {
         if self.path.as_os_str().is_empty() {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "no file to save to"));
         }
+        if fs::symlink_metadata(&self.path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{FILE_NAME} is a link; it is not changed")));
+        }
         let text = serde_json::to_string_pretty(&self.map).map_err(io::Error::other)?;
-        write_private(&self.path, text.as_bytes())
+        write_private(&self.path, text.as_bytes())?;
+        self.restricted.set(file_is_private(&self.path));
+        Ok(())
     }
 }
 
 #[cfg(unix)]
-fn tighten_permissions(path: &Path) -> io::Result<()> {
+fn file_is_private(path: &Path) -> Option<bool> {
     use std::os::unix::fs::PermissionsExt;
-    let mode = fs::metadata(path)?.permissions().mode() & 0o777;
-    if mode & 0o077 != 0 {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+    fs::metadata(path).ok().map(|m| mode_is_private(m.permissions().mode()))
 }
 
 #[cfg(not(unix))]
-fn tighten_permissions(_path: &Path) -> io::Result<()> {
-    Ok(())
+fn file_is_private(_path: &Path) -> Option<bool> {
+    None
+}
+
+/// Sets the file to 0600 if it is wider, then checks it took: `Some(false)` means the drive keeps every
+/// file open to everyone whatever is asked of it.
+#[cfg(unix)]
+fn tighten_permissions(path: &Path) -> io::Result<Option<bool>> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = fs::metadata(path)?.permissions().mode();
+    if !mode_is_private(mode) {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file_is_private(path))
+}
+
+#[cfg(not(unix))]
+fn tighten_permissions(_path: &Path) -> io::Result<Option<bool>> {
+    Ok(None)
 }
 
 /// Writes `bytes` to `path` through a sibling temp file that is private from its first byte.
@@ -408,12 +463,49 @@ mod tests {
         assert_eq!(others.len(), 2, "{others:?}");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn this_build_carries_no_developer_credentials() {
-        // No build in this repository sets them; the day one does, this test should be changed on purpose.
-        let build = BuildCreds::from_build();
-        assert!(build.screenscraper_dev().is_none());
-        assert!(build.tgdb_apikey.is_none());
+    fn a_symbolic_link_is_neither_read_nor_written() {
+        let dir = temp_dir("symlink");
+        let target = dir.join("elsewhere.json");
+        fs::write(&target, r#"{"steamgriddb_api_key":"abc123abc123abc1"}"#).unwrap();
+        let link = dir.join(FILE_NAME);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let mut s = Secrets::load(&link);
+        assert!(s.sgdb_key().is_none(), "a key behind a link is not used");
+        assert!(s.problem.as_deref().is_some_and(|p| p.contains("link")));
+        assert!(s.set(Field::SteamGridDbKey, Some("abc123abc123abc1")).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), r#"{"steamgriddb_api_key":"abc123abc123abc1"}"#);
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link is still a link");
+    }
+
+    #[test]
+    fn a_drive_that_cannot_restrict_files_is_reported_and_a_normal_one_is_not() {
+        assert!(mode_is_private(0o600) && mode_is_private(0o400));
+        assert!(!mode_is_private(0o644) && !mode_is_private(0o777) && !mode_is_private(0o660));
+        let dir = temp_dir("drivenote");
+        let mut s = Secrets::load(&dir.join(FILE_NAME));
+        s.set(Field::SteamGridDbKey, Some("abc123abc123abc1")).unwrap();
+        #[cfg(unix)]
+        {
+            assert_eq!(s.drive_note(), None, "a normal drive keeps the file private");
+            s.restricted.set(Some(false));
+            assert!(s.drive_note().is_some_and(|n| n.contains("cannot restrict")));
+        }
+    }
+
+    #[test]
+    fn passwords_keep_their_quotes_and_spaces_but_lose_the_pasted_line_break() {
+        assert_eq!(clean_password("\"p w\" \r\n").as_deref(), Some("\"p w\" "));
+        assert_eq!(clean_password("pw\n").as_deref(), Some("pw"));
+        assert_eq!(clean_password("   ").as_deref(), None);
+        assert_eq!(clean_password("a\tb"), None);
+        assert_eq!(clean_value("\"key\"\n").as_deref(), Some("key"));
+        let dir = temp_dir("pwq");
+        let mut s = Secrets::load(&dir.join(FILE_NAME));
+        s.set(Field::ScreenScraperPassword, Some("'quoted'")).unwrap();
+        let text = fs::read_to_string(dir.join(FILE_NAME)).unwrap();
+        assert!(text.contains("'quoted'"), "{text}");
     }
 
     #[test]

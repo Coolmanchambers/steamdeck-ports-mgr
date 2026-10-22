@@ -213,4 +213,32 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].name, "Customized");
     }
+
+    #[test]
+    fn local_entry_with_only_a_folder_and_an_art_id_leaves_the_catalog_port_alone() {
+        // The Artwork sources screen tells users to add exactly this to ports.local.json to pick a game
+        // by hand. With no name the app skips the entry, so the catalog port (and its source) stays; the
+        // art code reads the id from the raw file.
+        let main = vec![port_from_value(&serde_json::json!({"name": "Official", "folder": "a", "source": "https://github.com/official/a"})).unwrap()];
+        let path = write_temp("art_id_only", r#"{"ports":[{"folder": "a", "sgdb_id": 12345}]}"#);
+        let local = load_local_config(&path);
+        assert!(local.is_empty(), "an entry without a name is not a port");
+        let merged = merge_local_catalog(main, local);
+        assert_eq!(merged.len(), 1);
+        assert_eq!((merged[0].name.as_str(), merged[0].repo.as_deref()), ("Official", Some("official/a")));
+        assert!(!merged[0].user_managed);
+        let raw = crate::fork::rom_library::requirements::load_local_entries(&path);
+        assert_eq!(raw["a"]["sgdb_id"], 12345);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn local_entry_with_a_name_replaces_the_catalog_port_which_is_why_the_art_entry_has_none() {
+        let main = vec![port_from_value(&serde_json::json!({"name": "Official", "folder": "a", "source": "https://github.com/official/a"})).unwrap()];
+        let path = write_temp("art_id_with_name", r#"{"ports":[{"name": "Mine", "folder": "a", "sgdb_id": 12345}]}"#);
+        let merged = merge_local_catalog(main, load_local_config(&path));
+        assert_eq!(merged[0].name, "Mine");
+        assert_eq!(merged[0].repo, None, "the catalog source is gone");
+        let _ = fs::remove_file(&path);
+    }
 }

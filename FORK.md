@@ -475,7 +475,9 @@ build injects them from CI secrets later.
 - **User keys** live in `secrets.json` beside `state.json`, not in it (bug reports ask users to send `state.json`):
   `steamgriddb_api_key`, `thegamesdb_api_key` (optional), `screenscraper_ssid` and `screenscraper_sspassword`
   (optional). Created with mode 0600, written through a temp file that already has that mode and renamed (atomic), an
-  existing file with wider permissions is tightened on load, a file that is not a JSON object is never overwritten. The
+  existing file with wider permissions is tightened on load, a file that is not a JSON object, or that is a symbolic
+  link, is never read or overwritten. Some drives cannot restrict a file at all (exFAT or FAT on an SD card report every
+  file as open to everyone): that is checked after each save and the screen says "This drive cannot restrict files". The
   screen shows only the last four characters; `Debug` output hides every value; no error text, note or saved file
   carries a key (tests plant keys and search every saved file and message). Nothing exports or reports the file.
   `secrets.json` is in `.gitignore`, and the updater never touches it.
@@ -485,14 +487,17 @@ build injects them from CI secrets later.
   works only with the user's own key. **To add them later:** register the app with each service, store the values as
   GitHub Actions secrets, and set them as environment variables on the compile step only (`DPM_SS_DEVID: ${{ secrets.X }}`
   under that step's `env:`). Do not echo them, do not put them in a step summary, and keep logs of that step quiet;
-  anything in a shipped binary can be extracted, so treat them as low value. `src/fork/secrets.rs` has a test that fails
-  the day a build starts carrying them, so the change is deliberate.
+  anything in a shipped binary can be extracted, so treat them as low value. Set them on the release compile step
+  only: a test run that also gets them would not break anything, but it has no reason to carry them.
+- **Never add a logger without filtering `ureq` below `debug`.** TheGamesDB and ScreenScraper carry their keys in the request
+  address, and `ureq`'s debug logging prints addresses. The art code itself never logs (its error text is fixed phrases, cut
+  to 200 characters, with addresses and known secrets removed), so today nothing reaches a log.
 
 **What each source does.**
 
 - **SteamGridDB** (user key, Bearer header): title search, then grids, heroes, logos and icons by game id with the slot's
   `dimensions`, `types=static` (no animated art), `nsfw`, `humor` and `epilepsy` all off. 401 and 403 mean a bad key,
-  404 no such game, 429 slow down. No published rate limit; the resolver makes a handful of calls per port, one at a time.
+  404 no such game, 429 "too many requests" (the source is left alone for 5 minutes, not until midnight). No published rate limit; the resolver makes a handful of calls per port, one at a time.
 - **TheGamesDB** (`apikey` in the query): `ByGameID` (or an exact-title `ByGameName` on the PC platform), `Images`. Takes
   the `original` file when its `resolution` is big enough (the `large` size is upscaled from small originals), skips images
   that would need more than 1.5x enlargement, reads `remaining_monthly_allowance` and `extra_allowance` from every answer
@@ -515,7 +520,12 @@ capsule only when the downloaded image already has 920x430 proportions (its shap
 number or numeric string. Otherwise the id table `cache/art/ids.json` remembers what a title search found. A search result is
 used on its own only when it is the same title (case, punctuation, "the", and trailing "(...)" ignored). A look-alike
 ("Sonic Unleashed" for "Sonic Unleashed Recompiled") is saved as a candidate, mentioned in a note, listed under "Look-alike
-matches waiting" and never used until the user sets `sgdb_id` or `Session::confirm_match` is called. A search that found
+matches waiting" and never used until the user picks it: the "Use this match" rows on that screen (`PendingChoice::confirm`),
+or `{"folder": "<folder>", "sgdb_id": 12345}` added to the ports list of `ports.local.json`. That entry must have no name and
+no source: with a name the app replaces the port's catalog entry (source and all) by the local one, without one the app skips
+it and the art code reads the id from the raw file (pinned by two tests in `src/core/config.rs`). Choosing by hand also
+clears the waiting row. Two same-title games that differ only in their bracket text ("DOOM (2016)", "Doom (1993)") are a tie
+and are never picked for a query without brackets. A search that found
 nothing usable is not repeated for 3 days.
 
 **Cache** (`cache/art/`, in the app's cache folder, never the repo): `ids.json`, `state.json` (last problem and back-off per

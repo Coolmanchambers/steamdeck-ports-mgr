@@ -731,7 +731,7 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
 /// it): the text box on top, `labels` as rows under it (Save, Cancel...), Up/Down and the controller
 /// move between the rows, Enter picks the selected one. The caller wires `on_search_changed` (the text
 /// so far) and `on_item_selected`, then shows it and passes it to `finish_dialog_open`.
-pub(crate) fn build_text_entry_dialog(app: &Rc<AppState>, router: &Router, title: &str, placeholder: &str, labels: &[String], password: bool) -> Option<SearchListDialog> {
+pub(crate) fn build_text_entry_dialog(app: &Rc<AppState>, router: &Router, title: &str, placeholder: &str, initial_text: &str, labels: &[String], password: bool) -> Option<SearchListDialog> {
     close_current_dialog(app, router);
     let (fonts, ..) = dialog_context(app);
     let (dw, dh) = main_window_size(app);
@@ -742,6 +742,7 @@ pub(crate) fn build_text_entry_dialog(app: &Rc<AppState>, router: &Router, title
     dialog.set_search_bar_height_physical(fonts.search_bar_height_px as f32);
     dialog.set_placeholder_text(placeholder.into());
     dialog.set_password(password);
+    dialog.set_entry_text(initial_text.into());
     dialog.set_show_clock(false);
     let items: Vec<PickerItem> = labels.iter().map(|label| PickerItem { label: label.into() }).collect();
     dialog.set_items(slint::ModelRc::new(slint::VecModel::from(items)));

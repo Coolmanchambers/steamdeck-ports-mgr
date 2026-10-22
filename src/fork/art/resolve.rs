@@ -56,6 +56,8 @@ use crate::fork::secrets::{BuildCreds, Secrets, FILE_NAME as SECRETS_FILE};
 
 /// Downloads tried per slot and source before giving up.
 const MAX_DOWNLOADS: usize = 3;
+/// Images in a row that fail to download before the source is given up for the session.
+const MAX_IMAGE_FAILURES: u32 = 3;
 /// Region preferred for ScreenScraper media.
 pub const DEFAULT_REGION: &str = "us";
 
@@ -72,6 +74,9 @@ pub struct Request<'a> {
     pub port_key: &'a str,
     /// The name searched for on SteamGridDB and TheGamesDB.
     pub name: &'a str,
+    /// The port's `ports.local.json` folder; saved beside look-alike matches so the screen can say how to
+    /// choose one. Empty: unknown.
+    pub folder: &'a str,
     /// Override from the port's local entry.
     pub sgdb_id: Option<u64>,
     pub tgdb_id: Option<u64>,
@@ -84,7 +89,7 @@ pub struct Request<'a> {
 
 impl<'a> Request<'a> {
     pub fn new(port_key: &'a str, name: &'a str) -> Request<'a> {
-        Request { port_key, name, sgdb_id: None, tgdb_id: None, rom: Vec::new(), catalog: CatalogArt::default(), need: Slot::ALL.to_vec() }
+        Request { port_key, name, folder: "", sgdb_id: None, tgdb_id: None, rom: Vec::new(), catalog: CatalogArt::default(), need: Slot::ALL.to_vec() }
     }
 }
 
@@ -141,6 +146,8 @@ pub struct Session {
     ids: RefCell<IdTable>,
     dead: RefCell<BTreeMap<SourceId, String>>,
     reported: RefCell<BTreeSet<SourceId>>,
+    /// Consecutive single-image failures per source; three in a row give the source up for the session.
+    fails: RefCell<BTreeMap<SourceId, u32>>,
     /// The saved ROM scan, read once per session (it can be large); `None` inside: there is none.
     scan: RefCell<Option<Option<Rc<ScanResult>>>>,
 }
@@ -169,6 +176,7 @@ impl Session {
             ids: RefCell::new(ids),
             dead: RefCell::new(BTreeMap::new()),
             reported: RefCell::new(BTreeSet::new()),
+            fails: RefCell::new(BTreeMap::new()),
             scan: RefCell::new(None),
         }
     }
@@ -219,12 +227,20 @@ impl Session {
     }
 
     pub fn resolve(&self, req: &Request<'_>) -> PortArt {
+        self.resolve_with(req, &|| false)
+    }
+
+    /// [`Session::resolve`] that asks `cancel` before every request, so a Stop is honoured inside a port,
+    /// between two calls, and not only between ports. Once it says true the rest of the port is answered
+    /// from the cache alone.
+    pub fn resolve_with(&self, req: &Request<'_>, cancel: &dyn Fn() -> bool) -> PortArt {
         if !self.any_source_ready() {
             return catalog_only(req);
         }
         let run = Run {
             s: self,
             req,
+            cancel,
             sgdb: self.secrets.sgdb_key().map(|k| SteamGridDb::new(self.fetch.as_ref(), k)),
             tgdb: self.tgdb_key().map(|k| TheGamesDb::new(self.fetch.as_ref(), k)),
             ss: self.build.screenscraper_dev().map(|(id, password, softname)| {
@@ -247,6 +263,7 @@ impl Session {
 struct Run<'s, 'r> {
     s: &'s Session,
     req: &'r Request<'r>,
+    cancel: &'r dyn Fn() -> bool,
     sgdb: Option<SteamGridDb<'s>>,
     tgdb: Option<TheGamesDb<'s>>,
     ss: Option<ScreenScraper<'s>>,
@@ -265,15 +282,23 @@ struct Cand {
     require_native: bool,
 }
 
+/// Why a downloaded image was not used.
+enum EvalError {
+    /// A logo with no transparency.
+    Opaque,
+    /// Not decodable, too small, or not the slot's shape.
+    Unfit,
+}
+
 /// Turns downloaded bytes into a slot image or says why not.
-fn evaluate(slot: Slot, bytes: &[u8], require_native: bool) -> Result<Fitted, String> {
-    let img = decode(bytes).map_err(|e| e.to_string())?;
-    let fitted = if slot == Slot::Icon { fit_icon_keep_size(&img) } else { fit(slot, &img) }.map_err(|e| e.to_string())?;
+fn evaluate(slot: Slot, bytes: &[u8], require_native: bool) -> Result<Fitted, EvalError> {
+    let img = decode(bytes).map_err(|_| EvalError::Unfit)?;
+    let fitted = if slot == Slot::Icon { fit_icon_keep_size(&img) } else { fit(slot, &img) }.map_err(|_| EvalError::Unfit)?;
     if slot == Slot::Logo && !has_transparency(&fitted.image) {
-        return Err("a logo needs a transparent background and this has none".to_string());
+        return Err(EvalError::Opaque);
     }
     if require_native && fitted.generated {
-        return Err("it does not have the slot's shape".to_string());
+        return Err(EvalError::Unfit);
     }
     Ok(fitted)
 }
@@ -303,6 +328,9 @@ impl Run<'_, '_> {
         if self.s.mode == Mode::CacheOnly {
             return false;
         }
+        if (self.cancel)() {
+            return false;
+        }
         let ready = match src {
             SourceId::SteamGridDb => self.sgdb.is_some(),
             SourceId::TheGamesDb => self.tgdb.is_some(),
@@ -328,6 +356,7 @@ impl Run<'_, '_> {
         match result {
             Ok(v) => {
                 self.s.states.borrow_mut().record_ok(src, self.now());
+                self.s.fails.borrow_mut().remove(&src);
                 Some(v)
             }
             Err(SourceError::NotFound) => None,
@@ -348,6 +377,12 @@ impl Run<'_, '_> {
 
     fn title_search_id(&self, src: SourceId, over: Option<u64>) -> Option<u64> {
         if let Some(id) = over {
+            // A choice written in `ports.local.json` settles the matter: a look-alike waiting for this port
+            // is no longer waiting.
+            let mut ids = self.s.ids.borrow_mut();
+            if !ids.is_confirmed(self.req.port_key, src, id) {
+                ids.confirm(self.req.port_key, src, id, "chosen in ports.local.json");
+            }
             return Some(id);
         }
         let key = self.req.port_key;
@@ -361,27 +396,11 @@ impl Run<'_, '_> {
         let found: Vec<(u64, String, Confidence)> = match src {
             SourceId::SteamGridDb => {
                 let games = self.call(src, self.sgdb.as_ref()?.search(name))?;
-                match sgdb::best_match(name, &games) {
-                    Some((g, c)) => {
-                        let mut ranked: Vec<(u64, String, Confidence)> = games.iter().map(|x| (x.id, x.name.clone(), super::title::confidence(name, &x.name))).collect();
-                        ranked.sort_by_key(|(_, _, c)| std::cmp::Reverse(*c));
-                        let mut out = vec![(g.id, g.name.clone(), c)];
-                        out.extend(ranked.into_iter().filter(|(id, _, _)| *id != g.id));
-                        out
-                    }
-                    None => Vec::new(),
-                }
+                sgdb::ranked(name, &games).into_iter().map(|(g, c)| (g.id, g.name.clone(), c)).collect()
             }
             SourceId::TheGamesDb => {
                 let games = self.call(src, self.tgdb.as_ref()?.search(name))?;
-                match tgdb::best_match(name, &games) {
-                    Some((g, c)) => {
-                        let mut out = vec![(g.id, g.title.clone(), c)];
-                        out.extend(games.iter().filter(|x| x.id != g.id).map(|x| (x.id, x.title.clone(), super::title::confidence(name, &x.title))));
-                        out
-                    }
-                    None => Vec::new(),
-                }
+                tgdb::ranked(name, &games).into_iter().map(|(g, c)| (g.id, g.title, c)).collect()
             }
             SourceId::ScreenScraper => return None,
         };
@@ -434,13 +453,42 @@ impl Run<'_, '_> {
         let cands = list()?;
         let mut best: Option<(Fitted, Vec<u8>, u64)> = None;
         let mut net_trouble = false;
-        for cand in cands.iter().take(MAX_DOWNLOADS) {
+        // Downloads that count against the budget: every one except a logo thrown out for having no
+        // transparency (SteamGridDB lists opaque ones among the real ones); those are only capped overall.
+        let mut spent = 0;
+        for (n, cand) in cands.iter().enumerate() {
+            if spent >= MAX_DOWNLOADS || n >= MAX_DOWNLOADS * 2 {
+                break;
+            }
             let bytes = match download(&cand.url) {
-                Ok(b) => b,
-                Err(SourceError::NotFound) => continue,
+                Ok(b) => {
+                    self.s.fails.borrow_mut().remove(&src);
+                    b
+                }
+                Err(SourceError::NotFound) => {
+                    spent += 1;
+                    continue;
+                }
                 Err(e) => {
+                    spent += 1;
                     net_trouble = true;
+                    // One image that will not come is not the source's fault: skip it. Three in a row, or
+                    // anything that speaks for the whole source (a limit, a bad key), ends the session's use of it.
+                    let one_image = matches!(e, SourceError::Offline(_) | SourceError::BadResponse(_));
+                    let streak = {
+                        let mut fails = self.s.fails.borrow_mut();
+                        let n = fails.entry(src).or_insert(0);
+                        *n += 1;
+                        *n
+                    };
+                    if one_image && streak < MAX_IMAGE_FAILURES {
+                        self.problem(format!("{}: one image could not be downloaded ({e})", src.label()));
+                        continue;
+                    }
                     self.call::<()>(src, Err(e));
+                    if one_image {
+                        self.s.dead.borrow_mut().entry(src).or_insert_with(|| "images keep failing to download".to_string());
+                    }
                     if !self.can_ask(src) {
                         break;
                     }
@@ -453,11 +501,13 @@ impl Run<'_, '_> {
                     break;
                 }
                 Ok(f) => {
+                    spent += 1;
                     if best.is_none() {
                         best = Some((f, bytes, cand.image_id));
                     }
                 }
-                Err(_) => {}
+                Err(EvalError::Opaque) => {}
+                Err(EvalError::Unfit) => spent += 1,
             }
         }
         match best {
@@ -478,7 +528,11 @@ impl Run<'_, '_> {
         let id = self.title_search_id(SourceId::SteamGridDb, self.req.sgdb_id)?;
         let sgdb = self.sgdb.as_ref();
         let list = || -> Option<Vec<Cand>> {
-            let assets = self.call(SourceId::SteamGridDb, sgdb?.assets(id, sgdb::filter_for(slot)))?;
+            let assets = match sgdb?.assets(id, sgdb::filter_for(slot)) {
+                // No images for this game is an answer (remembered for a few days), not a failure.
+                Err(SourceError::NotFound) => Vec::new(),
+                other => self.call(SourceId::SteamGridDb, other)?,
+            };
             Some(assets.into_iter().map(|a| Cand { image_id: a.id, url: a.url, require_native: false }).collect())
         };
         let download = |url: &str| match sgdb {
@@ -492,7 +546,11 @@ impl Run<'_, '_> {
         if let Some(memo) = self.tgdb_images.borrow().get(&id) {
             return memo.clone();
         }
-        let set = self.tgdb.as_ref().and_then(|c| self.call(SourceId::TheGamesDb, c.images(id))).map(Rc::new);
+        let set = self.tgdb.as_ref().and_then(|c| match c.images(id) {
+            Err(SourceError::NotFound) => Some(ImageSet::default()),
+            other => self.call(SourceId::TheGamesDb, other),
+        });
+        let set = set.map(Rc::new);
         self.tgdb_images.borrow_mut().insert(id, set.clone());
         set
     }
@@ -641,6 +699,9 @@ impl Run<'_, '_> {
     // ---- the slots ---------------------------------------------------------------------------
 
     fn resolve(&self) -> PortArt {
+        if !self.req.folder.is_empty() {
+            self.s.ids.borrow_mut().set_identity(self.req.port_key, self.req.name, self.req.folder);
+        }
         let need = |slot: Slot| self.req.need.contains(&slot);
         let mut set = ArtSet::default();
         let (catalog_portrait, catalog_icon) = (self.req.catalog.set.portrait.clone(), self.req.catalog.set.icon.clone());
@@ -819,9 +880,15 @@ pub fn art_for_port(dirs: ArtDirs<'_>, port: PortRef<'_>, portrait: Option<&Path
 impl Session {
     /// [`art_for_port`] on an existing session, for resolving many ports in a row.
     pub fn resolve_port(&self, config_dir: &Path, port: PortRef<'_>, portrait: Option<&Path>, icon: Option<&Path>, grid: Option<(&Path, u32)>) -> PortArt {
+        self.resolve_port_with(config_dir, port, portrait, icon, grid, &|| false)
+    }
+
+    /// [`Session::resolve_port`] with a cancel check (see [`Session::resolve_with`]).
+    pub fn resolve_port_with(&self, config_dir: &Path, port: PortRef<'_>, portrait: Option<&Path>, icon: Option<&Path>, grid: Option<(&Path, u32)>, cancel: &dyn Fn() -> bool) -> PortArt {
         let catalog = catalog_art_from_files(portrait, icon);
         let local = load_local_entries(&config_dir.join("ports.local.json")).remove(port.folder);
         let mut req = Request::new(port.key, port.name);
+        req.folder = port.folder;
         req.catalog = catalog;
         req.sgdb_id = id_field(local.as_ref(), "sgdb_id");
         req.tgdb_id = id_field(local.as_ref(), "tgdb_id");
@@ -834,6 +901,6 @@ impl Session {
                 req.rom = rom_identities_in(&scan, &port, local.as_ref());
             }
         }
-        self.resolve(&req)
+        self.resolve_with(&req, cancel)
     }
 }

@@ -22,7 +22,7 @@ use super::fit::{upscale_needed, Slot, MAX_UPSCALE};
 use super::net::{self, Fetch, MAX_JSON_BYTES};
 use super::sgdb::download_image;
 use super::source::{KeyCheck, SourceError};
-use super::title::{confidence, Confidence};
+use super::title::{confidences, Confidence};
 
 const BASE: &str = "https://api.thegamesdb.net/v1";
 const IMAGE_HOSTS: [&str; 1] = ["thegamesdb.net"];
@@ -118,12 +118,15 @@ impl<'a> TheGamesDb<'a> {
         }
         let url = format!("{BASE}/{endpoint}?apikey={}{}{params}", net::encode_component(self.key), if params.is_empty() { "" } else { "&" });
         let response = self.fetch.get(&url, &[("Accept", "application/json")], MAX_JSON_BYTES)?;
+        if !net::host_allowed(&response.final_url, &IMAGE_HOSTS) {
+            return Err(SourceError::BadResponse("TheGamesDB answered from another address; ignored".into()));
+        }
         match response.status {
             200 => {}
-            401 | 403 => return Err(SourceError::Invalid("the key was not recognised, or its allowance is used up".into())),
+            401 | 403 => return Err(SourceError::Invalid("the key was not accepted, or its allowance is used up".into())),
             404 => return Err(SourceError::NotFound),
             406 => return Err(SourceError::BadResponse("TheGamesDB says a parameter is missing".into())),
-            429 => return Err(SourceError::Limited("TheGamesDB says too many requests".into())),
+            429 => return Err(SourceError::BackedOff { secs: super::sgdb::RATE_LIMIT_WAIT_SECS, reason: "TheGamesDB says too many requests".into() }),
             other => return Err(SourceError::BadResponse(format!("TheGamesDB answered HTTP {other}"))),
         }
         let v: Value = serde_json::from_slice(&response.body).map_err(|_| SourceError::BadResponse("TheGamesDB sent something that is not JSON".into()))?;
@@ -133,7 +136,7 @@ impl<'a> TheGamesDb<'a> {
         if let Some(code) = v.get("code").and_then(Value::as_u64) {
             match code {
                 200 => {}
-                401 | 403 => return Err(SourceError::Invalid("the key was not recognised, or its allowance is used up".into())),
+                401 | 403 => return Err(SourceError::Invalid("the key was not accepted, or its allowance is used up".into())),
                 404 => return Err(SourceError::NotFound),
                 other => return Err(SourceError::BadResponse(format!("TheGamesDB reported code {other}"))),
             }
@@ -225,12 +228,21 @@ impl<'a> TheGamesDb<'a> {
     }
 }
 
+/// Every game ranked for `title`, best first: the same title before a look-alike, a PC entry before
+/// another platform's, the API's own order otherwise. Two same-title games with different bracket texts
+/// are a tie and rank as look-alikes.
+pub fn ranked(title: &str, games: &[GameInfo]) -> Vec<(GameInfo, Confidence)> {
+    let names: Vec<&str> = games.iter().map(|g| g.title.as_str()).collect();
+    let mut all: Vec<(GameInfo, Confidence)> = games.iter().cloned().zip(confidences(title, &names)).collect();
+    all.sort_by_key(|(g, c)| (std::cmp::Reverse(*c), g.platform != PLATFORM_PC));
+    all
+}
+
 /// Where a game's name search result stands: the first same-title PC entry wins.
 pub fn best_match(title: &str, games: &[GameInfo]) -> Option<(GameInfo, Confidence)> {
-    let top = games.iter().map(|g| confidence(title, &g.title)).max()?;
-    let pick = games.iter().find(|g| confidence(title, &g.title) == top && g.platform == PLATFORM_PC).or_else(|| games.iter().find(|g| confidence(title, &g.title) == top))?;
-    Some((pick.clone(), top))
+    ranked(title, games).into_iter().next()
 }
+
 
 impl ImageSet {
     fn url(&self, base: &str, filename: &str) -> Option<String> {
@@ -361,7 +373,7 @@ mod tests {
         assert!(matches!(with(401), Err(SourceError::Invalid(_))));
         assert_eq!(with(404), Err(SourceError::NotFound));
         assert!(matches!(with(406), Err(SourceError::BadResponse(_))));
-        assert!(matches!(with(429), Err(SourceError::Limited(_))));
+        assert!(matches!(with(429), Err(SourceError::BackedOff { secs: 300, .. })));
         assert!(matches!(with(502), Err(SourceError::BadResponse(_))));
     }
 

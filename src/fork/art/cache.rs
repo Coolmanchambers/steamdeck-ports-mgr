@@ -188,6 +188,9 @@ pub struct Pending {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct PortIds {
+    /// The port's name and `ports.local.json` folder, saved so a waiting look-alike can say how to choose.
+    name: Option<String>,
+    folder: Option<String>,
     found: BTreeMap<SourceId, IdEntry>,
     pending: BTreeMap<SourceId, Vec<Pending>>,
     searched: BTreeMap<SourceId, u64>,
@@ -219,6 +222,8 @@ impl IdTable {
         if let Some(ports) = v.get("ports").and_then(Value::as_object) {
             for (key, p) in ports {
                 let mut ids = PortIds::default();
+                ids.name = p.get("name").and_then(Value::as_str).map(str::to_string);
+                ids.folder = p.get("folder").and_then(Value::as_str).map(str::to_string);
                 for src in SourceId::ALL {
                     if let Some(e) = p.get(src.id()) {
                         if let (Some(id), Some(name)) = (e.get("id").and_then(Value::as_u64), e.get("name").and_then(Value::as_str)) {
@@ -261,6 +266,12 @@ impl IdTable {
         let mut ports = serde_json::Map::new();
         for (key, ids) in &self.ports {
             let mut p = serde_json::Map::new();
+            if let Some(name) = &ids.name {
+                p.insert("name".into(), Value::from(name.as_str()));
+            }
+            if let Some(folder) = &ids.folder {
+                p.insert("folder".into(), Value::from(folder.as_str()));
+            }
             for (src, e) in &ids.found {
                 p.insert(
                     src.id().into(),
@@ -347,6 +358,26 @@ impl IdTable {
         }
     }
 
+    /// Remembers who a port is, for the screen that lists look-alike matches.
+    pub fn set_identity(&mut self, port_key: &str, name: &str, folder: &str) {
+        let p = self.ports.entry(port_key.to_string()).or_default();
+        if p.name.as_deref() != Some(name) || p.folder.as_deref() != Some(folder) {
+            p.name = Some(name.to_string());
+            p.folder = Some(folder.to_string());
+            self.dirty = true;
+        }
+    }
+
+    /// The saved name and folder of a port, when known.
+    pub fn identity(&self, port_key: &str) -> (Option<&str>, Option<&str>) {
+        self.ports.get(port_key).map_or((None, None), |p| (p.name.as_deref(), p.folder.as_deref()))
+    }
+
+    /// Is `id` already the confirmed id of this port for `src`?
+    pub fn is_confirmed(&self, port_key: &str, src: SourceId, id: u64) -> bool {
+        self.ports.get(port_key).and_then(|p| p.found.get(&src)).is_some_and(|e| e.origin == IdOrigin::Confirmed && e.id == id)
+    }
+
     /// Ports with look-alike candidates waiting for the user.
     pub fn ports_with_pending(&self) -> Vec<(&str, SourceId, &[Pending])> {
         let mut out = Vec::new();
@@ -359,6 +390,14 @@ impl IdTable {
         }
         out
     }
+}
+
+/// Confirms a look-alike for a port straight in the saved id table (what the "Use this match" row does).
+pub fn confirm_in_file(cache_dir: &Path, port_key: &str, src: SourceId, id: u64, name: &str) -> io::Result<()> {
+    let cache = ArtCache::new(cache_dir);
+    let mut table = IdTable::load(&cache.ids_path());
+    table.confirm(port_key, src, id, name);
+    table.save()
 }
 
 #[cfg(test)]
@@ -443,6 +482,23 @@ mod tests {
         assert!(!again.searched_recently("other", SourceId::SteamGridDb, 600 + SEARCH_TTL_SECS + 1));
         assert_eq!(again.rom_game("14:abcd:100"), Some(9001));
         assert_eq!(again.ports_with_pending().len(), 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn identity_is_saved_and_a_match_can_be_confirmed_straight_in_the_file() {
+        let (dir, cache) = temp_cache("identity");
+        let mut t = IdTable::load(&cache.ids_path());
+        t.set_identity("owner/ship", "Ship of Harkinian", "shipwright");
+        t.set_pending("owner/ship", SourceId::SteamGridDb, vec![Pending { id: 9, name: "Ship Remastered".into(), confidence: Confidence::Medium }], 5);
+        t.save().unwrap();
+        let loaded = IdTable::load(&cache.ids_path());
+        assert_eq!(loaded.identity("owner/ship"), (Some("Ship of Harkinian"), Some("shipwright")));
+        assert_eq!(loaded.ports_with_pending().len(), 1);
+        confirm_in_file(&dir, "owner/ship", SourceId::SteamGridDb, 9, "Ship Remastered").unwrap();
+        let after = IdTable::load(&cache.ids_path());
+        assert!(after.is_confirmed("owner/ship", SourceId::SteamGridDb, 9));
+        assert!(after.ports_with_pending().is_empty(), "the waiting row clears");
         let _ = fs::remove_dir_all(dir);
     }
 
