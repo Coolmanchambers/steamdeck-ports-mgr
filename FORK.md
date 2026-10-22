@@ -57,6 +57,17 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `src/app/events.rs` | After an install that is not followed by a launch, one call to `rom_screens::offer_after_install` (the once-per-port offer to connect game files) |
 | 2026-10-22 | `src/app/mod.rs` | One line registering `rom_screens` |
 | 2026-10-22 | `README.md` | Item 7 (game files folder) set to "Testing" |
+| 2026-10-21 | `src/core/platform_resolve.rs` | O1: `save_location` / `SaveLocation`; on Linux a save value never falls back to the `windows` or `android` key and a path with an unset `%VAR%` is `UnknownOnLinux`; `resolve_save_folder` returns no folder for it; `expand_env_path` is now test-only (`expand_env_path_checked` reports unset variables); Windows unchanged; 5 tests |
+| 2026-10-21 | `src/core/save_backup.rs` | O1: `save_folder_unknown_on_linux`; `GlobalBackupSummary::no_linux_folder` (installed ports concerned); `backup_before_update` says so in its progress text; 2 tests |
+| 2026-10-21 | `src/app/dialogs.rs`, `ui/dialogs/info.slint`, `src/app/events.rs` | O1: Info shows a `save-note-text` line ("Save folder: unknown on Linux, no backup"); the Save Backup summary appends the names (`SaveBackupDone` carries them) |
+| 2026-10-21 | `src/core/asset_select.rs` | O2/O3: `choose_release` (`ReleaseChoice::AskForNewest` when the newest release has several files for this system, instead of walking down), `prefer_stable` (prereleases skipped unless none is stable), `newest_release`; `latest_installable_release` wraps it; 7 tests |
+| 2026-10-21 | `src/core/github_api.rs`, `src/core/gitlab_api.rs` | O2/O3: `most_recent_release` returns the release `choose_release` asked about; the update check compares against the newest release even when it needs the picker; `fetch_latest_tag_and_date` removed from both (no caller left) |
+| 2026-10-21 | `src/core/jobs.rs`, `src/core/contract_tests.rs` | O2: test renamed and re-asserted (`update_check_without_preferred_asset_compares_the_newest_release_not_an_older_one`); contract test `severed_chains_without_preferred_asset_walks_down_to_the_2023_zip` replaced by `..._asks_for_a_file_of_the_newest_release`, plus a main-release and a devbuild-prerelease test |
+| 2026-10-21 | `src/app/sync.rs`, `src/app/events.rs`, `src/main.rs` | O4/O5: `settle_self_update_flag` at startup (clears a flag that no longer applies, then checks at once); the check compares commits through `fork::self_update`; `SelfUpdateAvailable` carries the offer, saved in `fork-settings.json`. O6: catalog and themes failures are logged and deferred (`PortsCheckFailed`, `ThemesCheckFailed`). O7: a 15-minute timer runs whichever check is due |
+| 2026-10-21 | `src/core/state/throttles.rs` | O6: `defer_catalog_check`, `defer_themes_check` (back-date the last check so the next one is due after the backoff); O7: self-update interval 24 h -> 12 h; 1 test |
+| 2026-10-21 | `src/core/catalog_sync.rs` | O6: `SyncError` with `Retry-After` (seconds or HTTP date), `retry_delay` (1 h default, 1 min to 1 day); 4xx/5xx read as responses (`http_status_as_error(false)`) so the header can be read; 2 tests |
+| 2026-10-21 | `src/ui/linux_chrome.rs` | O8: the single-instance socket is named per install folder (`ports_launcher-<FNV-1a of the folder>.sock`); a hand-over prints a line; 2 tests |
+| 2026-10-21 | `src/fork/rom_screens/report.rs` | Unused import removed (`cargo test` warned) |
 
 Files added by this fork:
 
@@ -70,7 +81,7 @@ Files added by this fork:
 | 2026-10-20 | `STEAM_DECK.md` | How to install and test this fork on a Steam Deck |
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
-| 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
+| 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it. A failed check prints the copy count, the processes under the test folder and the log tail (since 2026-10-21) |
 | 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-21 | `tools/test-app-update.sh` | Offline in-app update test: the packaged app, started from an old copy (marker appended to the program, old `BUILD_INFO`), runs Settings > Force update from the UI against a fake release on `file://`; checks the swap, `.previous/`, the restart on the new file and that saves, catalogs and state survive, then a tampered-checksum case (nothing changes, `update-failed.txt`, app reopens). CI runs it after the smoke test and blocks the release on failure |
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
@@ -88,7 +99,9 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/art/catalog.rs` | Turns a catalog entry's cached `image` and `icon` into the portrait and icon slots |
 | 2026-10-21 | `src/fork/steam_user.rs` | Reads `config/loginusers.vdf` (text KeyValues), lists the accounts that have a `userdata` folder and picks the saved one, else `MostRecent`, else the only one |
 | 2026-10-21 | `src/fork/backups.rs` | Prunes `shortcuts.vdf.bak-<stamp>` files: newest N kept (at least 1), nothing under an hour old, nothing else in the folder |
-| 2026-10-21 | `src/fork/settings.rs` | `fork-settings.json` (next to `state.json`): chosen Steam account, extra adopt scan folders, backups to keep. Other keys survive a save |
+| 2026-10-21 | `src/fork/settings.rs` | `fork-settings.json` (next to `state.json`): chosen Steam account, extra adopt scan folders, backups to keep, the self-update offer (`get`/`set`). Other keys survive a save |
+| 2026-10-21 | `src/fork/save_notes.rs` | Text for ports with no known Linux save folder (Info line, Save Backup summary) |
+| 2026-10-21 | `src/fork/self_update.rs` | Self-update by commit: reads `BUILD_INFO` and the release notes' source commit, decides, and keeps what raised the flag |
 | 2026-10-21 | `src/fork/adopt.rs` | Finds ports installed outside `Library/` and registers them (see "Adopting installed ports") |
 | 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
 | 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
@@ -230,8 +243,9 @@ screens. The text is English only.
 
 ## Fixes to upstream behavior
 
-Four small changes fix gaps found while validating Tim's catalog entries. Each has tests that fail
-when the change is reverted.
+Changes that fix upstream defects. The first ones fixed gaps found while validating Tim's catalog
+entries; the rest (O1 to O8) are from the upstream bugs register. Each has tests that fail when the
+change is reverted.
 
 - **Update check and `preferred_asset`.** Upstream's daily check ignored a port's `preferred_asset`
   and looked at whichever asset the default rules pick, so a port like Severed Chains (the Steam Deck
@@ -265,6 +279,35 @@ when the change is reverted.
   `themes.json` missing until upstream changes it), and the new ETag is stored only when the file was
   written (otherwise a read-only install folder would be told "unchanged" about a file never saved).
   A 304 to a request that carried no ETag is treated as an error.
+- **No Windows or Android save folder on Linux (O1).** Upstream used a port's Windows save path on
+  Linux when the catalog had no `linux` one (and the first value, sometimes Android's, when there was
+  no Windows one either), and kept an unset `%APPDATA%` literally, so the folder could not exist and
+  backups quietly did nothing (about 45 catalog ports). On Linux these now count as "no Linux save
+  folder known": Info says "Save folder: unknown on Linux, no backup", Save Backup names the installed
+  ports concerned, and the update backup says so in its progress. A Linux path in `ports.local.json`
+  fixes a port. Windows keeps upstream's fallbacks. Note: catalog entries whose Windows value is a
+  relative folder inside the game (`"windows": "saves"`, 5 ports such as Ikemen-GO and zelda3) also
+  count as unknown now, because nothing says the Linux build uses the same folder.
+- **Newest release, not an older one (O2).** When the newest release offers several files for this
+  system (Severed Chains without `preferred_asset`: two Linux tarballs), Install now shows the file
+  picker for that release. Upstream walked down to the first older release with one clear file and
+  installed it without a word (the 2023 zip for Severed Chains). A newest release with no file for
+  this system still walks down. The update check compares against that newest release too, so a new
+  release is offered and Install asks for the file.
+- **Prereleases (O3).** GitHub prereleases are skipped unless none of the 5 listed releases is stable.
+  A recycled tag such as the `devbuild` of Severed Chains is not a prerelease and is listed below
+  `release-3.0.0` (GitHub orders by creation date), so `preferred_asset` plus this order keeps the
+  main release.
+- **Self-update by commit (O5) and a stale flag (O4).** See Builds. The flag's cause is kept in
+  `fork-settings.json` (`self_update_offer`); at start, a flag that no longer applies is cleared and
+  a check runs at once.
+- **Catalog sync failures (O6) and checks while open (O7).** A failed catalog or themes check is
+  logged (`catalog check failed: ...`) and retried after 1 hour, or the server's `Retry-After`,
+  instead of at every start. An app left open runs the catalog, themes and self-update checks when
+  they fall due (every 12 hours).
+- **One instance per install folder (O8).** The single-instance socket is named after the install
+  folder, so this fork and the original, or two copies in different folders, run side by side. The
+  same folder started twice still hands over to the open copy.
 - **Side effects to know.** The `~` fix also means the Save Backup button (global backup) now
   includes upstream's `~/...` Linux save paths (about 32 catalog entries), installed or not. AppImage
   cleanup only recognizes names that differ by version numbers, so a renamed scheme keeps the old file.
@@ -301,6 +344,7 @@ Library only; nothing calls it yet and nothing here downloads anything. Document
   every 12 hours (`src/core/catalog_sync.rs`), so the catalog on a device matches upstream's, not
   this repo's copy. Personal entries belong in `ports.local.json` next to the executable.
 - **Self-update** checks this fork's releases, not upstream's, and installs this fork's builds.
+  Since 2026-10-21 it compares commits (see Builds).
 
 ## Staying in step with upstream
 
@@ -396,9 +440,12 @@ run. It holds the program, `7zzs`, a starter `ports.json` and `themes.json`, and
 Each push to `main` that passes CI (doc-only pushes included) also updates the **`rolling`**
 release in place: the tag moves to the build's commit and the assets are replaced with the build and
 its `.sha256`. It is a full release, so `releases/latest` points at it, and its notes name the exact
-source commit; `BUILD_INFO` inside the package records the commit and build date too. A build whose
-UTC date rolled over before upload is not published, because the app would offer it as an update
-every day. Pushes made by workflows, such as catalog-only upstream syncs, do not trigger CI, so they
+source commit; `BUILD_INFO` inside the package records the commit and build date too. The app's
+update check compares the commit in its own `BUILD_INFO` with the commit in the notes' "Source for
+this build: .../tree/<sha>" line (`src/fork/self_update.rs`; keep that line's form in `ci.yml`), so a
+second build on the same day is offered and an installed build is never offered again. Without either
+commit it falls back to upstream's day-only date check. A build whose UTC date rolled over before
+upload is still not published, for that fallback. Pushes made by workflows, such as catalog-only upstream syncs, do not trigger CI, so they
 do not produce a new release.
 
 The updater (`tools/fork-updater.sh`, shipped under upstream's file name so the app's Update and

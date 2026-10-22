@@ -26,9 +26,10 @@ The app keeps everything next to itself: `Library/` (installed ports), `Saves Ba
 `state.json` and a cache. Uninstalling the app means deleting that folder, which also deletes the
 ports installed under `Library/`, so back up anything you want first.
 
-Keep it on the internal drive or an ext4 SD card (the format SteamOS uses). Don't run the original
-Ports Launcher at the same time: both use the same single-instance lock, so the second one to start
-closes silently.
+Keep it on the internal drive or an ext4 SD card (the format SteamOS uses). It can run next to the
+original Ports Launcher, or next to a second copy in another folder: each install folder has its own
+single-instance lock. Starting the same folder twice brings the open copy to the front instead (the
+second start prints "already running from this folder" and quits).
 
 ## Updating
 
@@ -38,13 +39,14 @@ closes silently.
 - **If it fails** (offline, GitHub busy, a release being replaced): nothing is changed, the app
   reopens on the version you had, and an `update-failed.txt` next to it says why. Details are in
   `updater.log`.
-- **Automatically:** only when the app starts, and only if its last check was more than 24 hours
-  ago. The first check is therefore a day after first launch, and an app left running in the tray
-  never checks: quit from the tray and relaunch. When a newer build exists, the footer's **GitHub**
-  button turns into **Update**.
-- **Dates, not versions:** a build counts as newer only if it is from a later day, in UTC. In
-  Arizona that day starts at 5 pm. A second build on the same UTC day is never offered
-  automatically; use Force update.
+- **Automatically:** every 12 hours, at start or while the app stays open (in the tray). The first
+  check comes 12 hours after the first launch. When a newer build exists, the footer's **GitHub**
+  button turns into **Update**. If that build is already running (for example you copied the files
+  over by hand), the next start clears the Update button by itself and checks again.
+- **Commits, then dates:** the app compares the commit in its `BUILD_INFO` with the commit the
+  rolling release was built from, so a second build on the same day is offered and the build you
+  run is never offered again. Without `BUILD_INFO` (a copy you built yourself) it falls back to the
+  build date: only a build from a later UTC day counts.
 - **What changes:** only `ports_launcher`, `7zzs`, the updater itself and `BUILD_INFO` (the exact
   commit and build date). `Library/`, saves, `state.json`, `ports.local.json` and the catalogs are
   never touched. The previous program files are kept in `.previous/`.
@@ -177,7 +179,9 @@ the app never deletes game files.
 | Adopt | An outside install shows as installed with Play and Open folder; your folder is untouched |
 | Game files scan | Settings > Game files > pick the ROM folder: progress with Cancel, then results by system; a second scan is quick |
 | Game files connect | Connect a port: Link adds a pointer in its folder, Copy asks first with the size; your ROM folder is unchanged |
-| Update offered | After a later-dated build and a relaunch 24 h past the last check, the footer says Update |
+| Update offered | After a newer build is published and 12 h past the last check (relaunch, or leave it open), the footer says Update |
+| Save folder unknown | Info of an installed port whose catalog entry has only a Windows save folder says "Save folder: unknown on Linux, no backup"; Save Backup names it |
+| Side by side | The original Ports Launcher and this fork, open at the same time, both stay open |
 
 ## Known issues being tested
 
@@ -185,9 +189,9 @@ the app never deletes game files.
 |---|---|---|
 | Controller ignored | Touch and mouse work, buttons don't. Fixed for native Wayland and gamescope in current builds, not yet confirmed on a Deck | Send the log, then try Launch Options `env -u WAYLAND_DISPLAY %command%` |
 | No tray in Game Mode | Expected: the app runs without a tray icon there, and its X button quits instead of hiding | If it closes at start, or X hides it and Steam keeps showing it running, send the log: it says whether a tray was expected |
-| Desktop Mode copy still open | Game Mode launch returns to Steam at once | Quit from the tray in Desktop Mode first |
+| Desktop Mode copy still open | Game Mode launch of the same folder returns to Steam at once (it brought the open copy forward, which Game Mode may not show) | Quit from the tray in Desktop Mode first |
 | Force update in Game Mode untested | Steam may close the updater with the app, so nothing changes and the app doesn't return | Check `updater.log`; update from Desktop Mode until this is confirmed |
-| Update not offered | Footer stays "GitHub" | Same UTC day, under 24 h since the last check, or no relaunch: use Force update |
+| Update not offered | Footer stays "GitHub" | Under 12 h since the last check: use Force update |
 
 ## Reporting a result
 
