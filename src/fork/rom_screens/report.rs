@@ -6,7 +6,7 @@
 use super::util::{ellipsize, file_name};
 use crate::core::models::Port;
 use crate::fork::rom_library::{
-    check_mapping, load_local_entries, match_all, Health, Mapping, PortMatch, PortStatus, RomFile, RomLibraryStore, RomSpec, ScanResult, SlotKind, SlotResult,
+    check_mapping, load_local_entries, match_all, Health, Mapping, PortMatch, PortStatus, RomLibraryStore, RomSpec, ScanResult, SlotKind, SlotResult,
     SlotStatus, System,
 };
 use serde_json::Value;

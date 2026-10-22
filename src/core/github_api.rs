@@ -1,5 +1,5 @@
 
-use super::asset_select::{self, pick_asset, AssetSelectionError, RECENT_RELEASES_DEPTH};
+use super::asset_select::{self, pick_asset, AssetSelectionError, ReleaseChoice, RECENT_RELEASES_DEPTH};
 use super::http::api_agent;
 use serde_json::Value;
 
@@ -33,8 +33,9 @@ pub fn pick_release_asset(release: &Value, preferred: Option<&str>) -> Result<Va
     pick_asset(assets, preferred)
 }
 
+// Fork: the same release `choose_release` asks about (stable first, see `asset_select::prefer_stable`).
 pub fn most_recent_release(repo: &str, token: Option<&str>) -> Result<Value, AssetSelectionError> {
-    list_releases(repo, token, 1)?.into_iter().next().ok_or_else(|| AssetSelectionError::Message(format!("No release found for {repo}.")))
+    asset_select::newest_release(list_releases(repo, token, RECENT_RELEASES_DEPTH)?).ok_or_else(|| AssetSelectionError::Message(format!("No release found for {repo}.")))
 }
 
 pub fn latest_installable_release(repo: &str, token: Option<&str>, preferred: Option<&str>) -> Result<(Value, Value), AssetSelectionError> {
@@ -51,10 +52,16 @@ pub fn fetch_latest_tag_and_date_preferring(repo: &str, token: Option<&str>, pre
 }
 
 pub fn latest_tag_and_date(releases: Vec<Value>, preferred: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
-    let (release, asset) = asset_select::latest_installable_release(releases, preferred, pick_release_asset)?;
+    // Fork: when the newest release needs the file picker, compare against that release (its own date), so a
+    // new release is still offered and Install then asks for the file, instead of comparing against an older one.
+    let (release, asset) = match asset_select::choose_release(releases, preferred, pick_release_asset)? {
+        ReleaseChoice::Picked { release, asset } => (release, Some(asset)),
+        ReleaseChoice::AskForNewest { release, .. } => (release, None),
+    };
     let latest_tag = release.get("tag_name").and_then(Value::as_str).unwrap_or("").to_string();
     let latest_date = asset
-        .get("updated_at")
+        .as_ref()
+        .and_then(|a| a.get("updated_at"))
         .or_else(|| release.get("published_at"))
         .and_then(Value::as_str)
         .map(str::to_string);

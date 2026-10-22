@@ -148,9 +148,13 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    fn verification_de_maj_sans_asset_prefere_retombe_sur_la_vieille_release() {
+    fn update_check_without_preferred_asset_compares_the_newest_release_not_an_older_one() {
+        // Fork (O2): upstream walked down to the 2023 release here and flagged an update every day.
         let mut port = severed_chains();
         port.preferred_asset = None;
-        assert!(check(&port, &severed_chains_releases("2026-10-20T08:00:00Z")));
+        let mut releases = severed_chains_releases("2026-10-20T08:00:00Z");
+        assert!(!check(&port, &releases));
+        releases[0]["tag_name"] = "release-3.1.0".into();
+        assert!(check(&port, &releases), "a new tag that needs the file picker is still offered");
     }
 }

@@ -1,5 +1,5 @@
 
-use super::asset_select::{self, pick_asset, AssetSelectionError, RECENT_RELEASES_DEPTH};
+use super::asset_select::{self, pick_asset, AssetSelectionError, ReleaseChoice, RECENT_RELEASES_DEPTH};
 use super::http::api_agent;
 use serde_json::Value;
 
@@ -59,10 +59,9 @@ pub fn pick_release_asset(release: &Value, preferred: Option<&str>) -> Result<Va
     pick_asset(&release_assets(release), preferred)
 }
 
+// Fork: the same release `choose_release` asks about.
 pub fn most_recent_release(project_path: &str, token: Option<&str>) -> Result<Value, AssetSelectionError> {
-    list_releases(project_path, token, 1)?
-        .into_iter()
-        .next()
+    asset_select::newest_release(list_releases(project_path, token, RECENT_RELEASES_DEPTH)?)
         .ok_or_else(|| AssetSelectionError::Message(format!("No release found for {project_path}.")))
 }
 
@@ -71,12 +70,11 @@ pub fn latest_installable_release(project_path: &str, token: Option<&str>, prefe
     asset_select::latest_installable_release(releases, preferred, pick_release_asset)
 }
 
-pub fn fetch_latest_tag_and_date(project_path: &str, token: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
-    fetch_latest_tag_and_date_preferring(project_path, token, None)
-}
-
 pub fn fetch_latest_tag_and_date_preferring(project_path: &str, token: Option<&str>, preferred: Option<&str>) -> Result<(String, Option<String>), AssetSelectionError> {
-    let (release, _) = latest_installable_release(project_path, token, preferred)?;
+    // Fork: a newest release that needs the file picker is still the one compared (see github_api::latest_tag_and_date).
+    let release = match asset_select::choose_release(list_releases(project_path, token, RECENT_RELEASES_DEPTH)?, preferred, pick_release_asset)? {
+        ReleaseChoice::Picked { release, .. } | ReleaseChoice::AskForNewest { release, .. } => release,
+    };
     let latest_tag = release.get("tag_name").and_then(Value::as_str).unwrap_or("").to_string();
     let latest_date = release
         .get("released_at")

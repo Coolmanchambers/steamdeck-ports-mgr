@@ -4,6 +4,8 @@
 //! the feature that depends on the behavior.
 
 use super::asset_select::{latest_installable_release, pick_asset, AssetSelectionError};
+#[cfg(target_os = "linux")]
+use super::asset_select::{choose_release, ReleaseChoice};
 use super::config::{load_local_config, merge_local_catalog, parse_catalog};
 use super::github_api::pick_release_asset;
 use super::jobs::update_decision;
@@ -82,18 +84,46 @@ fn severed_chains_needs_preferred_asset_to_reach_the_steam_deck_tarball() {
     assert_eq!(picked_name(pick_asset(&assets(SEVERED_CURRENT), Some("Severed_Chains_Steam_Deck.tar.gz"))), "Severed_Chains_Steam_Deck.tar.gz");
 }
 
-#[test]
-fn severed_chains_without_preferred_asset_walks_down_to_the_2023_zip() {
-    let releases = vec![
+fn severed_chains_releases() -> Vec<Value> {
+    // Real order and flags from the GitHub API (2026-10-21): neither release-3.0.0 nor devbuild is a prerelease.
+    vec![
         release("release-3.0.0", SEVERED_CURRENT),
         release("devbuild", SEVERED_CURRENT),
         release("recommended-build-2", &[]),
         release("recommended-build-1", &["Linux.zip", "Mac.zip", "Windows.zip"]),
-    ];
-    let (tag, asset) = latest_installable_release(releases.clone(), None, pick_release_asset).unwrap();
-    assert_eq!((tag["tag_name"].as_str().unwrap(), asset["name"].as_str().unwrap()), ("recommended-build-1", "Linux.zip"));
-    let (tag, asset) = latest_installable_release(releases, Some("Severed_Chains_Steam_Deck.tar.gz"), pick_release_asset).unwrap();
+    ]
+}
+
+// Fork (upstream bug O2): this test replaced `severed_chains_without_preferred_asset_walks_down_to_the_2023_zip`,
+// which pinned upstream's silent install of the 2023 release. Tim's ruling: Severed Chains follows its main release.
+#[test]
+#[cfg(target_os = "linux")]
+fn severed_chains_without_preferred_asset_asks_for_a_file_of_the_newest_release() {
+    match choose_release(severed_chains_releases(), None, pick_release_asset).unwrap() {
+        ReleaseChoice::AskForNewest { release, candidates } => {
+            assert_eq!(release["tag_name"], "release-3.0.0");
+            let names: Vec<&str> = candidates.iter().map(|a| a["name"].as_str().unwrap()).collect();
+            assert_eq!(names, ["Severed_Chains_Linux.tar.gz", "Severed_Chains_Linux_ARM64.tar.gz"]);
+        }
+        other => panic!("expected the file picker for release-3.0.0, got {other:?}"),
+    }
+    assert!(matches!(latest_installable_release(severed_chains_releases(), None, pick_release_asset), Err(AssetSelectionError::Ambiguous(_))));
+}
+
+#[test]
+fn severed_chains_with_preferred_asset_installs_the_main_release_not_devbuild() {
+    let (tag, asset) = latest_installable_release(severed_chains_releases(), Some("Severed_Chains_Steam_Deck.tar.gz"), pick_release_asset).unwrap();
     assert_eq!((tag["tag_name"].as_str().unwrap(), asset["name"].as_str().unwrap()), ("release-3.0.0", "Severed_Chains_Steam_Deck.tar.gz"));
+}
+
+// Fork (upstream bug O3): a recycled tag published as a prerelease is skipped even when it is listed first.
+#[test]
+fn a_devbuild_prerelease_listed_first_is_skipped_for_the_main_release() {
+    let mut releases = severed_chains_releases();
+    releases.swap(0, 1);
+    releases[0]["prerelease"] = true.into();
+    let (tag, _) = latest_installable_release(releases, Some("Severed_Chains_Steam_Deck.tar.gz"), pick_release_asset).unwrap();
+    assert_eq!(tag["tag_name"], "release-3.0.0");
 }
 
 #[test]

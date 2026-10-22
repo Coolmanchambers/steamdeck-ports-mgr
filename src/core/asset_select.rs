@@ -122,21 +122,72 @@ pub fn pick_asset(assets: &[Value], preferred: Option<&str>) -> Result<Value, As
 
 pub const RECENT_RELEASES_DEPTH: usize = 5;
 
-pub fn latest_installable_release(
+fn is_prerelease(release: &Value) -> bool {
+    release.get("prerelease").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// Fork (upstream bug O3): GitHub prereleases (betas) are left out unless none of the listed releases is
+/// stable, so a port follows its main release. GitLab releases carry no such flag and pass unchanged.
+pub fn prefer_stable(releases: Vec<Value>) -> Vec<Value> {
+    if releases.iter().all(is_prerelease) {
+        return releases;
+    }
+    releases.into_iter().filter(|r| !is_prerelease(r)).collect()
+}
+
+/// Fork (upstream bug O2): a real choice is between files for this system (or files matching the port's
+/// `preferred_asset`). A release offering only other systems' files, or nothing usable, is "no file for
+/// this system", which still walks down to an older release.
+fn is_real_choice(candidates: &[Value], preferred: Option<&str>) -> bool {
+    let platform_key = get_platform_key();
+    candidates.iter().any(|a| {
+        let name = asset_name(a).to_lowercase();
+        !is_unusable_format(&name) && !has_non_archive_extension(&name) && (preferred.is_some() || asset_tier(platform_key, &name) < 3)
+    })
+}
+
+#[derive(Debug)]
+pub enum ReleaseChoice {
+    /// A release and its one clear file.
+    Picked { release: Value, asset: Value },
+    /// The newest release has several files for this system: the user picks one (never an older release).
+    AskForNewest { release: Value, candidates: Vec<Value> },
+}
+
+pub fn choose_release(
     releases: Vec<Value>,
     preferred: Option<&str>,
     pick_release_asset: impl Fn(&Value, Option<&str>) -> Result<Value, AssetSelectionError>,
-) -> Result<(Value, Value), AssetSelectionError> {
+) -> Result<ReleaseChoice, AssetSelectionError> {
     let mut first_error = None;
-    for release in releases {
+    for (index, release) in prefer_stable(releases).into_iter().enumerate() {
         match pick_release_asset(&release, preferred) {
-            Ok(asset) => return Ok((release, asset)),
+            Ok(asset) => return Ok(ReleaseChoice::Picked { release, asset }),
+            Err(AssetSelectionError::Ambiguous(candidates)) if index == 0 && is_real_choice(&candidates, preferred) => {
+                return Ok(ReleaseChoice::AskForNewest { release, candidates });
+            }
             Err(e) => {
                 first_error.get_or_insert(e);
             }
         }
     }
     Err(first_error.unwrap_or_else(|| AssetSelectionError::Message("No release found.".to_string())))
+}
+
+pub fn latest_installable_release(
+    releases: Vec<Value>,
+    preferred: Option<&str>,
+    pick_release_asset: impl Fn(&Value, Option<&str>) -> Result<Value, AssetSelectionError>,
+) -> Result<(Value, Value), AssetSelectionError> {
+    match choose_release(releases, preferred, pick_release_asset)? {
+        ReleaseChoice::Picked { release, asset } => Ok((release, asset)),
+        ReleaseChoice::AskForNewest { candidates, .. } => Err(AssetSelectionError::Ambiguous(candidates)),
+    }
+}
+
+/// Fork: the release the file picker's choice belongs to, the same one `choose_release` asked about.
+pub fn newest_release(releases: Vec<Value>) -> Option<Value> {
+    prefer_stable(releases).into_iter().next()
 }
 
 #[cfg(test)]
@@ -343,5 +394,81 @@ mod tests {
     #[test]
     fn latest_installable_release_erreur_claire_sur_une_liste_vide() {
         assert!(latest_installable_release(vec![], None, pick_from_release).is_err());
+    }
+
+    fn tagged(tag: &str, names: &[&str], prerelease: bool) -> Value {
+        json!({"tag_name": tag, "prerelease": prerelease, "assets": names.iter().map(|n| asset(n)).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn newest_release_with_two_files_for_this_system_asks_instead_of_walking_down() {
+        let os = get_platform_key();
+        let releases = vec![
+            tagged("v2", &[&format!("app-{os}-a.{}", preferred_ext(os)), &format!("app-{os}-b.{}", preferred_ext(os))], false),
+            tagged("v1", &[&format!("app-{os}.{}", preferred_ext(os))], false),
+        ];
+        match choose_release(releases.clone(), None, pick_from_release).unwrap() {
+            ReleaseChoice::AskForNewest { release, candidates } => {
+                assert_eq!(release["tag_name"], "v2");
+                assert_eq!(candidates.len(), 2);
+            }
+            other => panic!("expected the picker for v2, got {other:?}"),
+        }
+        assert!(matches!(latest_installable_release(releases, None, pick_from_release), Err(AssetSelectionError::Ambiguous(a)) if a.len() == 2));
+    }
+
+    #[test]
+    fn newest_release_with_two_preferred_matches_asks_too() {
+        let releases = vec![tagged("v2", &["Game-Full-x86.zip", "Game-Full-x64.zip"], false), tagged("v1", &["Game-Full.zip"], false)];
+        assert!(matches!(choose_release(releases, Some("Full"), pick_from_release), Ok(ReleaseChoice::AskForNewest { .. })));
+    }
+
+    #[test]
+    fn newest_release_with_only_other_systems_files_still_walks_down() {
+        let os = get_platform_key();
+        let foreign = other_os();
+        let releases = vec![
+            tagged("v2", &[&format!("app-{foreign}-a.zip"), "app-mac.zip"], false),
+            tagged("v1", &[&format!("app-{os}.{}", preferred_ext(os))], false),
+        ];
+        let (release, _) = latest_installable_release(releases, None, pick_from_release).unwrap();
+        assert_eq!(release["tag_name"], "v1");
+    }
+
+    #[test]
+    fn an_older_ambiguous_release_does_not_stop_the_walk() {
+        let os = get_platform_key();
+        let releases = vec![
+            tagged("v3", &["app-android.apk"], false),
+            tagged("v2", &[&format!("app-{os}-a.{}", preferred_ext(os)), &format!("app-{os}-b.{}", preferred_ext(os))], false),
+            tagged("v1", &[&format!("app-{os}.{}", preferred_ext(os))], false),
+        ];
+        let (release, _) = latest_installable_release(releases, None, pick_from_release).unwrap();
+        assert_eq!(release["tag_name"], "v1");
+    }
+
+    #[test]
+    fn prereleases_are_skipped_while_a_stable_release_is_listed() {
+        let os = get_platform_key();
+        let file = format!("app-{os}.{}", preferred_ext(os));
+        let releases = vec![tagged("v3-beta", &[&file], true), tagged("v2", &[&file], false), tagged("v1", &[&file], false)];
+        let (release, _) = latest_installable_release(releases.clone(), None, pick_from_release).unwrap();
+        assert_eq!(release["tag_name"], "v2");
+        assert_eq!(newest_release(releases).unwrap()["tag_name"], "v2");
+    }
+
+    #[test]
+    fn prereleases_are_used_when_no_stable_release_is_listed() {
+        let os = get_platform_key();
+        let file = format!("app-{os}.{}", preferred_ext(os));
+        let releases = vec![tagged("nightly-2", &[&file], true), tagged("nightly-1", &[&file], true)];
+        let (release, _) = latest_installable_release(releases, None, pick_from_release).unwrap();
+        assert_eq!(release["tag_name"], "nightly-2");
+    }
+
+    #[test]
+    fn prefer_stable_keeps_releases_without_the_flag() {
+        let releases = vec![json!({"tag_name": "gitlab-1"}), json!({"tag_name": "gitlab-0"})];
+        assert_eq!(prefer_stable(releases.clone()), releases);
     }
 }
