@@ -31,8 +31,9 @@ Terminal=false
 StartupNotify=false
 
 # Deck Ports Manager installer: https://github.com/Coolmanchambers/steamdeck-ports-mgr
-# Double-click this file in Desktop Mode and confirm the one security question; it downloads the newest
-# build from that page's rolling release, checks its SHA-256, installs it in ~/Applications and opens it.
+# Double-click this file in Dolphin (Desktop Mode), choose Execute, and the first time Continue on KDE's
+# warning; it downloads the newest build from that page's rolling release, checks its SHA-256, installs
+# it in ~/Applications and opens it.
 # Running it again updates an existing install without touching your ports, saves or settings.
 # Everything it runs is the plain bash below (each line starts with "#|"); nothing else is downloaded
 # and run. Source: tools/installer.sh in the repository.

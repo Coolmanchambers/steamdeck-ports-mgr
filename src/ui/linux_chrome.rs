@@ -435,15 +435,60 @@ fn desktop_exec_arg(path: &str) -> String {
     escaped
 }
 
+// Fork: the menu entry and icon get this fork's own names, so the original Ports Launcher (which writes
+// `ports_launcher.desktop` / `ports_launcher.png`) and this fork no longer overwrite each other's entry.
+// The one-file installer (tools/installer.sh) writes the same bytes; keep the two in step.
+const DESKTOP_ENTRY_FILE: &str = "steamdeck-ports-mgr.desktop";
+const ICON_NAME: &str = "steamdeck-ports-mgr";
+const UPSTREAM_ENTRY_FILE: &str = "ports_launcher.desktop";
+const UPSTREAM_ICON_NAME: &str = "ports_launcher";
+
+fn desktop_entry_text(exe: &str) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Deck Ports Manager\nExec={}\nIcon={ICON_NAME}\nCategories=Game;\nTerminal=false\nStartupWMClass=ports_launcher\n",
+        desktop_exec_arg(exe)
+    )
+}
+
+/// True when an upstream-named entry was written by this very program (its Exec line is ours), so it
+/// can go. An entry for any other program, the original Ports Launcher included, is never ours.
+fn upstream_entry_is_ours(entry: &str, exe: &str) -> bool {
+    let ours = format!("Exec={}", desktop_exec_arg(exe));
+    entry.lines().any(|line| line.trim_end() == ours)
+}
+
+/// One-time move from upstream's names: remove `ports_launcher.desktop` only when it points at this
+/// program, then the old icon only when no entry left in `applications/` still uses it.
+fn migrate_upstream_entry(data_home: &Path, exe: &str) {
+    let apps = data_home.join("applications");
+    let old = apps.join(UPSTREAM_ENTRY_FILE);
+    let Ok(text) = fs::read_to_string(&old) else { return };
+    if !upstream_entry_is_ours(&text, exe) || fs::remove_file(&old).is_err() {
+        return;
+    }
+    let icon_line = format!("Icon={UPSTREAM_ICON_NAME}");
+    let Ok(entries) = fs::read_dir(&apps) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
+            continue;
+        }
+        // Unreadable means unsure: leave the icon.
+        let Ok(other) = fs::read_to_string(&path) else { return };
+        if other.lines().any(|line| line.trim_end() == icon_line) {
+            return;
+        }
+    }
+    remove_icon_sizes(&data_home.join("icons").join("hicolor"), UPSTREAM_ICON_NAME, None);
+}
+
 pub fn register_desktop_entry() {
     let Some(data_home) = xdg_data_home() else { return };
     let Ok(exe) = std::env::current_exe() else { return };
+    let exe = exe.to_string_lossy();
 
-    let desktop_entry = format!(
-        "[Desktop Entry]\nType=Application\nName=Ports Launcher\nExec={}\nIcon=ports_launcher\nCategories=Game;\nTerminal=false\nStartupWMClass=ports_launcher\n",
-        desktop_exec_arg(&exe.to_string_lossy())
-    );
-    write_if_different(&data_home.join("applications").join("ports_launcher.desktop"), desktop_entry.as_bytes());
+    write_if_different(&data_home.join("applications").join(DESKTOP_ENTRY_FILE), desktop_entry_text(&exe).as_bytes());
+    migrate_upstream_entry(&data_home, &exe);
 
     let Some((rgba, width, height)) = extract_app_icon_rgba() else { return };
     let Some(img) = image::RgbaImage::from_raw(width, height, rgba) else { return };
@@ -453,14 +498,15 @@ pub fn register_desktop_entry() {
     }
     let hicolor_dir = data_home.join("icons").join("hicolor");
     let current_size = format!("{width}x{height}");
-    write_if_different(&hicolor_dir.join(&current_size).join("apps").join("ports_launcher.png"), &png_bytes);
-    remove_other_icon_sizes(&hicolor_dir, &current_size);
+    write_if_different(&hicolor_dir.join(&current_size).join("apps").join(format!("{ICON_NAME}.png")), &png_bytes);
+    remove_icon_sizes(&hicolor_dir, ICON_NAME, Some(&current_size));
 }
 
-fn remove_other_icon_sizes(hicolor_dir: &Path, current_size: &str) {
+/// Removes `<size>/apps/<name>.png` from every size folder except `keep`.
+fn remove_icon_sizes(hicolor_dir: &Path, name: &str, keep: Option<&str>) {
     let Ok(entries) = fs::read_dir(hicolor_dir) else { return };
-    for entry in entries.flatten().filter(|e| e.file_name().to_str() != Some(current_size)) {
-        let _ = fs::remove_file(entry.path().join("apps").join("ports_launcher.png"));
+    for entry in entries.flatten().filter(|e| keep.is_none() || e.file_name().to_str() != keep) {
+        let _ = fs::remove_file(entry.path().join("apps").join(format!("{name}.png")));
     }
 }
 
@@ -472,6 +518,71 @@ mod tests {
     fn desktop_exec_arg_echappe_les_caracteres_reserves() {
         assert_eq!(desktop_exec_arg("/opt/Ports Launcher/ports_launcher"), "\"/opt/Ports Launcher/ports_launcher\"");
         assert_eq!(desktop_exec_arg("/a$b/100%/c\"d"), "\"/a\\$b/100%%/c\\\"d\"");
+    }
+
+    #[test]
+    fn desktop_entry_has_the_forks_own_name_and_icon() {
+        assert_eq!(DESKTOP_ENTRY_FILE, "steamdeck-ports-mgr.desktop");
+        assert_eq!(
+            desktop_entry_text("/home/u/Applications/steamdeck-ports-mgr/ports_launcher"),
+            "[Desktop Entry]\nType=Application\nName=Deck Ports Manager\nExec=\"/home/u/Applications/steamdeck-ports-mgr/ports_launcher\"\nIcon=steamdeck-ports-mgr\nCategories=Game;\nTerminal=false\nStartupWMClass=ports_launcher\n"
+        );
+    }
+
+    fn upstream_entry(exe: &str) -> String {
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Ports Launcher\nExec={}\nIcon=ports_launcher\nCategories=Game;\nTerminal=false\nStartupWMClass=ports_launcher\n",
+            desktop_exec_arg(exe)
+        )
+    }
+
+    fn seed(data_home: &Path, entry: &str) -> (PathBuf, PathBuf) {
+        let apps = data_home.join("applications");
+        let icon = data_home.join("icons/hicolor/256x256/apps/ports_launcher.png");
+        fs::create_dir_all(&apps).unwrap();
+        fs::create_dir_all(icon.parent().unwrap()).unwrap();
+        fs::write(apps.join("ports_launcher.desktop"), entry).unwrap();
+        fs::write(&icon, b"png").unwrap();
+        (apps.join("ports_launcher.desktop"), icon)
+    }
+
+    #[test]
+    fn migration_removes_our_old_entry_and_its_icon() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = "/home/u/Applications/steamdeck-ports-mgr/ports_launcher";
+        let (old, icon) = seed(dir.path(), &upstream_entry(exe));
+        migrate_upstream_entry(dir.path(), exe);
+        assert!(!old.exists());
+        assert!(!icon.exists());
+    }
+
+    #[test]
+    fn migration_never_touches_the_original_apps_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = upstream_entry("/home/u/Applications/Ports Launcher/ports_launcher");
+        let (old, icon) = seed(dir.path(), &entry);
+        migrate_upstream_entry(dir.path(), "/home/u/Applications/steamdeck-ports-mgr/ports_launcher");
+        assert_eq!(fs::read_to_string(&old).unwrap(), entry);
+        assert!(icon.exists());
+    }
+
+    #[test]
+    fn migration_keeps_the_old_icon_while_another_entry_uses_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = "/opt/dpm/ports_launcher";
+        let (old, icon) = seed(dir.path(), &upstream_entry(exe));
+        fs::write(dir.path().join("applications/other.desktop"), "[Desktop Entry]\nIcon=ports_launcher\n").unwrap();
+        migrate_upstream_entry(dir.path(), exe);
+        assert!(!old.exists());
+        assert!(icon.exists());
+    }
+
+    #[test]
+    fn upstream_entry_is_ours_matches_the_exact_exec_line_only() {
+        let exe = "/a b/ports_launcher";
+        assert!(upstream_entry_is_ours(&upstream_entry(exe), exe));
+        assert!(!upstream_entry_is_ours(&upstream_entry("/a b/ports_launcher2"), exe));
+        assert!(!upstream_entry_is_ours("[Desktop Entry]\n", exe));
     }
 
     fn focus(windows: &[Option<bool>]) -> impl FnOnce() -> std::vec::IntoIter<Option<bool>> {

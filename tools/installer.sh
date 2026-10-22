@@ -7,7 +7,8 @@
 # one .desktop file is everything the user downloads: no second script is fetched and run.
 #
 # What it does:
-#   1. downloads the rolling release package and its .sha256 over HTTPS and checks the checksum;
+#   1. downloads the rolling release package and its .sha256 over HTTPS and checks the checksum, and
+#      refuses a package holding anything but plain files and folders inside its own folder;
 #   2. no install yet: unpacks the whole package into ~/Applications/steamdeck-ports-mgr;
 #      an install already there: replaces only what the in-app updater replaces (ports_launcher, 7zzs,
 #      ports_launcher_updater.sh, BUILD_INFO), keeps the old program in .previous/, and never touches
@@ -16,7 +17,8 @@
 #   3. writes the app-menu entry with the same bytes the app writes itself, and a desktop shortcut;
 #   4. starts the app, detached, and says what happened.
 # No sudo, nothing written outside $HOME, nothing of Steam's touched. On a failure before the swap
-# nothing in the install folder changes; a failed swap puts the previous program back.
+# nothing in the install folder changes; a failed or interrupted swap puts the previous program back.
+# One copy at a time (flock); a second copy says so and does nothing.
 #
 # Switches (tests use them): DPM_RELEASE_BASE (https:// or file:// only), DPM_INSTALL_DIR (absolute,
 # inside $HOME), DPM_NO_LAUNCH=1, DPM_UI=kdialog|zenity|text.
@@ -30,15 +32,13 @@ ASSET="$PKG-linux-x86_64.tar.gz"
 BASE="https://github.com/Coolmanchambers/steamdeck-ports-mgr/releases/latest/download"
 SELF_FILE="${1:-}"
 EXTRACT_SED='/^#BEGIN_DPM_INSTALLER/,/^#END_DPM_INSTALLER/s/^#|//p'
+LOG=/dev/null   # until this copy holds the lock, so a second copy never touches the first one's log
 
 if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then
     echo "HOME is not set to a folder; nothing was changed." >&2
     exit 1
 fi
 HOME_REAL="$(realpath -e -- "$HOME")" || exit 1
-mkdir -p "$HOME/.cache" 2>/dev/null
-LOG="$HOME/.cache/steamdeck-ports-mgr-installer.log"
-: > "$LOG" 2>/dev/null || LOG=/dev/null
 
 # ---------------------------------------------------------------- how the user sees it
 have_display() { [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }
@@ -68,6 +68,11 @@ fi
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >>"$LOG" 2>/dev/null; }
 say() { log "$*"; [ "$UI" = text ] && printf '%s\n' "$*"; return 0; }
 
+LOCK_FD=""
+nolock() { # run a command without the lock's file descriptor, so a program that outlives us never holds it
+    if [ -n "$LOCK_FD" ]; then "$@" {LOCK_FD}>&-; else "$@"; fi
+}
+
 PROG_REF=""
 ZEN_FD=""
 kd() { # kd <method> [dbus-send args...] on the kdialog progress bar; cosmetic, so errors are ignored
@@ -76,15 +81,26 @@ kd() { # kd <method> [dbus-send args...] on the kdialog progress bar; cosmetic, 
     shift
     dbus-send --session --print-reply=literal --dest="$svc" "$path" "$method" "$@" >/dev/null 2>&1 || true
 }
+markup() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+qt_text() {
+    # kdialog's labels guess plain or rich text: a "<" (a path like ~/x<y>) could be taken for a tag.
+    # Text with "<" goes out as rich text with & < > escaped; other text stays plain, where & and >
+    # show as they are (the usual "Games > Deck Ports Manager" never needs rich text).
+    local t
+    case "$1" in
+        *"<"*) t="$(markup "$1")"; printf '<qt>%s</qt>' "${t//$'\n'/<br>}" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
 progress_start() {
     case "$UI" in
         kdialog)
-            PROG_REF="$(kdialog --title "$TITLE" --progressbar "Starting..." 100 2>/dev/null)" || PROG_REF=""
+            PROG_REF="$(nolock kdialog --title "$TITLE" --progressbar "Starting..." 100 2>/dev/null)" || PROG_REF=""
             PROG_REF="$(printf '%s' "$PROG_REF" | head -n 1)"
             case "$PROG_REF" in "org.kde.kdialog-"*" /"*) ;; *) PROG_REF="" ;; esac
             ;;
         zenity)
-            exec {ZEN_FD}> >(zenity --progress --title="$TITLE" --text="Starting..." --percentage=0 \
+            exec {ZEN_FD}> >(nolock zenity --progress --title="$TITLE" --text="Starting..." --percentage=0 \
                 --auto-close --no-cancel --width=460 >/dev/null 2>&1)
             ;;
     esac
@@ -93,11 +109,11 @@ step() { # step <percent> <text>
     say "[$1%] $2"
     case "$UI" in
         kdialog)
-            kd org.kde.kdialog.ProgressDialog.setLabelText "string:$2"
+            kd org.kde.kdialog.ProgressDialog.setLabelText "string:$(qt_text "$2")"
             kd org.freedesktop.DBus.Properties.Set string:org.kde.kdialog.ProgressDialog string:value "variant:int32:$1"
             ;;
         # In a subshell: if the progress window was closed, the write's SIGPIPE ends only that.
-        zenity) [ -n "$ZEN_FD" ] && (printf '%s\n# %s\n' "$1" "$2" >&"$ZEN_FD") 2>/dev/null ;;
+        zenity) [ -n "$ZEN_FD" ] && (printf '%s\n# %s\n' "$1" "$(markup "$2")" >&"$ZEN_FD") 2>/dev/null ;;
     esac
     return 0
 }
@@ -114,43 +130,84 @@ progress_end() {
     esac
     return 0
 }
-markup() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
 message() { # message info|warning|error <text>
+    local k
     log "$1: $2"
     case "$UI" in
         kdialog)
             case "$1" in info) k=--msgbox ;; warning) k=--sorry ;; *) k=--error ;; esac
-            kdialog --title "$TITLE" "$k" "$2" >/dev/null 2>&1
+            kdialog --title "$TITLE" "$k" "$(qt_text "$2")" >/dev/null 2>&1
             ;;
         zenity) zenity "--$1" --title="$TITLE" --width=480 --text="$(markup "$2")" >/dev/null 2>&1 ;;
         *) printf '\n%s\n' "$2" ;;
     esac
     return 0
 }
-confirm() { # 0 = go ahead. Text mode has nobody to ask, so it goes ahead (as the in-app updater does).
+confirm() { # 0 = go ahead
+    local ans
     log "asked: $1"
     case "$UI" in
-        kdialog) kdialog --title "$TITLE" --warningcontinuecancel "$1" >/dev/null 2>&1 ;;
+        kdialog) kdialog --title "$TITLE" --warningcontinuecancel "$(qt_text "$1")" >/dev/null 2>&1 ;;
         zenity) zenity --question --title="$TITLE" --width=480 --ok-label=Continue --cancel-label=Cancel \
             --text="$(markup "$1")" >/dev/null 2>&1 ;;
-        *) say "$1"; say "(no one to ask in text mode: continuing)"; return 0 ;;
+        *)
+            if [ -n "${DPM_IN_TERMINAL:-}" ]; then
+                printf '\n%s\nContinue? [Y/n] ' "$1"
+                read -r ans || ans=n
+                case "$ans" in [nN]*) return 1 ;; esac
+                return 0
+            fi
+            # Nobody to ask (tests, scripts): go ahead, as the in-app updater does.
+            say "$1"; say "(no one to ask in text mode: continuing)"
+            return 0
+            ;;
     esac
 }
 pretty() { case "$1" in "$HOME_REAL"/*) printf '~/%s' "${1#"$HOME_REAL"/}" ;; *) printf '%s' "$1" ;; esac; }
 
 TMP=""
+PARENT=""
 PARENT_MADE=""
+DIR=""
+STAGED=""
+SWAPPING=""
+HAD=""
+rollback_program() { # put back what .previous/ holds; remove a program file that was not there before
+    local g
+    for g in ports_launcher 7zzs; do
+        rm -f -- "$DIR/.$g.new"
+        case " $HAD " in
+            *" $g "*) cp -p -- "$DIR/.previous/$g" "$DIR/.$g.restore" && mv -f -- "$DIR/.$g.restore" "$DIR/$g" ;;
+            *) rm -f -- "$DIR/$g" ;;
+        esac
+    done
+}
 cleanup() {
+    local p
     progress_end
+    if [ -n "$STAGED" ]; then rm -f -- "$DIR/.ports_launcher.new" "$DIR/.7zzs.new"; fi
     [ -n "$TMP" ] && rm -rf -- "$TMP"
-    [ -n "$PARENT_MADE" ] && rmdir -- "$PARENT_MADE" 2>/dev/null
+    if [ -n "$PARENT_MADE" ]; then
+        # Folders this run created on the way to the install folder, deepest first, only while empty.
+        p="$PARENT"
+        while rmdir -- "$p" 2>/dev/null && [ "$p" != "$PARENT_MADE" ]; do p="$(dirname -- "$p")"; done
+    fi
     if [ -n "${DPM_IN_TERMINAL:-}" ]; then
         printf '\nPress Enter to close this window. '
         read -r _ || true
     fi
 }
+on_signal() {
+    if [ -n "$SWAPPING" ]; then
+        rollback_program
+        SWAPPING=""
+        say "RESULT: interrupted"
+        message error "The installer was stopped during the update. The previous version was put back."
+    fi
+    exit 130
+}
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
+trap on_signal INT TERM HUP
 
 finish() { # finish <exit code> <info|warning|error> <result word> <text>
     progress_end
@@ -158,9 +215,31 @@ finish() { # finish <exit code> <info|warning|error> <result word> <text>
     message "$2" "$4"
     exit "$1"
 }
-fail() { finish 1 error failed "$1
+fail() {
+    if [ "$LOG" = /dev/null ]; then
+        finish 1 error failed "$1"
+    else
+        finish 1 error failed "$1
 
-Details: $(pretty "$LOG")"; }
+Details: $(pretty "$LOG")"
+    fi
+}
+
+# ---------------------------------------------------------------- one copy at a time
+mkdir -p "$HOME/.cache" 2>/dev/null
+if command -v flock >/dev/null 2>&1 && exec {LOCK_FD}>>"$HOME/.cache/steamdeck-ports-mgr-installer.lock"; then
+    if ! flock -n "$LOCK_FD"; then
+        say "RESULT: already running"
+        message warning "The installer is already running. This second copy did nothing."
+        exit 3
+    fi
+    LOCKED=1
+else
+    LOCK_FD=""
+    LOCKED=""
+fi 2>/dev/null
+LOG="$HOME/.cache/steamdeck-ports-mgr-installer.log"
+: >"$LOG" 2>/dev/null || LOG=/dev/null
 
 say "Deck Ports Manager installer, $(date '+%Y-%m-%d %H:%M:%S')"
 progress_start
@@ -181,33 +260,54 @@ case "$DIR_IN" in /*) ;; *) fail "The install folder must be an absolute path ($
 DIR="$(realpath -m -- "$DIR_IN")" || fail "Could not work out the install folder $DIR_IN. Nothing was changed."
 case "$DIR/" in
     "$HOME_REAL"/?*/) ;;
-    *) fail "The install folder must be inside your home folder ($DIR). Nothing was changed." ;;
+    *)
+        # Most likely ~/Applications is a link to an SD card. Name the link that leads out.
+        link=""
+        p="$DIR_IN"
+        while [ "$p" != / ] && [ "$p" != "$HOME" ] && [ "$p" != "$HOME_REAL" ]; do
+            if [ -L "$p" ]; then
+                case "$(realpath -m -- "$p")/" in "$HOME_REAL"/*) ;; *) link="$p" ;; esac
+            fi
+            p="$(dirname -- "$p")"
+        done
+        if [ -n "$link" ]; then
+            fail "Your $(basename -- "$link") folder is a link to $(realpath -m -- "$link"), which is outside your home folder (an SD card?). The installer only installs inside your home folder: remove the link, or install by hand (STEAM_DECK.md, Manual install). Nothing was changed."
+        fi
+        fail "The install folder must be inside your home folder ($DIR). Nothing was changed."
+        ;;
 esac
 if [ -e "$DIR" ] && [ ! -d "$DIR" ]; then
     fail "$(pretty "$DIR") exists but is not a folder. Nothing was changed."
 fi
 APP="$DIR/ports_launcher"
 PARENT="$(dirname -- "$DIR")"
+if [ -e "$APP" ] || [ -L "$APP" ]; then MODE=update; elif [ -d "$DIR" ]; then MODE=into; else MODE=fresh; fi
 
 # Temporary files go next to the install folder: inside $HOME, and on the same drive, so the fresh
 # install is one rename at the end.
 if [ ! -d "$PARENT" ]; then
     first_new="$PARENT"
     while [ ! -d "$(dirname -- "$first_new")" ]; do first_new="$(dirname -- "$first_new")"; done
-    mkdir -p -- "$PARENT" || fail "Could not create $(pretty "$PARENT"). Nothing was changed."
     PARENT_MADE="$first_new"
+    mkdir -p -- "$PARENT" || fail "Could not create $(pretty "$PARENT"). Nothing was changed."
 fi
-TMP="$(mktemp -d "$PARENT/.$PKG-installer.XXXXXX")" || fail "Could not create a temporary folder in $(pretty "$PARENT"). Nothing was changed."
+if [ -n "$LOCKED" ]; then
+    # Left by a run that was killed; no other run can be using them while we hold the lock.
+    for d in "$PARENT"/.$PKG-installer.*; do
+        [ -d "$d" ] && [ ! -L "$d" ] && rm -rf -- "$d" && say "removed a leftover temporary folder $d"
+    done
+fi
+TMP="$(mktemp -d "$PARENT/.$PKG-installer.XXXXXX")" || fail "Could not create a temporary folder in $(pretty "$PARENT") (the drive may be full). Nothing was changed."
 
 fetch() { curl -fsSL --proto '=https,file' --proto-redir '=https' --connect-timeout 15 --max-time 300 \
     --retry 3 --retry-delay 5 -o "$2" "$1" 2>>"$LOG"; }
 step 10 "Downloading the newest build (about 10 MB)..."
 say "from $BASE/$ASSET"
 fetch "$BASE/$ASSET" "$TMP/$ASSET" ||
-    fail "The download failed (no internet, or GitHub is busy). Nothing was changed. Try again in a minute."
+    fail "The download failed (no internet, GitHub is busy, or the drive is full). Nothing was changed. Try again in a minute."
 step 55 "Downloading its checksum..."
 fetch "$BASE/$ASSET.sha256" "$TMP/$ASSET.sha256" ||
-    fail "The checksum download failed. Nothing was changed. Try again in a minute."
+    fail "The checksum download failed (no internet, GitHub is busy, or the drive is full). Nothing was changed. Try again in a minute."
 
 step 62 "Checking the download..."
 expected="$(awk 'NR == 1 { print tolower($1) }' "$TMP/$ASSET.sha256")"
@@ -221,12 +321,25 @@ esac
     fail "The checksum does not match, so the download was not used. Nothing was changed. Try again in a minute (a new build may have been halfway through publishing)."
 
 step 70 "Unpacking..."
-listing="$(tar -tzf "$TMP/$ASSET" 2>>"$LOG")" || fail "The package could not be read. Nothing was changed."
-if printf '%s\n' "$listing" | grep -v -e "^$PKG/" -e "^$PKG\$" | grep -q .; then
+names="$(tar -tzf "$TMP/$ASSET" 2>>"$LOG")" || fail "The package could not be read. Nothing was changed."
+if printf '%s\n' "$names" | grep -v -e "^$PKG/" -e "^$PKG\$" | grep -q .; then
     fail "The package holds files outside its folder, so it was not used. Nothing was changed."
 fi
-mkdir -p "$TMP/x" && tar -xzf "$TMP/$ASSET" -C "$TMP/x" --no-same-owner 2>>"$LOG" ||
-    fail "The package could not be unpacked (is the drive full?). Nothing was changed."
+# Only plain files and folders: no links, hard links or devices (first letter of tar's mode column).
+types="$(tar -tzvf "$TMP/$ASSET" 2>>"$LOG" | cut -c1 | sort -u | tr -d '\n')"
+case "$types" in
+    "" | *[!-d]*) fail "The package holds links or special files, so it was not used. Nothing was changed." ;;
+esac
+mkdir -p "$TMP/x" || fail "Could not unpack (the drive may be full). Nothing was changed."
+if [ "$MODE" = update ]; then
+    # An update needs only the four program files.
+    tar -xzf "$TMP/$ASSET" -C "$TMP/x" --no-same-owner "$PKG/ports_launcher" "$PKG/7zzs" 2>>"$LOG" ||
+        fail "The package is missing program files, or could not be unpacked (the drive may be full). Nothing was changed."
+    tar -xzf "$TMP/$ASSET" -C "$TMP/x" --no-same-owner "$PKG/ports_launcher_updater.sh" "$PKG/BUILD_INFO" 2>/dev/null
+else
+    tar -xzf "$TMP/$ASSET" -C "$TMP/x" --no-same-owner 2>>"$LOG" ||
+        fail "The package could not be unpacked (the drive may be full). Nothing was changed."
+fi
 NEW="$TMP/x/$PKG"
 for f in ports_launcher 7zzs; do
     [ -f "$NEW/$f" ] && [ ! -L "$NEW/$f" ] || fail "The package is missing $f. Nothing was changed."
@@ -252,17 +365,16 @@ put() { # put <source> <name> <mode>: replace $DIR/<name> in one rename
 }
 
 NOTES=""
-if [ -e "$APP" ] || [ -L "$APP" ] || [ -d "$DIR" ]; then
-    if [ -e "$APP" ] || [ -L "$APP" ]; then MODE=update; else MODE=into; fi
+if [ "$MODE" != fresh ]; then
     OLD_COMMIT="$(commit_of "$DIR/BUILD_INFO")"
     say "existing folder $DIR (mode $MODE, build ${OLD_COMMIT:-unknown})"
 
     pids="$(our_pids)"
     if [ -n "$pids" ]; then
         step 75 "Waiting for Deck Ports Manager to close..."
-        confirm "Deck Ports Manager is open. It has to close for the update.
+        confirm "Deck Ports Manager is open and has to close before it can be updated.
 
-Quit it yourself now (tray icon > Quit) and then choose Continue, or choose Continue and the installer closes it." ||
+Continue closes it and carries on (quit it yourself first from its tray icon if you prefer). Cancel changes nothing." ||
             finish 2 info cancelled "Update cancelled. Nothing was changed."
         i=0
         while [ -n "$(our_pids)" ] && [ "$i" -lt 10 ]; do sleep 1; i=$((i + 1)); done
@@ -279,24 +391,28 @@ Quit it yourself now (tray icon > Quit) and then choose Continue, or choose Cont
 
     step 80 "Installing the new program files..."
     mkdir -p -- "$DIR/.previous" || fail "Could not create $(pretty "$DIR")/.previous. Nothing was changed."
-    had=""
     for f in ports_launcher 7zzs; do
         if [ -f "$DIR/$f" ]; then
-            cp -p -- "$DIR/$f" "$DIR/.previous/$f" || fail "Could not back up $f. Nothing was changed."
-            had="$had $f"
+            cp -p -- "$DIR/$f" "$DIR/.previous/$f" || fail "Could not back up $f (the drive may be full). Your install was not changed."
+            HAD="$HAD $f"
         fi
     done
+    STAGED=1
     for f in ports_launcher 7zzs; do
-        if ! put "$NEW/$f" "$f" 755; then
-            for g in ports_launcher 7zzs; do
-                case " $had " in
-                    *" $g "*) cp -p -- "$DIR/.previous/$g" "$DIR/$g" ;;
-                    *) rm -f -- "$DIR/$g" ;;
-                esac
-            done
-            fail "Could not install $f (is the drive full?). The previous version was put back."
+        cp -- "$NEW/$f" "$DIR/.$f.new" && chmod 755 "$DIR/.$f.new" ||
+            fail "Could not copy the new $f (the drive may be full). Your install was not changed."
+    done
+    sync 2>/dev/null
+    SWAPPING=1
+    for f in ports_launcher 7zzs; do
+        if ! mv -f -- "$DIR/.$f.new" "$DIR/$f"; then
+            rollback_program
+            SWAPPING=""
+            fail "Could not install $f. The previous version was put back."
         fi
     done
+    SWAPPING=""
+    STAGED=""
     if [ -f "$NEW/ports_launcher_updater.sh" ]; then
         put "$NEW/ports_launcher_updater.sh" ports_launcher_updater.sh 755 ||
             NOTES="$NOTES
@@ -315,22 +431,25 @@ BUILD_INFO could not be replaced, so the app may offer this build as an update."
             [ -f "$src" ] && [ ! -e "$DIR/$name" ] && cp -- "$src" "$DIR/$name"
         done
     fi
+    sync 2>/dev/null
 else
-    MODE=fresh
     step 80 "Installing into $(pretty "$DIR")..."
     chmod 755 "$NEW" "$NEW/ports_launcher" "$NEW/7zzs" || fail "Could not prepare the files. Nothing was changed."
     [ -f "$NEW/ports_launcher_updater.sh" ] && chmod 755 "$NEW/ports_launcher_updater.sh"
+    sync 2>/dev/null
     # -T: fails rather than moving into a folder that appeared in the meantime.
     mv -T -- "$NEW" "$DIR" 2>>"$LOG" || fail "Could not create $(pretty "$DIR"). Nothing was changed."
     PARENT_MADE=""
+    sync 2>/dev/null
 fi
 say "installed: $MODE"
 
 # ---------------------------------------------------------------- app menu and desktop shortcut
 step 90 "Adding it to the app menu..."
 EXE="$(realpath -e -- "$APP")" || EXE="$APP"
-# Same text as the app's own register_desktop_entry (src/ui/linux_chrome.rs, desktop_exec_arg), so the
-# app's write at startup changes nothing.
+# Same text as the app's own register_desktop_entry (src/ui/linux_chrome.rs, desktop_entry_text and
+# desktop_exec_arg), so the app's write at startup changes nothing. Like the app's, the entry has no
+# Path= key: the program finds its folder from its own path, not the working folder.
 exe_arg="$EXE"
 exe_arg="${exe_arg//\\/\\\\}"
 exe_arg="${exe_arg//\"/\\\"}"
@@ -338,24 +457,30 @@ exe_arg="${exe_arg//\`/\\\`}"
 exe_arg="${exe_arg//\$/\\\$}"
 exe_arg="${exe_arg//%/%%}"
 exe_arg="\"$exe_arg\""
-entry() { # entry <Name>
-    printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s\nIcon=ports_launcher\nCategories=Game;\nTerminal=false\nStartupWMClass=ports_launcher\n' "$1" "$exe_arg"
+entry() {
+    printf '[Desktop Entry]\nType=Application\nName=Deck Ports Manager\nExec=%s\nIcon=%s\nCategories=Game;\nTerminal=false\nStartupWMClass=ports_launcher\n' "$exe_arg" "$PKG"
 }
-write_entry() { # write_entry <file> <Name> <mode>: only when different, in one rename
+write_entry() { # write_entry <file> <mode>: only when different, in one rename
     local f="$1" t="$1.dpm-new"
-    entry "$2" >"$t" 2>/dev/null || { rm -f -- "$t"; return 1; }
-    if cmp -s -- "$t" "$f"; then rm -f -- "$t"; chmod "$3" -- "$f"; return 0; fi
-    chmod "$3" -- "$t" && mv -f -- "$t" "$f" || { rm -f -- "$t"; return 1; }
+    entry >"$t" 2>/dev/null || { rm -f -- "$t"; return 1; }
+    if cmp -s -- "$t" "$f"; then rm -f -- "$t"; chmod "$2" -- "$f"; return 0; fi
+    chmod "$2" -- "$t" && mv -f -- "$t" "$f" || { rm -f -- "$t"; return 1; }
 }
 in_home() { case "$1/" in "$HOME_REAL"/?*/) return 0 ;; esac; return 1; }
 
 DATA_HOME="${XDG_DATA_HOME:-}"
 [ -n "$DATA_HOME" ] || DATA_HOME="$HOME/.local/share"
 DATA_HOME="$(realpath -m -- "$DATA_HOME")"
-MENU_FILE="$DATA_HOME/applications/ports_launcher.desktop"
 MENU_OK=""
 if in_home "$DATA_HOME"; then
-    mkdir -p -- "$DATA_HOME/applications" && write_entry "$MENU_FILE" "Ports Launcher" 644 && MENU_OK=1
+    mkdir -p -- "$DATA_HOME/applications" && write_entry "$DATA_HOME/applications/$PKG.desktop" 644 && MENU_OK=1
+    # Builds before 2026-10-22 used upstream's file name. Remove that entry only when it is ours (its
+    # Exec is this program); the original Ports Launcher's entry points elsewhere and stays. The app
+    # does the same at startup, and also tidies the old icon.
+    old="$DATA_HOME/applications/ports_launcher.desktop"
+    if [ -f "$old" ] && grep -qxF "Exec=$exe_arg" "$old" 2>/dev/null; then
+        rm -f -- "$old" && say "removed the old menu entry $old"
+    fi
 fi
 [ -n "$MENU_OK" ] || NOTES="$NOTES
 The app-menu entry could not be written; the app adds it itself when it starts."
@@ -375,7 +500,7 @@ if [ -d "$DESK" ] && in_home "$DESK"; then
         done
         if [ -n "$dup" ]; then
             say "desktop already has a launcher for it: $dup"
-        elif write_entry "$SHORTCUT" "Deck Ports Manager" 755; then
+        elif write_entry "$SHORTCUT" 755; then
             DESK_OK=1
         fi
     fi
@@ -389,9 +514,9 @@ else
     step 96 "Starting Deck Ports Manager..."
     # Its own session, so closing this installer (or its terminal) does not take the app with it.
     if command -v setsid >/dev/null 2>&1; then
-        (cd "$DIR" && setsid -f "$APP" >/dev/null 2>&1 </dev/null)
+        (cd "$DIR" && nolock setsid -f "$APP" >/dev/null 2>&1 </dev/null)
     else
-        (cd "$DIR" && nohup "$APP" >/dev/null 2>&1 </dev/null &)
+        (cd "$DIR" && nolock nohup "$APP" >/dev/null 2>&1 </dev/null &)
     fi
     i=0
     while [ -z "$(our_pids)" ] && [ "$i" -lt 10 ]; do sleep 0.5; i=$((i + 1)); done
@@ -424,7 +549,7 @@ elif [ -n "$LAUNCHED" ]; then
 else
     open_text="It did not open by itself: start it from the app menu."
 fi
-find_text="Later, open it from the app menu (Games > Ports Launcher)"
+find_text="Later, open it from the app menu (Games > Deck Ports Manager)"
 [ -n "$DESK_OK" ] && find_text="$find_text or the \"Deck Ports Manager\" icon on the desktop"
 find_text="$find_text. To update, run this installer again or use Settings > Force update in the app."
 text="$head_text${open_text:+

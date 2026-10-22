@@ -80,6 +80,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/mod.rs` | One line registering `art_screens` |
 | 2026-10-21 | `.gitignore` | `secrets.json` added to the Secrets block (it holds the user's API keys; it is never committed) |
 | 2026-10-22 | `README.md` | The install pointer in the top note names the one-file installer |
+| 2026-10-22 | `src/ui/linux_chrome.rs` | `register_desktop_entry` writes this fork's own menu entry, `steamdeck-ports-mgr.desktop` ("Deck Ports Manager", icon `steamdeck-ports-mgr`, same Exec and `StartupWMClass`), instead of upstream's `ports_launcher.desktop` / `ports_launcher.png`, so it no longer overwrites the original Ports Launcher's entry. One-time migration: an old `ports_launcher.desktop` is removed only when its Exec is this program, and the old icon only when no remaining entry uses it. `desktop_entry_text`, `upstream_entry_is_ours`, `migrate_upstream_entry`; 5 tests. Window title and tray text unchanged |
 
 Files added by this fork:
 
@@ -674,7 +675,9 @@ CI also builds `steamdeck-ports-mgr-installer.desktop` (`tools/build-installer.s
 job publishes it, with its `.sha256`, next to the package, so its link is
 `releases/latest/download/steamdeck-ports-mgr-installer.desktop`. It is the same pattern Decky Loader
 (`decky_installer.desktop`) and EmuDeck (`EmuDeck.desktop`) use on the Deck: a desktop-entry file the
-user downloads and double-clicks, and KDE asks once whether to run an untrusted launcher. Unlike
+user downloads and double-clicks in Dolphin. Dolphin asks Open / Execute / Cancel (each run), and the
+first time KDE also warns that it will start the program, with Continue; Continue marks the file
+executable (wording unconfirmed until a Deck test). Unlike
 those two, it does not download and run a script (theirs `curl` one and pipe or run it): the whole
 installer is `tools/installer.sh`, embedded as comment lines between `#BEGIN_DPM_INSTALLER` and
 `#END_DPM_INSTALLER`, each prefixed with `#|`. The Exec line is
@@ -695,21 +698,26 @@ A terminal-first launcher (what Decky and EmuDeck do) shows a console full of te
 the script ends; dialogs give a progress bar and a result box that stays until it is read.
 
 What it changes: on a fresh install, the whole package moved into place in one rename (temporary
-files sit in a hidden folder beside the install folder, inside `$HOME`); on an existing install, only
-what the updater replaces, with `.previous/` and the same running-copy handling (asks first in the
-dialogs, then waits, then stops only a copy whose program is in that folder). Then
-`~/.local/share/applications/ports_launcher.desktop` with exactly the text `register_desktop_entry`
-writes (so the app's own write at startup is a no-op), and on a fresh install
-`~/Desktop/steamdeck-ports-mgr.desktop` ("Deck Ports Manager", executable so Plasma trusts it),
-unless another launcher on the desktop already points at the program; an update only refreshes that
-shortcut if it is still there. The app is started with `setsid`, so it outlives the installer. It
-refuses an install folder outside `$HOME` and never uses `sudo`.
+files sit in a hidden folder beside the install folder, inside `$HOME`; ones left by a killed run are
+swept at the next start); on an existing install, only the four files the updater replaces (only
+those are unpacked), staged as `.new`, `sync`ed, then renamed, with `.previous/` and the same
+running-copy handling (asks first, then waits, then stops only a copy whose program is in that
+folder). A failure or an INT/TERM/HUP during the renames puts the previous program back. The package
+must hold only plain files and folders inside `steamdeck-ports-mgr/`. One installer runs at a time
+(`flock` on `~/.cache/steamdeck-ports-mgr-installer.lock`; programs it starts do not inherit the
+lock). Then `~/.local/share/applications/steamdeck-ports-mgr.desktop` with exactly the text
+`register_desktop_entry` writes (so the app's own write at startup is a no-op), the removal of an old
+upstream-named `ports_launcher.desktop` only when its Exec is this program, and on a fresh install
+`~/Desktop/steamdeck-ports-mgr.desktop` (same text, executable so Plasma trusts it), unless another
+launcher on the desktop already points at the program; an update only refreshes that shortcut if it
+is still there. The app is started with `setsid`, so it outlives the installer. It refuses an install
+folder outside `$HOME` (naming the link when `~/Applications` points elsewhere) and never uses `sudo`.
 
 Test switches: `DPM_RELEASE_BASE` (https:// or file:// only), `DPM_INSTALL_DIR` (inside `$HOME`),
 `DPM_NO_LAUNCH=1`, `DPM_UI=kdialog|zenity|text`.
 
-Known limits: the KDE prompt's wording, kdialog on SteamOS (assumed present with Plasma; zenity is the
-fallback) and the desktop shortcut's trust are unverified until a Deck test; a launcher that does
-not expand `%k` (GLib's `gio launch` up to at least 2.72) runs nothing; the menu entry's name is
-shared with the original Ports Launcher (each app writes it at startup, so the last one started owns
-it).
+Known limits: both KDE dialogs' wording, kdialog on SteamOS (assumed present with Plasma; zenity is
+the fallback) and the desktop shortcut's trust are unverified until a Deck test; a launcher that does
+not expand `%k` (GLib's `gio launch` up to at least 2.72) runs nothing; an `~/Applications` that is a
+link to an SD card (outside `$HOME`) is refused, so such a Deck needs the manual install or the link
+removed; without `flock` on the system there is no single-instance lock (SteamOS has util-linux).
