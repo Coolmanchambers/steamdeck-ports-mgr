@@ -22,6 +22,7 @@ pub mod save_notes;
 pub mod save_restore;
 pub mod screens;
 pub mod self_update;
+pub mod secrets;
 pub mod settings;
 pub mod shortcuts;
 pub mod steam_queue;

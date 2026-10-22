@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "data": [
+    { "id": 900001, "name": "Ship of Harkinian", "types": ["steam"], "verified": true },
+    { "id": 900002, "name": "Ship of Harkinian: Remastered", "types": [], "verified": false },
+    { "id": 900003, "name": "Ship Simulator", "types": ["steam"], "verified": true }
+  ]
+}

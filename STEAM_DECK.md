@@ -240,6 +240,46 @@ Android one, the app says **no save folder known for Linux** and offers no resto
 guessing. A backup holding a file name that
 points outside its folder (`../...` or `/...`) is listed as "cannot be used" and never unpacked. The
 backups are plain zips, so you can also open them in Dolphin.
+## Artwork sources: fill the hero, logo and wide slots (Desktop Mode)
+
+Steam shows five pictures per shortcut: a portrait, a wide capsule, a hero banner, a logo and an icon. The catalog gives
+the portrait and most icons. Settings > **Artwork sources...** adds the rest from three free sites. Each is optional;
+SteamGridDB does most of the work and is the one to set up.
+
+**Get a SteamGridDB key (about two minutes, on the Deck or any computer):**
+1. Open https://www.steamgriddb.com and sign in (it offers Steam sign-in; a free account is all you need).
+2. Open your profile, Preferences, and the API tab (https://www.steamgriddb.com/profile/preferences), and press the
+   button that generates a key. Copy it.
+3. In the app: Settings > Artwork sources... > the **SteamGridDB** row. A text box opens. Paste the key (Ctrl+V in
+   Desktop Mode; in Game Mode press Steam + X for the on-screen keyboard), move down to **Save**, press A or Enter.
+4. Choose **Test the SteamGridDB key**. It makes one call and says OK, Invalid or Offline.
+5. Choose **Fetch artwork for installed ports now**. It looks each installed port up (3 to 8 requests per port, one at a
+   time, with a Stop row), saves what it finds in the app's `cache/` folder and tells you what it found per slot.
+6. Use **Add to Steam** as before. The artwork is placed with the shortcuts it adds. Pictures you chose yourself in Steam
+   are never replaced; art this app composed (a crop of a wider picture) may be replaced later by a better one.
+7. Restart Steam to see it (Steam reads the grid folder when the library draws).
+
+The key is stored in `secrets.json` next to the app, readable only by your account, shown on screen as `****` plus its
+last four characters, and never sent anywhere but SteamGridDB. It is not in `state.json`, so sending `state.json` in a
+bug report does not send it. The Remove choice in the key box deletes it.
+
+**What each source does**
+
+| Source | Needs | Gives |
+|---|---|---|
+| SteamGridDB | Your free key | Portrait, wide, hero, logo, icon in Steam's own sizes (static pictures only) |
+| TheGamesDB | Optional key of your own (this build has none) | Box art, banners, fan art, clear logos for ports it lists |
+| ScreenScraper | A build that carries the app's credentials (this one does not); your login is optional | Box art, fan art and logos of the original console game, matched by the hash of your own game file |
+
+The screen shows each source as set, not set, or "not configured in this build", with the last problem and any waiting
+time. A port is matched to SteamGridDB by title only when the title is the same; a close match ("Sonic Unleashed" for
+"Sonic Unleashed Recompiled") is listed under "Look-alike matches waiting for you" and not used. To pick the right game
+yourself, add `"sgdb_id": 12345` (the number from the game's SteamGridDB page address) to the port's entry in
+`ports.local.json`.
+
+Pictures that had to be cropped or padded to fit are marked as composed in `config/grid/.dpm-art-manifest.json`. Videos
+and animated pictures are not used. The images belong to their authors and the games' publishers; the app downloads them
+to your device, never uploads or shares them, and the credits are in the screen's last list.
 
 ## What to test
 

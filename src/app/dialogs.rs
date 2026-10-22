@@ -622,6 +622,7 @@ enum SettingsEntry {
     AddToSteam,
     AdoptPorts,
     GameFiles,
+    ArtSources,
     BackupSaves,
     RestoreSaves,
     CheckUpdates,
@@ -638,6 +639,7 @@ const SETTINGS_ENTRIES: [SettingsEntry; 13] = [
     SettingsEntry::AddToSteam,
     SettingsEntry::AdoptPorts,
     SettingsEntry::GameFiles,
+    SettingsEntry::ArtSources,
     SettingsEntry::BackupSaves,
     SettingsEntry::RestoreSaves,
     SettingsEntry::CheckUpdates,
@@ -660,6 +662,7 @@ fn settings_labels(app: &AppState) -> Vec<String> {
             SettingsEntry::AddToSteam => "Add to Steam...".into(),
             SettingsEntry::AdoptPorts => "Adopt installed ports...".into(),
             SettingsEntry::GameFiles => "Game files...".into(),
+            SettingsEntry::ArtSources => "Artwork sources...".into(),
             SettingsEntry::BackupSaves => tr.invoke_label_backup_saves(),
             SettingsEntry::RestoreSaves => "Restore saves...".into(),
             SettingsEntry::CheckUpdates if state.release_sync => tr.invoke_label_check_updates_on(),
@@ -706,6 +709,7 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                         SettingsEntry::AddToSteam => super::steam_screens::open_steam_screen(&app, &router),
                         SettingsEntry::AdoptPorts => super::steam_screens::open_adopt_screen(&app, &router),
                         SettingsEntry::GameFiles => super::rom_screens::open_game_files(&app, &router),
+                        SettingsEntry::ArtSources => super::art_screens::open_art_sources(&app, &router),
                         SettingsEntry::BackupSaves => start_save_backup(&app, &router),
                         SettingsEntry::RestoreSaves => super::save_restore_screen::open_from_settings(&app, &router),
                         SettingsEntry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
@@ -721,6 +725,41 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
     }
     let _ = dialog.show();
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+}
+
+/// Fork: the search dialog used as a one-line text entry (the Artwork sources screen asks for keys with
+/// it): the text box on top, `labels` as rows under it (Save, Cancel...), Up/Down and the controller
+/// move between the rows, Enter picks the selected one. The caller wires `on_search_changed` (the text
+/// so far) and `on_item_selected`, then shows it and passes it to `finish_dialog_open`.
+pub(crate) fn build_text_entry_dialog(app: &Rc<AppState>, router: &Router, title: &str, placeholder: &str, labels: &[String], password: bool) -> Option<SearchListDialog> {
+    close_current_dialog(app, router);
+    let (fonts, ..) = dialog_context(app);
+    let (dw, dh) = main_window_size(app);
+    let (x, y) = centered_position(app, dw, dh);
+    let dialog = SearchListDialog::new().ok()?;
+    style_dialog!(dialog, app, fonts);
+    dialog.set_dialog_title(title.into());
+    dialog.set_search_bar_height_physical(fonts.search_bar_height_px as f32);
+    dialog.set_placeholder_text(placeholder.into());
+    dialog.set_password(password);
+    dialog.set_show_clock(false);
+    let items: Vec<PickerItem> = labels.iter().map(|label| PickerItem { label: label.into() }).collect();
+    dialog.set_items(slint::ModelRc::new(slint::VecModel::from(items)));
+    dialog.set_selected_index(0);
+    app.dialog_nav.picker_index.set(0);
+    position_dialog!(dialog, app, dw, dh, x, y);
+    {
+        let (app, weak) = (app.clone(), dialog.as_weak());
+        dialog.on_item_hovered(move |index| {
+            app.dialog_nav.picker_index.set(index);
+            if let Some(d) = weak.upgrade() {
+                d.set_selected_index(index);
+            }
+        });
+    }
+    wire_keyboard_nav!(dialog, app, vertical);
+    wire_dialog_close!(dialog, app, router);
+    Some(dialog)
 }
 
 type HoverFn = Box<dyn Fn(&Rc<AppState>, &SearchListDialog, &str)>;

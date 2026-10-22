@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "page": 0,
+  "total": 4,
+  "limit": 12,
+  "data": [
+    { "id": 802, "score": 3, "style": "blurred", "url": "https://cdn2.steamgriddb.com/grid/fixture-b.png", "thumb": "https://cdn2.steamgriddb.com/thumb/fixture-b.jpg", "tags": [], "author": { "name": "fixture", "steam64": "0", "avatar": "https://cdn.example/a.jpg" } },
+    { "id": 801, "score": 9, "style": "alternate", "url": "https://cdn2.steamgriddb.com/grid/fixture-a.png", "thumb": "https://cdn2.steamgriddb.com/thumb/fixture-a.jpg", "tags": [], "author": { "name": "fixture", "steam64": "0", "avatar": "https://cdn.example/a.jpg" } },
+    { "id": 803, "score": 1, "style": "alternate", "url": "https://evil.example/grid/fixture-c.png", "thumb": "https://cdn2.steamgriddb.com/thumb/fixture-c.jpg", "tags": [], "author": { "name": "fixture", "steam64": "0", "avatar": "https://cdn.example/a.jpg" } },
+    { "id": 804, "score": 5, "style": "alternate", "url": "http://cdn2.steamgriddb.com/grid/fixture-d.png", "tags": [] }
+  ]
+}

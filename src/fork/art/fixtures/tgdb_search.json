@@ -1,0 +1,15 @@
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "count": 3,
+    "games": [
+      { "id": 900101, "game_title": "Ship of Harkinian", "release_date": "2022-03-22", "platform": 1, "region_id": 0, "country_id": 0 },
+      { "id": 900102, "game_title": "Ship of Harkinian", "release_date": "2023-01-01", "platform": 4971, "region_id": 0, "country_id": 0 },
+      { "id": 900103, "game_title": "Ship of Harkinian 2", "release_date": "2024-01-01", "platform": 1, "region_id": 0, "country_id": 0 }
+    ]
+  },
+  "remaining_monthly_allowance": 986,
+  "extra_allowance": 0,
+  "allowance_refresh_timer": 2499000
+}

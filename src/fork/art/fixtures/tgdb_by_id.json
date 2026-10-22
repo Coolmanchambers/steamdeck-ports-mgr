@@ -1,0 +1,14 @@
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "count": 1,
+    "games": [
+      { "id": 900100, "game_title": "Ship of Harkinian", "release_date": "2022-03-22", "platform": 1, "region_id": 0, "country_id": 0 }
+    ]
+  },
+  "pages": { "previous": null, "current": 1, "next": null },
+  "remaining_monthly_allowance": 987,
+  "extra_allowance": 0,
+  "allowance_refresh_timer": 2500000
+}

@@ -1,0 +1,6 @@
+{
+  "header": { "APIversion": "2.0", "success": "true", "error": "" },
+  "response": {
+    "ssuser": { "id": "fixtureuser", "niveau": "3", "maxthreads": "2", "requeststoday": "40", "maxrequestsperday": "20000" }
+  }
+}

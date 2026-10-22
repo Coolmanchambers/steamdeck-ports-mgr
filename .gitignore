@@ -66,6 +66,7 @@ firmware/
 # Secrets
 .env
 *.token
+/secrets.json
 
 # Python bytecode from tools/
 __pycache__/

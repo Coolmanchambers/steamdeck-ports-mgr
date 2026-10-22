@@ -35,8 +35,24 @@
 //!   refused.
 //! * The app does not cache catalog icons yet; pass the bytes straight to `catalog::catalog_art`.
 //!
-//! Library only: nothing in the app calls it yet, and nothing here downloads anything.
+//! Online sources (added after the no-key half): [`net`] (the one HTTP door), [`sgdb`], [`tgdb`] and
+//! [`screenscraper`] (the clients), [`cache`] (ids and images under `cache/art/`), [`source`] and [`title`]
+//! (errors, saved per-source state, same-title matching), [`resolve`] (per-slot priority, `art_for_port`) and
+//! [`screen`] (the Artwork sources screen's logic). Keys live in `crate::fork::secrets`. See `FORK.md`,
+//! "Online art sources and credentials". Only `resolve` with a key set up, and the screen's Test and Fetch
+//! rows, ever touch the network.
 
+pub mod cache;
 pub mod catalog;
 pub mod fit;
 pub mod grid;
+pub mod net;
+pub mod resolve;
+#[cfg(test)]
+mod resolve_tests;
+pub mod screen;
+pub mod screenscraper;
+pub mod sgdb;
+pub mod source;
+pub mod tgdb;
+pub mod title;

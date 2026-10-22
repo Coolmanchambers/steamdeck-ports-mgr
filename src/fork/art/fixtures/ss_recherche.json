@@ -1,0 +1,11 @@
+{
+  "header": { "APIversion": "2.0", "success": "true", "error": "" },
+  "response": {
+    "ssuser": { "id": "fixtureuser", "niveau": "1", "maxthreads": "1", "requeststoday": "13", "maxrequestsperday": "20000" },
+    "jeux": [
+      { "id": "777002", "noms": [ { "region": "us", "text": "Ship of Harkinian" } ], "systeme": { "id": "14", "text": "Nintendo 64" }, "medias": [ { "type": "box-2D", "region": "us", "url": "https://www.screenscraper.fr/image.php?gameid=777002&media=box-2D(us)", "format": "png" } ] },
+      { "id": "777003", "noms": [ { "region": "us", "text": "Ship Wars" } ] },
+      { "id": "0", "noms": [ { "region": "us", "text": "ZZZ(notgame)" } ] }
+    ]
+  }
+}

@@ -127,6 +127,8 @@ export component SearchListDialog inherits Window {
     in property <int> selected-index: -1;
     in property <bool> scroll-trigger: false;
     in property <string> placeholder-text: "Type to search...";
+    // Fork: set when the box takes a secret (the Artwork sources screen); the characters show as dots.
+    in property <bool> password: false;
     in property <bool> show-clock: true;
     in property <string> clock-text: "";
 
@@ -202,6 +204,7 @@ export component SearchListDialog inherits Window {
                 font-size: search-font-px;
                 vertical-alignment: center;
                 single-line: true;
+                input-type: root.password ? InputType.password : InputType.text;
                 x: text-margin;
                 y: 0px;
                 width: parent.width - text-margin * 2;

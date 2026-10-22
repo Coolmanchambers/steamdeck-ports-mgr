@@ -1,4 +1,5 @@
 
+pub mod art_screens;
 pub mod cards;
 pub mod deck_ready_screen;
 pub mod dialogs;

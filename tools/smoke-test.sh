@@ -5,6 +5,7 @@
 #   - it skipped the tray (no tray host here) instead of letting Slint try and fail;
 #   - its window is mapped and the screenshot is not blank;
 #   - Tab opens the Deck-ready list without a crash (whether it downloads is only reported), Tab returns;
+#   - Settings > Artwork sources... opens and its Back row returns to Settings;
 #   - Settings > Game files... opens without a crash;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
@@ -73,6 +74,19 @@ if [ "$alive" = yes ]; then
         # focus without a window manager, so this clicks, relative to the main window.
         eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
         if [ -n "${X:-}" ] && [ -n "${Y:-}" ]; then
+            # Settings > Artwork sources... opens and shows its rows, and its Back row returns to Settings.
+            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
+            xdotool mousemove $((X + 71)) $((Y + 353)) click 1; sleep 2
+            import -window root "$OUT/art-sources.png" 2>/dev/null
+            art=$(xdotool search --name "^Artwork sources$" 2>/dev/null | head -1)
+            art_alive=no; kill -0 "$APP" 2>/dev/null && art_alive=yes
+            check "Artwork sources screen opens and the app keeps running" '[ "$art_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$art" ]'
+            if [ -n "$art" ]; then
+                eval "$(xdotool getwindowgeometry --shell "$art")"; AX=$X; AY=$Y
+                xdotool mousemove $((AX + 100)) $((AY + 63 + 42 * 9)) click 1; sleep 1.5
+                check "Back leaves Artwork sources for Settings" '[ -z "$(xdotool search --name "^Artwork sources$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings$" 2>/dev/null)" ]'
+                eval "$(xdotool getwindowgeometry --shell "$win")"
+            fi
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
             xdotool mousemove $((X + 71)) $((Y + 310)) click 1; sleep 2
             import -window root "$OUT/game-files.png" 2>/dev/null

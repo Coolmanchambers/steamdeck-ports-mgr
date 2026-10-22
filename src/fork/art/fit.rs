@@ -213,6 +213,37 @@ pub fn fit_icon_keep_size(source: &DynamicImage) -> Result<Fitted, FitError> {
     fit(Slot::Icon, source)
 }
 
+/// How much a `w` x `h` source would have to be enlarged to fill `slot` (1.0 or less: none). A source
+/// whose answer is above [`MAX_UPSCALE`] is refused by [`fit`]; callers use this to skip such a
+/// candidate before downloading it. A logo has no size to reach, so only a tiny one counts as "too
+/// small" (reported as a large factor).
+pub fn upscale_needed(slot: Slot, w: u32, h: u32) -> f64 {
+    if w == 0 || h == 0 {
+        return f64::INFINITY;
+    }
+    let (tw, th) = (f64::from(slot.size().0), f64::from(slot.size().1));
+    let (w, h) = (f64::from(w), f64::from(h));
+    match slot {
+        Slot::Portrait => f64::min(tw / w, th / h),
+        Slot::Wide | Slot::Hero => f64::max(tw / w, th / h),
+        Slot::Logo => {
+            if w.max(h) < f64::from(LOGO_MIN_SIDE) {
+                f64::from(LOGO_MIN_SIDE) / w.max(h)
+            } else {
+                1.0
+            }
+        }
+        Slot::Icon => {
+            let (long, short) = (w.max(h), w.min(h));
+            if long / short <= ICON_CROP_MAX_RATIO {
+                tw / short
+            } else {
+                tw / long
+            }
+        }
+    }
+}
+
 fn check_scale(slot: Slot, w: u32, h: u32, scale: f64) -> Result<(), FitError> {
     if scale > MAX_UPSCALE + 1e-9 {
         Err(FitError::TooSmall { slot, width: w, height: h, scale })
@@ -226,7 +257,8 @@ fn scaled(w: u32, h: u32, scale: f64) -> (u32, u32) {
     (((f64::from(w) * scale).round() as u32).max(1), ((f64::from(h) * scale).round() as u32).max(1))
 }
 
-fn has_transparency(img: &RgbaImage) -> bool {
+/// True when any pixel is not fully opaque.
+pub fn has_transparency(img: &RgbaImage) -> bool {
     img.pixels().any(|p| p[3] < 255)
 }
 
@@ -378,6 +410,26 @@ mod tests {
 
     fn dims(f: &Fitted) -> (u32, u32) {
         f.image.dimensions()
+    }
+
+    #[test]
+    fn upscale_needed_matches_what_fit_accepts() {
+        for (slot, w, h) in [
+            (Slot::Portrait, 399, 598),
+            (Slot::Portrait, 400, 600),
+            (Slot::Hero, 1280, 413),
+            (Slot::Hero, 1920, 620),
+            (Slot::Wide, 600, 280),
+            (Slot::Logo, 40, 40),
+            (Slot::Logo, 64, 64),
+            (Slot::Icon, 300, 300),
+            (Slot::Icon, 600, 900),
+        ] {
+            let accepted = fit(slot, &solid(w, h, [9, 9, 9, 255])).is_ok();
+            let predicted = upscale_needed(slot, w, h) <= MAX_UPSCALE + 1e-9;
+            assert_eq!(accepted, predicted, "{slot:?} {w}x{h}");
+        }
+        assert!(upscale_needed(Slot::Hero, 0, 5).is_infinite());
     }
 
     #[test]

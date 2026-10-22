@@ -1,0 +1,30 @@
+{
+  "header": { "APIversion": "2.0", "dateTime": "2026-10-21 12:00:00", "commandRequested": "fixture", "success": "true", "error": "" },
+  "response": {
+    "serveurs": { "cpu1": "10", "threadsmin": "0", "nbscrapeurs": "5", "apiacces": "30" },
+    "ssuser": {
+      "id": "fixtureuser", "niveau": "1", "contribution": "0", "uploadsysteme": "0", "uploadinfos": "0", "romasso": "0", "uploadmedia": "0",
+      "propositionok": "0", "propositionko": "0", "quotarefu": "0", "maxthreads": "1", "maxdownloadspeed": "128",
+      "requeststoday": "12", "requestskotoday": "0", "maxrequestspermin": "60", "maxrequestsperday": "20000", "maxrequestskoperday": "2000",
+      "visites": "3", "datedernierevisite": "2026-10-20 10:00:00", "favregion": "usa"
+    },
+    "jeu": {
+      "id": "777001",
+      "romid": "555",
+      "notgame": "false",
+      "noms": [ { "region": "jp", "text": "Zeruda no Densetsu Fixture" }, { "region": "us", "text": "The Legend of Fixture: Test of Time" } ],
+      "systeme": { "id": "14", "text": "Nintendo 64" },
+      "medias": [
+        { "type": "box-2D", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=box-2D(eu)&hd=0&region=eu&num=&version=&maxwidth=&maxheight=", "region": "eu", "crc": "00000001", "md5": "aa", "sha1": "bb", "size": "1000", "format": "png" },
+        { "type": "box-2D", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=box-2D(us)&hd=0&region=us&num=&version=&maxwidth=&maxheight=", "region": "us", "crc": "00000002", "md5": "aa", "sha1": "bb", "size": "1000", "format": "png" },
+        { "type": "wheel", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=wheel(wor)&hd=0&region=wor&num=&version=&maxwidth=&maxheight=", "region": "wor", "format": "png" },
+        { "type": "wheel-hd", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=wheel-hd(wor)&hd=1&region=wor&num=&version=&maxwidth=&maxheight=", "region": "wor", "format": "png" },
+        { "type": "fanart", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=fanart&hd=0&region=&num=&version=&maxwidth=&maxheight=", "format": "jpg" },
+        { "type": "ss", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=ss&hd=0&region=wor&num=&version=&maxwidth=&maxheight=", "region": "wor", "format": "png" },
+        { "type": "steamgrid", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=steamgrid&hd=0&region=wor&num=&version=&maxwidth=&maxheight=", "region": "wor", "format": "png" },
+        { "type": "video", "parent": "jeu", "url": "https://www.screenscraper.fr/image.php?gameid=777001&media=video&hd=0&region=wor&num=&version=&maxwidth=&maxheight=", "region": "wor", "format": "mp4" },
+        { "type": "box-2D", "parent": "jeu", "url": "https://evil.example/box.png", "region": "wor", "format": "png" }
+      ]
+    }
+  }
+}

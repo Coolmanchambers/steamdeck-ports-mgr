@@ -75,6 +75,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `src/app/install_launch.rs` | `launch_flow` refuses while the port's install slot is held (install, update or save restore), so a tray recent-games click cannot start a game mid-restore (upstream had the same hole for installs) |
 | 2026-10-22 | `src/main.rs` | Window Close (when it quits) and tray Quit wait for a running save restore (`save_restore_screen::quit_waits_for_restore`); the footer Update is refused during one |
 | 2026-10-22 | `README.md` | Item 6 now reads "Save backups before every update, and restoring a backup" (still "Testing") |
+| 2026-10-21 | `src/app/dialogs.rs` | One Settings entry, "Artwork sources..." (list, labels and the menu match; English text), and `build_text_entry_dialog`: the existing search dialog used as a one-line text box with rows under it (Save, Remove, Cancel), for pasting a key. About 35 lines |
+| 2026-10-21 | `ui/dialogs/picker.slint` | `SearchListDialog` gets `in property <bool> password` and sets the text box's `input-type` from it, so a ScreenScraper password shows as dots. Two lines; no change while the property is false |
+| 2026-10-21 | `src/app/mod.rs` | One line registering `art_screens` |
+| 2026-10-21 | `.gitignore` | `secrets.json` added to the Secrets block (it holds the user's API keys; it is never committed) |
 
 Files added by this fork:
 
@@ -91,6 +95,8 @@ Files added by this fork:
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it. A failed check prints the copy count, the processes under the test folder and the log tail (since 2026-10-21) |
 | 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-21 | `tools/test-app-update.sh` | Offline in-app update test: the packaged app, started from an old copy (marker appended to the program, old `BUILD_INFO`), runs Settings > Force update from the UI against a fake release on `file://`; checks the swap, `.previous/`, the restart on the new file and that saves, catalogs and state survive, then a tampered-checksum case (nothing changes, `update-failed.txt`, app reopens). CI runs it after the smoke test and blocks the release on failure |
+| 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it |
+| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), opens Settings > Artwork sources and its Back row, and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-20 | `tools/deck_ready_index.py` | Builds the Deck-ready list (see below) |
 | 2026-10-20 | `tools/test_deck_ready_index.py` | Offline tests for the builder |
 | 2026-10-20 | `.github/workflows/deck-ready-index.yml` | Weekly refresh of the Deck-ready list |
@@ -104,6 +110,13 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/art/fit.rs` | Fits any image into a Steam art slot: portrait 600x900 (contain over a blurred copy), wide 920x430 and hero 1920x620 (cover-crop), logo inside 1280x720 (alpha kept), icon 512x512; refuses sources needing more than 1.5x enlargement |
 | 2026-10-21 | `src/fork/art/grid.rs` | Writes slot images into `config/grid/` through `place_artwork`; provenance manifest `.dpm-art-manifest.json`; never overwrites art the user chose; writes the logo position file once |
 | 2026-10-21 | `src/fork/art/catalog.rs` | Turns a catalog entry's cached `image` and `icon` into the portrait and icon slots |
+| 2026-10-21 | `src/fork/secrets.rs` | `secrets.json` next to the app: the user's SteamGridDB key, optional TheGamesDB key and ScreenScraper login. Mode 0600, atomic, masked, never logged; plus `BuildCreds`, the developer credentials a build may carry (`option_env!`) |
+| 2026-10-21 | `src/fork/art/net.rs` | `Fetch`: the one door for art HTTP (the app's https-only helper), response limits, URL encoding, host allow-lists, secret redaction, and the scripted fake the tests use |
+| 2026-10-21 | `src/fork/art/sgdb.rs`, `tgdb.rs`, `screenscraper.rs` | The three source clients: SteamGridDB v2, TheGamesDB v1, ScreenScraper v2 (hash lookup, name fallback, error codes and back-off) |
+| 2026-10-21 | `src/fork/art/source.rs`, `title.rs`, `cache.rs` | Source ids and errors, the saved per-source state (last problem, back-off), same-title matching, and the on-disk id table and image cache under `cache/art/` |
+| 2026-10-21 | `src/fork/art/resolve.rs` | The resolver: per-slot priority across catalog, SteamGridDB, TheGamesDB and ScreenScraper, id overrides, composed art flagged `generated`, `art_for_port` for the screens |
+| 2026-10-21 | `src/fork/art/screen.rs`, `src/app/art_screens.rs` | The "Artwork sources" screen: rows, status, Test key, Fetch artwork, credits (logic tested without UI; the app file draws it) |
+| 2026-10-21 | `src/fork/art/fixtures/` | Saved example answers from the three sources, made up to match their documented shapes (no real keys, ids or images), used by the tests |
 | 2026-10-21 | `src/fork/steam_user.rs` | Reads `config/loginusers.vdf` (text KeyValues), lists the accounts that have a `userdata` folder and picks the saved one, else `MostRecent`, else the only one |
 | 2026-10-21 | `src/fork/backups.rs` | Prunes `shortcuts.vdf.bak-<stamp>` files: newest N kept (at least 1), nothing under an hour old, nothing else in the folder |
 | 2026-10-21 | `src/fork/settings.rs` | `fork-settings.json` (next to `state.json`): chosen Steam account, extra adopt scan folders, backups to keep, the self-update offer (`get`/`set`). Other keys survive a save |
@@ -449,6 +462,78 @@ Library only; nothing calls it yet and nothing here downloads anything. Document
   slot whose image is not the slot's size.
 - **Not verified:** that Steam shows the art on a Deck (and whether it needs a restart), that Steam's `icon` field
   accepts a 256 px PNG path, and what Steam does with a slot left empty.
+
+## Online art sources and credentials (`src/fork/art/`, `src/fork/secrets.rs`)
+
+Settings > **Artwork sources...** fills Steam's hero, logo and wide slots (and, when the catalog has no usable
+image, the portrait and icon) from SteamGridDB, TheGamesDB and ScreenScraper. Source credits are in that screen
+("Credits and what each source does") and in `STEAM_DECK.md`.
+
+**Credentials, and the rule behind them.** Keys are never committed and never compiled into a public build unless a
+build injects them from CI secrets later.
+
+- **User keys** live in `secrets.json` beside `state.json`, not in it (bug reports ask users to send `state.json`):
+  `steamgriddb_api_key`, `thegamesdb_api_key` (optional), `screenscraper_ssid` and `screenscraper_sspassword`
+  (optional). Created with mode 0600, written through a temp file that already has that mode and renamed (atomic), an
+  existing file with wider permissions is tightened on load, a file that is not a JSON object is never overwritten. The
+  screen shows only the last four characters; `Debug` output hides every value; no error text, note or saved file
+  carries a key (tests plant keys and search every saved file and message). Nothing exports or reports the file.
+  `secrets.json` is in `.gitignore`, and the updater never touches it.
+- **Developer credentials** (ScreenScraper's `devid`, `devpassword`, `softname`; an app TheGamesDB key) come only from
+  `option_env!` values read at compile time: `DPM_SS_DEVID`, `DPM_SS_DEVPASSWORD`, `DPM_SS_SOFTNAME`,
+  `DPM_TGDB_APIKEY`. No build sets them today, so ScreenScraper says "not configured in this build" and TheGamesDB
+  works only with the user's own key. **To add them later:** register the app with each service, store the values as
+  GitHub Actions secrets, and set them as environment variables on the compile step only (`DPM_SS_DEVID: ${{ secrets.X }}`
+  under that step's `env:`). Do not echo them, do not put them in a step summary, and keep logs of that step quiet;
+  anything in a shipped binary can be extracted, so treat them as low value. `src/fork/secrets.rs` has a test that fails
+  the day a build starts carrying them, so the change is deliberate.
+
+**What each source does.**
+
+- **SteamGridDB** (user key, Bearer header): title search, then grids, heroes, logos and icons by game id with the slot's
+  `dimensions`, `types=static` (no animated art), `nsfw`, `humor` and `epilepsy` all off. 401 and 403 mean a bad key,
+  404 no such game, 429 slow down. No published rate limit; the resolver makes a handful of calls per port, one at a time.
+- **TheGamesDB** (`apikey` in the query): `ByGameID` (or an exact-title `ByGameName` on the PC platform), `Images`. Takes
+  the `original` file when its `resolution` is big enough (the `large` size is upscaled from small originals), skips images
+  that would need more than 1.5x enlargement, reads `remaining_monthly_allowance` and `extra_allowance` from every answer
+  and stops at zero. 403 means a bad key or a spent allowance. Never asked without an id or a key.
+- **ScreenScraper** (`jeuInfos.php` by ROM hash + size + system id from the ROM library's scan, `jeuRecherche.php` by the
+  ROM's file name as a fallback, same-title only): honors 401 (closed or saturated, 10 min), 403 (developer credentials
+  refused), 423 (closed, 1 h), 426 (app blocked, 1 day), 429 (thread limit: waits once, retries, then 60 s), 430 (daily quota,
+  until 00:00 UTC), 431 (too many unknown ROMs, until 00:00 UTC). One request at a time with a 1.2 s pause, which is within
+  every account's thread limit (`maxthreads` is read for display only). Used only for a port with a hash-confirmed ROM in the
+  ROM library. System ids are from memory of ScreenScraper's list (N64 is 14): unverified until a credentialed call.
+
+**Per-slot priority** (`resolve.rs` module docs has the table): portrait and icon from the catalog first; wide, hero and
+logo from SteamGridDB, then TheGamesDB, then ScreenScraper; an image that already has the slot's shape beats one that has to
+be cropped or padded whatever its source; what remains is composed by `fit` and flagged `generated` in
+`.dpm-art-manifest.json`. A wide capsule with no source of its own is cropped from the hero. A logo needs real
+transparency (a `wheel` with none is refused) and is never composed. ScreenScraper's `steamgrid` type is taken for the wide
+capsule only when the downloaded image already has 920x430 proportions (its shape is not documented).
+
+**Game ids.** A port's SteamGridDB id can be set per port as `sgdb_id` (and `tgdb_id`) in its `ports.local.json` entry,
+number or numeric string. Otherwise the id table `cache/art/ids.json` remembers what a title search found. A search result is
+used on its own only when it is the same title (case, punctuation, "the", and trailing "(...)" ignored). A look-alike
+("Sonic Unleashed" for "Sonic Unleashed Recompiled") is saved as a candidate, mentioned in a note, listed under "Look-alike
+matches waiting" and never used until the user sets `sgdb_id` or `Session::confirm_match` is called. A search that found
+nothing usable is not repeated for 3 days.
+
+**Cache** (`cache/art/`, in the app's cache folder, never the repo): `ids.json`, `state.json` (last problem and back-off per
+source, no keys, no addresses), `images/<source>/<game id>-<slot>.img` plus a `.json` (downloaded as is, reused for 90 days,
+oldest trimmed past 300 MB) and `.none` markers (a slot a source had nothing for, believed for 3 days). Source images are
+never committed, bundled or released.
+
+**Wiring.** The resolver is reached through `art::resolve::art_for_port` (one call, same `set` and `problems` shape as
+`catalog_art_from_files`) or `Session::resolve_port` for a batch. With no source set up it returns exactly the catalog art.
+The screen's "Fetch artwork for installed ports now" runs a batch on a worker thread and fills the cache and the id
+table; `Mode::CacheOnly` then places that art without any network call. The Add to Steam apply step still calls
+`catalog_art_from_files` until its call site is switched (see `HANDOFF.md`).
+
+**Limits and not verified.** The three clients are written to the documented API shapes and tested only against saved
+example answers; nothing here has run against a live key (no key was available to the builders). Not verified: ScreenScraper's
+JSON field names and system ids, TheGamesDB's `API/Limit` endpoint, that `types=static` leaves no animated art, that Steam
+shows the art, and how the Steam on-screen keyboard behaves with the key box in Game Mode. Animated art is off. Videos are
+never fetched. Fetching uses the calling thread's time: about 3 to 8 requests per port.
 
 ## What still comes from upstream at runtime
 

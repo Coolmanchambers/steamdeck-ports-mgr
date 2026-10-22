@@ -1,0 +1,32 @@
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "count": 1,
+    "base_url": {
+      "original": "https://cdn.thegamesdb.net/images/original/",
+      "small": "https://cdn.thegamesdb.net/images/small/",
+      "thumb": "https://cdn.thegamesdb.net/images/thumb/",
+      "cropped_center_thumb": "https://cdn.thegamesdb.net/images/cropped_center_thumb/",
+      "medium": "https://cdn.thegamesdb.net/images/medium/",
+      "large": "https://cdn.thegamesdb.net/images/large/"
+    },
+    "images": {
+      "900100": [
+        { "id": 1, "type": "boxart", "side": "front", "filename": "boxart/front/900100-1.jpg", "resolution": "581x732" },
+        { "id": 2, "type": "boxart", "side": "back", "filename": "boxart/back/900100-1.jpg", "resolution": "600x900" },
+        { "id": 3, "type": "fanart", "side": null, "filename": "fanart/original/900100-1.jpg", "resolution": "3083x1734" },
+        { "id": 4, "type": "banner", "side": null, "filename": "banners/900100-1.jpg", "resolution": "1800x900" },
+        { "id": 5, "type": "banner", "side": null, "filename": "banners/900100-2.jpg", "resolution": "1920x620" },
+        { "id": 6, "type": "clearlogo", "side": null, "filename": "clearlogo/900100.png", "resolution": "2927x3009" },
+        { "id": 7, "type": "clearlogo", "side": null, "filename": "clearlogo/900100-2.png", "resolution": "1221x1257" },
+        { "id": 8, "type": "screenshot", "side": null, "filename": "screenshots/900100-1.jpg", "resolution": "1920x1080" },
+        { "id": 9, "type": "fanart", "side": null, "filename": "fanart/original/900100-2.jpg", "resolution": "320x180" }
+      ]
+    }
+  },
+  "pages": { "previous": null, "current": 1, "next": null },
+  "remaining_monthly_allowance": 985,
+  "extra_allowance": 10,
+  "allowance_refresh_timer": 2498000
+}

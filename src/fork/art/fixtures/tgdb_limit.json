@@ -1,0 +1,8 @@
+{
+  "code": 200,
+  "status": "Success",
+  "data": { "count": 1 },
+  "remaining_monthly_allowance": 640,
+  "extra_allowance": 0,
+  "allowance_refresh_timer": 1000000
+}
