@@ -295,15 +295,17 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   (`save`, `save2`) each holds. The zip's table of contents is read directly (no unpacking); a zip
   that cannot be read, holds a name with `..`, a leading `/` or `\`, a drive letter, or a link entry is
   listed as "cannot be used".
-- **Which save folder:** a plain relative path inside the game folder (no `%VARIABLE%`, no `~`, no
-  drive letter, no leading `/` or `\`) counts on every system, also when the catalog lists it only
-  under `windows` (coordinator ruling 2026-10-22); on Linux its `\` separators become `/`.
-  Everything else goes through the app's own resolver (`resolve_save_folder`) plus our own guard so it
-  never guesses: a per-system value whose only entries are real paths for other systems (a Windows
-  drive or `%VARIABLE%` path, an Android path), a `%VARIABLE%` left after expansion, or (on Linux) a
-  Windows-style path means "no save folder known for Linux", and no restore is offered. Also refused: the game folder itself or anything holding it, a relative path leading out
-  of the game folder, the home folder or anything above it, anything overlapping `Saves Backup`, and a
-  path with fewer than two folder levels.
+- **Which save folder:** backup and restore share one resolver, `platform_resolve::save_location`
+  (O1), so a restore puts files back in the folder the backup read them from. Its rules: a plain
+  relative folder inside the game counts on every system, also when the catalog lists it only under
+  `windows`, and on Linux its `\` separators become `/`; a value naming only another system's real
+  path (a Windows drive or `%VARIABLE%` path, an Android path) or a `%VARIABLE%` not set here is
+  "unknown on Linux", shown as "no save folder known for Linux", and no restore is offered; an empty
+  value "does not say where it keeps its saves". On top of it the restore refuses only folders that
+  are far too broad: the game folder itself or anything holding it, a relative path leading out of
+  the game folder, the home folder or anything above it, anything overlapping `Saves Backup`, and a
+  path with fewer than two folder levels. A contract test runs `backup_before_update`, the list and a
+  restore for `{"windows": "saves\\slots"}` and `"save\\card0"`.
 - **Order of a restore:** refuse while the port's game runs: the app's own record of a game it
   started, and on Linux any process whose program file or working folder (`/proc/<pid>/exe`, `cwd`)
   is inside the game folder or a save folder (the refusal names it). Also refused while the port

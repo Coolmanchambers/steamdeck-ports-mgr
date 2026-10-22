@@ -14,11 +14,11 @@
 //! swap succeeded are the old folders removed. Names in the zip are checked before 7-Zip sees the
 //! file, so an entry like `../x` or `/x` refuses the whole backup.
 //!
-//! A save folder is only used when it is known for this system. A plain relative path inside the game
-//! folder counts on every system, even when the catalog lists it only under `windows`. A value that only
-//! names a real location on another system (a Windows drive or `%VARIABLE%` path, an Android path), or
-//! still holds a `%VARIABLE%` after expansion, means "no save folder known", and nothing is offered
-//! rather than a guess.
+//! Save folders come from the app's own resolver (`platform_resolve::save_location`), the one the
+//! backups use: a plain relative folder inside the game counts on every system (its `\` become `/` on
+//! Linux), even when the catalog lists it only under `windows`; a value that only names a real location
+//! on another system, or a `%VARIABLE%` not set here, is "no save folder known", and nothing is offered
+//! rather than a guess. This module only adds guards against replacing something far too broad.
 
 pub mod running;
 pub mod view;
@@ -27,7 +27,7 @@ pub mod zip_index;
 use crate::core::installer::{run_7z, sevenzip_exe_path};
 use crate::core::models::Port;
 use crate::core::path_safety::{is_within, safe_join};
-use crate::core::platform_resolve::{expand_env_path, get_platform_key, resolve_per_platform, resolve_save_folder};
+use crate::core::platform_resolve::{save_location, SaveLocation};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -117,82 +117,19 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// `%NAME%` left in a path after expansion: the variable is not set on this system.
-fn has_unexpanded_variable(text: &str) -> bool {
-    let mut rest = text;
-    while let Some(start) = rest.find('%') {
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('%') else { return false };
-        let name = &after[..end];
-        if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return true;
-        }
-        rest = &after[end..];
-    }
-    false
-}
-
-/// A Windows-style path (`C:...` or backslashes) cannot be a save folder on Linux.
-fn looks_like_windows_path(text: &str) -> bool {
-    let b = text.as_bytes();
-    cfg!(not(windows)) && (text.contains('\\') || (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()))
-}
-
-/// A plain path inside the game folder: no `%VAR%`, no `~`, no drive letter, no leading `/` or `\`.
-fn is_plain_relative(s: &str) -> bool {
-    let b = s.as_bytes();
-    !s.is_empty() && !s.contains('%') && !s.starts_with(['~', '/', '\\']) && !(b.len() >= 2 && b[1] == b':') && !Path::new(s).is_absolute()
-}
-
-/// A save value that is a plain relative path counts on every system (coordinator ruling 2026-10-22), also
-/// when the catalog only lists it under `windows`. Returned with `/` separators off Windows.
-fn os_neutral_relative(value: &Value) -> Option<String> {
-    let s = match value {
-        Value::String(s) => s.as_str(),
-        Value::Object(obj) => match obj.get(get_platform_key()).and_then(Value::as_str).filter(|s| !s.is_empty()) {
-            Some(own) => own,
-            None => obj.get("windows").and_then(Value::as_str)?,
-        },
-        _ => return None,
-    };
-    is_plain_relative(s).then(|| if cfg!(windows) { s.to_string() } else { s.replace('\\', "/") })
-}
-
-/// Null, "" or a per-system object whose entry for this system (or, without one, every entry) is empty.
-fn is_empty_value(value: &Value) -> bool {
-    let blank = |v: &Value| v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty());
-    match value {
-        Value::Object(obj) => match obj.get(get_platform_key()) {
-            Some(own) => blank(own),
-            None => obj.values().all(blank),
-        },
-        other => blank(other),
-    }
-}
-
+/// Where a save value points, from the app's own resolver (`save_location`), the same one the backups
+/// use, so a backup and its restore always mean the same folder. On top of it only the guards against
+/// replacing something far too broad.
 fn resolve_target(value: &Value, game_dir: &Path, saves_backup_dir: &Path, home: Option<&Path>) -> Target {
-    if is_empty_value(value) {
-        return Target::NotListed;
-    }
-    let (path, from_relative) = if let Some(rel) = os_neutral_relative(value) {
-        (normalize(&game_dir.join(rel)), true)
-    } else {
-        // A per-system object with no entry for this system: do not borrow another system's real path
-        // (a Windows drive or %VAR% path, an Android path).
-        if let Some(obj) = value.as_object() {
-            if !obj.get(get_platform_key()).and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
-                return Target::NotForThisSystem;
-            }
-        }
-        let Some(path) = resolve_save_folder(value, game_dir) else { return Target::NotForThisSystem };
-        let text = path.to_string_lossy();
-        if has_unexpanded_variable(&text) || looks_like_windows_path(&text) {
-            return Target::NotForThisSystem;
-        }
-        let raw = resolve_per_platform(value).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-        (normalize(&path), !expand_env_path(&raw).is_absolute())
+    let raw = match save_location(value, game_dir) {
+        SaveLocation::Known(path) => path,
+        SaveLocation::NotListed => return Target::NotListed,
+        SaveLocation::UnknownOnLinux => return Target::NotForThisSystem,
     };
-    if from_relative && !is_within(&path, game_dir) {
+    // A relative value is joined to the game folder, so it starts with it; after `..` it must stay inside.
+    let from_game_folder = raw.starts_with(game_dir);
+    let path = normalize(&raw);
+    if from_game_folder && !is_within(&path, game_dir) {
         return Target::Refused("points outside the game folder".into());
     }
     if is_within(game_dir, &path) {

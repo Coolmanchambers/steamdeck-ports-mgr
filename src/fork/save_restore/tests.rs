@@ -149,23 +149,39 @@ fn an_unreadable_backup_is_listed_with_its_problem() {
 #[test]
 fn a_port_with_no_save_folder_for_this_system_gets_no_target() {
     let fx = Fixture::new();
-    let only_other_system = port("A", Some(json!({"android": "/sdcard/A/saves"})), None);
-    let unset_variable = port("B", Some(json!("%DPM_TEST_UNSET_VARIABLE%/B/saves")), None);
-    for p in [&only_other_system, &unset_variable] {
-        let targets = save_targets(p, &fx.game_dir(p), &fx.saves_backup, None);
-        assert_eq!(targets, vec![SaveTarget { field: SaveField::Save, target: Target::NotForThisSystem }], "{}", p.folder);
-    }
-    // Not a guess either: a Windows-only path on Linux.
-    #[cfg(not(windows))]
-    {
-        let windows_only = port("C", Some(json!({"windows": "%APPDATA%\\C"})), None);
-        let windows_plain = port("D", Some(json!("C:\\Games\\D\\saves")), None);
-        for p in [&windows_only, &windows_plain] {
-            let targets = save_targets(p, &fx.game_dir(p), &fx.saves_backup, None);
-            assert_eq!(targets[0].target, Target::NotForThisSystem, "{}", p.folder);
-        }
+    // Through the app's own resolver (O1's rules), which only refuses other systems' paths on Linux.
+    #[cfg(target_os = "linux")]
+    for value in [json!({"android": "/sdcard/A/saves"}), json!("%DPM_TEST_UNSET_VARIABLE%/B/saves"), json!({"windows": "%APPDATA%\\C"}), json!({"windows": "C:\\Games\\D"})] {
+        let p = port("A", Some(value.clone()), None);
+        let targets = save_targets(&p, &fx.game_dir(&p), &fx.saves_backup, None);
+        assert_eq!(targets, vec![SaveTarget { field: SaveField::Save, target: Target::NotForThisSystem }], "{value}");
     }
     assert!(save_targets(&port("E", None, None), &fx.root, &fx.saves_backup, None).is_empty());
+}
+
+/// Backup and restore resolve the save folder through the same function, so what an update backed up
+/// is put back in the same folder, also for in-game folders written with `\`.
+#[test]
+fn a_backup_made_before_an_update_restores_into_the_folder_it_came_from() {
+    for (folder, value, parts) in [("WinRel", json!({"windows": "saves\\slots"}), ["saves", "slots"]), ("PlainRel", json!("save\\card0"), ["save", "card0"])] {
+        let fx = Fixture::new();
+        let game = port(folder, Some(value.clone()), None);
+        let dir = fx.game_dir(&game);
+        let save = dir.join(parts[0]).join(parts[1]);
+        fill_saves(&save, 1);
+        let original = snapshot(&save);
+        fx.update_backup(&game, "2026-10-20_12-00-00");
+        fill_saves(&save, 2);
+        write(&save.join("since.sav"), b"after the backup");
+
+        let backup = list_backups(&fx.saves_backup, folder).into_iter().find(|b| b.kind == BackupKind::BeforeUpdate).unwrap();
+        assert_eq!(backup.fields, vec![SaveField::Save], "{value}");
+        assert_eq!(backup.files, original.len(), "{value}");
+        restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap();
+        assert_eq!(snapshot(&save), original, "{value}");
+        let stray: Vec<String> = fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.contains('\\')).collect();
+        assert!(stray.is_empty(), "{value}: {stray:?}");
+    }
 }
 
 #[test]
@@ -176,7 +192,9 @@ fn a_windows_only_relative_save_folder_counts_on_every_system_and_restores() {
     let targets = save_targets(&game, &dir, &fx.saves_backup, None);
     let save = dir.join("saves").join("slots");
     assert_eq!(targets[0].target, Target::Folder(save.clone()));
-    assert!(matches!(targets[1].target, Target::Refused(_)), "{:?}", targets[1].target);
+    // Leading out of the game folder: never a folder to restore into (O1 calls it unknown on Linux; the
+    // outside-the-game-folder guard refuses it on Windows).
+    assert!(matches!(targets[1].target, Target::Refused(_) | Target::NotForThisSystem), "{:?}", targets[1].target);
     let dot = port("DotGame", Some(json!({"windows": "."})), None);
     assert!(matches!(save_targets(&dot, &fx.game_dir(&dot), &fx.saves_backup, None)[0].target, Target::Refused(_)));
 
