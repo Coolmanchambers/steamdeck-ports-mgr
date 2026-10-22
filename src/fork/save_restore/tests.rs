@@ -319,7 +319,8 @@ fn restore_is_refused_while_the_game_runs() {
     let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
     let mut input = fx.input(&game, &dir, &backup, "s");
     input.game_running = true;
-    assert_eq!(restore(&input, &mut |_| {}).unwrap_err(), RestoreError::GameRunning);
+    let err = restore(&input, &mut |_| {}).unwrap_err();
+    assert!(matches!(&err, RestoreError::GameRunning(what) if what.contains("started from this app")), "{err:?}");
     assert_eq!(snapshot(&save), later);
     assert!(!fx.saves_backup.join(RESTORE_BACKUPS_DIR).exists(), "no safety backup either");
 }
@@ -506,4 +507,212 @@ fn plan_says_which_folders_are_skipped_and_why() {
     let plan = plan_restore(&targets, &backup);
     assert_eq!(plan.replace, vec![(SaveField::Save, PathBuf::from("/x/save"))]);
     assert_eq!(plan.skipped, vec![(SaveField::Save2, format!("no save folder known for {}", system_name()))]);
+}
+
+// -- Review follow-ups -----------------------------------------------------------------------------
+
+const CENTRAL: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+
+/// Byte offsets of every central directory entry in a zip written by `write_stored_zip`.
+fn central_entries(bytes: &[u8]) -> Vec<usize> {
+    bytes.windows(4).enumerate().filter(|(_, w)| *w == CENTRAL).map(|(i, _)| i).collect()
+}
+
+/// A port with `Save`, an update backup of `fill_saves(1)`, and later saves `fill_saves(3)` on disk.
+fn played_on(fx: &Fixture) -> (Port, PathBuf, PathBuf) {
+    let game = port("MyGame", Some(json!("Save")), None);
+    let dir = fx.game_dir(&game);
+    let save = dir.join("Save");
+    fill_saves(&save, 1);
+    fx.update_backup(&game, "2026-10-20_12-00-00");
+    fill_saves(&save, 3);
+    write(&save.join("since.sav"), b"saved after the backup");
+    (game, dir, save)
+}
+
+fn staging_left(fx: &Fixture) -> Vec<String> {
+    fs::read_dir(&fx.saves_backup)
+        .map(|r| r.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("_restore_")).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_link_entry_refuses_the_backup_end_to_end() {
+    let fx = Fixture::new();
+    let (game, dir, save) = played_on(&fx);
+    let later = snapshot(&save);
+    let zip = fx.saves_backup.join(UPDATE_BACKUPS_DIR).join("MyGame").join("2026-10-22_08-00-00.zip");
+    write_stored_zip(&zip, &[("save_folder/slot1.sav", b"from the zip"), ("save_folder/link", b"/etc/passwd")]);
+    let mut bytes = fs::read(&zip).unwrap();
+    let cd = central_entries(&bytes)[1];
+    bytes[cd + 5] = 3; // made by: Unix
+    bytes[cd + 38..cd + 42].copy_from_slice(&(0o120_777u32 << 16).to_le_bytes());
+    fs::write(&zip, bytes).unwrap();
+
+    let backup = list_backups(&fx.saves_backup, "MyGame").into_iter().find(|b| b.name == "2026-10-22_08-00-00").unwrap();
+    assert!(backup.problem.as_deref().is_some_and(|p| p.contains("link")), "{:?}", backup.problem);
+    let mut stale = backup.clone();
+    stale.problem = None;
+    let err = restore(&fx.input(&game, &dir, &stale, "s"), &mut |_| {}).unwrap_err();
+    assert!(matches!(err, RestoreError::UnusableBackup(_)), "{err:?}");
+    assert_eq!(snapshot(&save), later);
+    assert!(!fx.saves_backup.join(RESTORE_BACKUPS_DIR).exists());
+}
+
+#[test]
+fn a_size_that_differs_from_the_table_refuses_the_restore_and_leaves_nothing() {
+    let fx = Fixture::new();
+    let (game, dir, save) = played_on(&fx);
+    let later = snapshot(&save);
+    let zip = fx.saves_backup.join(UPDATE_BACKUPS_DIR).join("MyGame").join("2026-10-22_08-00-00.zip");
+    write_stored_zip(&zip, &[("save_folder/slot1.sav", b"twelve bytes")]);
+    let mut bytes = fs::read(&zip).unwrap();
+    let cd = central_entries(&bytes)[0];
+    bytes[cd + 24..cd + 28].copy_from_slice(&13u32.to_le_bytes()); // the table says 13, the data is 12
+    fs::write(&zip, bytes).unwrap();
+
+    let backup = list_backups(&fx.saves_backup, "MyGame").into_iter().find(|b| b.name == "2026-10-22_08-00-00").unwrap();
+    let err = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap_err();
+    assert!(matches!(err, RestoreError::Failed(_) | RestoreError::UnusableBackup(_)), "{err:?}");
+    assert_eq!(snapshot(&save), later);
+    assert!(leftovers_beside(&save).is_empty(), "{:?}", leftovers_beside(&save));
+    assert!(staging_left(&fx).is_empty(), "{:?}", staging_left(&fx));
+}
+
+#[test]
+fn when_the_second_swap_fails_the_first_folder_is_put_back() {
+    let fx = Fixture::new();
+    let game = port("MyGame", Some(json!("Save")), Some(json!("Save2")));
+    let dir = fx.game_dir(&game);
+    let (save, save2) = (dir.join("Save"), dir.join("Save2"));
+    fill_saves(&save, 1);
+    fill_saves(&save2, 2);
+    fx.update_backup(&game, "2026-10-20_12-00-00");
+    fill_saves(&save, 3);
+    write(&save2.join("new.sav"), b"new");
+    let (later1, later2) = (snapshot(&save), snapshot(&save2));
+
+    let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
+    FAIL_SWAP_AT.with(|f| f.set(Some(1)));
+    let result = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {});
+    FAIL_SWAP_AT.with(|f| f.set(None));
+    assert!(matches!(result, Err(RestoreError::Failed(_))), "{result:?}");
+    assert_eq!(snapshot(&save), later1, "the first folder was swapped, then put back");
+    assert_eq!(snapshot(&save2), later2);
+    assert!(leftovers_beside(&save).is_empty(), "{:?}", leftovers_beside(&save));
+    assert!(leftovers_beside(&save2).is_empty(), "{:?}", leftovers_beside(&save2));
+    assert!(staging_left(&fx).is_empty());
+}
+
+#[test]
+fn a_link_to_a_folder_inside_a_save_folder_keeps_the_old_folder() {
+    #[cfg(unix)]
+    {
+        let fx = Fixture::new();
+        let (game, dir, save) = played_on(&fx);
+        let elsewhere = fx.root.join("elsewhere");
+        write(&elsewhere.join("big.dat"), b"not ours to touch");
+        std::os::unix::fs::symlink(&elsewhere, save.join("linked")).unwrap();
+        let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
+        let done = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap();
+        let kept = done.folders[0].kept_old.clone().expect("the old folder is kept: its link was not in the safety zip");
+        assert!(fs::symlink_metadata(kept.join("linked")).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(elsewhere.join("big.dat")).unwrap(), b"not ours to touch");
+        assert!(!save.join("linked").exists());
+        assert!(view::done_text("MyGame", &done).contains("was kept at"));
+    }
+}
+
+#[test]
+fn hidden_files_and_empty_folders_come_back() {
+    let fx = Fixture::new();
+    let (game, dir, save) = played_on(&fx);
+    let zip = fx.saves_backup.join(UPDATE_BACKUPS_DIR).join("MyGame").join("2026-10-22_08-00-00.zip");
+    write_stored_zip(&zip, &[("save_folder/", b""), ("save_folder/.hidden", b"dot"), ("save_folder/empty/", b""), ("save_folder/sub/.cfg", b"c")]);
+    let backup = list_backups(&fx.saves_backup, "MyGame").into_iter().find(|b| b.name == "2026-10-22_08-00-00").unwrap();
+    restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap();
+    assert_eq!(snapshot(&save), BTreeMap::from([(".hidden".to_string(), b"dot".to_vec()), ("sub/.cfg".to_string(), b"c".to_vec())]));
+    assert!(save.join("empty").is_dir());
+}
+
+#[test]
+fn folders_left_by_an_interrupted_restore_are_reported_kept_and_do_not_block_a_restore() {
+    let fx = Fixture::new();
+    let (game, dir, save) = played_on(&fx);
+    let before = dir.join(".Save.before-restore-999");
+    let restoring = dir.join(".Save.restoring-999");
+    write(&before.join("slot1.sav"), b"saves from before the crash");
+    write(&restoring.join("slot1.sav"), b"half a copy");
+    write(&dir.join(".Other.before-restore-1/x"), b"belongs to another folder, not listed");
+
+    let targets = save_targets(&game, &dir, &fx.saves_backup, None);
+    let found = interrupted_restores(&targets);
+    assert_eq!(found.iter().map(|i| (i.path.clone(), i.holds_previous)).collect::<Vec<_>>(), vec![(before.clone(), true), (restoring.clone(), false)]);
+    assert!(view::interrupted_text(&found[0]).contains(&before.display().to_string()));
+    assert!(view::interrupted_row(&found[0]).starts_with("A restore was interrupted"));
+
+    let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
+    restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap();
+    assert_eq!(fs::read(before.join("slot1.sav")).unwrap(), b"saves from before the crash");
+    assert_eq!(fs::read(restoring.join("slot1.sav")).unwrap(), b"half a copy");
+    assert_eq!(leftovers_beside(&save).len(), 2, "only the two that were there");
+}
+
+#[test]
+fn stale_scratch_folders_are_swept_and_nothing_else() {
+    let fx = Fixture::new();
+    let fresh = fx.saves_backup.join("_restore_fresh");
+    let other = fx.saves_backup.join("_update_backup_x");
+    write(&fresh.join("a"), b"a");
+    write(&other.join("a"), b"a");
+    let now = SystemTime::now();
+    sweep_stale_staging(&fx.saves_backup, now);
+    assert!(fresh.exists(), "a scratch folder under a day old may belong to a running restore");
+    sweep_stale_staging(&fx.saves_backup, now + Duration::from_secs(2 * 24 * 60 * 60));
+    assert!(!fresh.exists());
+    assert!(other.exists(), "not ours");
+}
+
+#[test]
+fn an_empty_save_value_does_not_say_where_the_saves_are() {
+    let fx = Fixture::new();
+    for value in [json!(""), json!(null), json!({"linux": "", "windows": "%APPDATA%\\x"}), json!({"windows": ""})] {
+        let p = port("Empty", Some(value.clone()), None);
+        let targets = save_targets(&p, &fx.game_dir(&p), &fx.saves_backup, None);
+        // On Windows the object with a filled "windows" entry is that system's own value.
+        if !(cfg!(windows) && value.get("linux").is_some()) {
+            assert_eq!(targets[0].target, Target::NotListed, "{value}");
+        }
+    }
+    let p = port("Empty", Some(json!("")), None);
+    let targets = save_targets(&p, &fx.game_dir(&p), &fx.saves_backup, None);
+    assert!(view::nothing_restorable_text("Empty", &targets).contains("does not say where it keeps its saves"));
+}
+
+#[test]
+fn a_program_running_from_the_game_folder_refuses_the_restore() {
+    #[cfg(target_os = "linux")]
+    {
+        let fx = Fixture::new();
+        let (game, dir, save) = played_on(&fx);
+        let later = snapshot(&save);
+        let mut child = std::process::Command::new("sleep").arg("30").current_dir(&dir).spawn().unwrap();
+        let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
+        let result = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {});
+        let _ = child.kill();
+        let _ = child.wait();
+        let err = result.unwrap_err();
+        assert!(matches!(&err, RestoreError::GameRunning(what) if what.starts_with("sleep (process ")), "{err:?}");
+        assert!(err.to_string().contains("Quit it first"));
+        assert_eq!(snapshot(&save), later);
+        assert!(!fx.saves_backup.join(RESTORE_BACKUPS_DIR).exists());
+    }
+}
+
+#[test]
+fn a_known_full_drive_is_a_reason_to_refuse_and_an_unknown_one_is_not() {
+    let place = Path::new("/x");
+    assert!(space_problem(1_000, None, place).is_none());
+    assert!(space_problem(1_000, Some(u64::MAX), place).is_none());
+    assert!(space_problem(1_000, Some(1_000), place).is_some_and(|p| p.contains("not enough free space")));
 }

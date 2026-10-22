@@ -693,6 +693,9 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                     let value = !app.state.borrow().discord_rpc_enabled;
                     app.state.borrow_mut().set_discord_rpc_enabled(value);
                 }
+                // Fork: entries that read or write saves wait while a save restore runs.
+                SettingsEntry::BackupSaves | SettingsEntry::RestoreSaves | SettingsEntry::ForceUpdate
+                    if super::save_restore_screen::refuse_while_restoring(&app, &router) => {}
                 _ => {
                     close_current_dialog(&app, &router);
                     match entry {

@@ -20,6 +20,7 @@
 //! still holds a `%VARIABLE%` after expansion, means "no save folder known", and nothing is offered
 //! rather than a guess.
 
+pub mod running;
 pub mod view;
 pub mod zip_index;
 
@@ -84,6 +85,8 @@ pub enum Target {
     NotForThisSystem,
     /// A location the app will not replace wholesale; the text says why.
     Refused(String),
+    /// The catalog names the field but leaves it empty: it does not say where the saves are.
+    NotListed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,7 +158,22 @@ fn os_neutral_relative(value: &Value) -> Option<String> {
     is_plain_relative(s).then(|| if cfg!(windows) { s.to_string() } else { s.replace('\\', "/") })
 }
 
+/// Null, "" or a per-system object whose entry for this system (or, without one, every entry) is empty.
+fn is_empty_value(value: &Value) -> bool {
+    let blank = |v: &Value| v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty());
+    match value {
+        Value::Object(obj) => match obj.get(get_platform_key()) {
+            Some(own) => blank(own),
+            None => obj.values().all(blank),
+        },
+        other => blank(other),
+    }
+}
+
 fn resolve_target(value: &Value, game_dir: &Path, saves_backup_dir: &Path, home: Option<&Path>) -> Target {
+    if is_empty_value(value) {
+        return Target::NotListed;
+    }
     let (path, from_relative) = if let Some(rel) = os_neutral_relative(value) {
         (normalize(&game_dir.join(rel)), true)
     } else {
@@ -178,7 +196,7 @@ fn resolve_target(value: &Value, game_dir: &Path, saves_backup_dir: &Path, home:
         return Target::Refused("points outside the game folder".into());
     }
     if is_within(game_dir, &path) {
-        return Target::Refused("is the whole game folder, so it is not restored as a save folder".into());
+        return Target::Refused("is the whole game folder".into());
     }
     if is_within(saves_backup_dir, &path) || is_within(&path, saves_backup_dir) {
         return Target::Refused("overlaps the app's Saves Backup folder".into());
@@ -304,6 +322,7 @@ fn newest_first(list: &mut [Backup]) {
 /// read is listed with its problem so it does not silently vanish; a whole-library zip that cannot be
 /// read is left out (it may not hold this port at all).
 pub fn list_backups(saves_backup_dir: &Path, folder: &str) -> Vec<Backup> {
+    sweep_stale_staging(saves_backup_dir, SystemTime::now());
     let mut out = Vec::new();
     for (kind, dir) in [(BackupKind::BeforeUpdate, UPDATE_BACKUPS_DIR), (BackupKind::BeforeRestore, RESTORE_BACKUPS_DIR)] {
         let Ok(port_dir) = safe_join(&saves_backup_dir.join(dir), folder) else { continue };
@@ -350,6 +369,69 @@ pub fn list_all_backups(saves_backup_dir: &Path) -> BTreeMap<String, Vec<Backup>
         .collect()
 }
 
+// -- Leftovers ---------------------------------------------------------------------------------------
+
+/// Scratch folders a restore makes inside `Saves Backup` (`_restore_*`, `_restore_backup_*`) are removed
+/// when the restore ends; one left by a crash is removed here once it is a day old. They only ever hold
+/// copies (of current saves already zipped, or of an unpacked backup). Nothing else is touched.
+pub fn sweep_stale_staging(saves_backup_dir: &Path, now: SystemTime) {
+    const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    let Ok(read) = fs::read_dir(saves_backup_dir) else { return };
+    for entry in read.filter_map(|e| e.ok()) {
+        let ours = entry.file_name().to_str().is_some_and(|n| n.starts_with("_restore_"));
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|age| age > DAY);
+        if ours && is_dir && old {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// A folder a restore left beside a save folder because it stopped part way (the app was killed, the
+/// Deck lost power) or could not remove the old copy. Never removed by the app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Interrupted {
+    pub field: SaveField,
+    /// The save folder it belongs to.
+    pub folder: PathBuf,
+    pub path: PathBuf,
+    /// True: the saves that were in the folder before the restore. False: an unfinished copy of a backup.
+    pub holds_previous: bool,
+}
+
+const TAG_BEFORE: &str = "before-restore";
+const TAG_RESTORING: &str = "restoring";
+
+fn real_folder(path: &Path) -> PathBuf {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+        _ => path.to_path_buf(),
+    }
+}
+
+pub fn interrupted_restores(targets: &[SaveTarget]) -> Vec<Interrupted> {
+    let mut out = Vec::new();
+    for t in targets {
+        let Target::Folder(path) = &t.target else { continue };
+        let real = real_folder(path);
+        let (Some(parent), Some(name)) = (real.parent(), real.file_name().map(|n| n.to_string_lossy().into_owned())) else { continue };
+        let Ok(read) = fs::read_dir(parent) else { continue };
+        for entry in read.filter_map(|e| e.ok()) {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            let holds_previous = if file.starts_with(&format!(".{name}.{TAG_BEFORE}-")) {
+                true
+            } else if file.starts_with(&format!(".{name}.{TAG_RESTORING}-")) {
+                false
+            } else {
+                continue;
+            };
+            out.push(Interrupted { field: t.field, folder: path.clone(), path: entry.path(), holds_previous });
+        }
+    }
+    out.sort_by(|a, b| (a.field, !a.holds_previous, &a.path).cmp(&(b.field, !b.holds_previous, &b.path)));
+    out
+}
+
 // -- Restoring ---------------------------------------------------------------------------------------
 
 /// What a restore of one backup would do, worked out before anything is touched.
@@ -363,7 +445,8 @@ pub struct RestorePlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreError {
-    GameRunning,
+    /// What is running: "The game (started from this app)" or "<program> (process <pid>)".
+    GameRunning(String),
     NothingToRestore(String),
     UnusableBackup(String),
     SafetyBackupFailed(String),
@@ -376,8 +459,10 @@ pub enum RestoreError {
 impl std::fmt::Display for RestoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RestoreError::GameRunning => write!(f, "The game is running. Quit it first, then restore; nothing was changed."),
-            RestoreError::NothingToRestore(why) => write!(f, "Nothing to restore: {why}"),
+            RestoreError::GameRunning(what) => {
+                write!(f, "{what} is running from this port's folders. Quit it first, then restore; nothing was changed.")
+            }
+            RestoreError::NothingToRestore(why) => write!(f, "Nothing to restore. {why}."),
             RestoreError::UnusableBackup(why) => write!(f, "This backup cannot be used: {why}. Nothing was changed."),
             RestoreError::SafetyBackupFailed(why) => {
                 write!(f, "Your current saves could not be backed up ({why}), so nothing was restored and nothing was changed.")
@@ -395,6 +480,7 @@ pub fn plan_restore(targets: &[SaveTarget], backup: &Backup) -> RestorePlan {
             Some(Target::Folder(path)) => plan.replace.push((field, path.clone())),
             Some(Target::NotForThisSystem) => plan.skipped.push((field, format!("no save folder known for {}", system_name()))),
             Some(Target::Refused(why)) => plan.skipped.push((field, why.clone())),
+            Some(Target::NotListed) => plan.skipped.push((field, "the catalog does not say where this port keeps these saves".into())),
             None => plan.skipped.push((field, "this port no longer names that save folder".into())),
         }
     }
@@ -407,6 +493,7 @@ pub struct RestoreInput<'a> {
     pub saves_backup_dir: &'a Path,
     pub home: Option<&'a Path>,
     pub backup: &'a Backup,
+    /// The app's own record of a game it started; programs started some other way are found by `running`.
     pub game_running: bool,
     /// Names the "Before restore" zip, e.g. `2026-10-21_14-05-00`.
     pub stamp: &'a str,
@@ -490,7 +577,7 @@ fn safety_backup(port: &Port, targets: &[SaveTarget], saves_backup_dir: &Path, s
     let dir = safe_join(&saves_backup_dir.join(RESTORE_BACKUPS_DIR), &port.folder)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let zip = unused_path(&dir, stamp, ".zip")?;
-    let made = run_7z(&tool, &[OsStr::new("a"), OsStr::new("-tzip"), zip.as_os_str(), OsStr::new(".")], "create", Some(staging.path()))
+    let made = run_7z(&tool, &[OsStr::new("a"), OsStr::new("-tzip"), OsStr::new("--"), zip.as_os_str(), OsStr::new(".")], "create", Some(staging.path()))
         .and_then(|_| count_zip_files(&zip))
         .and_then(|n| if n == total { Ok(()) } else { Err(format!("the backup holds {n} of {total} files")) });
     if let Err(e) = made {
@@ -538,9 +625,12 @@ fn expected_files(entries: &[ZipEntry], prefix: &str, field: SaveField) -> BTree
 fn extract(zip: &Path, staging: &Path, prefix: &str) -> Result<(), String> {
     let tool = sevenzip_exe_path().ok_or("7-Zip is missing next to the application")?;
     let out_arg = format!("-o{}", staging.display());
-    let mut args = vec![OsStr::new("x"), zip.as_os_str(), OsStr::new(&out_arg), OsStr::new("-y"), OsStr::new("-bd")];
+    // `--` ends the switches, so neither the zip path nor a folder name starting with '-' is read as one.
+    let mut args = vec![OsStr::new("x"), OsStr::new(&out_arg), OsStr::new("-y"), OsStr::new("-bd"), OsStr::new("--"), zip.as_os_str()];
     // A whole-library backup: unpack only this port's folder (7-Zip takes a folder name as "that folder and
-    // everything in it"). A name with 7-Zip wildcard characters is not narrowed.
+    // everything in it"). A name holding 7-Zip's wildcards `*` or `?` would match other folders, so it is
+    // not passed: the whole zip is unpacked instead (every name in it was checked first) and only this
+    // port's folder is read from it.
     let folder = prefix.trim_end_matches('/');
     if !folder.is_empty() && !folder.contains(['*', '?']) {
         args.push(OsStr::new(folder));
@@ -591,15 +681,71 @@ fn roll_back(done: &[Swapped]) -> Vec<String> {
     problems
 }
 
+/// Bytes in files under `path` (links not followed); 0 when it does not exist.
+fn tree_size(path: &Path) -> u64 {
+    let Ok(read) = fs::read_dir(path) else { return 0 };
+    read.filter_map(|e| e.ok())
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => tree_size(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map_or(0, |m| m.len()),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Spare room kept on top of what a restore needs.
+const SPACE_MARGIN: u64 = 16 * 1024 * 1024;
+
+/// `Some(reason)` when the drive is known to be too full. Unknown free space is not a reason to refuse.
+pub fn space_problem(need: u64, free: Option<u64>, place: &Path) -> Option<String> {
+    let free = free?;
+    (free < need.saturating_add(SPACE_MARGIN)).then(|| {
+        format!("not enough free space: it needs about {} and the drive holding {} has {} free", view::human_size(need), place.display(), view::human_size(free))
+    })
+}
+
+/// Free bytes on the drive holding `path` (Linux; `None` elsewhere or when unknown).
+fn free_bytes(path: &Path) -> Option<u64> {
+    crate::fork::rom_screens::util::free_bytes(path)
+}
+
+/// Programs running from the game folder or a save folder (see `running`), as text for the refusal.
+pub fn running_from(game_dir: &Path, targets: &[SaveTarget]) -> Option<String> {
+    let mut watch = vec![game_dir.to_path_buf()];
+    watch.extend(targets.iter().filter_map(|t| if let Target::Folder(p) = &t.target { Some(p.clone()) } else { None }));
+    running::processes_under(&watch).first().map(running::Found::describe)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: make the swap of the n-th folder (0-based) fail, to exercise the roll back.
+    static FAIL_SWAP_AT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+fn injected_swap_failure(index: usize) -> bool {
+    #[cfg(test)]
+    {
+        FAIL_SWAP_AT.with(|f| f.get() == Some(index))
+    }
+    #[cfg(not(test))]
+    {
+        let _ = index;
+        false
+    }
+}
+
 /// Restores one backup. See the module notes for the order of steps; each refusal leaves every file as it was.
 pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Result<RestoreDone, RestoreError> {
     if input.game_running {
-        return Err(RestoreError::GameRunning);
+        return Err(RestoreError::GameRunning("The game (started from this app)".into()));
     }
     if let Some(problem) = &input.backup.problem {
         return Err(RestoreError::UnusableBackup(problem.clone()));
     }
     let targets = save_targets(input.port, input.game_dir, input.saves_backup_dir, input.home);
+    if let Some(what) = running_from(input.game_dir, &targets) {
+        return Err(RestoreError::GameRunning(what));
+    }
     let plan = plan_restore(&targets, input.backup);
     if plan.replace.is_empty() {
         let why = plan.skipped.first().map(|(f, why)| format!("{}: {why}", f.label())).unwrap_or_else(|| "the backup holds no save folders".into());
@@ -619,6 +765,16 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
     let expected: Vec<BTreeMap<String, u64>> = plan.replace.iter().map(|(f, _)| expected_files(&entries, &input.backup.prefix, *f)).collect();
     if expected.iter().any(BTreeMap::is_empty) {
         return Err(RestoreError::UnusableBackup("it no longer holds the save folders it listed".into()));
+    }
+
+    // Saves Backup holds a copy of the current saves, their zip and the unpacked backup at once; each save
+    // folder's drive holds the rebuilt folder beside the old one.
+    let current: u64 = targets.iter().filter_map(|t| if let Target::Folder(p) = &t.target { Some(tree_size(p)) } else { None }).sum();
+    let unpacked: u64 = expected.iter().flat_map(|m| m.values()).sum();
+    let mut checks = vec![(current.saturating_mul(2).saturating_add(unpacked), input.saves_backup_dir.to_path_buf())];
+    checks.extend(plan.replace.iter().zip(&expected).map(|((_, path), want)| (want.values().sum::<u64>(), path.clone())));
+    if let Some(problem) = checks.iter().find_map(|(need, place)| space_problem(*need, free_bytes(place), place)) {
+        return Err(RestoreError::Failed(problem));
     }
 
     on_progress("Backing up your current saves...");
@@ -661,7 +817,7 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
             _ => shown.clone(),
         };
         let parent_ok = real.parent().is_some_and(|p| fs::create_dir_all(p).is_ok());
-        let staged = match hidden_sibling(&real, "restoring") {
+        let staged = match hidden_sibling(&real, TAG_RESTORING) {
             Ok(p) if parent_ok => p,
             Ok(_) | Err(_) => {
                 clean_up(&prepared);
@@ -681,9 +837,9 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
 
     on_progress("Putting the saves in place...");
     let mut swapped: Vec<Swapped> = Vec::new();
-    for p in &prepared {
+    for (index, p) in prepared.iter().enumerate() {
         let old = if fs::symlink_metadata(&p.real).is_ok() {
-            let old = match hidden_sibling(&p.real, "before-restore") {
+            let old = match hidden_sibling(&p.real, TAG_BEFORE) {
                 Ok(old) => old,
                 Err(e) => return Err(fail_swap(&swapped, &prepared, e)),
             };
@@ -694,7 +850,8 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
         } else {
             None
         };
-        if let Err(e) = fs::rename(&p.staged, &p.real) {
+        let swapped_in = if injected_swap_failure(index) { Err(io::Error::other("test: swap fails")) } else { fs::rename(&p.staged, &p.real) };
+        if let Err(e) = swapped_in {
             let mut problems = Vec::new();
             if let Some(old) = &old {
                 if fs::rename(old, &p.real).is_err() {

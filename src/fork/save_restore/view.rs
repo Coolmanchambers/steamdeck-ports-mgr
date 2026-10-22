@@ -1,7 +1,7 @@
 //! The text the "Restore saves" screens show, kept apart from the UI so it can be tested. English only,
 //! like the fork's other screens.
 
-use super::{system_name, Backup, RestoreDone, RestorePlan, SaveTarget, Target};
+use super::{system_name, Backup, Interrupted, RestoreDone, RestorePlan, SaveTarget, Target};
 use std::path::Path;
 
 pub fn human_size(bytes: u64) -> String {
@@ -56,7 +56,35 @@ pub fn target_row(target: &SaveTarget) -> String {
     match &target.target {
         Target::Folder(path) => format!("{}: {}", target.field.label(), path.display()),
         Target::NotForThisSystem => format!("{}: no save folder known for {}", target.field.label(), system_name()),
-        Target::Refused(why) => format!("{}: {why}; not restored", target.field.label()),
+        Target::Refused(why) => format!("{}: not used, it {why}", target.field.label()),
+        Target::NotListed => format!("{}: the catalog does not say where it keeps its saves", target.field.label()),
+    }
+}
+
+/// One list row per folder a restore left behind (shown above the backups).
+/// The folder's own name only, so the row fits; the details give the full path.
+pub fn interrupted_row(item: &Interrupted) -> String {
+    let name = item.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if item.holds_previous {
+        format!("A restore was interrupted: your previous saves are in {name} (select for details)")
+    } else {
+        format!("An unfinished restore copy was left in {name} (select for details)")
+    }
+}
+
+pub fn interrupted_text(item: &Interrupted) -> String {
+    if item.holds_previous {
+        format!(
+            "A restore was interrupted. Your previous saves are in {}.\n\nIf {} looks wrong or is missing, copy that folder's contents back into it (in Dolphin, Ctrl+H shows hidden folders). The newest \"Before restore\" row in this list holds the same saves; restoring it puts them back. The app never deletes this folder; remove it yourself once your saves are right.",
+            item.path.display(),
+            item.folder.display()
+        )
+    } else {
+        format!(
+            "A restore stopped before it finished and left an unfinished copy of a backup at {}.\n\nIt is not your current saves ({} is). You can delete it once you have checked that folder. The app never deletes it.",
+            item.path.display(),
+            item.folder.display()
+        )
     }
 }
 
@@ -67,7 +95,7 @@ pub fn any_restorable(targets: &[SaveTarget]) -> bool {
 
 /// Shown instead of the list when there is nowhere to restore to.
 pub fn nothing_restorable_text(port_name: &str, targets: &[SaveTarget]) -> String {
-    if targets.is_empty() {
+    if targets.is_empty() || targets.iter().all(|t| t.target == Target::NotListed) {
         return format!("{port_name} does not say where it keeps its saves, so there is nothing to restore.");
     }
     let mut text = if targets.iter().all(|t| t.target == Target::NotForThisSystem) {
@@ -95,6 +123,7 @@ pub fn confirm_text(port_name: &str, backup: &Backup, plan: &RestorePlan, saves_
     for (field, path) in &plan.replace {
         text.push_str(&format!("\n  {}: {}", field.label(), path.display()));
     }
+    text.push_str("\nFiles saved since then are removed from the folder (they stay in the zip made first).");
     for (field, why) in &plan.skipped {
         text.push_str(&format!("\n\nNot restored, {}: {why}.", field.label()));
     }
@@ -118,7 +147,7 @@ pub fn done_text(port_name: &str, done: &RestoreDone) -> String {
     }
     match &done.safety_backup {
         Some(zip) => text.push_str(&format!(
-            "\n\nYour saves from before the restore are in {}. To undo, pick it (\"Before restore\") in this list.",
+            "\n\nYour saves from before the restore are in {}. To undo, open Info > Restore saves... and pick the newest \"Before restore\" row.",
             zip.display()
         )),
         None => text.push_str("\n\nThere were no current saves to back up first."),

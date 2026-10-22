@@ -214,7 +214,8 @@ the app never deletes game files.
 The app zips a port's saves before every update, and Settings > **Backup Saves** zips every port's
 saves at once. To put one of those back:
 
-1. Quit the game first. The app refuses to restore while the port's game is running.
+1. Quit the game first. The app refuses to restore while the port's game is running, whether it was
+   started from this app or from Steam (it names the program it found).
 2. Open the port's **Info** (X) > **Restore saves...** (the button above Game folder / Save folder;
    only ports that name a save folder have it), or Settings > **Restore saves...**, which lists every
    port that has a backup.
@@ -225,7 +226,13 @@ saves at once. To put one of those back:
    `Saves Backup/Restore Backups/<port folder>/`; if that fails, nothing is changed. Then each save
    folder is rebuilt beside the old one and swapped in, and the old one is removed only after every
    swap worked.
-5. To undo a restore, pick the newest **Before restore** backup in the same list.
+5. To undo a restore, open Info > Restore saves... again and pick the newest **Before restore** row.
+
+Files saved after the backup was made are removed from the save folder by a restore; they stay in the
+Before restore zip. While a restore runs, closing the app waits until it is done. If the app was killed
+or the Deck lost power during one, the restore list starts with "A restore was interrupted: your
+previous saves are in ..." naming a hidden folder beside the save folder (Ctrl+H in Dolphin shows it);
+the app never deletes it.
 
 A save folder inside the game's own folder works on the Deck even when the catalog lists it only for
 Windows. If the catalog only gives a real Windows location (a drive or `%APPDATA%`-style path) or an

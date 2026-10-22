@@ -70,8 +70,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `src/main.rs` | One line starting the Game Mode queue watch (`steam_screens::start_queue_watch`, a timer held for the app's life) |
 | 2026-10-22 | `ui/dialogs/info.slint` | Restore saves: one `DialogButton` "Restore saves..." above the shortcut row (button index 10), shown only when `restore-saves-enabled`; the instructions box shrinks by its height. Property, callback, import of `DialogButton` |
 | 2026-10-22 | `src/app/gamepad_target.rs` | `INFO_BUTTON_COUNT` 10 to 11; the new button in `info_buttons_enabled` and `invoke_info_button` |
-| 2026-10-22 | `src/app/dialogs.rs` | Info dialog: `restore-saves-enabled` set when the port names `save` or `save2`, wired to `save_restore_screen::open_from_info` (one import, two lines). One Settings entry, "Restore saves..." (list, label and menu match; English text) |
+| 2026-10-22 | `src/app/dialogs.rs` | Info dialog: `restore-saves-enabled` set when the port names `save` or `save2`, wired to `save_restore_screen::open_from_info` (one import, two lines). One Settings entry, "Restore saves..." (list, label and menu match; English text); Backup Saves, Restore saves and Force update wait while a restore runs |
 | 2026-10-22 | `src/app/mod.rs` | One line registering `save_restore_screen` |
+| 2026-10-22 | `src/app/install_launch.rs` | `launch_flow` refuses while the port's install slot is held (install, update or save restore), so a tray recent-games click cannot start a game mid-restore (upstream had the same hole for installs) |
+| 2026-10-22 | `src/main.rs` | Window Close (when it quits) and tray Quit wait for a running save restore (`save_restore_screen::quit_waits_for_restore`); the footer Update is refused during one |
 | 2026-10-22 | `README.md` | Item 6 now reads "Save backups before every update, and restoring a backup" (still "Testing") |
 
 Files added by this fork:
@@ -295,27 +297,43 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   listed as "cannot be used".
 - **Which save folder:** a plain relative path inside the game folder (no `%VARIABLE%`, no `~`, no
   drive letter, no leading `/` or `\`) counts on every system, also when the catalog lists it only
-  under `windows` (coordinator ruling 2026-10-22, same as O1); on Linux its `\` separators become `/`.
+  under `windows` (coordinator ruling 2026-10-22); on Linux its `\` separators become `/`.
   Everything else goes through the app's own resolver (`resolve_save_folder`) plus our own guard so it
   never guesses: a per-system value whose only entries are real paths for other systems (a Windows
   drive or `%VARIABLE%` path, an Android path), a `%VARIABLE%` left after expansion, or (on Linux) a
   Windows-style path means "no save folder known for Linux", and no restore is offered. Also refused: the game folder itself or anything holding it, a relative path leading out
   of the game folder, the home folder or anything above it, anything overlapping `Saves Backup`, and a
   path with fewer than two folder levels.
-- **Order of a restore:** refuse while the port's game runs (and while it installs, or another
-  restore runs); read the zip's names again from disk and refuse on any unsafe one; zip every
-  current save folder of the port to `Restore Backups/<folder>/<stamp>.zip` and check it reads back
-  with every file (refuse to go on if that fails); unpack with 7-Zip into a scratch folder in
-  `Saves Backup`, refusing on any link and on any file count or size that differs from the zip's
-  table; copy each folder to a hidden sibling (`.<name>.restoring-<pid>`), then rename the old
-  folder aside and the new one in, for every folder; if a rename fails, every folder already
-  swapped is put back. Only after every swap worked are the old folders removed. A save folder that
-  is a link keeps the link (its destination is replaced). A save folder that does not exist yet is
-  created (its parent folders too).
+- **Order of a restore:** refuse while the port's game runs: the app's own record of a game it
+  started, and on Linux any process whose program file or working folder (`/proc/<pid>/exe`, `cwd`)
+  is inside the game folder or a save folder (the refusal names it). Also refused while the port
+  installs or another restore runs, and when a drive is known to be too full (about twice the
+  current saves plus the backup in `Saves Backup`, the backup's size beside each save folder;
+  unknown free space does not refuse). Read the zip's names again from disk and refuse on any unsafe
+  one; zip every current save folder of the port to `Restore Backups/<folder>/<stamp>.zip` and check
+  it reads back with every file (refuse to go on if that fails); unpack with 7-Zip (`--` before the
+  paths) into a scratch folder in `Saves Backup`, refusing on any link and on any file count or size
+  that differs from the zip's table; copy each folder to a hidden sibling
+  (`.<name>.restoring-<pid>`), then rename the old folder aside (`.<name>.before-restore-<pid>`)
+  and the new one in, for every folder; if a rename fails, every folder already swapped is put back.
+  Only after every swap worked are the old folders removed. A save folder that is a link keeps the
+  link (its destination is replaced). A save folder that does not exist yet is created (its parent
+  folders too). A whole-library backup is unpacked only for the port's folder, unless the folder
+  name holds `*` or `?` (then the whole zip is unpacked; every name in it was checked first).
+- **While it runs:** the port's install slot is held, so Play, the tray's recent games, Install and
+  Update of that port wait; window Close (when it would quit) and tray Quit wait for the restore and
+  then quit; Backup Saves, Restore saves, Force update and the footer Update say to wait.
+- **Interrupted restore:** if the app is killed or the Deck loses power mid-restore, the hidden
+  siblings stay. The restore list shows each one at the top ("A restore was interrupted: your
+  previous saves are in ...", or "An unfinished restore copy was left at ...") with what to do; the
+  app never deletes them. Scratch folders inside `Saves Backup` (`_restore_*`) are removed when a
+  list is opened once they are a day old (they only hold copies).
 - **Known limits:** a link to a folder inside a save folder is not in the safety zip, so that save
-  folder's old copy is kept beside it (named in the result) instead of being removed. The "Pending
-  Restore" copies kept across an uninstall are not listed (they are put back by the next install).
-  Backups are never pruned. Text is English only. Not yet tried on a Deck.
+  folder's old copy is kept beside it (named in the result) instead of being removed. An interrupted
+  restore is only noticed when that port's restore list is opened (not at startup). The
+  running-game check beyond the app's own record is Linux only. The "Pending Restore" copies kept
+  across an uninstall are not listed (they are put back by the next install). Backups are never
+  pruned. Text is English only. Not yet tried on a Deck.
 
 ## Fixes to upstream behavior
 

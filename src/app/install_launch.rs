@@ -161,6 +161,15 @@ fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Pat
 }
 
 pub(crate) fn launch_flow(app: &Rc<AppState>, router: &Router, port: &Port) {
+    // Fork: the tray's recent games call this directly; never start a game while it installs, updates or
+    // has its saves restored (the install slot is held for all three).
+    if app.install_runtime.installing.borrow().contains(port.key()) {
+        // Its progress dialog is usually up; leave that in place rather than replacing it with this note.
+        if !dialog_is_open(app) {
+            open_message_dialog(app, router, &port.name, "This port is being installed, updated or restored. Wait for that to finish, then start it.");
+        }
+        return;
+    }
     let Some(game_dir) = game_dir(app, port) else {
         let window = app.window();
         let tr = window.global::<Tr>();

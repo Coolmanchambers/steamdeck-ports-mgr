@@ -290,17 +290,22 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     }));
     window.on_github_requested(with!(app, router => move || {
         if app.window().get_self_update_available() {
-            launch_self_update(&app, &router);
+            // Fork: the updater closes the app, which must not happen during a save restore.
+            if !app::save_restore_screen::refuse_while_restoring(&app, &router) {
+                launch_self_update(&app, &router);
+            }
         } else {
             core::launch::open_url(core::version::PROJECT_URL);
         }
     }));
-    window.on_close_requested(with!(app => move || {
+    window.on_close_requested(with!(app, router => move || {
         // Fork: hide to the tray only when there is one; otherwise the window could never come back.
         match close_action(app.tray.borrow().as_ref().and_then(slint::Weak::upgrade).is_some()) {
             CloseAction::HideToTray => {
                 let _ = app.window().hide();
             }
+            // Fork: a running save restore finishes first (it quits the app when done).
+            CloseAction::Quit if app::save_restore_screen::quit_waits_for_restore(&app, &router) => {}
             CloseAction::Quit => {
                 let _ = slint::quit_event_loop();
             }
@@ -436,9 +441,15 @@ fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRout
         let app = app.clone();
         tray.on_restore_requested(move || lock(&app.events).push(AppEvent::BringToForeground));
     }
-    tray.on_quit_requested(|| {
-        let _ = slint::quit_event_loop();
-    });
+    {
+        let (app, router) = (app.clone(), router.clone());
+        tray.on_quit_requested(move || {
+            // Fork: a running save restore finishes first (it quits the app when done).
+            if !app::save_restore_screen::quit_waits_for_restore(&app, &router) {
+                let _ = slint::quit_event_loop();
+            }
+        });
+    }
     if let Err(e) = tray.show() {
         // Not seen with Slint 1.18 (a failed tray only logs), but Close must not hide into nothing.
         eprintln!("couldn't show the tray icon ({e}); closing the window quits");
