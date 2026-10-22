@@ -25,11 +25,28 @@ pub fn native_window(window: &slint::Window) -> Option<NativeWindow> {
     }
 }
 
-fn instance_socket_path() -> PathBuf {
-    match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|dir| dir.is_dir()) {
-        Some(dir) => dir.join("ports_launcher.sock"),
-        None => std::env::temp_dir().join(format!("ports_launcher-{}.sock", std::env::var("USER").unwrap_or_default())),
+// Fork (upstream bug O8): one socket per install folder, so this fork and the original (or two copies in
+// different folders) can run side by side; a second start from the same folder still hands over. FNV-1a
+// rather than std's hasher so the name stays the same across builds.
+fn install_folder_tag(folder: &Path) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in folder.as_os_str().as_encoded_bytes() {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
     }
+    format!("{hash:016x}")
+}
+
+fn instance_socket_path_for(runtime_dir: Option<PathBuf>, user: &str, install_folder: &Path) -> PathBuf {
+    let tag = install_folder_tag(install_folder);
+    match runtime_dir.filter(|dir| dir.is_dir()) {
+        Some(dir) => dir.join(format!("ports_launcher-{tag}.sock")),
+        None => std::env::temp_dir().join(format!("ports_launcher-{user}-{tag}.sock")),
+    }
+}
+
+fn instance_socket_path() -> PathBuf {
+    let install_folder = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)).unwrap_or_default();
+    instance_socket_path_for(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from), &std::env::var("USER").unwrap_or_default(), &install_folder)
 }
 
 pub fn claim_single_instance(on_activate: impl Fn() + Send + 'static) -> bool {
@@ -37,6 +54,7 @@ pub fn claim_single_instance(on_activate: impl Fn() + Send + 'static) -> bool {
     let path = instance_socket_path();
     if let Ok(mut stream) = UnixStream::connect(&path) {
         let _ = stream.write_all(&[0]);
+        eprintln!("already running from this folder; brought that copy to the front and quit ({})", path.display());
         return false;
     }
     let _ = fs::remove_file(&path);
@@ -444,6 +462,35 @@ mod tests {
         assert!(decide_tray_host(Some("KDE"), || None));
         assert!(!decide_tray_host(None, || None));
         assert!(!decide_tray_host(Some(""), || None));
+    }
+
+    #[test]
+    fn each_install_folder_gets_its_own_instance_socket() {
+        let run = std::env::temp_dir();
+        let fork = instance_socket_path_for(Some(run.clone()), "deck", Path::new("/home/deck/Applications/steamdeck-ports-mgr"));
+        let original = instance_socket_path_for(Some(run.clone()), "deck", Path::new("/home/deck/Applications/Ports-Launcher"));
+        assert_ne!(fork, original);
+        assert_eq!(fork, instance_socket_path_for(Some(run.clone()), "deck", Path::new("/home/deck/Applications/steamdeck-ports-mgr")));
+        assert_ne!(fork, run.join("ports_launcher.sock"), "never the name upstream's copy uses");
+        let name = fork.file_name().unwrap().to_str().unwrap().to_string();
+        assert!(name.starts_with("ports_launcher-") && name.ends_with(".sock") && name.len() == "ports_launcher-".len() + 16 + ".sock".len(), "{name}");
+        let fallback = instance_socket_path_for(None, "deck", Path::new("/a"));
+        assert!(fallback.starts_with(std::env::temp_dir()) && fallback.to_str().unwrap().contains("ports_launcher-deck-"), "{}", fallback.display());
+        // FNV-1a of the empty input is its offset basis: the tag does not depend on the Rust version.
+        assert_eq!(install_folder_tag(Path::new("")), "cbf29ce484222325");
+    }
+
+    #[test]
+    fn a_second_start_from_the_same_folder_hands_over_and_another_folder_does_not() {
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let dir = std::env::temp_dir().join(format!("dpm_instance_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let first = instance_socket_path_for(Some(dir.clone()), "u", Path::new("/opt/a"));
+        let _listener = UnixListener::bind(&first).unwrap();
+        assert!(UnixStream::connect(instance_socket_path_for(Some(dir.clone()), "u", Path::new("/opt/a"))).is_ok());
+        assert!(UnixStream::connect(instance_socket_path_for(Some(dir.clone()), "u", Path::new("/opt/b"))).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
