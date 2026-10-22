@@ -173,7 +173,7 @@ fn save_value_for_this_os(save_folder: &Value) -> Result<Option<Value>, ()> {
     }
     // Fork (O1): a Windows value that is a folder inside the game is OS-neutral; Android values never are.
     if let Some(windows) = obj.get("windows").and_then(Value::as_str).filter(|w| is_in_game_relative(w)) {
-        return Ok(Some(Value::String(windows.replace('\\', "/"))));
+        return Ok(Some(Value::String(windows.to_string())));
     }
     if obj.values().any(is_truthy) { Err(()) } else { Ok(None) }
 }
@@ -191,7 +191,13 @@ pub fn save_location(save_folder: &Value, game_dir: &Path) -> SaveLocation {
     let Some(s) = resolved.as_ref().and_then(Value::as_str).filter(|s| !s.is_empty()) else {
         return SaveLocation::NotListed;
     };
-    let (expanded, unresolved) = expand_env_path_checked(s);
+    // Fork (O1): on Linux a folder inside the game written with `\` (`saves\slots`) means `saves/slots`, not
+    // one folder named with a backslash; backup, uninstall preserve and restore all resolve through here.
+    #[cfg(target_os = "linux")]
+    let normalized = if is_in_game_relative(s) { s.replace('\\', "/") } else { s.to_string() };
+    #[cfg(not(target_os = "linux"))]
+    let normalized = s.to_string();
+    let (expanded, unresolved) = expand_env_path_checked(&normalized);
     if unresolved && cfg!(target_os = "linux") {
         return SaveLocation::UnknownOnLinux;
     }
@@ -342,6 +348,21 @@ mod tests {
         assert_eq!(save_location(&json!({"windows": "save/card0", "android": ""}), game), SaveLocation::Known(game.join("save/card0")));
         assert_eq!(save_location(&json!({"windows": "save\\card0"}), game), SaveLocation::Known(game.join("save/card0")));
         assert_eq!(resolve_save_folder(&json!({"windows": "worlds"}), game), Some(game.join("worlds")));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn backslashes_in_a_folder_inside_the_game_are_separators_on_linux() {
+        let game = Path::new("/library/Game");
+        assert_eq!(resolve_save_folder(&json!({"windows": "saves\\slots"}), game), Some(game.join("saves").join("slots")));
+        assert_eq!(resolve_save_folder(&json!("saves\\slots"), game), Some(game.join("saves").join("slots")));
+        assert_eq!(resolve_save_folder(&json!({"windows": "x", "linux": "data\\saves"}), game), Some(game.join("data").join("saves")));
+        // Not a folder inside the game: unchanged. `..\Outside` stays one literal name (as upstream did) for a
+        // plain value and is unknown as a Windows-only value; "." is the game folder, which backups skip.
+        assert_eq!(resolve_save_folder(&json!("..\\Outside"), game), Some(game.join("..\\Outside")));
+        assert_eq!(save_location(&json!({"windows": "..\\Outside"}), game), SaveLocation::UnknownOnLinux);
+        assert_eq!(resolve_save_folder(&json!("."), game), Some(game.join(".")));
+        assert_eq!(resolve_save_folder(&json!({"windows": "."}), game), Some(game.join(".")));
     }
 
     #[test]

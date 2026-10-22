@@ -539,6 +539,25 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
+    fn a_windows_folder_with_backslashes_is_the_same_nested_folder_for_preserve_and_restore() {
+        let dir = temp_dir("backslash_nested");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let dest_dir = dir.join("Game");
+        fs::create_dir_all(dest_dir.join("saves").join("slots")).unwrap();
+        fs::write(dest_dir.join("saves").join("slots").join("1.sav"), b"precious").unwrap();
+        let port = port_from_json(serde_json::json!({"name": "Game", "folder": "Game", "source": "https://example.com/x.zip", "save": {"windows": "saves\\slots"}}));
+
+        assert!(preserve_all_before_uninstall(&port, &saves_backup_dir, &dest_dir));
+        assert_eq!(fs::read_to_string(pending_restore_dir(&saves_backup_dir, "Game", "save_folder").join("1.sav")).unwrap(), "precious");
+        fs::remove_dir_all(&dest_dir).unwrap();
+        fs::create_dir_all(&dest_dir).unwrap();
+        restore_all_after_install(&port, &saves_backup_dir, &dest_dir);
+        assert_eq!(fs::read_to_string(dest_dir.join("saves").join("slots").join("1.sav")).unwrap(), "precious");
+        assert!(!dest_dir.join("saves\\slots").exists());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
     fn a_known_save_with_an_unknown_save2_is_still_named() {
         let dir = temp_dir("save2_unknown");
         let library_dir = dir.join("Library");
