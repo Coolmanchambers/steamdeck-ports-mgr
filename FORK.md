@@ -67,7 +67,6 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/core/state/throttles.rs` | O6: `defer_catalog_check`, `defer_themes_check` (back-date the last check so the next one is due after the backoff); O7: self-update interval 24 h -> 12 h; 1 test |
 | 2026-10-21 | `src/core/catalog_sync.rs` | O6: `SyncError` with `Retry-After` (seconds or HTTP date), `retry_delay` (1 h default, 1 min to 1 day); 4xx/5xx read as responses (`http_status_as_error(false)`) so the header can be read; 2 tests |
 | 2026-10-21 | `src/ui/linux_chrome.rs` | O8: the single-instance socket is named per install folder (`ports_launcher-<FNV-1a of the folder>.sock`); a hand-over prints a line; 2 tests |
-| 2026-10-21 | `src/fork/rom_screens/report.rs` | Unused import removed (`cargo test` warned) |
 
 Files added by this fork:
 
