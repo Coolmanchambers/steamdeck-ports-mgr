@@ -19,6 +19,7 @@
 //! | [`FindOutcome::NoFilesNeeded`] | The port names no file it cannot run without | Say nothing |
 //! | [`FindOutcome::NoRomFolder`] | No game files folder is set yet | Offer to choose one |
 //! | [`FindOutcome::FolderUnreadable`] | The folder is set but cannot be read (card out?) | Say so, offer search again |
+//! | [`FindOutcome::FolderLooksEmpty`] | No game files where the saved scan had some (card out?); the saved scan is kept | Same |
 //! | [`FindOutcome::Found`] | Every required file was found, one each | Open the Connect step with `row` |
 //! | [`FindOutcome::Ambiguous`] | Every required file was found, some more than once | Let the user pick, then Connect |
 //! | [`FindOutcome::NotFound`] | At least one required file is not in the folder | Name the files and where it looked |
@@ -139,7 +140,7 @@ impl Need {
             }
             format!(" (CRC32 {})", list.join(" or "))
         } else if self.has_sha1 {
-            " (SHA-1 listed)".to_string()
+            " (checksum listed)".to_string()
         } else if self.title_only {
             " (only the game is named, no file or checksum)".to_string()
         } else {
@@ -183,6 +184,9 @@ pub enum FindOutcome {
     NoRomFolder { needs: Vec<Need> },
     /// The folder is set but could not be read (the card or drive is not plugged in, or it is gone).
     FolderUnreadable { needs: Vec<Need>, folder: PathBuf, error: String },
+    /// The folder can be read but holds no game files, although the saved scan of it had `saved`:
+    /// most likely the card or drive is not plugged in. The saved scan is left as it was.
+    FolderLooksEmpty { needs: Vec<Need>, folder: PathBuf, saved: usize },
     /// Every required file was found, one each. `row` feeds the Connect step.
     Found { row: PortRow, looked_in: LookedIn },
     /// Every required file was found, and `slots` (indices into `row.matched.slots`) have several
@@ -200,6 +204,7 @@ impl FindOutcome {
             FindOutcome::NoFilesNeeded => "needs no game files",
             FindOutcome::NoRomFolder { .. } => "no game files folder set yet",
             FindOutcome::FolderUnreadable { .. } => "the game files folder could not be read",
+            FindOutcome::FolderLooksEmpty { .. } => "the game files folder looks empty (card or drive out?)",
             FindOutcome::Found { row, .. } if row.connected => "already connected",
             FindOutcome::Found { .. } => "found, choose to connect",
             FindOutcome::Ambiguous { .. } => "several matches, choose to pick one",
@@ -212,7 +217,7 @@ fn mtime_ms(meta: &std::fs::Metadata) -> u64 {
     meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// "1 file", "12,431 files".
+/// "1 game file", "12,431 game files".
 pub fn count_files(n: usize) -> String {
     let digits = n.to_string();
     let mut grouped = String::new();
@@ -223,9 +228,9 @@ pub fn count_files(n: usize) -> String {
         grouped.push(c);
     }
     if n == 1 {
-        "1 file".to_string()
+        "1 game file".to_string()
     } else {
-        format!("{grouped} files")
+        format!("{grouped} game files")
     }
 }
 
@@ -248,16 +253,28 @@ fn required_needs(spec: &RomSpec) -> Vec<Need> {
         .collect()
 }
 
+/// Why the folder could not be used.
+enum Lookup {
+    Unreadable(String),
+    /// The walk found no game files although the saved scan of this folder had `saved` of them: most
+    /// likely the card or drive is not mounted (an empty mount point). The saved scan is kept.
+    LooksEmpty { saved: usize },
+}
+
 /// The folder's files: the saved scan where nothing changed, files read again where something did.
 /// `Ok(None)` when cancelled.
-fn library_files(store: &RomLibraryStore, root: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(String)) -> Result<Option<(ScanResult, LookedIn)>, String> {
+fn library_files(store: &RomLibraryStore, root: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(String)) -> Result<Option<(ScanResult, LookedIn)>, Lookup> {
     let prior = store.load_scan_cache().filter(|p| p.root == root);
     let scan = scan_folder(root, &ScanOptions::default(), prior.as_ref(), cancel, &mut |p| {
         progress(format!("Checked {} files, {} read\n{}", p.files_done, human_bytes(p.bytes_hashed), file_name(p.current)));
     })
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| Lookup::Unreadable(e.to_string()))?;
     if scan.cancelled || cancel.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(None);
+    }
+    // Never let an empty walk replace a populated saved scan: an unmounted card leaves an empty folder.
+    if let Some(saved) = prior.as_ref().map(|p| p.files.len()).filter(|n| *n > 0 && scan.files.is_empty()) {
+        return Err(Lookup::LooksEmpty { saved });
     }
     let rescanned = prior.as_ref().is_none_or(|p| p.files != scan.files);
     let cache_error = if rescanned { store.save_scan_cache(&scan).err().map(|e| e.to_string()) } else { None };
@@ -302,13 +319,19 @@ pub fn outcome_for(req: &FindRequest, files: &[RomFile], looked_in: LookedIn) ->
     for slot in &missing {
         if let SlotStatus::WrongVersion(c) = &slot.status {
             for f in c.iter().take(2) {
-                notes.push(format!("{} has the right name but a different checksum (CRC32 {:08X}), so it is another version or a modified file.", ellipsize(&file_name(&f.path), 50), f.crc32));
+                notes.push(format!(
+                    "{} has the right name, but its checksum ({:08X}) is not one {} lists. It may be another version or a modified file.",
+                    ellipsize(&file_name(&f.path), 50),
+                    f.crc32,
+                    req.port.display_name()
+                ));
             }
         }
     }
+    let rest = if missing.len() == 1 { "only the file above is missing" } else { "only the files above are missing" };
     for (_, slot) in &required {
         if let SlotStatus::Found(f) = &slot.status {
-            notes.push(format!("Found: {}", ellipsize(&file_name(&f.path), 60)));
+            notes.push(format!("Already found: {} ({rest})", ellipsize(&file_name(&f.path), 60)));
         }
     }
     FindOutcome::NotFound { needs: missing.iter().map(|s| Need::from_slot(s)).collect(), looked_in, notes }
@@ -331,13 +354,16 @@ pub fn find_game_files_for_ports(store: &RomLibraryStore, reqs: &[FindRequest], 
     };
     match library_files(store, &root, cancel, progress) {
         Ok(None) => None,
-        Err(error) => Some(
+        Err(lookup) => Some(
             reqs.iter()
                 .map(|r| {
-                    if r.needs_files() {
-                        FindOutcome::FolderUnreadable { needs: required_needs(&r.spec), folder: root.clone(), error: error.clone() }
-                    } else {
-                        FindOutcome::NoFilesNeeded
+                    if !r.needs_files() {
+                        return FindOutcome::NoFilesNeeded;
+                    }
+                    let needs = required_needs(&r.spec);
+                    match &lookup {
+                        Lookup::Unreadable(error) => FindOutcome::FolderUnreadable { needs, folder: root.clone(), error: error.clone() },
+                        Lookup::LooksEmpty { saved } => FindOutcome::FolderLooksEmpty { needs, folder: root.clone(), saved: *saved },
                     }
                 })
                 .collect(),
@@ -392,6 +418,16 @@ pub fn unreadable_lines(port_name: &str, needs: &[Need], folder: &Path, error: &
     lines
 }
 
+/// The prompt when the folder holds no game files although the saved scan had some.
+pub fn looks_empty_lines(port_name: &str, needs: &[Need], folder: &Path, saved: usize) -> Vec<String> {
+    let mut lines = vec![format!("Could not look for {port_name}'s game files.")];
+    lines.extend(need_lines(needs, "It needs:"));
+    lines.push(format!("{} held {} last time, but now it has none.", ellipsize(&folder.to_string_lossy(), 60), count_files(saved)));
+    lines.push("The folder looks empty. Is the card or drive plugged in?".to_string());
+    lines.push("Plug it in and choose Search again, or choose another folder.".to_string());
+    lines
+}
+
 /// Under every prompt, so "Later" is not a dead end.
 pub const LATER_HINT: &str = "Later: use Game files... in the port's Info, or Settings > Game files > Find game files for a port.";
 
@@ -409,7 +445,7 @@ pub enum HandPick {
 
 /// Read and checksum one file the user picked and match it against the port's needs.
 /// `Ok(None)` when cancelled. Only reads the file.
-pub fn match_hand_picked(req: &FindRequest, path: &Path, cancel: &AtomicBool) -> Result<Option<HandPick>, String> {
+pub fn match_hand_picked(req: &FindRequest, path: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(String)) -> Result<Option<HandPick>, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("Could not read {}: {e}", file_name(path)))?;
     if !meta.is_file() {
         return Err(format!("{} is not a file.", file_name(path)));
@@ -418,7 +454,13 @@ pub fn match_hand_picked(req: &FindRequest, path: &Path, cancel: &AtomicBool) ->
     let system = classify(&rel);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let n64 = system == System::N64 || matches!(ext.as_str(), "z64" | "v64" | "n64");
-    let Some(h) = hash_file(path, n64, true, cancel, &mut |_| {}).map_err(|e| format!("Could not read {}: {e}", file_name(path)))? else {
+    let (name, total) = (file_name(path), meta.len());
+    let mut read = 0u64;
+    let mut on_bytes = |n: u64| {
+        read += n;
+        progress(format!("Checked {} of {}\n{name}", human_bytes(read), human_bytes(total)));
+    };
+    let Some(h) = hash_file(path, n64, true, cancel, &mut on_bytes).map_err(|e| format!("Could not read {}: {e}", file_name(path)))? else {
         return Ok(None);
     };
     let file = RomFile { path: path.to_path_buf(), rel_path: rel, system, size: h.size, mtime_ms: mtime_ms(&meta), ext, byte_order: h.byte_order, raw: h.raw, normalized: h.normalized };
@@ -447,7 +489,7 @@ pub fn use_anyway(row: &PortRow, slot: usize, file: &FileMatch) -> PortRow {
 
 /// The prompt for a hand-picked file that is not one the port lists.
 pub fn no_match_lines(port_name: &str, row: &PortRow, file: &FileMatch, wrong_version: bool) -> Vec<String> {
-    let what = if wrong_version { "has the right name but not a checksum" } else { "is not a file" };
+    let what = if wrong_version { "has the right name, but its checksum is not one" } else { "is not a file" };
     let mut lines = vec![format!("{} (CRC32 {:08X}) {what} {port_name} lists.", ellipsize(&file_name(&file.path), 50), file.crc32)];
     let needs: Vec<Need> = row.matched.slots.iter().filter(|s| !s.optional).map(Need::from_slot).collect();
     lines.extend(need_lines(&needs, "It needs:"));
@@ -532,7 +574,7 @@ mod tests {
         let text = not_found_lines("Ship of Harkinian", &needs, &looked_in, &notes).join("\n");
         assert!(text.starts_with("No matching game file found for Ship of Harkinian."), "{text}");
         assert!(text.contains("It needs: oot.z64 (CRC32 AABBCCDD)"), "{text}");
-        assert!(text.contains(&format!("Looked in: {} (1 file)", w.roms.display())), "{text}");
+        assert!(text.contains(&format!("Looked in: {} (1 game file)", w.roms.display())), "{text}");
         assert!(text.contains("Search again") && text.contains("Connect by hand"), "{text}");
     }
 
@@ -543,13 +585,13 @@ mod tests {
         write(&w.roms.join("n64/Kart (USA).z64"), &game);
         let wrong = req("Kart Port", "Required files: Kart (USA).z64 (CRC32: 01020304)");
         let FindOutcome::NotFound { notes, .. } = find(&w.store, &wrong) else { panic!() };
-        assert!(notes.iter().any(|n| n.contains("Kart (USA).z64 has the right name but a different checksum")), "{notes:?}");
+        assert!(notes.iter().any(|n| n.contains("Kart (USA).z64 has the right name, but its checksum (") && n.contains("is not one Kart Port lists. It may be another version")), "{notes:?}");
 
         let two = req("Two Files", &format!("Required files: Kart (USA).z64 (CRC32: {}), Disk (Japan).z64 (CRC32: 0A0B0C0D)", crc(&game)));
         assert_eq!(two.spec.requirement.slots.len(), 2);
         let FindOutcome::NotFound { needs, notes, .. } = find(&w.store, &two) else { panic!() };
         assert_eq!(needs.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(), vec!["Disk (Japan).z64"]);
-        assert!(notes.iter().any(|n| n == "Found: Kart (USA).z64"), "{notes:?}");
+        assert!(notes.iter().any(|n| n == "Already found: Kart (USA).z64 (only the file above is missing)"), "{notes:?}");
     }
 
     #[test]
@@ -606,6 +648,44 @@ mod tests {
         fs::write(w.roms.join("n64/added.z64"), n64_rom(5, 40_001)).unwrap();
         let FindOutcome::NotFound { looked_in, .. } = find(&w.store, &r) else { panic!("the stale checksum was trusted") };
         assert!(looked_in.rescanned);
+    }
+
+    #[test]
+    fn an_emptied_folder_never_replaces_a_populated_saved_scan() {
+        let w = world();
+        let oot = n64_rom(1, 9_000);
+        write(&w.roms.join("n64/oot.z64"), &oot);
+        write(&w.roms.join("snes/other.sfc"), &random_bytes(2, 900));
+        let r = req("Ship of Harkinian", &format!("Required files: oot.z64 (CRC32: {})", crc(&oot)));
+        assert!(matches!(find(&w.store, &r), FindOutcome::Found { .. }));
+        let saved = fs::read(w.store.scan_cache_path()).unwrap();
+        // The card is out: the mount point is still there but empty.
+        fs::remove_dir_all(&w.roms).unwrap();
+        fs::create_dir_all(&w.roms).unwrap();
+        let FindOutcome::FolderLooksEmpty { needs, folder, saved: n } = find(&w.store, &r) else { panic!("an empty walk read as not found") };
+        assert_eq!((folder.as_path(), n), (w.roms.as_path(), 2));
+        assert_eq!(fs::read(w.store.scan_cache_path()).unwrap(), saved, "the saved scan is untouched");
+        let text = looks_empty_lines("Ship of Harkinian", &needs, &folder, n).join("\n");
+        assert!(text.contains("The folder looks empty. Is the card or drive plugged in?") && text.contains("2 game files last time"), "{text}");
+        // A folder that was empty before stays an ordinary not found.
+        let tmp = temp_dir();
+        let mut fresh = RomLibraryStore::load(&tmp.path().join("rom_library.json")).unwrap();
+        fs::create_dir_all(tmp.path().join("roms")).unwrap();
+        fresh.set_rom_dir(Some(tmp.path().join("roms"))).unwrap();
+        assert!(matches!(find(&fresh, &r), FindOutcome::NotFound { .. }));
+    }
+
+    #[test]
+    fn a_cancelled_hand_pick_returns_nothing() {
+        let tmp = temp_dir();
+        let file = tmp.path().join("big.z64");
+        write(&file, &n64_rom(1, 3 << 20));
+        let r = req("Ship", "Required files: oot.z64 (CRC32: AABBCCDD)");
+        let mut seen = Vec::new();
+        assert!(match_hand_picked(&r, &file, &AtomicBool::new(true), &mut |t| seen.push(t)).unwrap().is_none());
+        let mut seen = Vec::new();
+        assert!(match_hand_picked(&r, &file, &AtomicBool::new(false), &mut |t| seen.push(t)).unwrap().is_some());
+        assert!(seen.last().unwrap().starts_with("Checked 3.1 MB of 3.1 MB\nbig.z64"), "{seen:?}");
     }
 
     #[test]
@@ -718,15 +798,17 @@ mod tests {
         write(&bad, &n64_rom(2, 9_000));
         let before = snapshot(tmp.path());
         let r = req("Ship", &format!("Required files: oot.z64 (CRC32: {})", crc(&oot)));
-        let Some(HandPick::Matches { row }) = match_hand_picked(&r, &good, &AtomicBool::new(false)).unwrap() else { panic!("checksum match missed") };
+        let Some(HandPick::Matches { row }) = match_hand_picked(&r, &good, &AtomicBool::new(false), &mut |_| {}).unwrap() else { panic!("checksum match missed") };
         assert!(row.can_connect());
 
-        let Some(HandPick::NoMatch { row, file, slots, wrong_version }) = match_hand_picked(&r, &bad, &AtomicBool::new(false)).unwrap() else { panic!() };
+        let Some(HandPick::NoMatch { row, file, slots, wrong_version }) = match_hand_picked(&r, &bad, &AtomicBool::new(false), &mut |_| {}).unwrap() else { panic!() };
         assert!(!wrong_version && slots == vec![0] && !row.can_connect());
         assert!(no_match_lines("Ship", &row, &file, false)[0].contains("is not a file Ship lists"));
         let forced = use_anyway(&row, 0, &file);
         assert!(forced.can_connect() && forced.low_confidence);
-        assert!(match_hand_picked(&r, tmp.path(), &AtomicBool::new(false)).is_err(), "a folder is refused");
+        let screen = super::super::connect_screen::ConnectScreen::new(&forced, tmp.path().join("lib"), &[]);
+        assert_eq!(screen.unchecked_files(), vec!["other.z64".to_string()], "the done message will say it was not checked");
+        assert!(match_hand_picked(&r, tmp.path(), &AtomicBool::new(false), &mut |_| {}).is_err(), "a folder is refused");
         assert_eq!(snapshot(tmp.path()), before, "picked files are only read");
     }
 
@@ -734,11 +816,11 @@ mod tests {
     fn need_lines_cover_bios_sha1_titles_and_alternatives() {
         let n = |crc32: Vec<u32>, has_sha1, kind, title_only, other_choices| Need { name: "x.bin".into(), crc32, has_sha1, kind, title_only, other_choices };
         assert_eq!(n(vec![1, 2, 3], false, SlotKind::Bios, false, 0).line(), "BIOS: x.bin (CRC32 00000001 or 00000002 or 1 more)");
-        assert_eq!(n(vec![], true, SlotKind::Game, false, 0).line(), "x.bin (SHA-1 listed)");
+        assert_eq!(n(vec![], true, SlotKind::Game, false, 0).line(), "x.bin (checksum listed)");
         assert!(n(vec![], false, SlotKind::Game, true, 2).line().ends_with("no file or checksum), or one of 2 other files it lists"));
-        assert_eq!(count_files(12_431), "12,431 files");
-        assert_eq!(count_files(1), "1 file");
-        assert_eq!(count_files(999), "999 files");
-        assert_eq!(count_files(1_000_000), "1,000,000 files");
+        assert_eq!(count_files(12_431), "12,431 game files");
+        assert_eq!(count_files(1), "1 game file");
+        assert_eq!(count_files(999), "999 game files");
+        assert_eq!(count_files(1_000_000), "1,000,000 game files");
     }
 }

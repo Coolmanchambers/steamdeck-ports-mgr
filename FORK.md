@@ -311,20 +311,25 @@ screens. The text is English only.
   Choosing one offers "Forget": only the record goes, never a file.
 - **After an install (ROM search, 2026-10-22):** once per port, when the port names files it cannot run without and is not
   connected yet, the app looks for them in the game files folder on its own (`find.rs`; `rom_prompted_ports` in
-  `fork-settings.json` remembers it, the same key the earlier offer used, so there is never a second prompt). The folder is walked
+  `fork-settings.json` remembers it, the same key the earlier offer used, so there is never a second prompt; a port is marked only
+  once a result is on screen, so a search cancelled or abandoned with B is tried again after the next install or update). The folder is walked
   on the worker thread with progress and Cancel; only new or changed files are read (a folder that did not change costs one walk
   and no reads, and the saved scan is not rewritten). Found: the Connect step. Several files: a pick list per slot, then Connect.
-  Not found: a list naming the port, each missing file with its CRC32 (or "SHA-1 listed", or "only the game is named"), the
-  folder and its file count, notes for a wrong version or the files that were found, then **Search again**, **Connect by
+  Not found: a list naming the port, each missing file with its CRC32 (or "checksum listed", or "only the game is named"), the
+  folder and its game-file count, notes for a wrong version or the files that were found, then **Search again**, **Connect by
   hand...** and **Later**. No folder set: the same prompt with **Choose ROM folder...**. Folder unreadable (card out): **Search
-  again** and **Choose another folder...**. Nothing when a launch follows the install (Play), when the port needs no files, or when
+  again** and **Choose another folder...**. Folder that holds no game files although the saved scan had some (an unmounted card
+  leaves an empty mount point): "The folder looks empty. Is the card or drive plugged in?" with the same buttons, and the saved scan
+  is not overwritten. Nothing when a launch follows the install (Play), when the port needs no files, or when
   a dialog or another game-files task is already up. Adopting ports does the same with one walk for all of them and a list of
   results under the adopt summary (`after_ports_added`).
 - **Finding a port's files later:** the port's Info dialog has **Game files...** (installed ports that name files; beside
   Restore saves) and Settings > Game files has **Find game files for a port...** (installed ports that name files, not yet
   connected first). Both run the same search. **Connect by hand...** walks folders (starting at the game files folder), lists
-  game files first, reads and checksums the chosen file: a listed file opens Connect; any other file says so with its CRC32 and
-  offers **Use it anyway** (marked "matched by name, check this" in Connect), Choose another file or Cancel.
+  game files first, reads and checksums the chosen file (a cancellable "Checking the file" list): a listed file opens Connect; any other file says so with its CRC32 and
+  offers **Use it anyway** (marked "matched by name, check this" in Connect; the "Game files connected" message adds "<file> was
+  not checked against the catalog's checksum", as it does for any name-only match), Choose another file or Cancel. The saved
+  connection does not record that it was not checksum-matched (Connected ports shows it like any other).
 - **API for other screens:** `fork::rom_screens::find::find_game_files_for_port` (pure, any thread) and
   `app::rom_screens::{find_for_port, after_ports_added}` (the screens). See the module docs of `find.rs` and `find_flow.rs`.
 - **Known limits:** B closes the whole flow from any list (each deeper list has a Back or Cancel row; the copy confirm's Cancel

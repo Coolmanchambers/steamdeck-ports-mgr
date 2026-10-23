@@ -27,7 +27,8 @@ use crate::fork::rom_library::{load_local_entries, Mapping, RomLibraryStore};
 use crate::fork::rom_screens::connect_screen::{ConnectScreen, Pick};
 use crate::fork::rom_screens::file_pick::{FileBrowser, Line as FileLine};
 use crate::fork::rom_screens::find::{
-    find_game_files_for_port, find_game_files_for_ports, match_hand_picked, no_folder_lines, no_match_lines, not_found_lines, unreadable_lines, use_anyway,
+    find_game_files_for_port, find_game_files_for_ports, match_hand_picked, looks_empty_lines, no_folder_lines, no_match_lines, not_found_lines, unreadable_lines,
+    use_anyway,
     FindOutcome, FindRequest, HandPick, LATER_HINT,
 };
 use crate::fork::rom_screens::offer::{self, AutoSearch};
@@ -35,7 +36,9 @@ use crate::fork::rom_screens::report::PortRow;
 use crate::fork::rom_screens::util::ellipsize;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use slint::ComponentHandle;
+use serde_json::Value;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
@@ -51,14 +54,45 @@ fn title_for(name: &str) -> String {
     format!("Game files for {}", ellipsize(name, 50))
 }
 
-fn request_for(app: &AppState, port: &Port, mappings: Vec<Mapping>) -> FindRequest {
-    let local = load_local_entries(&app.paths.config_dir.join("ports.local.json"));
+type LocalEntries = HashMap<String, Value>;
+
+/// The raw `ports.local.json` entries (explicit `rom_files` live there), read once per screen.
+fn local_entries(app: &AppState) -> LocalEntries {
+    load_local_entries(&app.paths.config_dir.join("ports.local.json"))
+}
+
+fn request_for(app: &AppState, local: &LocalEntries, port: &Port, mappings: Vec<Mapping>) -> FindRequest {
     FindRequest::new(port.clone(), app.is_installed(port), local.get(&port.folder), mappings)
 }
 
 /// For the Info dialog: is the port installed and does it name files it needs.
 pub(crate) fn port_needs_game_files(app: &AppState, port: &Port) -> bool {
-    !port.is_android_only() && app.is_installed(port) && request_for(app, port, Vec::new()).needs_files()
+    !port.is_android_only() && app.is_installed(port) && request_for(app, &local_entries(app), port, Vec::new()).needs_files()
+}
+
+/// The automatic search spends a port's one turn only once a result is really on screen: a search
+/// cancelled or abandoned (B) while it runs leaves the port to be searched after its next install.
+fn mark_searched(app: &AppState, keys: &[String]) {
+    let mut settings = ForkSettings::load(&app.paths.config_dir.join(FILE_NAME));
+    for key in keys {
+        if let Err(e) = settings.mark_rom_prompted(key) {
+            eprintln!("game files: could not remember that {key} was searched ({e})");
+        }
+    }
+}
+
+/// A list whose cursor starts on `start` (the first action row) instead of the first text row.
+fn open_list_at(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, start: usize, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) {
+    let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
+    let start = start.min(labels.len().saturating_sub(1)) as i32;
+    dialog.set_selected_index(start);
+    app.dialog_nav.picker_index.set(start);
+    {
+        let (app, router) = (app.clone(), router.clone());
+        dialog.on_item_selected(move |index| on_select(&app, &router, index as usize));
+    }
+    let _ = dialog.show();
+    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
 // -- Entry points ---------------------------------------------------------------------------------
@@ -71,17 +105,13 @@ pub(crate) fn after_install(app: &Rc<AppState>, router: &Router, key: &str) {
     }
     let Some(port) = app.find_port(key) else { return };
     let Ok(store) = RomLibraryStore::load(&store_path(app)) else { return };
-    let req = request_for(app, &port, store.mappings().to_vec());
-    let mut settings = ForkSettings::load(&app.paths.config_dir.join(FILE_NAME));
+    let req = request_for(app, &local_entries(app), &port, store.mappings().to_vec());
+    let settings = ForkSettings::load(&app.paths.config_dir.join(FILE_NAME));
     match offer::after_install(&req, port.is_android_only(), settings.rom_prompted(key)) {
         AutoSearch::Search => {}
         AutoSearch::Skip(_) => return,
     }
-    search(app, router, req, store, close_back());
-    // Marked only once something is really up, so a failure to open does not use up the search.
-    if dialog_is_open(app) {
-        let _ = settings.mark_rom_prompted(key);
-    }
+    search(app, router, req, store, close_back(), Some(key.to_string()));
 }
 
 /// Look for one port's game files and show the result. `back` runs when the user leaves.
@@ -90,11 +120,11 @@ pub(crate) fn find_for_port(app: &Rc<AppState>, router: &Router, key: &str, back
         return message(app, router, TITLE, "That port is no longer in the list.");
     };
     let Some(store) = load_store(app, router) else { return };
-    let req = request_for(app, &port, store.mappings().to_vec());
+    let req = request_for(app, &local_entries(app), &port, store.mappings().to_vec());
     if !req.needs_files() {
         return message(app, router, &title_for(port.display_name()), &format!("{} does not name any game files it needs, so there is nothing to look for.", port.display_name()));
     }
-    search(app, router, req, store, back);
+    search(app, router, req, store, back, None);
 }
 
 /// The Info dialog's "Game files..." button.
@@ -110,22 +140,22 @@ pub(crate) fn after_ports_added(app: &Rc<AppState>, router: &Router, keys: &[Str
         return false;
     }
     let Ok(store) = RomLibraryStore::load(&store_path(app)) else { return false };
-    let mut settings = ForkSettings::load(&app.paths.config_dir.join(FILE_NAME));
+    let settings = ForkSettings::load(&app.paths.config_dir.join(FILE_NAME));
+    let local = local_entries(app);
     let reqs: Vec<FindRequest> = keys
         .iter()
         .filter_map(|k| app.find_port(k))
-        .map(|p| request_for(app, &p, store.mappings().to_vec()))
+        .map(|p| request_for(app, &local, &p, store.mappings().to_vec()))
         .filter(|r| offer::after_install(r, r.port.is_android_only(), settings.rom_prompted(r.port.key())) == AutoSearch::Search)
         .collect();
     if reqs.is_empty() {
         return false;
     }
-    for r in &reqs {
-        let _ = settings.mark_rom_prompted(r.port.key());
-    }
+    let searched: Vec<String> = reqs.iter().map(|r| r.port.key().to_string()).collect();
     let intro: Rc<Vec<String>> = Rc::new(intro.lines().filter(|l| !l.trim().is_empty()).map(|l| ellipsize(l, ROW_WIDTH)).collect());
     if store.rom_dir().is_none() {
         let outcomes = find_game_files_for_ports(&store, &reqs, &AtomicBool::new(false), &mut |_| {}).unwrap_or_default();
+        mark_searched(app, &searched);
         show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()));
         return true;
     }
@@ -136,7 +166,10 @@ pub(crate) fn after_ports_added(app: &Rc<AppState>, router: &Router, keys: &[Str
         JobUi::Cancellable { title: SEARCH_TITLE },
         move |ctl| find_game_files_for_ports(&store, &worker_reqs, ctl.flag(), &mut |t| ctl.set_progress(t)),
         move |app, router, result| match result {
-            Ok(Some(outcomes)) => show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect())),
+            Ok(Some(outcomes)) => {
+                mark_searched(app, &searched);
+                show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()));
+            }
             Ok(None) => message(app, router, TITLE, &format!("{}\n\nThe search for game files was cancelled. {LATER_HINT}", intro.join("\n"))),
             Err(e) => message(app, router, TITLE, &format!("{}\n\nCould not look for game files: {e}", intro.join("\n"))),
         },
@@ -148,10 +181,11 @@ pub(crate) fn after_ports_added(app: &Rc<AppState>, router: &Router, keys: &[Str
 pub(crate) fn show_ports_needing_files(app: &Rc<AppState>, router: &Router) {
     let Some(store) = load_store(app, router) else { return };
     let catalog = app.catalog.borrow().clone();
+    let local = local_entries(app);
     let mut rows: Vec<(bool, String, String)> = catalog
         .iter()
         .filter(|p| !p.is_android_only() && app.is_installed(p))
-        .map(|p| request_for(app, p, store.mappings().to_vec()))
+        .map(|p| request_for(app, &local, p, store.mappings().to_vec()))
         .filter(FindRequest::needs_files)
         .map(|r| {
             let connected = r.already_connected();
@@ -179,11 +213,12 @@ pub(crate) fn show_ports_needing_files(app: &Rc<AppState>, router: &Router) {
 
 // -- The search -----------------------------------------------------------------------------------
 
-fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibraryStore, back: Back) {
+/// `mark`: the port whose automatic search this is; it is marked as searched when the result shows.
+fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibraryStore, back: Back, mark: Option<String>) {
     if store.rom_dir().is_none() {
         // Nothing to walk: answer right away.
         if let Some(outcome) = find_game_files_for_port(&store, &req, &AtomicBool::new(false), &mut |_| {}) {
-            show_outcome(app, router, req, outcome, back);
+            show_outcome(app, router, req, outcome, back, mark);
         }
         return;
     }
@@ -194,7 +229,7 @@ fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibra
         JobUi::Cancellable { title: SEARCH_TITLE },
         move |ctl| find_game_files_for_port(&store, &worker_req, ctl.flag(), &mut |t| ctl.set_progress(t)),
         move |app, router, result| match result {
-            Ok(Some(outcome)) => show_outcome(app, router, req, outcome, back),
+            Ok(Some(outcome)) => show_outcome(app, router, req, outcome, back, mark),
             Ok(None) => back(app, router),
             Err(e) => message(app, router, TITLE, &e),
         },
@@ -205,8 +240,8 @@ fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibra
 fn search_key(app: &Rc<AppState>, router: &Router, key: &str, back: Back) {
     let Some(port) = app.find_port(key) else { return back(app, router) };
     let Some(store) = load_store(app, router) else { return };
-    let req = request_for(app, &port, store.mappings().to_vec());
-    search(app, router, req, store, back);
+    let req = request_for(app, &local_entries(app), &port, store.mappings().to_vec());
+    search(app, router, req, store, back, None);
 }
 
 /// Where "Choose ROM folder..." returns to: after a folder is chosen (search again there) and on Back.
@@ -214,8 +249,11 @@ pub(super) fn resume(app: &Rc<AppState>, router: &Router, key: &str, back: &Back
     search_key(app, router, key, back.clone());
 }
 
-fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: FindOutcome, back: Back) {
+fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: FindOutcome, back: Back, mark: Option<String>) {
     let name = req.port.display_name().to_string();
+    if let Some(key) = mark {
+        mark_searched(app, &[key]);
+    }
     match outcome {
         FindOutcome::NoFilesNeeded => back(app, router),
         FindOutcome::Found { row, .. } => open_row(app, router, &row, back),
@@ -230,6 +268,11 @@ fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: 
         }
         FindOutcome::FolderUnreadable { needs, folder, error } => {
             let lines = unreadable_lines(&name, &needs, &folder, &error);
+            let acts = vec![Act::SearchAgain, Act::ChooseFolder("Choose another folder..."), Act::ByHand, Act::Later];
+            prompt(app, router, Rc::new(Prompt { req, lines, acts, back }));
+        }
+        FindOutcome::FolderLooksEmpty { needs, folder, saved } => {
+            let lines = looks_empty_lines(&name, &needs, &folder, saved);
             let acts = vec![Act::SearchAgain, Act::ChooseFolder("Choose another folder..."), Act::ByHand, Act::Later];
             prompt(app, router, Rc::new(Prompt { req, lines, acts, back }));
         }
@@ -270,7 +313,7 @@ fn prompt(app: &Rc<AppState>, router: &Router, p: Rc<Prompt>) {
     let first = labels.len();
     labels.extend(p.acts.iter().map(|a| a.label().to_string()));
     let title = title_for(p.req.port.display_name());
-    open_list(app, router, &title, labels, move |app, router, index| {
+    open_list_at(app, router, &title, labels, first, move |app, router, index| {
         let Some(act) = index.checked_sub(first).and_then(|i| p.acts.get(i)).copied() else { return };
         let key = p.req.port.key().to_string();
         match act {
@@ -297,7 +340,7 @@ fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items
     labels.extend(shown.iter().map(|i| format!("Game files for {}: {}", ellipsize(items[*i].0.port.display_name(), 50), items[*i].1.short())));
     let done = labels.len();
     labels.push("Done".into());
-    open_list(app, router, TITLE, labels, move |app, router, index| {
+    open_list_at(app, router, TITLE, labels, first, move |app, router, index| {
         if index == done {
             return close_current_dialog(app, router);
         }
@@ -307,7 +350,7 @@ fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items
             Rc::new(move |app, router| show_batch(app, router, intro.clone(), items.clone()))
         };
         let (req, outcome) = items[i].clone();
-        show_outcome(app, router, req, outcome, back);
+        show_outcome(app, router, req, outcome, back, None);
     });
 }
 
@@ -390,11 +433,12 @@ fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrow
     run_job(
         app,
         router,
-        JobUi::Progress { title: TITLE, status: "Checking the file...".into() },
-        move |ctl| match_hand_picked(&worker_req, &path, ctl.flag()),
+        JobUi::Cancellable { title: "Checking the file" },
+        move |ctl| match_hand_picked(&worker_req, &path, ctl.flag(), &mut |t| ctl.set_progress(t)),
         move |app, router, result| match result.and_then(|r| r) {
             Err(e) => message(app, router, TITLE, &e),
-            Ok(None) => cancel(app, router),
+            // Cancelled: back to the same folder to pick again.
+            Ok(None) => show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone()),
             Ok(Some(HandPick::Matches { row })) => open_row(app, router, &row, back),
             Ok(Some(HandPick::NoMatch { row, file, slots, wrong_version })) => {
                 let name = req.port.display_name().to_string();
@@ -410,7 +454,7 @@ fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrow
                 let other = labels.len();
                 labels.push("Choose another file".into());
                 labels.push("Cancel".into());
-                open_list(app, router, &title_for(&name), labels, move |app, router, index| {
+                open_list_at(app, router, &title_for(&name), labels, first, move |app, router, index| {
                     if let Some(&slot) = index.checked_sub(first).and_then(|n| slots.get(n)) {
                         open_row(app, router, &use_anyway(&row, slot, &file), back.clone());
                     } else if index == other {

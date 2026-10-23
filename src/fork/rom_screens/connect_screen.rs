@@ -215,6 +215,17 @@ impl ConnectScreen {
         }
     }
 
+    /// File names about to be connected that were matched by name only (or picked by hand and used
+    /// anyway): the done message says they were not checked against the catalog's checksum.
+    pub fn unchecked_files(&self) -> Vec<String> {
+        (0..self.slots.len())
+            .filter(|i| self.connectable(*i))
+            .filter_map(|i| self.slots[i].chosen.and_then(|c| self.slots[i].candidates.get(c)))
+            .filter(|f| f.is_low_confidence())
+            .map(|f| file_name(&f.path))
+            .collect()
+    }
+
     /// The requests for every slot that has a file chosen and is not connected yet.
     pub fn requests(&self) -> Result<Vec<ConnectRequest>, String> {
         let mut out = Vec::new();

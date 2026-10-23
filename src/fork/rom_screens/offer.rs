@@ -4,7 +4,8 @@
 //! The search itself is `find::find_game_files_for_port`; this file only decides whether to start it,
 //! so the old "connect now?" offer and the automatic search can never both appear. The memory of which
 //! ports were already handled is `rom_prompted_ports` in `fork-settings.json` (the same key the earlier
-//! offer used, so a port offered before is not asked again). "Later" does not forget a port: the port's
+//! offer used, so a port offered before is not asked again). A port is marked only once a result is on
+//! screen: a search cancelled or abandoned while it runs is tried again after the next install. "Later" does not forget a port: the port's
 //! Info dialog (Game files...) and Settings > Game files > Find game files for a port always reach it.
 
 use super::find::FindRequest;

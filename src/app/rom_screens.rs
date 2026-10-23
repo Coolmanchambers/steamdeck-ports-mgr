@@ -481,6 +481,7 @@ fn connect_now(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectSc
         Err(text) => return message(app, router, TITLE, &text),
     };
     let name = screen.borrow().port_name.clone();
+    let unchecked = Rc::new(screen.borrow().unchecked_files());
     run_job(
         app,
         router,
@@ -492,18 +493,19 @@ fn connect_now(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectSc
                 Err(e) => return message(app, router, TITLE, &format!("Nothing was connected: {e}")),
             };
             if plan.needs_copy_approval() {
-                let (name2, plan2) = (name.clone(), plan.clone());
+                let (name2, plan2, unchecked2) = (name.clone(), plan.clone(), unchecked.clone());
                 open_confirm_dialog(app, router, "Copy game files".into(), padded(&plan.confirm_text(&name)).into(), "Copy".into(), move |app, router| {
-                    apply_now(app, router, &name2, plan2.clone(), Approval::CopyAllowed);
+                    apply_now(app, router, &name2, plan2.clone(), Approval::CopyAllowed, unchecked2.clone());
                 });
             } else {
-                apply_now(app, router, &name, plan, Approval::None);
+                apply_now(app, router, &name, plan, Approval::None, unchecked);
             }
         },
     );
 }
 
-fn apply_now(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<PlanOutput>, approval: Approval) {
+/// `unchecked`: files matched by name only or used anyway; the message says they were not checksum-checked.
+fn apply_now(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<PlanOutput>, approval: Approval, unchecked: Rc<Vec<String>>) {
     let status = if approval == Approval::CopyAllowed { "Copying game files. This can take a while and cannot be cancelled." } else { "Connecting game files..." };
     let (path, plans) = (store_path(app), plan.plans.clone());
     let name = name.to_string();
@@ -517,6 +519,9 @@ fn apply_now(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<PlanOutpu
                 let mut text = connect_screen::done_text(&name, &plan.plans, &mappings);
                 for w in plan.warnings() {
                     text.push_str(&format!("\n\nNote: {w}"));
+                }
+                for file in unchecked.iter() {
+                    text.push_str(&format!("\n\n{file} was not checked against the catalog's checksum."));
                 }
                 message(app, router, "Game files connected", &text);
             }
