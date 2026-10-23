@@ -435,7 +435,7 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   `fork::ports_folder::{current, configured, save_choice, check, create, at_startup, plan_move}`,
   `port_mover::{prepare, switch_over, discard}` with `MoveEnv` / `MoveOptions` /
   `game_files::GameFiles::for_port`, `port_mover::old_copies::{load, removal_check, remove, forget}`,
-  `ports_folder_screen::{prompt_old_copies, open_old_copies, refuse_when_blocked}`,
+  `ports_folder_screen::{choose_folder, consider, prompt_old_copies, open_old_copies, refuse_when_blocked}`,
   `ForkSettings::set_adopt_folders`.
 - **Known limits.** The move copies on a worker thread; the Steam repoint, records and old-copy prompts
   run on the UI thread after it (fast). Removing a large old copy runs on a worker thread with a progress

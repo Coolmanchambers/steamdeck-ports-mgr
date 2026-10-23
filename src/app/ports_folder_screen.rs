@@ -9,6 +9,8 @@
 //! - `prompt_old_copies(app, router, copies, summary)`: the "Remove the old copy now?" prompts that
 //!   follow a move (stage 2's import calls it after its own moves).
 //! - `open_old_copies(app, router)`: the list of old copies kept after moves.
+//! - `choose_folder(app, router)` and `consider(app, router, folder)`: the whole ports folder change
+//!   (picker, checks, create, move, switch, old-copy prompts), for the setup wizard.
 
 use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_progress_dialog, set_picker_items, update_progress_dialog, DialogSlot};
 use super::folder_picker_screen::open_folder_picker;
@@ -227,7 +229,9 @@ pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
     });
 }
 
-fn choose_folder(app: &Rc<AppState>, router: &Router) {
+/// The picker for a new ports folder, then the whole change (check, create, move, switch, old-copy prompts).
+/// Cancel returns to the Ports folder list. The setup wizard can call this.
+pub(crate) fn choose_folder(app: &Rc<AppState>, router: &Router) {
     let current = app.paths.library_dir();
     // The default folder sits inside the app folder: start at home instead of among the app's own files.
     let start = if current.is_dir() && !is_default(app, &current) {
@@ -238,8 +242,9 @@ fn choose_folder(app: &Rc<AppState>, router: &Router) {
     open_folder_picker(app, router, PickerRequest::new("Choose the ports folder", &start, Purpose::PortsFolder), consider, open_menu);
 }
 
-/// The user picked `dir`: check it, create it if needed (asked first), then plan the switch.
-fn consider(app: &Rc<AppState>, router: &Router, dir: PathBuf) {
+/// The user picked `dir`: check it, create it if needed (asked first), then plan the switch. For callers
+/// that already have a folder (the setup wizard): the same flow as Settings > Ports folder.
+pub(crate) fn consider(app: &Rc<AppState>, router: &Router, dir: PathBuf) {
     let current = app.paths.library_dir();
     let (mounts, roots, home) = (system_mounts(), default_media_roots(), home_dir());
     let ctx = CheckCtx::system(&app.paths.config_dir, &current, home.as_deref(), &mounts, &roots);
