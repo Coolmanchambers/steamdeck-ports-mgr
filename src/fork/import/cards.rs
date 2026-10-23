@@ -277,6 +277,16 @@ impl Cards {
         self.items.get(i)
     }
 
+    /// A folder the user picked by hand (nothing was found, so there was nothing to walk): it becomes an item
+    /// still to be given a port. Returns its position.
+    pub fn add_folder(&mut self, path: PathBuf) -> usize {
+        let dir_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.items.push(Item::Unsure(Unsure { path, dir_name, could_be: Vec::new() }));
+        self.verdicts.push(Verdict::Undecided);
+        self.settled.push(false);
+        self.items.len() - 1
+    }
+
     /// The matches among the items, in order.
     pub fn matches(&self) -> Vec<&Match> {
         self.items.iter().filter_map(|i| if let Item::Match(m) = i { Some(m) } else { None }).collect()
@@ -348,6 +358,10 @@ pub enum CardAction {
     Pick(usize),
     /// Add the project from a GitHub link.
     GithubLink,
+    /// The project GitHub described is the one: use it.
+    UseIt,
+    /// Go back to the text box and change the link.
+    ChangeLink,
     NotAPort,
     Details,
     /// Copy the ports in.
@@ -407,7 +421,11 @@ pub fn found_page(cards: &Cards, leave_label: &str, deck_ready_note: Option<&str
         if let Some(note) = deck_ready_note {
             p.paragraphs.push(note.to_string());
         }
-        p.options = vec![option("Look in another folder...", "Choose a folder to look in", CardAction::AddFolder, true), option(leave_label_for_empty(leave_label), "", CardAction::Leave, false)];
+        p.options = vec![
+            option("Look in another folder...", "Choose a folder to look in", CardAction::AddFolder, true),
+            option("Use a GitHub link...", "For a port you have that is not on the list", CardAction::GithubLink, false),
+            option(leave_label_for_empty(leave_label), "", CardAction::Leave, false),
+        ];
         p.buttons[LEFT] = details_button();
         p.initial = Focus::Option(0);
         return p;
@@ -738,9 +756,10 @@ mod tests {
         assert_eq!(p.window_title, "Import ports: nothing found");
         assert!(p.tiles.is_empty());
         assert_eq!(p.options[0].action, CardAction::AddFolder);
+        assert_eq!(p.options[1].action, CardAction::GithubLink, "nothing matched: the GitHub link is the way to say what the folder is");
         assert!(p.options[0].recommended);
-        assert_eq!(p.options[1].title, "Next", "in the wizard leaving goes to the next step");
-        assert_eq!(found_page(&Cards::new(vec![]), "Not now", None).options[1].title, "Done");
+        assert_eq!(p.options[2].title, "Next", "in the wizard leaving goes to the next step");
+        assert_eq!(found_page(&Cards::new(vec![]), "Not now", None).options[2].title, "Done");
         assert_eq!(p.paragraphs.len(), 2);
         let note = "The Deck-ready list couldn't be loaded, so ports only on that list aren't recognised.";
         assert_eq!(found_page(&Cards::new(vec![]), "Skip", Some(note)).paragraphs.last().unwrap(), note);
@@ -880,6 +899,7 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+#[test]    fn a_folder_picked_by_hand_is_an_item_still_to_be_given_a_port() {        let mut cards = Cards::new(vec![]);        let at = cards.add_folder(PathBuf::from("/home/deck/Games/My Game"));        assert_eq!(at, 0);        assert_eq!(cards.walk(), [0]);        assert_eq!(cards.verdict(0), Verdict::Undecided);        let Some(Item::Unsure(u)) = cards.item(0) else { panic!() };        assert_eq!(u.dir_name, "My Game");        assert!(u.could_be.is_empty());        assert_eq!(cards.accepted_count(), 0);    }
     #[test]
     fn no_page_text_shows_a_file_name_or_a_path_outside_details() {
         let h = fake_home("cards_nopaths");

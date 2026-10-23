@@ -23,6 +23,11 @@ use super::state::AppState;
 use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::import::cards::{self, card_page, confirm_page, found_page, scan_notes, which_page, CardAction, Item, Match, Verdict};
 use crate::fork::import::folders::AddOutcome;
+use crate::fork::art::net::{Fetch, Net};
+use crate::fork::custom_repo::check::{check, CheckError, Checked, ReplayFetch};
+use crate::fork::custom_repo::entry as repo_entry;
+use crate::fork::custom_repo::parse::parse_link;
+use crate::fork::import::link::{self, LinkRow};
 use crate::fork::import::scan::{measure_choice, Choice};
 use crate::fork::import::screen::{ChoiceTarget, ImportScreen, PortListScreen};
 use crate::fork::page::Page;
@@ -83,6 +88,7 @@ pub(super) fn show_found(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
             }
             CardAction::Leave => leave(app, router, &ctx),
             CardAction::AddFolder => add_folder_and_rescan(app, router, &ctx, screen.clone()),
+            CardAction::GithubLink => show_github(app, router, &ctx, screen.clone(), Target::NewFolder, again.clone(), String::new()),
             CardAction::Details => {
                 let text = {
                     let s = screen.borrow();
@@ -226,7 +232,7 @@ fn show_which(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, po
                 }
             }
             CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), pos, index, again.clone()),
-            CardAction::GithubLink => notice_back(app, router, "Adding a port from a GitHub link is not ready yet.", again.clone()),
+            CardAction::GithubLink => show_github(app, router, &ctx, screen.clone(), Target::Folder { pos, index }, again.clone(), String::new()),
             CardAction::NotAPort => not_a_port(app, router, &ctx, screen.clone(), pos, index, again.clone()),
             CardAction::Details => {
                 let text = {
@@ -275,7 +281,7 @@ fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen
             let picked = shown.borrow().get(row as usize).copied();
             match picked {
                 Some(i) => choose_port(&app, &router, &ctx, screen.clone(), pos, index, list.ports[i].key.clone(), back.clone()),
-                None => notice_back(&app, &router, "Adding a port from a GitHub link is not ready yet.", back.clone()),
+                None => show_github(&app, &router, &ctx, screen.clone(), Target::Folder { pos, index }, back.clone(), String::new()),
             }
         });
     }
@@ -385,4 +391,189 @@ fn port_rows(list: &PortListScreen, shown: &[usize]) -> Vec<String> {
     let mut rows: Vec<String> = shown.iter().map(|i| ellipsize(&list.ports[*i].label(), 90)).collect();
     rows.push("Use a GitHub link...".to_string());
     rows
+}
+
+// -- Use a GitHub link ----------------------------------------------------------------------------------
+
+/// What the project from the link is for.
+#[derive(Clone, Copy)]
+enum Target {
+    /// The folder at `index` of the walk (page `pos`): it becomes this project.
+    Folder { pos: usize, index: usize },
+    /// Nothing was found, so the user picks the folder after the project is confirmed.
+    NewFolder,
+}
+
+/// GitHub, or the saved answers of the `DPM_GITHUB_REPLAY` test switch.
+fn github() -> Box<dyn Fetch> {
+    match ReplayFetch::from_env() {
+        Some(replay) => Box::new(replay),
+        None => Box::new(Net::new()),
+    }
+}
+
+/// The text box: paste or type the project address. Rows under it: Check this link, Show keyboard (Game
+/// Mode), What should I look for?, Cancel. B and the X go back to where the user came from (`back`).
+fn show_github(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, back: Again, text: String) {
+    let rows = link::rows(crate::fork::steam_queue::game_mode_from_env());
+    let labels: Vec<String> = rows.iter().map(|r| r.1.to_string()).collect();
+    let Some(dialog) = build_text_entry_dialog(app, router, link::WINDOW_TITLE, link::PLACEHOLDER, &text, &labels, false) else { return back(app, router) };
+    let typed = Rc::new(RefCell::new(text));
+    {
+        let typed = typed.clone();
+        dialog.on_search_changed(move |query| *typed.borrow_mut() = query.to_string());
+    }
+    let again: Again = {
+        let (ctx, screen, back, typed) = (ctx.clone(), screen.clone(), back.clone(), typed.clone());
+        Rc::new(move |app, router| show_github(app, router, &ctx, screen.clone(), target, back.clone(), typed.borrow().clone()))
+    };
+    {
+        let (app, router, ctx, screen, back, typed, again) = (app.clone(), router.clone(), ctx.clone(), screen.clone(), back.clone(), typed.clone(), again.clone());
+        dialog.on_item_selected(move |row| {
+            let Some((action, _)) = rows.get(row as usize) else { return };
+            match action {
+                LinkRow::Check => check_link(&app, &router, &ctx, screen.clone(), target, &back, &typed.borrow(), again.clone()),
+                LinkRow::ShowKeyboard => {
+                    // Slint does not raise the Steam keyboard by itself; ask Steam to. Unverified on a Deck, so the
+                    // help text also says how to bring it up by hand.
+                    let opened = std::process::Command::new("xdg-open").arg("steam://open/keyboard").spawn().is_ok();
+                    if !opened {
+                        notice_back(&app, &router, link::KEYBOARD_HINT, again.clone());
+                    }
+                }
+                LinkRow::Help => details_text(&app, &router, "What should I look for?", link::HELP, again.clone()),
+                LinkRow::Cancel => {
+                    close_current_dialog(&app, &router);
+                    back(&app, &router);
+                }
+            }
+        });
+    }
+    {
+        let (b_app, b_router, b_back) = (app.clone(), router.clone(), back.clone());
+        dialog.on_close_requested(move || {
+            close_current_dialog(&b_app, &b_router);
+            b_back(&b_app, &b_router);
+        });
+        // The title bar X only hides the window; it goes where B goes.
+        let (app, router) = (app.clone(), router.clone());
+        dialog.window().on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            back(&app, &router);
+            slint::CloseRequestResponse::HideWindow
+        });
+    }
+    let _ = dialog.show();
+    finish_dialog_open(app, router, DialogSlot::SearchList(dialog));
+}
+
+/// Reads the text; a bad one gets its reason. A good one is asked about on the worker (a project already in
+/// the port list needs no asking: it is that port).
+#[allow(clippy::too_many_arguments)]
+fn check_link(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, back: &Again, text: &str, again: Again) {
+    let repo = match parse_link(text) {
+        Ok(repo) => repo,
+        Err(e) => return notice_back(app, router, &e.text(), again),
+    };
+    let known = repo_entry::existing(&screen.borrow().scan.ports, &repo).map(|p| p.key().to_string());
+    if let Some(key) = known {
+        return use_port(app, router, ctx, screen, target, key, back.clone(), again);
+    }
+    let (ctx2, screen2, back2, again2, asked) = (ctx.clone(), screen.clone(), back.clone(), again.clone(), repo.clone());
+    run_job(
+        app,
+        router,
+        JobSpec {
+            title: "Checking the link",
+            initial: link::checking_text(&repo.slug()),
+            cancel_label: "Cancel",
+            deliver_after_close: false,
+            leave: Some(again.clone()),
+            prompts: None,
+            is_import: false,
+            work: Box::new(move |_| check(github().as_ref(), &asked)),
+        },
+        move |app, router, result| match result {
+            Ok(Ok(checked)) => {
+                // GitHub may know the project under another name (a rename): that one may be in the list.
+                let known = repo_entry::existing(&screen2.borrow().scan.ports, &checked.repo).map(|p| p.key().to_string());
+                match known {
+                    Some(key) => use_port(app, router, &ctx2, screen2.clone(), target, key, back2.clone(), again2.clone()),
+                    None => show_github_card(app, router, &ctx2, screen2.clone(), target, checked, back2.clone(), again2.clone()),
+                }
+            }
+            Ok(Err(e)) => notice_back(app, router, &e.text(), again2.clone()),
+            Err(_) => notice_back(app, router, &CheckError::Unreadable.text(), again2.clone()),
+        },
+    );
+}
+
+/// "Is this the project?": what GitHub said. Yes adds it to this scan's ports (the port list gets it just before
+/// the move), Change the link goes back to the text box.
+#[allow(clippy::too_many_arguments)]
+fn show_github_card(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, checked: Checked, back: Again, again: Again) {
+    let page = link::confirm_card(&checked);
+    let act = {
+        let (ctx, screen, back, again, checked) = (ctx.clone(), screen.clone(), back.clone(), again.clone(), checked.clone());
+        move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
+            CardAction::UseIt => {
+                let built = {
+                    let s = screen.borrow();
+                    let known: Vec<&str> = s.scan.ports.iter().map(|p| p.folder.as_str()).collect();
+                    let folder = repo_entry::folder_for(&checked.repo, |f| repo_entry::folder_taken(&s.ports_folder, known.iter().copied(), f));
+                    folder.ok_or_else(|| "No folder name is free for this project in your ports folder.".to_string()).and_then(|f| repo_entry::new_entry(&checked, &f))
+                };
+                match built {
+                    Ok((new, port)) => {
+                        let key = port.key().to_string();
+                        ctx.extra.borrow_mut().push((port.clone(), new.clone()));
+                        {
+                            let mut s = screen.borrow_mut();
+                            s.scan.new_entries.push((key.clone(), new));
+                            s.scan.ports.push(port);
+                        }
+                        use_port(app, router, &ctx, screen.clone(), target, key, back.clone(), again.clone());
+                    }
+                    Err(why) => notice_back(app, router, &why, again.clone()),
+                }
+            }
+            CardAction::ChangeLink => again(app, router),
+            _ => {}
+        }
+    };
+    let back_to_link = {
+        let again = again.clone();
+        move |app: &Rc<AppState>, router: &Router| again(app, router)
+    };
+    show_or_end(app, router, ctx, page, handlers(ctx, act, back_to_link));
+}
+
+/// The project (`key`, now among the scan's ports) is the port: for a folder of the walk it is measured like
+/// any pick; with no folder yet the user picks the folder first.
+#[allow(clippy::too_many_arguments)]
+fn use_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, key: String, back: Again, again: Again) {
+    match target {
+        Target::Folder { pos, index } => choose_port(app, router, ctx, screen, pos, index, key, again),
+        Target::NewFolder => {
+            let start = home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+            let (ctx2, screen2, back2, again2) = (ctx.clone(), screen.clone(), back.clone(), again.clone());
+            open_folder_picker(
+                app,
+                router,
+                PickerRequest::new("Pick the folder this port is in", &start, Purpose::ScanFolder),
+                move |app, router, path| {
+                    if !path.is_dir() {
+                        return notice_back(app, router, "That is not a folder.", again2.clone());
+                    }
+                    let (pos, index) = {
+                        let mut s = screen2.borrow_mut();
+                        let index = s.cards.add_folder(path);
+                        (s.cards.walk().len().saturating_sub(1), index)
+                    };
+                    choose_port(app, router, &ctx2, screen2.clone(), pos, index, key.clone(), again2.clone());
+                },
+                move |app, router| back2(app, router),
+            );
+        }
+    }
 }

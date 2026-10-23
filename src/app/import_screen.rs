@@ -69,11 +69,13 @@ pub(super) struct Ctx {
     finished: Once,
     /// What the user said about folders (which port, or not a port), kept while the screen is open.
     pub(super) choices: Rc<RefCell<Choices>>,
+    /// Projects added from a GitHub link (the port and what importing writes first), kept while the screen is open.
+    pub(super) extra: Rc<RefCell<Vec<(crate::core::models::Port, crate::fork::import::targets::NewEntry)>>>,
 }
 
 impl Ctx {
     pub(super) fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
-        Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default() }
+        Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default(), extra: Rc::default() }
     }
 
     /// Whether the wizard is waiting for this screen.
@@ -493,6 +495,7 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
     let saved_index = super::deck_ready_screen::index_for_import(app);
     let cache_dir = app.paths.cache_dir.clone();
     let choices = ctx.choices.borrow().clone();
+    let extra = ctx.extra.borrow().clone();
     let (work_home, work_ports, deeper) = (home.clone(), ports.clone(), folders.look_deeper);
     let ctx2 = ctx.clone();
     run_job(
@@ -514,16 +517,24 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
                 let deck_ready_note = index.is_none().then(|| {
                     "The Deck-ready list couldn't be loaded, so ports only on that list (like Severed Chains) aren't recognised. Connect to the internet and Scan again.".to_string()
                 });
-                let t = targets::build(&catalog, index.as_ref(), &work_ports);
+                let mut t = targets::build(&catalog, index.as_ref(), &work_ports);
+                // Projects the user added from a GitHub link stay known across scans of this screen.
+                for (port, new) in extra {
+                    if !t.catalog.iter().any(|p| p.key() == port.key()) {
+                        t.new_entries.push((port.key().to_string(), new));
+                        t.catalog.push(port);
+                    }
+                }
+                let (t_catalog, new_entries) = (t.catalog, t.new_entries);
                 let input = ScanInput {
                     roots,
-                    catalog: t.catalog,
+                    catalog: t_catalog,
                     library_dir: work_ports,
                     home: work_home.clone(),
                     deeper,
                     shortcuts,
                     hints: t.hints,
-                    new_entries: t.new_entries,
+                    new_entries,
                     choices,
                     deck_ready_note,
                 };

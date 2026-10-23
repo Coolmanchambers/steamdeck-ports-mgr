@@ -22,6 +22,7 @@ pub mod cards;
 pub mod engine;
 pub mod fallback;
 pub mod folders;
+pub mod link;
 pub mod old_batch;
 pub mod plan;
 pub mod real_engine;
