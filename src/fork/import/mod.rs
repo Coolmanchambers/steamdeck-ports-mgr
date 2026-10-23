@@ -18,9 +18,11 @@
 //!
 //! The old adopt code stays in `fork::adopt` (scan matching and the link fallback use it).
 
+pub mod cards;
 pub mod engine;
 pub mod fallback;
 pub mod folders;
+pub mod old_batch;
 pub mod plan;
 pub mod real_engine;
 pub mod scan;

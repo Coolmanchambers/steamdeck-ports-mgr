@@ -54,5 +54,6 @@ pub mod screen;
 pub mod screenscraper;
 pub mod sgdb;
 pub mod source;
+pub mod thumbs;
 pub mod tgdb;
 pub mod title;
