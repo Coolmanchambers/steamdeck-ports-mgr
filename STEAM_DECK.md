@@ -308,7 +308,7 @@ steps for each port in order. Folders that fit two ports, a second copy of a por
 your ports folder are listed but not offered.
 
 **What importing does.** For each ticked port, one at a time: the game files it needs are checked in the
-old folder (it stops and asks if one is missing or broken); the folder is copied into the ports folder;
+old folder (it stops and asks if one is missing or broken); the folder is copied into the ports folder (a hidden staging folder first, so a failure or Cancel leaves only the old folder);
 the copy is checked, game files again; the app switches over to the new folder; a Steam shortcut that
 pointed into the old folder is repointed to the new one and keeps its app ID (so play time and art stay),
 or the change is queued for Desktop Mode when Steam is running (always, in Game Mode). **The old folder
@@ -318,14 +318,13 @@ never assumed and nothing is deleted automatically. A progress list shows each p
 the end says what moved, which old copies are still on disk (with their size and a pointer to remove
 them yourself), what happened to each Steam shortcut, and any problem.
 
-If a port does not fit (not enough free space, with 1 GB to spare), nothing is copied for it and the
+If a game file the port needs is missing or broken, you are asked before anything is copied: **Fix in Game files** (skips that port; nothing is copied), **Move anyway**, or **Cancel** (stops the import there). A problem found after the copy always stops that port and removes the copy. Removing an old copy from the question is refused when its folder name differs from the port's catalog folder (for example `dusk-old` imported as `dusklight`); it then stays under Settings > Ports folder > Old copies, and you can delete it yourself.
+
+If a port does not fit (not enough free space: its size plus 64 MB; the same check the move itself makes), nothing is copied for it and the
 summary offers to **link it where it stands** instead: `Library/<port>` becomes a link and the port
 gets an entry in `ports.local.json` (backed up first). A linked port is not checked for updates and the
 app refuses to install or update into it. To undo a link, in this order: remove the port's entry from
 `ports.local.json`, then delete the link in `Library/` (your folder stays).
-
-**Status of this build.** The move engine is not in this build yet: **Import** shows a preview of
-exactly what would happen and writes nothing. The screens, scan, plan and summary are the real ones.
 
 ## Deck-ready list
 
@@ -499,7 +498,7 @@ to your device, never uploads or shares them, and the credits are in the screen'
 | Force update in Game Mode | The app comes back in Game Mode and Steam still shows it running |
 | Add to Steam, Steam open | Settings > Add to Steam > Review shows the close-Steam message (no Apply button) and changes nothing |
 | Add to Steam, Steam closed | "Added N", a `shortcuts.vdf.bak-...` next to `shortcuts.vdf`, shortcuts appear after Steam restarts |
-| Import ports | Settings > Import ports... lists the outside install with size and match; Show what importing will do... lists its steps; until the move engine lands, Import only previews and changes nothing |
+| Import ports | Settings > Import ports... lists the outside install with size and match; Show what importing will do... lists its steps; Import copies it into the ports folder and repoints its Steam shortcut |
 | Game files scan | Settings > Game files > pick the ROM folder: progress with Cancel, then results by system; a second scan is quick |
 | Game files connect | Connect a port: Link adds a pointer in its folder, Copy asks first with the size; your ROM folder is unchanged |
 | Update offered | After a newer build is published and 12 h past the last check (relaunch, or leave it open), the footer says Update |

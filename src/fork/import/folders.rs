@@ -3,7 +3,7 @@
 //! sees or edits that file.
 //!
 //! Settings keys (documented here because the file is shared with other fork features):
-//! - `adopt_folders`: the user's own folders, as absolute paths (the key name predates Import ports and
+//! - `adopt_folders`: the user's own folders (`ForkSettings::set_adopt_folders`), as absolute paths (the key name predates Import ports and
 //!   is kept so an existing list still works);
 //! - `import_defaults_off`: names of well-known folders switched off (`"Games"`);
 //! - `import_look_deeper`: true to look one level further into folders that matched nothing.
@@ -14,7 +14,6 @@ use serde_json::Value;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const KEY_USER: &str = "adopt_folders";
 const KEY_DEFAULTS_OFF: &str = "import_defaults_off";
 const KEY_DEEPER: &str = "import_look_deeper";
 
@@ -53,7 +52,7 @@ impl ScanFolders {
 
     /// Writes all three keys; the first failure is returned.
     pub fn save(&self, settings: &mut ForkSettings) -> io::Result<()> {
-        settings.set(KEY_USER, Value::from(self.user.clone()))?;
+        settings.set_adopt_folders(&self.user)?;
         settings.set(KEY_DEFAULTS_OFF, Value::from(self.defaults_off.clone()))?;
         settings.set(KEY_DEEPER, Value::from(self.look_deeper))
     }

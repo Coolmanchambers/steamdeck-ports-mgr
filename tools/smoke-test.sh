@@ -88,7 +88,7 @@ if [ "$alive" = yes ]; then
         if [ -n "${X:-}" ] && [ -n "${Y:-}" ]; then
             # Settings > Import ports... opens (its scan runs on a worker thread), shows the screen and closes again.
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 267)) click 1; sleep 4
+            xdotool mousemove $((X + 71)) $((Y + 311)) click 1; sleep 4
             import -window root "$OUT/import-ports.png" 2>/dev/null
             imp=$(xdotool search --name "^Import ports$" 2>/dev/null | head -1)
             imp_alive=no; kill -0 "$APP" 2>/dev/null && imp_alive=yes

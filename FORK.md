@@ -36,6 +36,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
 | 2026-10-22 | `src/app/dialogs.rs`, `src/app/mod.rs` | Import ports: the Settings entry "Adopt installed ports..." renamed "Import ports..." (`SettingsEntry::ImportPorts`, opens `import_screen::open`); one module line |
 | 2026-10-22 | `tools/smoke-test.sh` | Opens Settings > Import ports... and closes it again |
+| 2026-10-22 | `src/main.rs` | Import ports: window Close (when it quits) and tray Quit also ask `import_screen::quit_waits_for_import`, so a running import is cancelled first |
 | 2026-10-21 | `src/core/installer.rs` | `refuse_adopted`: `install_port` and `install_extra` stop with a message when `Library/<folder>` is a symlink (an adopted port), whatever the catalog says, so a bad edit of `ports.local.json` cannot make the installer write into the user's own folder; 1 test |
 | 2026-10-21 | `README.md` | Item 4 (adopt) set to "Testing", item 5 (Steam shortcuts) to "In progress" |
 | 2026-10-22 | `README.md` | Item 4 reads "Import ports already on the Deck into your ports folder" (still Testing) |
@@ -146,7 +147,7 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
 | 2026-10-21 | `src/fork/screens.rs` | View model for the Add to Steam screen: labels, toggling, review text, apply. All the decisions, tested without UI (2026-10-22: the adopt screen model moved to `fork::import`) |
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" list dialogs (thin: draws `screens.rs` text); the adopt screen left it for `import_screen.rs` on 2026-10-22 |
-| 2026-10-22 | `src/fork/import/` | Import ports: scan folders, finds with confidence, size and Steam shortcuts, per-port plan, the move adapter with a dry-run stub engine, the summary, the link fallback, the list models, the folder picker adapter; tested without UI (see "Importing ports") |
+| 2026-10-22 | `src/fork/import/` | Import ports: scan folders, finds with confidence, size and Steam shortcuts, per-port plan, the move adapter and engine over the port mover, the summary, the link fallback, the list models; tested without UI (see "Importing ports") |
 | 2026-10-22 | `src/app/import_screen.rs` | The Import ports lists, the worker-thread job with a Cancel row, and the entry point the setup wizard calls |
 | 2026-10-22 | `src/fork/steam_queue.rs` | Steam changes queued from Game Mode: `steam-queue.json` (versioned, atomic), applying it through the screen's safe write, the startup/30-second offer decision, the mode wording; tested without UI |
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
@@ -248,24 +249,40 @@ steam links"). It is also step c of the setup wizard, which opens it through
   the Steam shortcut (app ID kept, program and start folder re-rooted under the new folder) or queue it
   (Steam running, always in Game Mode, or not provably closed), keep the old folder. Refused before
   anything happens when the destination exists, the source is gone, the folder name is not one plain name,
-  the two folders contain each other, or free space is under the port's size plus 1 GB (a batch counts the
+  the two folders contain each other, or free space is under the port's size plus 64 MB, the mover's own rule (a batch counts the
   space earlier ports use).
-- **Adapter** (`engine.rs`): `move_selected(engine, plans, cancelled, publish, prompts)` runs the plans
-  one at a time, publishes a status line per port, checks the cancel flag only between ports and returns an
-  `ImportSummary` (moved, old copies kept with sizes, Steam repointed/queued/failed, problems). `MoveEngine`
-  is what actually moves a port; `Prompter` is how it asks (game file problem, remove the old copy).
-  **STUB:** until the move engine of the ports-folder work is on `main`, `engine_for_import()` returns
-  `DryRunEngine`, which reports the plan and writes nothing; `ports_folder()` in `import/mod.rs` returns
-  the library folder until the ports-folder setting exists; `picker.rs` adapts the game-files browser until
-  the shared folder picker exists. Each is one place to change.
+- **Adapter and engine** (`engine.rs`, `real_engine.rs`): `move_selected(engine, plans, cancel, publish, prompts)`
+  runs the plans one at a time, publishes a status line per port, checks the cancel flag between ports and
+  returns an `ImportSummary` (moved, old copies on disk with sizes, Steam repointed/queued/failed, notes,
+  problems). `MoveEngine` is what moves a port; `Prompter` is how it asks. `RealEngine` (the one the screen
+  uses, `engine_for_import`) runs the port mover per port on the worker thread: `prepare` (checks, copy to a
+  hidden staging folder, verify, game files checked before and after, rename into place), then `switch_over`
+  (Steam shortcuts repointed with app IDs kept, or a queued `Repoint` while Steam runs and always in Game
+  Mode; Game files records follow; the old folder recorded in `port-moves.json`). The mover's rules apply
+  as written in "Ports folder, folder picker and moving ports" (space = size + 64 MB, nothing runs from the
+  folder, old copy never deleted). A game file problem found before the copy is asked on the UI thread while
+  the worker waits (the screen shows it between progress lists): Fix in Game files (skips that port; the
+  summary then offers Open Game files), Move anyway, Cancel (stops the ports after it). Problems found
+  after the copy always stop that port. After the batch the screen marks what moved as installed and runs
+  `ports_folder_screen::prompt_old_copies` (Keep for now preselected; the summary ends that sequence).
+  Scan folders go through `folder_picker_screen::open_folder_picker` (`Purpose::ScanFolder`) and
+  `ForkSettings::set_adopt_folders`; imports go to `AppPaths::library_dir()`; Import refuses while
+  `ports_folder_screen::blocked_reason` is set (ports folder missing, a move running) and while an install,
+  update or restore runs; moved ports count as busy (`installing`) meanwhile, and Close or Quit cancels the
+  copy in progress first (`import_screen::quit_waits_for_import`, two lines in `main.rs`). `DryRunEngine`
+  (plan and report, write nothing) is kept for tests.
 - **Fallback** (`fallback.rs`): a port refused for lack of space can be linked where it stands instead
   (`Library/<folder>` symlink plus a sourceless `ports.local.json` entry, backed up first; `adopt.rs` does
   the work and its rules stand: nothing in the install is touched, no updates through the link). It is
   offered only after the summary shows why, and asks first.
 - Nothing is ever deleted by Import. The old folder stays after a verified move.
-- Not done / not verified: the real engine (above); `Prompter` through the UI thread; the after-import game
-  file search of the ROM work (`after_ports_added`); Steam shortcuts matched by name only (the plan only
-  repoints shortcuts that already point inside the old folder); a Deck (SD card paths, exFAT, Game Mode).
+- Limits: an old copy whose folder name differs from the catalog folder (a "likely" or "check this" match,
+  say `~/Games/dusk-old` imported as `dusklight`) cannot be removed from the prompt: the mover's check
+  says "The old and new copies have different folder names, so the old one is kept". It stays listed under
+  Old copies. The wizard's "Continue setup" is not offered after the old-copy questions
+  (`prompt_old_copies` has no completion callback). The game files search after a move
+  (`rom_screens::after_ports_added`, rom-search branch) is not called yet: that function is not on `main`.
+  Not verified: a Deck (SD card paths, exFAT, Game Mode wording, controller feel).
 
 ## Linking an install in place (`src/fork/adopt.rs`)
 

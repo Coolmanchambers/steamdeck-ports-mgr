@@ -370,9 +370,10 @@ mod tests {
     fn the_confirm_lists_ports_that_cannot_go_ahead_with_the_reason() {
         let h = fake_home("screen_confirm_block");
         let s = screen(&h, false);
-        let plans = plans_of(&s, Some(1_000_000_100));
-        // 1 GB + 100 bytes free: Dusklight (700 B) cannot keep the 1 GB margin, nor can the other.
-        let text = confirm_text(&plans, &h.library, &h.home, Some(1_000_000_100), false);
+        let free = crate::fork::import::plan::SPACE_MARGIN + 100;
+        let plans = plans_of(&s, Some(free));
+        // The margin plus 100 bytes free: Dusklight (700 B) cannot keep the margin, nor can the other.
+        let text = confirm_text(&plans, &h.library, &h.home, Some(free), false);
         assert!(text.starts_with("Import 0 ports into"), "{text}");
         assert!(text.contains("Not imported now:\n  Dusklight: not enough free space"), "{text}");
     }

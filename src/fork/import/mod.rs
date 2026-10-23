@@ -7,9 +7,10 @@
 //!   that point into each find (the shortcuts file is only read);
 //! - `plan`: the step-by-step plan for a port (check game files, copy, verify, switch over, repoint or
 //!   queue Steam shortcuts, keep the old folder), with the disk checks that can refuse it;
-//! - `engine`: the one adapter to whatever moves a port (`move_selected`), the summary, and the STUB
-//!   dry-run engine used until the real move engine is on `main`;
-//! - `picker`: the folder picker (an adapter over the game-files browser for now);
+//! - `engine`: the one adapter to whatever moves a port (`move_selected`), the summary, `Prompter`, and a
+//!   dry-run engine for tests;
+//! - `real_engine`: the engine the screen uses, over the port mover (copy, verify, game files, switch over,
+//!   Steam repoint or queue, old copy kept);
 //! - `fallback`: link a port in place when the move was refused for lack of space (the old adopt);
 //! - `screen`: what the lists say, without UI code. The screens are in `src/app/import_screen.rs`.
 //!
@@ -18,15 +19,14 @@
 pub mod engine;
 pub mod fallback;
 pub mod folders;
-pub mod picker;
 pub mod plan;
+pub mod real_engine;
 pub mod scan;
 pub mod screen;
 
 use std::path::{Path, PathBuf};
 
-/// Where imported ports go. STUB: the app's library folder until the ports folder setting of the setup
-/// work is on `main`; the screen asks only this function, so that change is one line here.
+/// Where imported ports go: the ports folder in use (`AppPaths::library_dir()`).
 pub fn ports_folder(library_dir: &Path) -> PathBuf {
     library_dir.to_path_buf()
 }

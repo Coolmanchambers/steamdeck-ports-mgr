@@ -9,8 +9,8 @@ use crate::fork::store::SteamProcessCheck;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-/// A copy needs this much free space beyond the port's own size, like the game-files copy does.
-pub const SPACE_MARGIN: u64 = 1_000_000_000;
+/// A copy needs this much free space beyond the port's own size: the move engine's own rule.
+pub use crate::fork::port_mover::SPACE_MARGIN;
 
 /// When a Steam shortcut change can be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,7 +341,7 @@ mod tests {
         let tight = plan_port(soh, Some(SPACE_MARGIN + 7_999), SteamWrite::Now);
         assert_eq!(tight.block, Some(Block::NotEnoughSpace { need: 8000, free: SPACE_MARGIN + 7_999 }));
         assert!(tight.block.as_ref().unwrap().is_space());
-        assert!(tight.block.unwrap().text(&h.home).contains("needs 8 KB plus 1.0 GB spare"));
+        assert!(tight.block.unwrap().text(&h.home).contains(&format!("needs 8 KB plus {} spare", human_bytes(SPACE_MARGIN))));
         assert!(plan_port(soh, Some(SPACE_MARGIN + 8_000), SteamWrite::Now).block.is_none());
         assert!(plan_port(soh, None, SteamWrite::Now).block.is_none());
     }

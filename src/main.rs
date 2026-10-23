@@ -307,7 +307,7 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
                 let _ = app.window().hide();
             }
             // Fork: a running save restore or ports move finishes first (it quits the app when done).
-            CloseAction::Quit if app::save_restore_screen::quit_waits_for_restore(&app, &router) || app::ports_folder_screen::quit_waits_for_move(&app, &router) => {}
+            CloseAction::Quit if app::save_restore_screen::quit_waits_for_restore(&app, &router) || app::ports_folder_screen::quit_waits_for_move(&app, &router) || app::import_screen::quit_waits_for_import(&app, &router) => {}
             CloseAction::Quit => {
                 let _ = slint::quit_event_loop();
             }
@@ -447,7 +447,7 @@ fn wire_tray(tray: &AppTray, app: &Rc<AppState>, router: &Rc<RefCell<GamepadRout
         let (app, router) = (app.clone(), router.clone());
         tray.on_quit_requested(move || {
             // Fork: a running save restore or ports move finishes first (it quits the app when done).
-            if !app::save_restore_screen::quit_waits_for_restore(&app, &router) && !app::ports_folder_screen::quit_waits_for_move(&app, &router) {
+            if !app::save_restore_screen::quit_waits_for_restore(&app, &router) && !app::ports_folder_screen::quit_waits_for_move(&app, &router) && !app::import_screen::quit_waits_for_import(&app, &router) {
                 let _ = slint::quit_event_loop();
             }
         });

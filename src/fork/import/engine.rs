@@ -5,20 +5,18 @@
 //! `ImportSummary`. The screen knows nothing about copying: it builds plans, calls `move_selected` on a
 //! worker thread and shows the summary.
 //!
-//! # STUB (until the move engine of the ports-folder work is on `main`)
-//! The only engine today is `DryRunEngine`. It plans and reports exactly what would be checked, copied,
-//! verified and repointed and writes nothing. The real engine implements `MoveEngine` (copy, verify with
-//! the port's game files before and after, switch the app's records, repoint or queue Steam shortcuts,
-//! never delete the original) and asks the user through `Prompter` when a game file is missing or broken
-//! and, after each verified move, whether to remove the old copy. `engine_for_import()` is the single
-//! place that picks the engine.
+//! The real engine is `real_engine::RealEngine` (the port mover: copy, verify with the port's game files
+//! before and after, switch over, Steam repoint or queue, old copy kept). `DryRunEngine` (plan and report,
+//! write nothing) stays for tests. `Prompter` is how an engine asks the user, on the UI thread, while the
+//! worker waits.
 
 use super::plan::{PortPlan, SteamWrite};
-use super::scan::Size;
 use crate::fork::rom_screens::util::human_bytes;
 use crate::fork::screens::short_path;
+use crate::fork::port_mover::game_files::Issue;
 use std::cell::RefCell;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// What the engine reports for one Steam shortcut change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,44 +33,50 @@ pub enum SteamResult {
 pub enum PortOutcome {
     /// Dry run: the plan was worked out and shown; nothing was written.
     Planned,
-    /// Copied, verified, switched over. `old_copy_removed` is true only when the user chose "Remove old
-    /// copy" in the prompt that follows each verified move.
-    Moved { steam: SteamResult, old_copy_removed: bool },
+    /// Copied, verified, switched over. The old folder is still there: the screen asks about each one
+    /// afterwards ("Remove the old copy now?", Keep for now preselected). `notes` are lines for the summary
+    /// (Steam queued until Desktop Mode, game files named but not found, links adjusted).
+    Moved { steam: SteamResult, notes: Vec<String> },
     /// The engine would not start; nothing changed. `space` is true for "not enough free space", the one
     /// case where linking the folder in place instead is offered.
     Refused { reason: String, space: bool },
     /// The user stopped this port at a prompt (a game file was missing or broken); nothing changed.
-    Stopped(String),
+    /// `fix_in_game_files`: they chose to fix it in Settings > Game files first.
+    Stopped { reason: String, fix_in_game_files: bool },
     /// Something went wrong part way; the text says what, and the old folder is untouched.
     Failed(String),
     /// A cancel came before this port started.
     NotStarted,
 }
 
-/// The user's answers to the prompts an engine may raise on the worker thread.
-pub trait Prompter: Sync {
-    /// A game file the port needs is missing or broken. `true` = carry on with this port anyway.
-    fn game_file_problem(&self, port: &str, problems: &[String]) -> bool;
-    /// A move was verified. `true` = remove the old copy now; the default of "keep" is `false`.
-    fn remove_old_copy(&self, port: &str, old_copy: &Path, size: Size) -> bool;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameFileChoice {
+    /// Skip this port; the user will fix it in Settings > Game files and import again.
+    FixInGameFiles,
+    /// Copy it although the files named are missing or broken.
+    MoveAnyway,
+    /// Stop the whole import here (the ports after this one are not started).
+    Cancel,
 }
 
-/// Answers every prompt the safe way: stop on a problem, keep the old copy.
+/// The user's answers to the prompts an engine may raise on the worker thread.
+pub trait Prompter: Sync {
+    /// Game files the port needs are missing or broken (found before anything is copied).
+    fn game_file_problem(&self, port: &str, issues: &[Issue]) -> GameFileChoice;
+}
+
+/// Answers the safe way: skip the port with the problem.
 pub struct NoPrompts;
 
 impl Prompter for NoPrompts {
-    fn game_file_problem(&self, _: &str, _: &[String]) -> bool {
-        false
-    }
-
-    fn remove_old_copy(&self, _: &str, _: &Path, _: Size) -> bool {
-        false
+    fn game_file_problem(&self, _: &str, _: &[Issue]) -> GameFileChoice {
+        GameFileChoice::FixInGameFiles
     }
 }
 
 pub struct MoveContext<'a> {
     pub plan: &'a PortPlan,
-    pub cancelled: &'a dyn Fn() -> bool,
+    pub cancel: &'a AtomicBool,
     /// Says what the engine is doing now ("copying", "checking the copy"), shown after the port's name.
     pub progress: &'a dyn Fn(String),
     pub prompts: &'a dyn Prompter,
@@ -83,7 +87,7 @@ pub trait MoveEngine: Send + Sync {
     fn move_port(&self, ctx: &MoveContext) -> PortOutcome;
 }
 
-/// STUB engine: reports the plan, writes nothing. See the module documentation.
+/// Reports the plan and writes nothing (tests).
 pub struct DryRunEngine;
 
 impl MoveEngine for DryRunEngine {
@@ -97,11 +101,6 @@ impl MoveEngine for DryRunEngine {
             None => PortOutcome::Planned,
         }
     }
-}
-
-/// The engine the Import screen uses. Switching from the dry run to the real engine is this function.
-pub fn engine_for_import() -> Box<dyn MoveEngine> {
-    Box::new(DryRunEngine)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,20 +150,21 @@ fn finished_text(outcome: &PortOutcome) -> &'static str {
         PortOutcome::Planned => "planned",
         PortOutcome::Moved { .. } => "done",
         PortOutcome::Refused { .. } => "not moved",
-        PortOutcome::Stopped(_) => "stopped",
+        PortOutcome::Stopped { .. } => "stopped",
         PortOutcome::Failed(_) => "problem",
         PortOutcome::NotStarted => "not started",
     }
 }
 
 /// Runs the plans in order. `publish` gets the whole status text (one line per port) after every change.
-/// `cancelled` is looked at before each port, so a cancel never interrupts one that is part way through.
-pub fn move_selected(engine: &dyn MoveEngine, plans: Vec<PortPlan>, cancelled: &dyn Fn() -> bool, publish: &dyn Fn(String), prompts: &dyn Prompter) -> ImportSummary {
+/// `cancel` is looked at before each port; the engine may also watch it inside a port (the copy stops and
+/// is removed). An engine can set it (the user chose Cancel at a prompt) to stop the ports after it.
+pub fn move_selected(engine: &dyn MoveEngine, plans: Vec<PortPlan>, cancel: &AtomicBool, publish: &dyn Fn(String), prompts: &dyn Prompter) -> ImportSummary {
     let board = RefCell::new(Board { names: plans.iter().map(|p| p.request.port_name.clone()).collect(), status: vec![Status::Waiting; plans.len()] });
     publish(board.borrow().render());
     let mut summary = ImportSummary { dry_run: engine.is_dry_run(), items: Vec::new(), cancelled: false };
     for (i, plan) in plans.into_iter().enumerate() {
-        if summary.cancelled || cancelled() {
+        if summary.cancelled || cancel.load(Ordering::Relaxed) {
             summary.cancelled = true;
             board.borrow_mut().status[i] = Status::Finished(finished_text(&PortOutcome::NotStarted).into());
             summary.items.push(SummaryItem { plan, outcome: PortOutcome::NotStarted });
@@ -176,7 +176,7 @@ pub fn move_selected(engine: &dyn MoveEngine, plans: Vec<PortPlan>, cancelled: &
             board.borrow_mut().status[i] = Status::Working(note);
             publish(board.borrow().render());
         };
-        let outcome = engine.move_port(&MoveContext { plan: &plan, cancelled, progress: &progress, prompts });
+        let outcome = engine.move_port(&MoveContext { plan: &plan, cancel, progress: &progress, prompts });
         board.borrow_mut().status[i] = Status::Finished(finished_text(&outcome).into());
         summary.items.push(SummaryItem { plan, outcome });
     }
@@ -215,13 +215,13 @@ impl ImportSummary {
         self.moved().count()
     }
 
-    /// Moved ports whose old folder is still on disk.
-    pub fn kept_old_copies(&self) -> Vec<&SummaryItem> {
-        self.moved().filter(|i| matches!(i.outcome, PortOutcome::Moved { old_copy_removed: false, .. })).collect()
+    /// True when the user chose "Fix in Game files" for some port.
+    pub fn wants_game_files(&self) -> bool {
+        self.items.iter().any(|i| matches!(i.outcome, PortOutcome::Stopped { fix_in_game_files: true, .. }))
     }
 
     pub fn problem_count(&self) -> usize {
-        self.items.iter().filter(|i| matches!(i.outcome, PortOutcome::Failed(_) | PortOutcome::Stopped(_) | PortOutcome::Refused { .. })).count()
+        self.items.iter().filter(|i| matches!(i.outcome, PortOutcome::Failed(_) | PortOutcome::Stopped { .. } | PortOutcome::Refused { .. })).count()
     }
 
     /// (repointed, queued, failed) over every moved port.
@@ -246,19 +246,14 @@ impl ImportSummary {
         let size = human_bytes(item.plan.request.size.bytes);
         match &item.outcome {
             PortOutcome::Planned => format!("{name}: would move {size}{}", would_steam_clause(&item.plan)),
-            PortOutcome::Moved { steam, old_copy_removed } => {
-                let old = if *old_copy_removed {
-                    "old copy removed at your request".to_string()
-                } else {
-                    format!("old copy kept at {} ({size})", short_path(&item.plan.request.from, home))
-                };
-                format!("{name}: moved, {old}{}", steam_clause(steam))
+            PortOutcome::Moved { steam, .. } => {
+                format!("{name}: moved; the old copy at {} ({size}) is still there{}", short_path(&item.plan.request.from, home), steam_clause(steam))
             }
-            PortOutcome::Refused { .. } => {
-                let reason = item.plan.block.as_ref().map_or_else(|| "the engine refused".to_string(), |b| b.text(home));
+            PortOutcome::Refused { reason, .. } => {
+                let reason = item.plan.block.as_ref().map_or_else(|| reason.clone(), |b| b.text(home));
                 format!("{name}: not moved, {reason}")
             }
-            PortOutcome::Stopped(why) => format!("{name}: stopped, {why}"),
+            PortOutcome::Stopped { reason, .. } => format!("{name}: stopped, {reason}"),
             PortOutcome::Failed(why) => format!("{name}: problem, {why}"),
             PortOutcome::NotStarted => format!("{name}: not started (cancelled)"),
         }
@@ -275,7 +270,7 @@ impl ImportSummary {
     }
 
     /// The totals under the title: what moved, what stayed behind, Steam, problems.
-    pub fn totals(&self, home: &Path) -> Vec<String> {
+    pub fn totals(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.dry_run {
             out.push(format!("Preview only: {} port{} would be moved. Nothing was copied or changed.", self.planned_count(), if self.planned_count() == 1 { "" } else { "s" }));
@@ -285,19 +280,15 @@ impl ImportSummary {
         if self.cancelled {
             out.push("Stopped before the rest: you cancelled between ports.".to_string());
         }
-        let kept = self.kept_old_copies();
-        if !kept.is_empty() {
-            let bytes: u64 = kept.iter().map(|i| i.plan.request.size.bytes).sum();
+        let moved: Vec<&SummaryItem> = self.moved().collect();
+        if !moved.is_empty() {
+            let bytes: u64 = moved.iter().map(|i| i.plan.request.size.bytes).sum();
             out.push(format!(
-                "{} old cop{} kept ({}). Nothing was deleted: once you have checked the ports, remove {} yourself, for example in Desktop Mode's file manager.",
-                kept.len(),
-                if kept.len() == 1 { "y" } else { "ies" },
-                human_bytes(bytes),
-                if kept.len() == 1 { "it" } else { "them" }
+                "Old cop{} from this import: {} on disk ({}). Each one you are asked about gets Remove old copy or Keep for now; nothing is deleted unless you choose it. Kept ones stay listed under Settings > Ports folder > Old copies.",
+                if moved.len() == 1 { "y" } else { "ies" },
+                moved.len(),
+                human_bytes(bytes)
             ));
-            for item in kept {
-                out.push(format!("  {}", short_path(&item.plan.request.from, home)));
-            }
         }
         let (repointed, queued, failed) = self.steam_counts();
         if repointed + queued + failed > 0 {
@@ -322,9 +313,18 @@ impl ImportSummary {
 
     /// The whole summary as one text.
     pub fn text(&self, home: &Path) -> String {
-        let mut lines = self.totals(home);
+        let mut lines = self.totals();
         lines.push(String::new());
         lines.extend((0..self.items.len()).map(|i| self.item_label(i, home)));
+        for item in self.moved() {
+            if let PortOutcome::Moved { notes, .. } = &item.outcome {
+                if !notes.is_empty() {
+                    lines.push(String::new());
+                    lines.push(format!("{}:", item.plan.request.port_name));
+                    lines.extend(notes.iter().cloned());
+                }
+            }
+        }
         lines.join("\n")
     }
 }
@@ -333,11 +333,13 @@ impl ImportSummary {
 mod tests {
     use super::super::plan::{build_requests, plan_all, MoveRequest};
     use super::super::scan::fixtures::*;
-    use super::super::scan::{Found, Size};
+    use super::super::scan::Found;
     use super::*;
     use std::cell::RefCell;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static NO_CANCEL: AtomicBool = AtomicBool::new(false);
 
     fn plans(h: &Home, free: Option<u64>) -> Vec<PortPlan> {
         use crate::fork::import::folders::ScanFolders;
@@ -360,7 +362,7 @@ mod tests {
     /// An engine for tests that "moves" every port and records what it was asked.
     struct Recorder {
         seen: Mutex<Vec<String>>,
-        cancel_after_first: Option<Arc<AtomicBool>>,
+        cancel_after_first: bool,
     }
 
     impl MoveEngine for Recorder {
@@ -371,11 +373,11 @@ mod tests {
         fn move_port(&self, ctx: &MoveContext) -> PortOutcome {
             self.seen.lock().unwrap().push(ctx.plan.request.port_name.clone());
             (ctx.progress)("copying".into());
-            if let Some(flag) = &self.cancel_after_first {
-                flag.store(true, Ordering::SeqCst);
+            if self.cancel_after_first {
+                ctx.cancel.store(true, Ordering::SeqCst);
             }
             let steam = if ctx.plan.steam.is_empty() { SteamResult::NoShortcut } else { SteamResult::Repointed(ctx.plan.steam.len()) };
-            PortOutcome::Moved { steam, old_copy_removed: false }
+            PortOutcome::Moved { steam, notes: Vec::new() }
         }
     }
 
@@ -384,7 +386,7 @@ mod tests {
         let h = fake_home("engine_dry");
         let before = snapshot(&h.home);
         let lines = RefCell::new(Vec::new());
-        let summary = move_selected(&DryRunEngine, plans(&h, None), &|| false, &|t| lines.borrow_mut().push(t), &NoPrompts);
+        let summary = move_selected(&DryRunEngine, plans(&h, None), &NO_CANCEL, &|t| lines.borrow_mut().push(t), &NoPrompts);
         assert!(summary.dry_run && !summary.cancelled);
         assert_eq!(summary.items.len(), 2);
         assert!(summary.items.iter().all(|i| i.outcome == PortOutcome::Planned));
@@ -415,7 +417,7 @@ mod tests {
     #[test]
     fn the_preview_summary_says_what_would_happen_and_that_nothing_did() {
         let h = fake_home("engine_dry_text");
-        let summary = move_selected(&DryRunEngine, plans(&h, None), &|| false, &|_| {}, &NoPrompts);
+        let summary = move_selected(&DryRunEngine, plans(&h, None), &NO_CANCEL, &|_| {}, &NoPrompts);
         let text = summary.text(&h.home);
         assert_eq!(summary.title(), "Import preview");
         assert!(text.starts_with("Preview only: 2 ports would be moved. Nothing was copied or changed."), "{text}");
@@ -426,11 +428,11 @@ mod tests {
     #[test]
     fn a_dry_run_refusal_for_space_makes_the_port_a_link_candidate() {
         let h = fake_home("engine_space");
-        let summary = move_selected(&DryRunEngine, plans(&h, Some(100)), &|| false, &|_| {}, &NoPrompts);
+        let summary = move_selected(&DryRunEngine, plans(&h, Some(100)), &NO_CANCEL, &|_| {}, &NoPrompts);
         assert!(summary.items.iter().all(|i| matches!(i.outcome, PortOutcome::Refused { space: true, .. })));
         assert_eq!(summary.link_candidates(), [0, 1]);
         assert_eq!(summary.problem_count(), 2);
-        assert!(summary.item_label(0, &h.home).starts_with("Dusklight: not moved, not enough free space: needs 700 B plus 1.0 GB spare, 100 B free"), "{}", summary.item_label(0, &h.home));
+        assert!(summary.item_label(0, &h.home).starts_with(&format!("Dusklight: not moved, not enough free space: needs 700 B plus {} spare, 100 B free", human_bytes(crate::fork::import::plan::SPACE_MARGIN))), "{}", summary.item_label(0, &h.home));
     }
 
     #[test]
@@ -439,17 +441,17 @@ mod tests {
         let mut plans = plans(&h, None);
         std::fs::create_dir_all(&plans[0].request.to).unwrap();
         plans[0] = super::super::plan::plan_port(&plans[0].request, None, SteamWrite::Now);
-        let summary = move_selected(&DryRunEngine, plans, &|| false, &|_| {}, &NoPrompts);
+        let summary = move_selected(&DryRunEngine, plans, &NO_CANCEL, &|_| {}, &NoPrompts);
         assert!(matches!(summary.items[0].outcome, PortOutcome::Refused { space: false, .. }));
         assert_eq!(summary.link_candidates(), Vec::<usize>::new());
     }
 
     #[test]
     fn a_cancel_is_honoured_between_ports_and_never_in_the_middle_of_one() {
-        let flag = Arc::new(AtomicBool::new(false));
+        let flag = AtomicBool::new(false);
         let h = fake_home("engine_cancel");
-        let engine = Recorder { seen: Mutex::new(Vec::new()), cancel_after_first: Some(flag.clone()) };
-        let summary = move_selected(&engine, plans(&h, None), &|| flag.load(Ordering::SeqCst), &|_| {}, &NoPrompts);
+        let engine = Recorder { seen: Mutex::new(Vec::new()), cancel_after_first: true };
+        let summary = move_selected(&engine, plans(&h, None), &flag, &|_| {}, &NoPrompts);
         assert!(summary.cancelled);
         assert_eq!(*engine.seen.lock().unwrap(), ["Dusklight"], "the second port never started");
         assert!(matches!(summary.items[0].outcome, PortOutcome::Moved { .. }), "the first one ran to the end");
@@ -462,9 +464,9 @@ mod tests {
     #[test]
     fn progress_shows_what_the_engine_says_it_is_doing() {
         let h = fake_home("engine_progress");
-        let engine = Recorder { seen: Mutex::new(Vec::new()), cancel_after_first: None };
+        let engine = Recorder { seen: Mutex::new(Vec::new()), cancel_after_first: false };
         let lines = RefCell::new(Vec::new());
-        move_selected(&engine, plans(&h, None), &|| false, &|t| lines.borrow_mut().push(t), &NoPrompts);
+        move_selected(&engine, plans(&h, None), &NO_CANCEL, &|t| lines.borrow_mut().push(t), &NoPrompts);
         let all = lines.into_inner();
         assert!(all.iter().any(|t| t == "Dusklight: copying...\nShip of Harkinian: waiting"), "{all:#?}");
         assert_eq!(all.last().unwrap(), "Dusklight: done\nShip of Harkinian: done");
@@ -475,38 +477,35 @@ mod tests {
         let h = fake_home("engine_summary");
         let mut p = plans(&h, None);
         let items = vec![
-            SummaryItem { plan: p.remove(1), outcome: PortOutcome::Moved { steam: SteamResult::Queued(1), old_copy_removed: false } },
+            SummaryItem { plan: p.remove(1), outcome: PortOutcome::Moved { steam: SteamResult::Queued(1), notes: vec!["Steam: queued until Desktop Mode.".into()] } },
             SummaryItem { plan: p.remove(0), outcome: PortOutcome::Failed("the copy failed a check".into()) },
         ];
         let summary = ImportSummary { dry_run: false, items, cancelled: false };
         let text = summary.text(&h.home);
         assert_eq!(summary.title(), "Import finished");
         assert!(text.starts_with("Moved 1 of 2 ports."), "{text}");
-        assert!(text.contains("1 old copy kept (8 KB). Nothing was deleted: once you have checked the ports, remove it yourself"), "{text}");
-        assert!(text.contains("  ~/Applications/SoH\n"), "{text}");
+        assert!(text.contains("Old copy from this import: 1 on disk (8 KB). Each one you are asked about gets Remove old copy or Keep for now; nothing is deleted unless you choose it."), "{text}");
         assert!(text.contains("Steam shortcuts: 1 queued for Desktop Mode."), "{text}");
         assert!(text.contains("1 port had a problem (listed below)."), "{text}");
-        assert!(text.contains("Ship of Harkinian: moved, old copy kept at ~/Applications/SoH (8 KB); 1 Steam shortcut queued for Desktop Mode"), "{text}");
+        assert!(text.contains("Ship of Harkinian: moved; the old copy at ~/Applications/SoH (8 KB) is still there; 1 Steam shortcut queued for Desktop Mode"), "{text}");
+        assert!(text.contains("\nShip of Harkinian:\nSteam: queued until Desktop Mode."), "{text}");
         assert!(text.contains("Dusklight: problem, the copy failed a check"), "{text}");
     }
 
     #[test]
-    fn a_removed_old_copy_is_reported_as_removed_at_the_users_request() {
-        let h = fake_home("engine_removed");
-        let mut p = plans(&h, None);
-        let item = SummaryItem { plan: p.remove(1), outcome: PortOutcome::Moved { steam: SteamResult::Repointed(2), old_copy_removed: true } };
-        let summary = ImportSummary { dry_run: false, items: vec![item], cancelled: false };
-        assert!(summary.kept_old_copies().is_empty());
-        let text = summary.text(&h.home);
-        assert!(text.contains("old copy removed at your request; 2 Steam shortcuts repointed"), "{text}");
-        assert!(!text.contains("kept"), "{text}");
-        assert_eq!(summary.steam_counts(), (2, 0, 0));
+    fn the_safe_answer_skips_the_port_with_the_problem() {
+        let issue = Issue { file: "oot.o2r".into(), expected_at: PathBuf::from("/x/oot.o2r"), problem: "is missing".into() };
+        assert_eq!(NoPrompts.game_file_problem("x", &[issue]), GameFileChoice::FixInGameFiles);
     }
 
     #[test]
-    fn the_safe_answers_stop_on_a_problem_and_keep_the_old_copy() {
-        let size = Size::default();
-        assert!(!NoPrompts.game_file_problem("x", &["oot.o2r is missing".into()]));
-        assert!(!NoPrompts.remove_old_copy("x", Path::new("/a"), size));
+    fn a_fix_in_game_files_stop_is_a_problem_that_asks_for_the_game_files_screen() {
+        let h = fake_home("engine_fix");
+        let mut p = plans(&h, None);
+        let items = vec![SummaryItem { plan: p.remove(0), outcome: PortOutcome::Stopped { reason: "fix its game files, then import again".into(), fix_in_game_files: true } }];
+        let summary = ImportSummary { dry_run: false, items, cancelled: false };
+        assert!(summary.wants_game_files());
+        assert_eq!(summary.problem_count(), 1);
+        assert!(summary.item_label(0, &h.home).starts_with("Dusklight: stopped, fix its game files"));
     }
 }
