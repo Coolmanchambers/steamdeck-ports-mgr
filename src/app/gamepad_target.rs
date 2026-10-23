@@ -60,6 +60,7 @@ pub(crate) fn dialog_reject(app: &AppState) {
         DialogSlot::SearchList(d) => d.invoke_close_requested(),
         DialogSlot::DeckReadyInfo(d) => d.invoke_close_requested(),
         DialogSlot::FolderPicker(d) => d.invoke_close_requested(),
+        DialogSlot::SetupWizard(d) => d.invoke_close_requested(),
         DialogSlot::Progress(_) | DialogSlot::None => {}
     }
 }
@@ -82,6 +83,7 @@ pub(crate) fn dialog_activate(app: &AppState) {
         }
         DialogSlot::DeckReadyInfo(d) => super::deck_ready_screen::info_activate(&d, nav.info_nav_index.get()),
         DialogSlot::FolderPicker(d) => d.invoke_item_selected(nav.picker_index.get()),
+        DialogSlot::SetupWizard(d) => d.invoke_activate_requested(),
         DialogSlot::Progress(_) | DialogSlot::None => {}
     }
 }
@@ -147,6 +149,7 @@ pub(crate) fn dialog_move_selection(app: &AppState, dx: i32, dy: i32) {
             }
         }
         DialogSlot::FolderPicker(d) => super::folder_picker_screen::move_selection(app, &d, dy),
+        DialogSlot::SetupWizard(d) => d.invoke_move_requested(dx, dy),
         DialogSlot::Message(_) | DialogSlot::Progress(_) | DialogSlot::None => {}
     }
 }

@@ -163,6 +163,17 @@ Files added by this fork:
 | 2026-10-22 | `src/app/rom_screens/find_flow.rs` | The screens around `find`: after an install or adopt, from Info and Settings; entry points for other screens |
 | 2026-10-22 | `src/fork/save_restore/` | Restore saves: list a port's backups (before update, Backup Saves, before restore), resolve its save folders for this system without guessing, and restore one (safety zip first, zip-slip check, swap by rename); `zip_index.rs` reads a zip's table of contents; `view.rs` holds the screen text; tested without UI |
 | 2026-10-22 | `src/app/save_restore_screen.rs` | The Restore saves screens (Info button and Settings entry): list dialogs, confirm, a progress dialog polling the worker thread |
+| 2026-10-22 | `src/fork/setup_wizard/` | The first-run setup wizard (see "Setup wizard" below): state machine and its adapters (`flow.rs`), the text of each view (`text.rs`), the ports-folder quick choices and checks (`ports_folder.rs`), `setup_done` in `fork-settings.json` (`mod.rs`); tested without UI |
+| 2026-10-22 | `src/app/setup_wizard_screen.rs` | The wizard page dialog (filled and wired here), the hand-offs to the existing screens and the timer that brings the wizard back when one of them is closed |
+| 2026-10-22 | `ui/fork/setup-wizard.slint` | The wizard page (`SetupWizardDialog`): header with the app name, "Step N of 6" and a progress bar, a title, wrapped body text, a summary card, real options (radio choices or actions) and a footer of buttons (Back left, Skip, primary Next or Finish right); theme colors and fonts |
+| 2026-10-22 | `ui/app-window.slint`, `src/ui/slint_layout_lint.rs` | Import and export `SetupWizardDialog` and `WizardOption`; the new Slint file is linted |
+| 2026-10-22 | `src/app/gamepad_target.rs` | `DialogSlot::SetupWizard`: B (close-requested), A (activate-requested) and the D-pad (move-requested) reach the wizard page |
+| 2026-10-22 | `src/main.rs` | One call after `start_queue_watch`: `app::setup_wizard_screen::start_if_first_run(&app, &router)` |
+| 2026-10-22 | `src/app/dialogs.rs` | `DialogSlot::SetupWizard` and `build_setup_wizard_dialog` (sized from the work area, 88% high, kept on screen); Settings entry "Setup wizard..." (first row, `SettingsEntry::SetupWizard`); `open_settings_dialog` hands back to the wizard when an existing screen it opened leads back to Settings |
+| 2026-10-22 | `src/app/rom_screens.rs` | `open_folder_chooser`: the folder choice of Game files without the menu in front (4 lines, wraps `choose_folder`) |
+| 2026-10-22 | `src/app/mod.rs`, `src/fork/mod.rs` | One module line each (`setup_wizard_screen`, `setup_wizard`) |
+| 2026-10-22 | `tools/smoke-test.sh` | The main run starts with `fork-settings.json` holding `setup_done`; a new first part starts a fresh folder and checks that the wizard opens, Skip setup asks, quitting half-way leaves setup unfinished, the wizard returns, a confirmed skip is remembered and leaves the main window; click offsets for Settings rows moved down one row |
+| 2026-10-22 | `tools/test-app-update.sh` | The old install it builds has `setup_done` set, so the wizard does not cover the main window |
 | 2026-10-21 | `src/fork/deck_ready/index.rs` | Reads `index/deck-ready.json` (schema 1); unusable entries are skipped, an unusable file is refused |
 | 2026-10-21 | `src/fork/deck_ready/sync.rs` | Fetches the list from this repo with an ETag, at most every 12 hours, and keeps the saved copy in `cache/` |
 | 2026-10-21 | `src/fork/deck_ready/view.rs` | Rows, filters, sorting, matching to ports the app already has, and the Info and confirm text; tested without UI |
@@ -371,6 +382,55 @@ as partial; the BIOS and serial checks are by name only. A ZIP is hashed as a fi
 (SNES copier headers, iNES) hash differently from headerless No-Intro lists and show as "wrong version";
 Switch dumps that are folders are not scanned; `rom_access` for Ship of Harkinian and 2 Ship 2 Harkinian
 ("use original") comes from the findings document and is not yet confirmed on a Deck.
+
+## Setup wizard (`src/fork/setup_wizard/`, `src/app/setup_wizard_screen.rs`)
+
+The first start opens a short wizard instead of the plain list (Tim, 2026-10-22: "this one is really hard to
+understand to start with"). Settings > **Setup wizard...** (first row) runs it again at any time, starting at
+Welcome and showing the current values. English only, plain wording.
+
+- **Page layout:** each step is one page (`ui/fork/setup-wizard.slint`): a header with the app name, "Step N of 6" and a
+  six-segment progress bar; a title; wrapped body text; a summary card (what is set or found) and/or a short list of
+  real options (radio choices such as the ports folder places, or actions such as "Find ports I already have...");
+  a footer with Back on the left, Skip this step next to it where allowed, and the primary Next or Finish on the
+  right. Focus moves only between options and buttons (D-pad or arrow keys; text never takes focus): Up and Down
+  walk the options and drop to the primary button, Left and Right move between buttons; A or Enter activates; the
+  primary button has the initial focus (on the "Skip setup?" question it is "Keep going with setup"); B or Escape
+  goes back; the title bar's X leaves the wizard. If the text is long the body scrolls, never the buttons. The
+  window is sized from the work area (about 62% wide windowed, 80% fullscreen, 88% high), not from the small
+  windowed main window, and uses the app's theme colors and font sizes. The ports-folder choosers that the
+  "Choose another folder..." option opens are still plain list dialogs.
+- **Steps:** Welcome, Ports folder, Ports you already have (import), Game files folder, Steam, All done. Each page has
+  Next and Back; the import, game files and Steam steps also have Skip this step; the ports folder always has an
+  answer (the current folder). B goes back one step; on Welcome B asks "Skip setup?". In a rerun, Welcome's exit
+  button is "Close the wizard" and needs no question.
+- **When it opens:** at start when `fork-settings.json` has no `"setup_done": true` (no file, or an install that
+  never ran it, so existing installs get it once). A settings file that is not a JSON object never opens it by
+  itself (it could never be saved as done and would return at every start); Settings still opens it.
+- **`setup_done` is written only** by Finish on the last page, or by Skip setup after its question. Quitting
+  half-way (closing the window, quitting the app) leaves it unset, so the wizard returns at the next start.
+- **Ports folder step:** shows the folder in use and quick choices, SD cards or drives first (`<mount>/Ports`, marked
+  "new folder" when missing, free space shown), then internal storage, then the current folder if it is neither, and
+  "Choose another folder..." (the folder browser of the Game files screens). A folder that does not exist is created
+  only after "Create it and use it". A choice is checked first: a full path, not the drive root, a folder that can be
+  written (a small test file of ours is written and removed) or can be created.
+- **Hand-offs:** the import, game files, Add to Steam and Artwork sources steps open the app's existing screens.
+  Those do not know about the wizard, so while one is open the wizard waits, and once no dialog has been open for
+  half a second it comes back at the same step. Their Back rows that lead to the Settings list come back to the
+  wizard (`open_settings_dialog` asks `resume_instead_of_settings` first). "Ports you already had: N added" is the
+  change in the number of installed ports across the import screen, so that screen needs no callback.
+- **Adapters (the integration points):** `flow::Adapters` is everything the wizard needs from the rest of the app and
+  the only thing the tests fake. In `setup_wizard_screen.rs`: `ports_folder_step` (folder choice; today the Game files
+  folder browser) with `record_ports_folder` and `current_ports_folder` (today the choice is recorded in
+  `fork-settings.json` as `setup_ports_folder`, nothing is moved and the app keeps its library folder), and
+  `import_step` (today Settings > Adopt installed ports). These are meant to be switched to the reusable folder
+  picker, the ports-folder setting and the new import screen.
+- **Not done by the wizard:** it never moves, deletes or overwrites anything itself. What the screens it opens do is
+  governed by their own rules.
+- **Known limits:** if something else replaces the wizard's list (a Steam queue offer, say) the wizard is over for
+  this run and returns at the next start; closing a step with the window's close button does the same. The
+  controller cursor can start on a hovered row when the mouse pointer is over the list as it opens. Fullscreen layout
+  on a real Deck is not verified (Xvfb has no window manager).
 
 ## Game files screens (`src/fork/rom_screens/`, `src/app/rom_screens.rs`)
 

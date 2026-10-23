@@ -111,6 +111,8 @@ install_old() {  # $1 = folder
     head -c 4096 /dev/urandom > "$d/Library/game/save.dat"
     head -c 2048 /dev/urandom > "$d/Saves Backup/game/backup.zip"
     echo '{"local": "ports.local.json must survive"}' > "$d/ports.local.json"
+    # Setup was finished on this install, so the first-run wizard does not cover the main window.
+    echo '{"setup_done": true}' > "$d/fork-settings.json"
     echo 'cache bytes' > "$d/cache/entry"
     # No release or catalog checks over the network; one installed port to prove state.json survives.
     printf '{"release_sync": false, "catalog_sync": false, "last_launcher_update_check": "%s", "launcher_update_available": false,

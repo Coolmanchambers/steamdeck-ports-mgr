@@ -14,7 +14,7 @@ use crate::ui::font_sizing::FontSizes;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::ui::theme::{SemanticPalette, ThemeColors, ThemeConfig};
 use crate::{
-    AppWindow, ConfirmDialog, DeckReadyInfoDialog, ErrorDialog, FolderPickerDialog, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog,
+    AppWindow, ConfirmDialog, DeckReadyInfoDialog, SetupWizardDialog, ErrorDialog, FolderPickerDialog, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog,
     SearchListDialog, SemanticColors, Theme, Tr,
 };
 use serde_json::Value;
@@ -165,6 +165,7 @@ pub(crate) enum DialogSlot {
     DeckReadyInfo(DeckReadyInfoDialog),
     // Fork: the in-app folder picker (src/app/folder_picker_screen.rs).
     FolderPicker(FolderPickerDialog),
+    SetupWizard(SetupWizardDialog),
 }
 
 impl DialogSlot {
@@ -180,6 +181,7 @@ impl DialogSlot {
             DialogSlot::SearchList(d) => Some(d.window()),
             DialogSlot::DeckReadyInfo(d) => Some(d.window()),
             DialogSlot::FolderPicker(d) => Some(d.window()),
+            DialogSlot::SetupWizard(d) => Some(d.window()),
         }
     }
 
@@ -195,6 +197,7 @@ impl DialogSlot {
             DialogSlot::SearchList(d) => DialogSlot::SearchList(d.clone_strong()),
             DialogSlot::DeckReadyInfo(d) => DialogSlot::DeckReadyInfo(d.clone_strong()),
             DialogSlot::FolderPicker(d) => DialogSlot::FolderPicker(d.clone_strong()),
+            DialogSlot::SetupWizard(d) => DialogSlot::SetupWizard(d.clone_strong()),
         }
     }
 }
@@ -565,6 +568,23 @@ pub(crate) fn build_folder_picker_dialog(app: &Rc<AppState>, router: &Router) ->
     Some(dialog)
 }
 
+// Fork: the setup wizard page, sized from the work area (not from the main window, which is small when
+// windowed) and kept on screen; src/app/setup_wizard_screen.rs fills and wires it.
+pub(crate) fn build_setup_wizard_dialog(app: &Rc<AppState>, router: &Router) -> Option<SetupWizardDialog> {
+    close_current_dialog(app, router);
+    let big = app.window().get_big_mode();
+    let fonts = if big { app.window_geometry.fullscreen_mode.borrow().fonts } else { app.window_geometry.normal_mode.borrow().fonts };
+    let (wx, wy, work_w, work_h) = chrome::work_area_under_cursor();
+    let dw = if big { (work_w as f64 * 0.8) as i32 } else { (work_w as f64 * 0.62) as i32 }.clamp(600, 1100).min(work_w);
+    let dh = ((work_h as f64 * 0.88) as i32).clamp(480, 780).min(work_h);
+    let (x, y) = centered_position(app, dw, dh);
+    let (x, y) = (x.clamp(wx, (wx + work_w - dw).max(wx)), y.clamp(wy, (wy + work_h - dh).max(wy)));
+    let dialog = SetupWizardDialog::new().ok()?;
+    style_dialog!(dialog, app, fonts);
+    position_dialog!(dialog, app, dw, dh, x, y);
+    Some(dialog)
+}
+
 pub(crate) fn open_update_toggle_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
     let window = app.window();
     let tr = window.global::<Tr>();
@@ -635,6 +655,7 @@ pub(crate) fn open_picker_dialog(
 
 #[derive(Clone, Copy)]
 enum SettingsEntry {
+    SetupWizard,
     Themes,
     Language,
     Files,
@@ -652,7 +673,8 @@ enum SettingsEntry {
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 15] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 16] = [
+    SettingsEntry::SetupWizard,
     SettingsEntry::Themes,
     SettingsEntry::Language,
     SettingsEntry::Files,
@@ -677,6 +699,7 @@ fn settings_labels(app: &AppState) -> Vec<String> {
     SETTINGS_ENTRIES
         .iter()
         .map(|entry| match entry {
+            SettingsEntry::SetupWizard => "Setup wizard...".into(),
             SettingsEntry::Themes => tr.invoke_label_themes(),
             SettingsEntry::Language => tr.invoke_label_language(),
             SettingsEntry::Files => tr.invoke_label_files(),
@@ -703,6 +726,10 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
     }
+    // Fork: the Back row of an existing screen the setup wizard opened leads here; go back to the wizard.
+    if super::setup_wizard_screen::resume_instead_of_settings(app, router) {
+        return;
+    }
     let title = tr!(app).invoke_dialog_title_settings();
     let Some(dialog) = build_picker_dialog(app, router, &title, &settings_labels(app)) else { return };
     {
@@ -725,6 +752,7 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                 _ => {
                     close_current_dialog(&app, &router);
                     match entry {
+                        SettingsEntry::SetupWizard => super::setup_wizard_screen::open_from_settings(&app, &router),
                         SettingsEntry::Themes => open_theme_picker(&app, &router),
                         SettingsEntry::Language => open_language_picker(&app, &router),
                         SettingsEntry::Files => open_files_picker(&app, &router),

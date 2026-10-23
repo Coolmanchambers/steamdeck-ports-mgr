@@ -1,0 +1,412 @@
+// Fork: the setup wizard page. One page per step: a header (app name, "Step 2 of 6", a progress bar),
+// a title, a wrapped body, a summary card and/or a few real options, and a footer of buttons (Back on
+// the left, Skip beside it, the primary Next/Finish on the right). Only options and buttons can take
+// focus; text never does. What each page says is prepared in src/fork/setup_wizard/text.rs and
+// filled in by src/app/setup_wizard_screen.rs.
+//
+// Focus numbering (shared with the Rust side): options are 0..options.length-1, then the buttons that
+// exist, in the order left, middle, right. `focus-left`, `focus-middle` and `focus-right` carry the
+// number of each button (-1 when the button is not shown).
+
+import { SemanticColors, Theme, ThemedScrollbar } from "../shared.slint";
+import { DialogChrome } from "../dialogs/chrome.slint";
+
+// kind: 0 an action (opens something), 1 a choice (a radio mark, `chosen` says which one is in use)
+export struct WizardOption {
+    title: string,
+    detail: string,
+    kind: int,
+    chosen: bool,
+}
+
+component WizardButton inherits Rectangle {
+    in property <string> text: "";
+    in property <bool> primary: false;
+    in property <bool> selected: false;
+    in property <length> border-px: 1px;
+    in property <length> font-size: 14px;
+    out property <length> text-preferred-width: label.preferred-width;
+    callback clicked();
+    callback hovered();
+
+    background: root.primary
+        ? (root.selected ? SemanticColors.info-hover : SemanticColors.info)
+        : (root.selected ? Theme.selected-background : Theme.list-background);
+    border-width: root.selected ? root.border-px * 2 : root.border-px;
+    border-color: root.selected ? SemanticColors.selection-border : (root.primary ? SemanticColors.info : Theme.border-color);
+
+    TouchArea {
+        clicked => { root.clicked(); }
+        changed has-hover => {
+            if (self.has-hover) {
+                root.hovered();
+            }
+        }
+    }
+    label := Text {
+        text: root.text;
+        color: root.primary ? SemanticColors.text-on-accent : (root.selected ? Theme.selected-text : Theme.list-text);
+        font-size: root.font-size;
+        font-weight: root.primary ? 700 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}
+
+component OptionRow inherits Rectangle {
+    in property <string> title: "";
+    in property <string> detail: "";
+    in property <int> kind: 0;
+    in property <bool> chosen: false;
+    in property <bool> selected: false;
+    in property <length> border-px: 1px;
+    in property <length> font-size: 14px;
+    callback clicked();
+    callback hovered();
+
+    background: root.selected ? Theme.selected-background : Theme.list-background;
+    border-width: root.border-px;
+    border-color: root.selected ? SemanticColors.selection-border : Theme.border-color;
+
+    TouchArea {
+        clicked => { root.clicked(); }
+        changed has-hover => {
+            if (self.has-hover) {
+                root.hovered();
+            }
+        }
+    }
+
+    property <length> mark-size: root.font-size * 1.1;
+    property <length> text-x: root.kind == 1 ? root.font-size * 0.9 + root.mark-size + root.font-size * 0.7 : root.font-size * 0.9;
+    property <color> text-color: root.selected ? Theme.selected-text : Theme.list-text;
+
+    if root.kind == 1: Rectangle {
+        x: root.font-size * 0.9;
+        y: (root.height - root.mark-size) / 2;
+        width: root.mark-size;
+        height: root.mark-size;
+        border-radius: root.mark-size / 2;
+        border-width: 2px / Theme.scale-factor;
+        border-color: root.text-color;
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: root.chosen ? parent.width * 0.5 : 0px;
+            height: self.width;
+            border-radius: self.width / 2;
+            background: root.text-color;
+        }
+    }
+    Text {
+        x: root.text-x;
+        y: root.detail == "" ? 0px : root.height * 0.08;
+        width: root.width - root.text-x - root.font-size * 0.9;
+        height: root.detail == "" ? root.height : root.height * 0.46;
+        text: root.title;
+        color: root.text-color;
+        font-size: root.font-size;
+        font-weight: root.kind == 1 && root.chosen ? 700 : 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.detail != "": Text {
+        x: root.text-x;
+        y: root.height * 0.52;
+        width: root.width - root.text-x - root.font-size * 0.9;
+        height: root.height * 0.4;
+        text: root.detail;
+        color: root.selected ? Theme.selected-text : Theme.search-text;
+        font-size: root.font-size * 0.85;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+export component SetupWizardDialog inherits Window {
+    no-frame: true;
+    title: root.dialog-title;
+    background: Theme.list-background;
+    in property <length> initial-width: 800px;
+    in property <length> initial-height: 600px;
+    width: initial-width;
+    height: initial-height;
+
+    in property <string> font-family;
+    default-font-family: root.font-family;
+
+    in property <string> dialog-title: "";
+    in property <string> header-text: "";
+    in property <string> step-text: "";
+    in property <int> step-count: 6;
+    in property <int> step-index: 0;
+    in property <string> page-title: "";
+    in property <[string]> paragraphs: [];
+    in property <[string]> facts: [];
+    in property <[WizardOption]> options: [];
+    in property <string> footnote: "";
+    in property <string> left-text: "";
+    in property <string> middle-text: "";
+    in property <string> right-text: "";
+    // Which button is drawn as the primary one: 0 left, 1 middle, 2 right, -1 none.
+    in property <int> primary-slot: 2;
+    in property <int> focus-left: -1;
+    in property <int> focus-middle: -1;
+    in property <int> focus-right: -1;
+    in property <int> selected-index: -1;
+
+    callback option-requested(int);
+    callback button-requested(int);
+    callback nav-hovered(int);
+    callback close-requested();
+    // The title bar's X: leave the wizard (B and Escape go back one step instead).
+    callback exit-requested();
+    callback move-requested(int, int);
+    callback activate-requested();
+    forward-focus: key-handler;
+
+    in property <length> item-font-px-physical: 14px;
+    in property <length> title-font-px-physical: 13px;
+    in property <length> row-height-physical: 48px;
+    in property <length> title-bar-height-physical: 34px;
+
+    property <length> border-px: Theme.border-width * 1px / Theme.scale-factor;
+    property <length> item-font-px: item-font-px-physical / Theme.scale-factor;
+    property <length> title-font-px: title-font-px-physical / Theme.scale-factor;
+    property <length> bar-height: title-bar-height-physical / Theme.scale-factor;
+    property <length> row-height: row-height-physical / Theme.scale-factor;
+    property <length> gutter: 14px / Theme.scale-factor;
+    property <length> spacing: 8px / Theme.scale-factor;
+    property <length> button-padding: 18px / Theme.scale-factor;
+    property <length> option-height: root.row-height * 1.3;
+    property <length> bar-thickness: root.item-font-px * 0.4;
+
+    // Keep the focused option in view when the body scrolls.
+    changed selected-index => {
+        if (root.selected-index >= 0 && root.selected-index < root.options.length) {
+            root.reveal(root.selected-index);
+        }
+    }
+    function reveal(index: int) {
+        // The options start below the paragraphs and the summary card.
+        let top = opts-box.y + index * (root.option-height + root.spacing);
+        let bottom = top + root.option-height;
+        if (top + body.content-y < 0px) {
+            body.content-y = -top;
+        } else if (bottom + body.content-y > body.height) {
+            body.content-y = body.height - bottom;
+        }
+    }
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
+            } else if (event.text == Key.UpArrow) {
+                root.move-requested(0, -1);
+                return accept;
+            } else if (event.text == Key.DownArrow) {
+                root.move-requested(0, 1);
+                return accept;
+            } else if (event.text == Key.LeftArrow) {
+                root.move-requested(-1, 0);
+                return accept;
+            } else if (event.text == Key.RightArrow) {
+                root.move-requested(1, 0);
+                return accept;
+            } else if (event.text == Key.Return) {
+                root.activate-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        chrome := DialogChrome {
+            dialog-title: root.dialog-title;
+            bar-height: root.bar-height;
+            title-font-px: root.title-font-px;
+            border-px: root.border-px;
+            logical-w: root.width - root.border-px * 2;
+            logical-h: root.height - root.border-px * 2;
+            close-requested => { root.exit-requested(); }
+
+            property <length> inner-w: chrome.content-width - root.gutter * 2;
+            property <length> header-h: root.item-font-px * 1.7;
+            property <length> title-h: root.item-font-px * 2.2;
+            property <length> footer-y: chrome.content-height - root.gutter - root.row-height;
+            property <length> body-y: root.gutter + self.header-h + root.bar-thickness + root.spacing * 2 + self.title-h;
+
+            Text {
+                x: root.gutter;
+                y: root.gutter;
+                width: chrome.inner-w * 0.6;
+                height: chrome.header-h;
+                text: root.header-text;
+                color: Theme.list-text;
+                font-size: root.item-font-px;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                x: root.gutter + chrome.inner-w * 0.6;
+                y: root.gutter;
+                width: chrome.inner-w * 0.4;
+                height: chrome.header-h;
+                text: root.step-text;
+                color: Theme.search-text;
+                font-size: root.item-font-px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+
+            // The progress bar: one segment per step, filled up to the current one.
+            for n in root.step-count: Rectangle {
+                property <length> gap: root.spacing * 0.6;
+                property <length> seg-w: (chrome.inner-w - (root.step-count - 1) * self.gap) / root.step-count;
+                x: root.gutter + n * (self.seg-w + self.gap);
+                y: root.gutter + chrome.header-h + root.spacing * 0.5;
+                width: self.seg-w;
+                height: root.bar-thickness;
+                border-radius: root.bar-thickness / 2;
+                background: n <= root.step-index ? SemanticColors.info : Theme.border-color;
+            }
+
+            Text {
+                x: root.gutter;
+                y: root.gutter + chrome.header-h + root.bar-thickness + root.spacing * 1.5;
+                width: chrome.inner-w;
+                height: chrome.title-h;
+                text: root.page-title;
+                color: Theme.list-text;
+                font-size: root.item-font-px * 1.5;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            body := Flickable {
+                x: root.gutter;
+                y: chrome.body-y;
+                width: chrome.inner-w;
+                height: chrome.footer-y - root.gutter - chrome.body-y;
+                content-width: self.width;
+                content-height: max(self.height, body-layout.preferred-height);
+
+                body-layout := VerticalLayout {
+                    alignment: start;
+                    x: 0px;
+                    y: 0px;
+                    width: body.width - root.gutter;
+                    spacing: root.spacing;
+
+                    for p in root.paragraphs: Text {
+                        text: p;
+                        color: Theme.list-text;
+                        font-size: root.item-font-px;
+                        wrap: word-wrap;
+                    }
+                    if root.facts.length > 0: Rectangle {
+                        background: Theme.search-background;
+                        border-width: root.border-px;
+                        border-color: Theme.border-color;
+                        height: facts-layout.preferred-height + root.gutter * 1.6;
+                        facts-layout := VerticalLayout {
+                            alignment: start;
+                            x: root.gutter * 0.8;
+                            y: root.gutter * 0.7;
+                            width: parent.width - root.gutter * 1.6;
+                            spacing: root.spacing * 0.5;
+                            for f in root.facts: Text {
+                                text: f;
+                                color: Theme.list-text;
+                                font-size: root.item-font-px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    opts-box := VerticalLayout {
+                        spacing: root.spacing;
+                        for o[i] in root.options: OptionRow {
+                            height: root.option-height;
+                            title: o.title;
+                            detail: o.detail;
+                            kind: o.kind;
+                            chosen: o.chosen;
+                            selected: root.selected-index == i;
+                            border-px: root.border-px;
+                            font-size: root.item-font-px;
+                            clicked => { root.option-requested(i); }
+                            hovered => { root.nav-hovered(i); }
+                        }
+                    }
+                    if root.footnote != "": Text {
+                        text: root.footnote;
+                        color: Theme.search-text;
+                        font-size: root.item-font-px * 0.9;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            ThemedScrollbar {
+                x: root.gutter + chrome.inner-w - self.width;
+                y: body.y;
+                height: body.height;
+                viewport-height: body.content-height;
+                visible-height: body.height;
+                viewport-y <=> body.content-y;
+            }
+
+            // Footer: Back on the left (Skip next to it), the primary button on the right.
+            if root.left-text != "": WizardButton {
+                x: root.gutter;
+                y: chrome.footer-y;
+                width: self.text-preferred-width + root.button-padding * 2;
+                height: root.row-height;
+                text: root.left-text;
+                primary: root.primary-slot == 0;
+                selected: root.selected-index == root.focus-left;
+                border-px: root.border-px;
+                font-size: root.item-font-px;
+                clicked => { root.button-requested(0); }
+                hovered => { root.nav-hovered(root.focus-left); }
+            }
+            if root.middle-text != "": WizardButton {
+                x: root.gutter + (root.left-text != "" ? left-w.width : 0px) + (root.left-text != "" ? root.spacing : 0px);
+                y: chrome.footer-y;
+                width: self.text-preferred-width + root.button-padding * 2;
+                height: root.row-height;
+                text: root.middle-text;
+                primary: root.primary-slot == 1;
+                selected: root.selected-index == root.focus-middle;
+                border-px: root.border-px;
+                font-size: root.item-font-px;
+                clicked => { root.button-requested(1); }
+                hovered => { root.nav-hovered(root.focus-middle); }
+            }
+            if root.right-text != "": right-btn := WizardButton {
+                x: chrome.content-width - root.gutter - self.width;
+                y: chrome.footer-y;
+                width: self.text-preferred-width + root.button-padding * 2;
+                height: root.row-height;
+                text: root.right-text;
+                primary: root.primary-slot == 2;
+                selected: root.selected-index == root.focus-right;
+                border-px: root.border-px;
+                font-size: root.item-font-px;
+                clicked => { root.button-requested(2); }
+                hovered => { root.nav-hovered(root.focus-right); }
+            }
+            // Measures the left button's width for the middle button's position.
+            left-w := Text {
+                visible: false;
+                text: root.left-text;
+                font-size: root.item-font-px;
+                width: self.preferred-width + root.button-padding * 2;
+            }
+        }
+    }
+}

@@ -92,6 +92,29 @@ start prints "this app is already running from this folder" and quits (bringing 
 the front is best effort, especially on Wayland). A copy of this app from before 2026-10-21 that is
 still open from the same folder is recognized too; quit old copies from the tray before updating.
 
+## First launch: the setup wizard
+
+The first time the app starts (and on an install from before the wizard existed) it opens **Setup wizard**
+on top of the list instead of leaving you in it. It takes a few minutes and every step except the ports
+folder can be skipped. A chooses, the D-pad moves, B goes back one step (on the first page B asks whether
+to skip setup; the cursor starts on "Keep going with setup").
+
+1. **Welcome:** what the app does and the four steps. "Start setup" or "Skip setup...".
+2. **Ports folder:** where installed ports are kept. Your SD card is offered first (a `Ports` folder on it),
+   then internal storage, then "Choose another folder...". A folder that does not exist yet is created only
+   after you say so. Nothing is moved by this step in this build.
+3. **Ports you already have:** opens Adopt installed ports, which finds ports installed outside the app. When
+   you close it you are back in the wizard, which says how many ports were added.
+4. **Game files:** choose the folder that holds your ROMs and disc images (they are only read), then the app
+   scans it. Close the results to come back.
+5. **Steam:** opens Add to Steam (Desktop Mode, Steam closed; in Game Mode you can queue the change) and,
+   if you like, Artwork sources for a free SteamGridDB key. Close them to come back.
+6. **All done:** what was set, then Finish. Finish (or confirmed Skip setup) is what marks setup as done.
+   If you quit the app half-way, the wizard opens again next time.
+
+**Run it again any time:** Settings (Y) > **Setup wizard...**, the first row. It starts at Welcome and shows
+what is set now; "Close the wizard" on the first page leaves without changing anything.
+
 ## Updating
 
 - **Right away:** Settings > **Force update**. The app closes, the updater downloads the newest
@@ -482,7 +505,8 @@ to your device, never uploads or shares them, and the credits are in the screen'
 |---|---|
 | Installer | Download, double-click in Dolphin, Execute, Continue (first time only), progress window, the app opens; "Deck Ports Manager" menu entry and desktop icon appear |
 | Installer again | Only the Open/Execute question; says "updated" (or "reinstalled"), the app reopens, ports and saves are still there, `.previous/` holds the old program |
-| First launch | The catalog fills; typing filters it |
+| First launch | The setup wizard opens by itself (Welcome page); Skip setup asks first; after finishing or skipping the catalog fills and typing filters it |
+| Setup wizard again | Settings > Setup wizard... opens it at Welcome; Back and Next walk the steps with the controller; quitting half-way brings it back at the next start |
 | Install a port | Progress, then installed, with a Linux build under `Library/` |
 | Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |
 | Controller | D-pad moves, A activates, B closes, X opens Info, Y opens Settings |

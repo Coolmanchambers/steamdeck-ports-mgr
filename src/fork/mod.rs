@@ -29,6 +29,7 @@ pub mod screens;
 pub mod self_update;
 pub mod secrets;
 pub mod settings;
+pub mod setup_wizard;
 pub mod shortcuts;
 pub mod steam_queue;
 pub mod steam_sync;

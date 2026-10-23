@@ -4,6 +4,8 @@ import { SemanticColors, Theme, ThemedScrollbar, InertialScroller, TitleBarIconB
 import { MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr } from "dialogs.slint";
 // Fork: the Deck-ready list and its Info dialog.
 import { DeckReadyList, DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog } from "fork/deck-ready.slint";
+// Fork: the setup wizard page.
+import { SetupWizardDialog, WizardOption } from "fork/setup-wizard.slint";
 export { AppTray } from "tray.slint";
 
 export struct PortItem {
@@ -17,6 +19,7 @@ export { CardItem, CardRow, SemanticColors, Theme, MessageDialog, ConfirmDialog,
 export { DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog }
 // Fork: the in-app folder picker (src/app/folder_picker_screen.rs).
 export { FolderPickerDialog, FolderRow } from "fork/folder-picker.slint";
+export { SetupWizardDialog, WizardOption }
 
 component ActionButton inherits Rectangle {
     in property <string> text: "";

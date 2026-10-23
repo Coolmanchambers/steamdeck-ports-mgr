@@ -250,6 +250,12 @@ pub(crate) fn open_game_files(app: &Rc<AppState>, router: &Router) {
     show_menu(app, router, store);
 }
 
+/// Fork (setup wizard): the folder choice of this screen with no menu in front of it. After the scan
+/// the results list shows what was found.
+pub(crate) fn open_folder_chooser(app: &Rc<AppState>, router: &Router) {
+    choose_folder(app, router, Then::Results);
+}
+
 fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
     let folder = match store.rom_dir() {
         Some(dir) => format!("Game files folder: {}", ellipsize(&dir.to_string_lossy(), 56)),

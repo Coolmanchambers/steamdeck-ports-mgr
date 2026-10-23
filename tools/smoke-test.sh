@@ -12,6 +12,9 @@
 #     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
 #     ports into ~/Games/Ports (New folder here, Use this folder, Move, Keep for now twice) and checks the
 #     setting, the copy (program bits), the kept old copies and their records, and a relaunch;
+#   - a fresh start (no fork-settings.json) opens the setup wizard by itself, Skip setup leaves the
+#     main window, and quitting the wizard half-way leaves setup unfinished; every other run seeds
+#     setup_done so it goes straight to the main window;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
@@ -40,23 +43,101 @@ mkdir -p "$HOME_DIR/Games" "$APP_DIR/Library/SpaceCadetPinball" "$APP_DIR/Librar
 printf '#!/bin/sh\necho pinball\n' > "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball" && chmod 755 "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball"
 echo data > "$APP_DIR/Library/Abuse_2025/x"
 E2E=0
+# Setup is marked finished here, so this run goes straight to the main window. The fresh-start check
+# further down (its own folder, no fork-settings.json) is the one that sees the wizard.
+echo '{"setup_done": true}' > "$APP_DIR/fork-settings.json"
 
 Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
 XVFB=$!
 APP=""
-cleanup() { kill $APP "$XVFB" 2>/dev/null; rm -rf "$APP_DIR" "$HOME_DIR"; }
+cleanup() { kill $APP ${FRESH:-} "$XVFB" 2>/dev/null; rm -rf "$APP_DIR" "$HOME_DIR" "${FRESH_DIR:-}"; }
 trap cleanup EXIT
 for _ in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
 kill -0 "$XVFB" 2>/dev/null && xdpyinfo >/dev/null 2>&1 || { cat "$OUT/xvfb.log"; setup_fail "Xvfb $DISPLAY did not come up"; }
 
+fail=0
+check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; fi; }
+
+# ---- First start: the setup wizard ----
+# A folder with no fork-settings.json is a first start (and so is an old install that never ran the
+# wizard). The wizard must open by itself; quitting it half-way must leave setup unfinished so it comes
+# back; Skip setup (confirmed) must end it and leave the main window. The pages are driven by keyboard:
+# the primary button has the focus at first, Left moves to Skip, B (Escape) goes back.
+FRESH_DIR="$(mktemp -d)" || setup_fail "mktemp"
+cp "$APP_DIR/ports_launcher" "$APP_DIR/7zzs" "$FRESH_DIR/"
+for f in ports.json themes.json; do [ -f "$APP_DIR/$f" ] && cp "$APP_DIR/$f" "$FRESH_DIR/"; done
+FRESH=""
+start_fresh() {
+    env -i HOME="$HOME" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$FRESH_DIR" RUST_BACKTRACE=1 \
+        "$FRESH_DIR/ports_launcher" >>"$OUT/fresh-app.log" 2>&1 &
+    FRESH=$!
+}
+find_window() {  # $1 = name regex; waits up to 20 s
+    local w
+    for _ in $(seq 1 100); do
+        w=$(xdotool search --onlyvisible --name "$1" 2>/dev/null | tail -1)
+        [ -n "$w" ] && { echo "$w"; return 0; }
+        sleep 0.2
+    done
+    return 1
+}
+press_keys() {  # $1 = window id, then the keys. Without a window manager a dialog gets keys only after an explicit focus.
+    local win="$1"; shift
+    xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
+    xdotool key --delay 150 "$@"
+}
+
+start_fresh
+wiz=$(find_window '^Setup wizard') || wiz=""
+import -window root "$OUT/fresh-wizard.png" 2>/dev/null
+check "a fresh start opens the setup wizard by itself" '[ -n "$wiz" ] && kill -0 "$FRESH" 2>/dev/null && ! grep -q "panicked" "$OUT/fresh-app.log"'
+check "the wizard opens on the welcome page" '[ "$(xdotool getwindowname "$wiz" 2>/dev/null)" = "Setup wizard: welcome" ]'
+if [ -n "$wiz" ]; then
+    press_keys "$wiz" Return      # the primary button (Start setup) has the focus at first
+    next=$(find_window '^Setup wizard: Ports folder') || next=""
+    import -window root "$OUT/fresh-ports-folder.png" 2>/dev/null
+    check "Return on the primary button moves to the next step" '[ -n "$next" ]'
+    if [ -n "$next" ]; then
+        press_keys "$next" Escape  # B is Back
+        wiz=$(find_window '^Setup wizard: welcome') || wiz=""
+        check "B goes back one step" '[ -n "$wiz" ]'
+    fi
+fi
+if [ -n "$wiz" ]; then
+    press_keys "$wiz" Left Return   # Skip setup...
+    ask=$(find_window '^Setup wizard: skip setup\?') || ask=""
+    import -window root "$OUT/fresh-skip-question.png" 2>/dev/null
+    check "Skip setup asks before skipping" '[ -n "$ask" ]'
+fi
+kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
+check "quitting half-way leaves setup unfinished" '! grep -qs "setup_done" "$FRESH_DIR/fork-settings.json"'
+
+start_fresh
+wiz=$(find_window '^Setup wizard') || wiz=""
+check "the wizard comes back at the next start" '[ -n "$wiz" ]'
+if [ -n "$wiz" ]; then
+    press_keys "$wiz" Left Return
+    ask=$(find_window '^Setup wizard: skip setup\?') || ask=""
+    if [ -n "$ask" ]; then
+        press_keys "$ask" Right Return   # Skip setup (the right button; the cursor starts on Keep going)
+        for _ in $(seq 1 50); do grep -qs '"setup_done": true' "$FRESH_DIR/fork-settings.json" && break; sleep 0.2; done
+    fi
+fi
+sleep 1
+import -window root "$OUT/fresh-after-skip.png" 2>/dev/null
+check "confirmed Skip setup is remembered" 'grep -qs "\"setup_done\": true" "$FRESH_DIR/fork-settings.json"'
+check "no wizard window is left after Skip setup" '[ -z "$(xdotool search --onlyvisible --name "^Setup wizard" 2>/dev/null)" ]'
+check "the main window is still there after Skip setup" 'kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Ports Launcher$" >/dev/null 2>&1'
+kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
+rm -rf "$FRESH_DIR"
+
+# ---- The main run: setup already finished, so it goes straight to the main window ----
 # A bare session: no D-Bus session bus (so no tray host), no Wayland, no desktop name.
 env -i HOME="$HOME_DIR" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$APP_DIR" RUST_BACKTRACE=1 \
     "$APP_DIR/ports_launcher" >"$OUT/app.log" 2>&1 &
 APP=$!
 
 sleep "$STARTUP_SECONDS"
-fail=0
-check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; fi; }
 
 alive=no; kill -0 "$APP" 2>/dev/null && alive=yes
 import -window root "$OUT/screenshot.png" 2>/dev/null
@@ -103,7 +184,7 @@ if [ "$alive" = yes ]; then
             fi
             # Settings > Artwork sources... opens and shows its rows, and its Back row returns to Settings.
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 395)) click 1; sleep 2
+            xdotool mousemove $((X + 71)) $((Y + 437)) click 1; sleep 2
             import -window root "$OUT/art-sources.png" 2>/dev/null
             art=$(xdotool search --name "^Artwork sources$" 2>/dev/null | head -1)
             art_alive=no; kill -0 "$APP" 2>/dev/null && art_alive=yes
@@ -115,11 +196,11 @@ if [ "$alive" = yes ]; then
                 eval "$(xdotool getwindowgeometry --shell "$win")"
             fi
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 353)) click 1; sleep 2
+            xdotool mousemove $((X + 71)) $((Y + 395)) click 1; sleep 2
             import -window root "$OUT/game-files.png" 2>/dev/null
             gf_alive=no; kill -0 "$APP" 2>/dev/null && gf_alive=yes
             check "Game files screen opens and the app keeps running" '[ "$gf_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$(xdotool search --name "^Game files$" 2>/dev/null)" ]'
-            # Settings > Ports folder... (row 5), then its "Choose another folder..." row (third) opens the picker;
+            # Settings > Ports folder... (row 6; the Setup wizard row is first), then its "Choose another folder..." row (third) opens the picker;
             # the picker's close button cancels back to the Ports folder list.
             # A dialog's own close button (top right), since keys need focus and there is no window manager.
             close_named() {
@@ -129,7 +210,7 @@ if [ "$alive" = yes ]; then
             close_named "^Game files$"
             eval "$(xdotool getwindowgeometry --shell "$win")"
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 227)) click 1; sleep 2
+            xdotool mousemove $((X + 71)) $((Y + 269)) click 1; sleep 2
             pf=$(xdotool search --name "^Ports folder$" 2>/dev/null | head -1)
             check "Ports folder screen opens and the app keeps running" 'kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log" && [ -n "$pf" ]'
             if [ -n "$pf" ]; then

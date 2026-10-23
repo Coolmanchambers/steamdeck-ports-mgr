@@ -1,0 +1,629 @@
+//! The setup wizard's state machine. No UI here: [`press`] takes the row the user chose, decides what
+//! happens next and calls the [`Adapters`] for everything outside the wizard (the folder choice, the
+//! import screen, the game files folder, Add to Steam, saving `setup_done`). The screen in
+//! `src/app/setup_wizard_screen.rs` implements `Adapters` with the real dialogs; the tests below use a
+//! recording fake.
+//!
+//! Views: a step, or a small question (skip the whole setup? create this folder?) or a notice. All of
+//! them are drawn as one list, with B (or Escape) mapped by [`back_action`], so the controller always
+//! has a way back.
+//!
+//! Hand-offs: the import, game files, Steam and artwork screens are the app's existing screens and do
+//! not know about the wizard. [`press`] records a [`HandOff`], the screen opens the other list, and
+//! once that list is closed the screen calls [`resume`], which reads what changed and shows the same
+//! step again.
+
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Welcome,
+    PortsFolder,
+    Import,
+    RomFolder,
+    Steam,
+    Done,
+}
+
+impl Step {
+    pub const ALL: [Step; 6] = [Step::Welcome, Step::PortsFolder, Step::Import, Step::RomFolder, Step::Steam, Step::Done];
+
+    pub fn next(self) -> Option<Step> {
+        Step::ALL.get(self.index() + 1).copied()
+    }
+
+    pub fn prev(self) -> Option<Step> {
+        self.index().checked_sub(1).map(|i| Step::ALL[i])
+    }
+
+    pub fn index(self) -> usize {
+        Step::ALL.iter().position(|s| *s == self).unwrap_or(0)
+    }
+
+    /// Steps that can be left out; the ports folder always has an answer (the current one).
+    pub fn skippable(self) -> bool {
+        matches!(self, Step::Import | Step::RomFolder | Step::Steam)
+    }
+}
+
+/// First run (setup was never finished) or a rerun from Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    FirstRun,
+    Rerun,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum View {
+    Step,
+    ConfirmSkipSetup,
+    ConfirmCreate(PathBuf),
+    Notice(String),
+}
+
+/// What a row does. Rows with no action are plain text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    Next,
+    Back,
+    Skip,
+    SkipSetup,
+    UseFolder(PathBuf),
+    ChooseFolder,
+    FindPorts,
+    ChooseRomFolder,
+    OpenSteam,
+    OpenArtSources,
+    Finish,
+    Yes,
+    No,
+    Ok,
+}
+
+/// An existing screen the wizard sent the user to; [`resume`] runs when it has been closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandOff {
+    Import { installed_before: usize },
+    RomFolder,
+    Steam,
+    Art,
+}
+
+/// What the wizard remembers for the last page. Values the app already holds (the ports folder, the
+/// game files folder) are read again by the screen when it draws; this holds what only the wizard knows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Summary {
+    /// The ports folder chosen in this run.
+    pub ports_folder: Option<PathBuf>,
+    /// How many ports the import screen added, summed over the times it was opened; `None` = not opened.
+    pub imported: Option<usize>,
+    pub rom_folder_opened: bool,
+    pub steam_opened: bool,
+    pub art_opened: bool,
+    pub skipped: Vec<Step>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wizard {
+    pub mode: Mode,
+    pub step: Step,
+    pub view: View,
+    pub summary: Summary,
+    pub handoff: Option<HandOff>,
+}
+
+impl Wizard {
+    pub fn new(mode: Mode) -> Wizard {
+        Wizard { mode, step: Step::Welcome, view: View::Step, summary: Summary::default(), handoff: None }
+    }
+}
+
+/// What [`Adapters::plan_ports_folder`] found out about a folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderPlan {
+    Ready,
+    NeedsCreate,
+    Refused(String),
+}
+
+/// Everything the wizard needs from the rest of the app. Each method is one integration point.
+pub trait Adapters {
+    /// Draw the wizard's current view.
+    fn show(&mut self, wizard: &Wizard);
+    /// Say whether a folder can be the ports folder (exists and is writable, or can be created).
+    fn plan_ports_folder(&mut self, path: &Path) -> FolderPlan;
+    fn create_ports_folder(&mut self, path: &Path) -> Result<(), String>;
+    /// Record the choice. The ports-folder feature owns what happens next (moving ports, restarts).
+    fn apply_ports_folder(&mut self, path: &Path) -> Result<(), String>;
+    /// Open the folder picker. The picked folder (or `None` for Back) comes back through [`browse_done`].
+    fn browse_ports_folder(&mut self);
+    /// Open the import screen (finding ports installed elsewhere).
+    fn import_step(&mut self);
+    /// Open the game files folder choice and scan.
+    fn rom_folder_step(&mut self);
+    /// Open Add to Steam.
+    fn steam_step(&mut self);
+    /// Open Artwork sources.
+    fn art_sources_step(&mut self);
+    /// Ports installed right now (the import's result is the difference).
+    fn installed_count(&mut self) -> usize;
+    /// Remember that setup is finished (`setup_done`).
+    fn mark_done(&mut self) -> Result<(), String>;
+    /// Close the wizard and land on the main list.
+    fn close(&mut self);
+}
+
+/// What B (or Escape) does in the current view.
+pub fn back_action(wizard: &Wizard) -> Action {
+    match &wizard.view {
+        View::Notice(_) => Action::Ok,
+        View::ConfirmSkipSetup | View::ConfirmCreate(_) => Action::No,
+        View::Step if wizard.step == Step::Welcome => Action::SkipSetup,
+        View::Step => Action::Back,
+    }
+}
+
+fn notice(w: &mut Wizard, a: &mut dyn Adapters, text: impl Into<String>) {
+    w.view = View::Notice(text.into());
+    a.show(w);
+}
+
+fn show_step(w: &mut Wizard, a: &mut dyn Adapters) {
+    w.view = View::Step;
+    a.show(w);
+}
+
+fn go_to(w: &mut Wizard, step: Step, a: &mut dyn Adapters) {
+    w.step = step;
+    show_step(w, a);
+}
+
+fn finish(w: &mut Wizard, a: &mut dyn Adapters) {
+    match a.mark_done() {
+        Ok(()) => a.close(),
+        Err(e) => notice(w, a, format!("Setup could not be saved as finished, so it will open again next time.\n\n{e}")),
+    }
+}
+
+fn use_folder(w: &mut Wizard, a: &mut dyn Adapters, path: PathBuf) {
+    match a.plan_ports_folder(&path) {
+        FolderPlan::Ready => apply_folder(w, a, path),
+        FolderPlan::NeedsCreate => {
+            w.view = View::ConfirmCreate(path);
+            a.show(w);
+        }
+        FolderPlan::Refused(why) => notice(w, a, why),
+    }
+}
+
+fn apply_folder(w: &mut Wizard, a: &mut dyn Adapters, path: PathBuf) {
+    match a.apply_ports_folder(&path) {
+        Ok(()) => {
+            w.summary.ports_folder = Some(path);
+            show_step(w, a);
+        }
+        Err(e) => notice(w, a, format!("The ports folder was not changed.\n\n{e}")),
+    }
+}
+
+/// The user chose a row (or pressed B, which the screen turns into [`back_action`]).
+pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
+    match (w.view.clone(), action) {
+        (View::Notice(_), Action::Ok) => show_step(w, a),
+        (View::ConfirmSkipSetup, Action::Yes) => finish(w, a),
+        (View::ConfirmSkipSetup | View::ConfirmCreate(_), Action::No) => show_step(w, a),
+        (View::ConfirmCreate(path), Action::Yes) => match a.create_ports_folder(&path) {
+            Ok(()) => apply_folder(w, a, path),
+            Err(e) => notice(w, a, format!("The folder was not created.\n\n{e}")),
+        },
+        (View::Step, action) => press_in_step(w, action, a),
+        // A press that does not belong to this view (a stale row) changes nothing.
+        _ => {}
+    }
+}
+
+fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
+    match action {
+        Action::Next => {
+            if let Some(next) = w.step.next() {
+                go_to(w, next, a);
+            }
+        }
+        Action::Back => {
+            if let Some(prev) = w.step.prev() {
+                go_to(w, prev, a);
+            }
+        }
+        Action::Skip if w.step.skippable() => {
+            if !w.summary.skipped.contains(&w.step) {
+                w.summary.skipped.push(w.step);
+            }
+            if let Some(next) = w.step.next() {
+                go_to(w, next, a);
+            }
+        }
+        Action::SkipSetup => match w.mode {
+            Mode::FirstRun => {
+                w.view = View::ConfirmSkipSetup;
+                a.show(w);
+            }
+            // Setup was finished before: leaving a rerun changes nothing, so there is nothing to confirm.
+            Mode::Rerun => a.close(),
+        },
+        Action::Finish if w.step == Step::Done => finish(w, a),
+        Action::UseFolder(path) if w.step == Step::PortsFolder => use_folder(w, a, path),
+        Action::ChooseFolder if w.step == Step::PortsFolder => a.browse_ports_folder(),
+        Action::FindPorts if w.step == Step::Import => {
+            w.handoff = Some(HandOff::Import { installed_before: a.installed_count() });
+            a.import_step();
+        }
+        Action::ChooseRomFolder if w.step == Step::RomFolder => {
+            w.handoff = Some(HandOff::RomFolder);
+            a.rom_folder_step();
+        }
+        Action::OpenSteam if w.step == Step::Steam => {
+            w.handoff = Some(HandOff::Steam);
+            a.steam_step();
+        }
+        Action::OpenArtSources if w.step == Step::Steam => {
+            w.handoff = Some(HandOff::Art);
+            a.art_sources_step();
+        }
+        _ => {}
+    }
+}
+
+/// The folder picker finished: `Some(folder)` is used like a quick choice, `None` returns to the step.
+pub fn browse_done(w: &mut Wizard, picked: Option<PathBuf>, a: &mut dyn Adapters) {
+    match picked {
+        Some(path) => use_folder(w, a, path),
+        None => show_step(w, a),
+    }
+}
+
+/// The screen opened by a hand-off was closed: note what it did and show the step again.
+pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
+    match w.handoff.take() {
+        Some(HandOff::Import { installed_before }) => {
+            let added = a.installed_count().saturating_sub(installed_before);
+            w.summary.imported = Some(w.summary.imported.unwrap_or(0) + added);
+        }
+        Some(HandOff::RomFolder) => w.summary.rom_folder_opened = true,
+        Some(HandOff::Steam) => w.summary.steam_opened = true,
+        Some(HandOff::Art) => w.summary.art_opened = true,
+        None => {}
+    }
+    show_step(w, a);
+}
+
+#[cfg(test)]
+pub(crate) mod fake {
+    use super::*;
+
+    /// Records every call as text so a test can assert the exact sequence and arguments.
+    #[derive(Default)]
+    pub struct Fake {
+        pub calls: Vec<String>,
+        pub plan: Option<FolderPlan>,
+        pub create_error: Option<String>,
+        pub apply_error: Option<String>,
+        pub done_error: Option<String>,
+        pub installed: usize,
+    }
+
+    impl Adapters for Fake {
+        fn show(&mut self, w: &Wizard) {
+            self.calls.push(format!("show {:?} {:?}", w.step, w.view));
+        }
+        fn plan_ports_folder(&mut self, path: &Path) -> FolderPlan {
+            self.calls.push(format!("plan {}", path.display()));
+            self.plan.clone().unwrap_or(FolderPlan::Ready)
+        }
+        fn create_ports_folder(&mut self, path: &Path) -> Result<(), String> {
+            self.calls.push(format!("create {}", path.display()));
+            self.create_error.clone().map_or(Ok(()), Err)
+        }
+        fn apply_ports_folder(&mut self, path: &Path) -> Result<(), String> {
+            self.calls.push(format!("apply {}", path.display()));
+            self.apply_error.clone().map_or(Ok(()), Err)
+        }
+        fn browse_ports_folder(&mut self) {
+            self.calls.push("browse".into());
+        }
+        fn import_step(&mut self) {
+            self.calls.push("import".into());
+        }
+        fn rom_folder_step(&mut self) {
+            self.calls.push("rom".into());
+        }
+        fn steam_step(&mut self) {
+            self.calls.push("steam".into());
+        }
+        fn art_sources_step(&mut self) {
+            self.calls.push("art".into());
+        }
+        fn installed_count(&mut self) -> usize {
+            self.installed
+        }
+        fn mark_done(&mut self) -> Result<(), String> {
+            self.calls.push("mark_done".into());
+            self.done_error.clone().map_or(Ok(()), Err)
+        }
+        fn close(&mut self) {
+            self.calls.push("close".into());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fake::Fake;
+    use super::*;
+
+    fn at(step: Step, mode: Mode) -> Wizard {
+        let mut w = Wizard::new(mode);
+        w.step = step;
+        w
+    }
+
+    #[test]
+    fn next_walks_the_steps_in_order_and_back_returns_through_them() {
+        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake::default());
+        let mut seen = vec![w.step];
+        for _ in 0..5 {
+            press(&mut w, Action::Next, &mut a);
+            seen.push(w.step);
+        }
+        assert_eq!(seen, Step::ALL);
+        press(&mut w, Action::Next, &mut a); // nothing after Done
+        assert_eq!(w.step, Step::Done);
+        for expected in [Step::Steam, Step::RomFolder, Step::Import, Step::PortsFolder, Step::Welcome] {
+            press(&mut w, Action::Back, &mut a);
+            assert_eq!(w.step, expected);
+        }
+        press(&mut w, Action::Back, &mut a); // nothing before Welcome
+        assert_eq!(w.step, Step::Welcome);
+    }
+
+    #[test]
+    fn only_import_game_files_and_steam_can_be_skipped_and_skipping_moves_on() {
+        for step in Step::ALL {
+            assert_eq!(step.skippable(), matches!(step, Step::Import | Step::RomFolder | Step::Steam), "{step:?}");
+        }
+        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!(w.step, Step::RomFolder);
+        press(&mut w, Action::Skip, &mut a);
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!(w.step, Step::Done);
+        assert_eq!(w.summary.skipped, [Step::Import, Step::RomFolder, Step::Steam]);
+        // A skip on a step that cannot be skipped does nothing.
+        let mut w = at(Step::PortsFolder, Mode::FirstRun);
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!(w.step, Step::PortsFolder);
+        assert!(w.summary.skipped.is_empty());
+    }
+
+    #[test]
+    fn finishing_marks_setup_done_once_and_closes() {
+        let (mut w, mut a) = (at(Step::Done, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::Finish, &mut a);
+        assert_eq!(a.calls, ["mark_done", "close"]);
+    }
+
+    #[test]
+    fn a_step_other_than_the_last_cannot_finish() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::Finish, &mut a);
+        assert!(a.calls.is_empty());
+    }
+
+    #[test]
+    fn skip_setup_on_first_run_asks_first_and_marks_done_only_after_yes() {
+        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake::default());
+        press(&mut w, Action::SkipSetup, &mut a);
+        assert_eq!(w.view, View::ConfirmSkipSetup);
+        assert!(!a.calls.iter().any(|c| c == "mark_done" || c == "close"));
+        // No keeps the wizard where it was.
+        press(&mut w, Action::No, &mut a);
+        assert_eq!((w.view.clone(), w.step), (View::Step, Step::Welcome));
+        press(&mut w, Action::SkipSetup, &mut a);
+        press(&mut w, Action::Yes, &mut a);
+        assert_eq!(&a.calls[a.calls.len() - 2..], ["mark_done", "close"]);
+    }
+
+    #[test]
+    fn skip_setup_in_a_rerun_just_closes_without_touching_setup_done() {
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake::default());
+        press(&mut w, Action::SkipSetup, &mut a);
+        assert_eq!(a.calls, ["close"]);
+    }
+
+    #[test]
+    fn b_means_back_on_a_step_skip_setup_on_welcome_and_no_or_ok_on_questions() {
+        let mut w = Wizard::new(Mode::FirstRun);
+        assert_eq!(back_action(&w), Action::SkipSetup);
+        w.step = Step::Steam;
+        assert_eq!(back_action(&w), Action::Back);
+        w.step = Step::Done;
+        assert_eq!(back_action(&w), Action::Back);
+        w.view = View::ConfirmSkipSetup;
+        assert_eq!(back_action(&w), Action::No);
+        w.view = View::ConfirmCreate("/x".into());
+        assert_eq!(back_action(&w), Action::No);
+        w.view = View::Notice("n".into());
+        assert_eq!(back_action(&w), Action::Ok);
+    }
+
+    #[test]
+    fn quitting_midway_never_marks_setup_done() {
+        // Closing the dialog (X, or B somewhere unwired) is the screen's doing, not an Action: walking
+        // through every step except the last never reaches mark_done.
+        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake::default());
+        for _ in 0..4 {
+            press(&mut w, Action::Next, &mut a);
+        }
+        assert!(!a.calls.iter().any(|c| c == "mark_done"));
+    }
+
+    #[test]
+    fn a_failed_save_of_setup_done_is_shown_and_does_not_close() {
+        let (mut w, mut a) = (at(Step::Done, Mode::FirstRun), Fake { done_error: Some("disk full".into()), ..Fake::default() });
+        press(&mut w, Action::Finish, &mut a);
+        assert!(matches!(&w.view, View::Notice(t) if t.contains("disk full") && t.contains("open again next time")));
+        assert!(!a.calls.iter().any(|c| c == "close"));
+        press(&mut w, Action::Ok, &mut a);
+        assert_eq!(w.view, View::Step);
+    }
+
+    #[test]
+    fn a_ready_folder_is_checked_then_applied_with_the_same_path() {
+        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::UseFolder("/run/media/deck/SD/Ports".into()), &mut a);
+        assert_eq!(a.calls[..2], ["plan /run/media/deck/SD/Ports", "apply /run/media/deck/SD/Ports"]);
+        assert_eq!(w.summary.ports_folder.as_deref(), Some(Path::new("/run/media/deck/SD/Ports")));
+        assert_eq!(w.view, View::Step);
+    }
+
+    #[test]
+    fn a_missing_folder_is_created_only_after_a_yes() {
+        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake { plan: Some(FolderPlan::NeedsCreate), ..Fake::default() });
+        press(&mut w, Action::UseFolder("/sd/Ports".into()), &mut a);
+        assert_eq!(w.view, View::ConfirmCreate("/sd/Ports".into()));
+        assert!(!a.calls.iter().any(|c| c.starts_with("create") || c.starts_with("apply")));
+        press(&mut w, Action::Yes, &mut a);
+        let tail: Vec<&str> = a.calls.iter().map(String::as_str).filter(|c| c.starts_with("create") || c.starts_with("apply")).collect();
+        assert_eq!(tail, ["create /sd/Ports", "apply /sd/Ports"]);
+        assert_eq!(w.summary.ports_folder.as_deref(), Some(Path::new("/sd/Ports")));
+    }
+
+    #[test]
+    fn declining_the_create_question_changes_nothing() {
+        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake { plan: Some(FolderPlan::NeedsCreate), ..Fake::default() });
+        press(&mut w, Action::UseFolder("/sd/Ports".into()), &mut a);
+        press(&mut w, Action::No, &mut a);
+        assert_eq!(w.view, View::Step);
+        assert!(w.summary.ports_folder.is_none());
+        assert!(!a.calls.iter().any(|c| c.starts_with("create") || c.starts_with("apply")));
+    }
+
+    #[test]
+    fn a_refused_folder_shows_the_reason_and_applies_nothing() {
+        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake { plan: Some(FolderPlan::Refused("not writable".into())), ..Fake::default() });
+        press(&mut w, Action::UseFolder("/ro".into()), &mut a);
+        assert_eq!(w.view, View::Notice("not writable".into()));
+        assert!(!a.calls.iter().any(|c| c.starts_with("apply")));
+    }
+
+    #[test]
+    fn a_failed_create_or_apply_is_reported_and_the_choice_is_not_remembered() {
+        let mut a = Fake { plan: Some(FolderPlan::NeedsCreate), create_error: Some("read-only".into()), ..Fake::default() };
+        let mut w = at(Step::PortsFolder, Mode::FirstRun);
+        press(&mut w, Action::UseFolder("/sd/Ports".into()), &mut a);
+        press(&mut w, Action::Yes, &mut a);
+        assert!(matches!(&w.view, View::Notice(t) if t.contains("not created") && t.contains("read-only")));
+        assert!(w.summary.ports_folder.is_none());
+        assert!(!a.calls.iter().any(|c| c.starts_with("apply")));
+
+        let mut a = Fake { apply_error: Some("settings file damaged".into()), ..Fake::default() };
+        let mut w = at(Step::PortsFolder, Mode::FirstRun);
+        press(&mut w, Action::UseFolder("/x".into()), &mut a);
+        assert!(matches!(&w.view, View::Notice(t) if t.contains("not changed") && t.contains("damaged")));
+        assert!(w.summary.ports_folder.is_none());
+    }
+
+    #[test]
+    fn choose_another_folder_opens_the_picker_and_its_result_is_used_like_a_quick_choice() {
+        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::ChooseFolder, &mut a);
+        assert_eq!(a.calls, ["browse"]);
+        browse_done(&mut w, Some("/home/deck/MyPorts".into()), &mut a);
+        assert_eq!(a.calls[1..3], ["plan /home/deck/MyPorts", "apply /home/deck/MyPorts"]);
+        // Backing out of the picker returns to the step and applies nothing.
+        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
+        browse_done(&mut w, None, &mut a);
+        assert_eq!(a.calls, ["show PortsFolder Step"]);
+    }
+
+    #[test]
+    fn folder_actions_belong_to_the_ports_folder_step_only() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::UseFolder("/x".into()), &mut a);
+        press(&mut w, Action::ChooseFolder, &mut a);
+        assert!(a.calls.is_empty());
+    }
+
+    #[test]
+    fn each_hand_off_calls_its_adapter_once_and_records_it() {
+        let cases = [
+            (Step::Import, Action::FindPorts, "import", HandOff::Import { installed_before: 7 }),
+            (Step::RomFolder, Action::ChooseRomFolder, "rom", HandOff::RomFolder),
+            (Step::Steam, Action::OpenSteam, "steam", HandOff::Steam),
+            (Step::Steam, Action::OpenArtSources, "art", HandOff::Art),
+        ];
+        for (step, action, call, hand_off) in cases {
+            let (mut w, mut a) = (at(step, Mode::FirstRun), Fake { installed: 7, ..Fake::default() });
+            press(&mut w, action, &mut a);
+            assert_eq!(a.calls, [call]);
+            assert_eq!(w.handoff, Some(hand_off));
+        }
+    }
+
+    #[test]
+    fn a_hand_off_action_from_the_wrong_step_does_nothing() {
+        let (mut w, mut a) = (at(Step::Welcome, Mode::FirstRun), Fake::default());
+        for action in [Action::FindPorts, Action::ChooseRomFolder, Action::OpenSteam, Action::OpenArtSources] {
+            press(&mut w, action, &mut a);
+        }
+        assert!(a.calls.is_empty() && w.handoff.is_none());
+    }
+
+    #[test]
+    fn resuming_after_the_import_counts_the_ports_it_added() {
+        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake { installed: 7, ..Fake::default() });
+        press(&mut w, Action::FindPorts, &mut a);
+        a.installed = 10;
+        resume(&mut w, &mut a);
+        assert_eq!(w.summary.imported, Some(3));
+        assert!(w.handoff.is_none());
+        assert_eq!(w.step, Step::Import);
+        // A second visit adds to the total; ports removed meanwhile never make it negative.
+        press(&mut w, Action::FindPorts, &mut a);
+        a.installed = 11;
+        resume(&mut w, &mut a);
+        assert_eq!(w.summary.imported, Some(4));
+        press(&mut w, Action::FindPorts, &mut a);
+        a.installed = 5;
+        resume(&mut w, &mut a);
+        assert_eq!(w.summary.imported, Some(4));
+    }
+
+    #[test]
+    fn resuming_with_no_hand_off_just_redraws() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        resume(&mut w, &mut a);
+        assert_eq!(a.calls, ["show Steam Step"]);
+    }
+
+    #[test]
+    fn resuming_after_the_other_screens_notes_that_they_were_opened() {
+        for (action, step) in [(Action::ChooseRomFolder, Step::RomFolder), (Action::OpenSteam, Step::Steam), (Action::OpenArtSources, Step::Steam)] {
+            let (mut w, mut a) = (at(step, Mode::FirstRun), Fake::default());
+            press(&mut w, action.clone(), &mut a);
+            resume(&mut w, &mut a);
+            assert!(w.summary.rom_folder_opened || w.summary.steam_opened || w.summary.art_opened, "{action:?}");
+            assert_eq!(w.step, step);
+        }
+    }
+
+    #[test]
+    fn a_stale_press_in_a_question_view_changes_nothing() {
+        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake::default());
+        press(&mut w, Action::SkipSetup, &mut a);
+        let before = a.calls.len();
+        press(&mut w, Action::Next, &mut a);
+        press(&mut w, Action::Finish, &mut a);
+        assert_eq!(a.calls.len(), before);
+        assert_eq!(w.view, View::ConfirmSkipSetup);
+    }
+}

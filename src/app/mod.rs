@@ -13,6 +13,7 @@ pub mod playtime;
 pub mod ports_folder_screen;
 pub mod rom_screens;
 pub mod save_restore_screen;
+pub mod setup_wizard_screen;
 pub mod state;
 pub mod steam_screens;
 pub mod sync;
