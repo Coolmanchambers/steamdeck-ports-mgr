@@ -109,16 +109,13 @@ pub fn read_shortcuts(home: &Path, settings: &ForkSettings) -> ShortcutsRead {
     ShortcutsRead { shortcuts: Vec::new(), note: Some("No Steam account folder was found, so Steam shortcuts were not checked.".into()) }
 }
 
-fn is_inside(path: &Path, install: &Path, real: Option<&Path>) -> bool {
-    !path.as_os_str().is_empty() && (path.starts_with(install) || real.is_some_and(|r| path.starts_with(r)))
-}
-
-/// The shortcuts that point into `install` (program or start folder), by path, not by name.
+/// The shortcuts that point into `install` (program or start folder), by path, not by name. The same
+/// rule the move uses to repoint them (`port_mover::steam::moved_path`), so what is shown is what happens.
 pub fn steam_refs(shortcuts: &[Shortcut], install: &Path) -> Vec<SteamRef> {
-    let real = fs::canonicalize(install).ok();
+    let inside = |p: &str| crate::fork::port_mover::steam::moved_path(p, install, install).is_some();
     shortcuts
         .iter()
-        .filter(|s| is_inside(Path::new(s.exe_path()), install, real.as_deref()) || is_inside(Path::new(s.start_dir_path()), install, real.as_deref()))
+        .filter(|s| inside(s.exe_path()) || inside(s.start_dir_path()))
         .map(|s| SteamRef { app_id: s.app_id, name: s.app_name.clone(), exe: s.exe_path().to_string(), start_dir: s.start_dir_path().to_string() })
         .collect()
 }
@@ -167,6 +164,8 @@ pub struct ScanInput {
     pub roots: Vec<PathBuf>,
     pub catalog: Vec<Port>,
     pub library_dir: PathBuf,
+    /// The user's home folder: a program found directly inside it is never preselected.
+    pub home: PathBuf,
     pub deeper: bool,
     pub shortcuts: ShortcutsRead,
 }
@@ -185,6 +184,16 @@ pub fn run_scan(input: &ScanInput, cancelled: &dyn Fn() -> bool, progress: &dyn 
         }
         progress(format!("Measuring {} ({} of {total})...", c.port_name, i + 1));
         let Some(port) = input.catalog.iter().find(|p| p.key() == c.port_key) else { continue };
+        // A match by a program name inside is only trusted one level under a scan folder, and never
+        // directly under the home folder (a program in `~/Downloads` does not make `Downloads` a port).
+        let same = crate::fork::port_mover::old_copies::same;
+        let parent = c.path.parent();
+        let under_root = input.roots.iter().any(|r| parent.is_some_and(|p| same(p, r)));
+        let under_home = parent.is_some_and(|p| same(p, &input.home));
+        let mut sure = confidence(c, port);
+        if c.how == MatchKind::ExecutableName && (!under_root || under_home) {
+            sure = Confidence::CheckThis;
+        }
         found.push(Found {
             path: c.path.clone(),
             dir_name: c.dir_name.clone(),
@@ -192,7 +201,7 @@ pub fn run_scan(input: &ScanInput, cancelled: &dyn Fn() -> bool, progress: &dyn 
             port_name: c.port_name.clone(),
             catalog_folder: c.catalog_folder.clone(),
             how: c.how,
-            confidence: confidence(c, port),
+            confidence: sure,
             size: dir_size(&c.path, cancelled),
             steam: steam_refs(&input.shortcuts.shortcuts, &c.path),
         });
@@ -305,6 +314,7 @@ mod tests {
             roots: crate::fork::import::folders::ScanFolders::default().roots(&h.home, &h.library),
             catalog: catalog(),
             library_dir: h.library.clone(),
+            home: h.home.clone(),
             deeper,
             shortcuts: read_shortcuts(&h.home, &settings),
         }
@@ -368,7 +378,7 @@ mod tests {
         assert!(read.shortcuts.is_empty());
         assert!(read.note.as_deref().unwrap().contains("No Steam account folder"));
         let scan = run_scan(
-            &ScanInput { roots: vec![bare.join("Applications")], catalog: catalog(), library_dir: h.library.clone(), deeper: false, shortcuts: read },
+            &ScanInput { roots: vec![bare.join("Applications")], catalog: catalog(), library_dir: h.library.clone(), home: bare.clone(), deeper: false, shortcuts: read },
             &no_cancel,
             &|_| {},
         );
@@ -471,5 +481,32 @@ mod tests {
         let lines = lines.into_inner();
         assert_eq!(lines[0], "Looking in 2 folders...");
         assert!(lines.iter().any(|l| l.starts_with("Measuring Ship of Harkinian (")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_program_name_match_is_never_preselected_directly_under_the_home_folder_or_below_the_first_level() {
+        let h = fake_home("scan_exe_rules");
+        // A program named like Dusklight's sits in ~/Downloads, and another two folders into ~/Games.
+        put_exe(&h.home.join("Downloads/dusk"), b"x");
+        put_exe(&h.home.join("Games/collection/inner/dusk"), b"x");
+        let mut scan_input = input(&h, true);
+        scan_input.roots = vec![h.home.clone()];
+        let scan = run_scan(&scan_input, &no_cancel, &|_| {});
+        let dusk: Vec<&Found> = scan.found.iter().filter(|f| f.port_name == "Dusklight").collect();
+        assert!(!dusk.is_empty());
+        assert!(dusk.iter().all(|f| f.confidence == Confidence::CheckThis), "{:?}", dusk.iter().map(|f| (&f.path, f.confidence)).collect::<Vec<_>>());
+        // The same program one level under an ordinary scan folder keeps its "likely" match.
+        let normal = run_scan(&input(&h, false), &no_cancel, &|_| {});
+        let ordinary = normal.found.iter().find(|f| f.port_name == "Dusklight").unwrap();
+        assert_eq!(ordinary.confidence, Confidence::Likely);
+    }
+
+    #[test]
+    fn a_folder_match_below_the_first_level_is_still_preselected() {
+        let h = fake_home("scan_folder_deep");
+        put_file(&h.home.join("Games/collection/severed-chains/x"), b"x");
+        let scan = run_scan(&input(&h, true), &no_cancel, &|_| {});
+        let sc = scan.found.iter().find(|f| f.port_name == "Severed Chains").unwrap();
+        assert_eq!((sc.how, sc.confidence), (MatchKind::FolderName, Confidence::Exact));
     }
 }

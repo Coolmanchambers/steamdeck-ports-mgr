@@ -289,7 +289,7 @@ impl fmt::Display for AdoptError {
             AdoptError::LibraryFolderTaken(p) => write!(f, "{} already exists, so nothing was changed", p.display()),
             AdoptError::BadInstallFolder(p) => write!(f, "{} is not a folder that can be adopted", p.display()),
             AdoptError::BadCatalogFolder(s) => write!(f, "the catalog folder name \"{s}\" is not usable"),
-            AdoptError::AlreadyRegistered(s) => write!(f, "ports.local.json already has an entry for \"{s}\""),
+            AdoptError::AlreadyRegistered(s) => write!(f, "the app's port list already has an entry for \"{s}\""),
             AdoptError::LocalFileUnreadable(p) => write!(f, "{} is not in the expected format; it was not touched", p.display()),
             AdoptError::Unsupported => write!(f, "adopting needs Linux (it links the install into the library)"),
             AdoptError::Io { action, path, source } => write!(f, "could not {action} {}: {source}", path.display()),

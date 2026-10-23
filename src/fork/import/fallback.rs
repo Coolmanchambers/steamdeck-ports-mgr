@@ -22,7 +22,7 @@ pub struct LinkDone {
 pub fn confirm_text(requests: &[&MoveRequest]) -> String {
     let names: Vec<String> = requests.iter().map(|r| format!("  {}", r.port_name)).collect();
     format!(
-        "Link {} instead of moving:\n{}\n\nEach stays where it is. The ports folder gets a link to it and ports.local.json an entry (backed up first). \
+        "Link {} instead of moving:\n{}\n\nEach stays where it is. The ports folder gets a link to it and the app's own port list an entry (backed up first). \
          Nothing is copied or changed, and a linked port is not updated by this app.",
         if requests.len() == 1 { "1 port".to_string() } else { format!("{} ports", requests.len()) },
         listed(&names)
@@ -142,5 +142,15 @@ mod tests {
         let text = confirm_text(&reqs.iter().collect::<Vec<_>>());
         assert!(text.starts_with("Link 1 port instead of moving:\n  Ship of Harkinian"), "{text}");
         assert!(text.contains("Nothing is copied or changed"));
+    }
+
+    #[test]
+    fn the_link_texts_never_name_the_json_file() {
+        let h = fake_home("link_nojson");
+        let f = found(&h, "Applications/SoH", "Ship of Harkinian", "k", "SoH");
+        let reqs = build_requests(&[&f], &h.library);
+        assert!(!confirm_text(&reqs.iter().collect::<Vec<_>>()).to_lowercase().contains("json"));
+        let failure = adopt::AdoptError::AlreadyRegistered("SoH".into()).to_string();
+        assert!(!failure.to_lowercase().contains("json"), "{failure}");
     }
 }

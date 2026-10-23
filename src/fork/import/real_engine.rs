@@ -13,6 +13,7 @@ use super::engine::{GameFileChoice, MoveContext, MoveEngine, PortOutcome, SteamR
 use super::plan::MoveRequest;
 use crate::core::models::Port;
 use crate::fork::port_mover::game_files::{required_not_found, GameFiles};
+use crate::fork::port_mover::old_copies;
 use crate::fork::port_mover::{prepare, switch_over, MoveEnv, MoveError, MoveOptions, PortRef, Stage};
 use crate::fork::rom_screens::util::human_bytes;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
@@ -102,6 +103,9 @@ impl MoveEngine for RealEngine {
             };
             match prepare(&port_ref, &request.from, &request.to, &env, &options, &mut progress, ctx.cancel) {
                 Ok(done) => break done,
+                Err(MoveError::GameFiles { stage: Stage::BeforeCopy, .. }) if !accept && ctx.cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                    return PortOutcome::Stopped { reason: "cancelled before this port was copied. Nothing was copied.".into(), fix_in_game_files: false };
+                }
                 Err(MoveError::GameFiles { stage: Stage::BeforeCopy, issues }) if !accept => match ctx.prompts.game_file_problem(&request.port_name, &issues) {
                     GameFileChoice::MoveAnyway => accept = true,
                     GameFileChoice::FixInGameFiles => {
@@ -119,13 +123,19 @@ impl MoveEngine for RealEngine {
                     return PortOutcome::Stopped { reason: "cancelled while copying. The partial copy was removed; the old folder is untouched.".into(), fix_in_game_files: false };
                 }
                 Err(e @ MoveError::NotEnoughSpace { .. }) => return refused(&e, true),
-                Err(e @ (MoveError::Running(_) | MoveError::SourceMissing(_) | MoveError::TargetExists(_) | MoveError::TargetParentMissing(_) | MoveError::Nested)) => return refused(&e, false),
+                Err(e @ (MoveError::Running(_) | MoveError::SourceMissing(_) | MoveError::TargetExists(_) | MoveError::TargetParentMissing(_) | MoveError::Nested | MoveError::Protected(..))) => return refused(&e, false),
                 Err(e) => return PortOutcome::Failed(e.to_string()),
             }
         };
 
         (ctx.progress)("switching over".into());
         let report = switch_over(&prepared, &env);
+        // Mark the record as an import: the old folder may be named differently from the catalog folder, and
+        // that is the one removal rule this relaxes (the new copy must carry exactly this folder name).
+        if let Some(mut record) = old_copies::load(&self.config_dir).ok().and_then(|list| list.into_iter().find(|o| o.old_path == prepared.from)) {
+            record.import_folder = Some(request.catalog_folder.clone());
+            let _ = old_copies::record(&self.config_dir, record);
+        }
         let mut notes: Vec<String> = Vec::new();
         let text = report.text();
         if !text.is_empty() {
@@ -183,6 +193,7 @@ mod tests {
             roots: ScanFolders::default().roots(&h.home, &h.library),
             catalog: catalog(),
             library_dir: h.library.clone(),
+            home: h.home.clone(),
             deeper: false,
             shortcuts: read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
         };
@@ -250,8 +261,8 @@ mod tests {
         assert_eq!(records[0].old_path, old);
         assert_eq!(records[0].new_path, h.library.join("SoH"));
         assert!(records[0].switched);
-        // The summary says the old copy is still there.
-        assert!(summary.text(&h.home).contains("the old copy at ~/Applications/SoH (8 KB) is still there; 1 Steam shortcut repointed"), "{}", summary.text(&h.home));
+        // The summary names where it came from and what happened to the shortcut.
+        assert!(summary.text(&h.home).contains("moved (from ~/Applications/SoH, 8 KB); 1 Steam shortcut repointed"), "{}", summary.text(&h.home));
     }
 
     #[test]
@@ -381,5 +392,243 @@ mod tests {
         let h = fake_home("real_title");
         let summary = run(&engine(&h, false), plans_for(&h, &["Dusklight"], SteamWrite::Now), &NoPrompts);
         assert_eq!(summary.title(), "Import finished");
+    }
+
+    #[cfg(unix)]
+    mod aliases {
+        use super::*;
+        use crate::fork::vdf::fixtures::{file_of, steam_entry};
+
+        fn plans_in(h: &Home, roots: Vec<PathBuf>, names: &[&str]) -> Vec<PortPlan> {
+            let input = ScanInput {
+                roots,
+                catalog: catalog(),
+                library_dir: h.library.clone(),
+                home: h.home.clone(),
+                deeper: false,
+                shortcuts: read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
+            };
+            let scan = run_scan(&input, &|| false, &|_| {});
+            let refs: Vec<&Found> = names.iter().map(|n| scan.found.iter().find(|f| f.port_name == *n).unwrap()).collect();
+            plan_all(&build_requests(&refs, &h.library), None, SteamWrite::Now)
+        }
+
+        #[test]
+        fn a_scan_folder_reached_through_a_link_still_repoints_a_shortcut_that_names_the_real_path() {
+            let h = fake_home("real_alias_scan");
+            std::os::unix::fs::symlink(h.home.join("Applications"), h.home.join("sdcard")).unwrap();
+            let plans = plans_in(&h, vec![h.home.join("sdcard")], &["Ship of Harkinian"]);
+            assert_eq!(plans[0].request.from, h.home.join("sdcard/SoH"), "found through the link");
+            assert_eq!(plans[0].steam.len(), 1, "the plan shows the shortcut");
+            let summary = run(&engine(&h, false), plans, &NoPrompts);
+            let PortOutcome::Moved { steam, .. } = &summary.items[0].outcome else { panic!("{:?}", summary.items[0].outcome) };
+            assert_eq!(*steam, SteamResult::Repointed(1), "and the engine repoints what the plan showed");
+            let sc = shortcut_of(&h, "Ship of Harkinian");
+            assert_eq!(sc.app_id, Some(SOH_ID));
+            assert_eq!(Path::new(sc.exe_path()), h.library.join("SoH/soh.appimage"));
+        }
+
+        #[test]
+        fn a_shortcut_that_names_the_folder_through_a_link_is_repointed_when_the_scan_folder_is_the_real_one() {
+            let h = fake_home("real_alias_shortcut");
+            std::os::unix::fs::symlink(h.home.join("Applications"), h.home.join("sdcard")).unwrap();
+            let exe = format!("\"{}\"", h.home.join("sdcard/SoH/soh.appimage").display());
+            let dir = format!("\"{}/\"", h.home.join("sdcard/SoH").display());
+            fs::write(&h.shortcuts_path, file_of(&[steam_entry(0, SOH_ID, "Ship of Harkinian", &exe, &dir, &[])])).unwrap();
+            let plans = plans_in(&h, vec![h.home.join("Applications")], &["Ship of Harkinian"]);
+            assert_eq!(plans[0].steam.len(), 1);
+            let summary = run(&engine(&h, false), plans, &NoPrompts);
+            assert!(matches!(&summary.items[0].outcome, PortOutcome::Moved { steam: SteamResult::Repointed(1), .. }), "{:?}", summary.items[0].outcome);
+            assert_eq!(Path::new(shortcut_of(&h, "Ship of Harkinian").exe_path()), h.library.join("SoH/soh.appimage"));
+        }
+
+        #[test]
+        fn the_removal_check_also_sees_a_shortcut_that_reaches_the_old_folder_through_a_link() {
+            let h = fake_home("real_alias_removal");
+            std::os::unix::fs::symlink(h.home.join("Applications"), h.home.join("sdcard")).unwrap();
+            let seen = crate::fork::port_mover::steam::shortcuts_pointing_into_detailed(&h.home, &h.home.join("sdcard/SoH")).unwrap();
+            assert_eq!(seen, [("Ship of Harkinian".to_string(), true)], "the shortcut names the real path, the old copy is known by the link");
+        }
+
+        #[test]
+        fn a_link_is_not_imported_as_a_port_folder() {
+            let h = fake_home("real_link_source");
+            std::os::unix::fs::symlink(h.home.join("Applications/SoH"), h.home.join("Applications/SoH-link")).unwrap();
+            let request = MoveRequest {
+                port_key: "k".into(),
+                port_name: "Ship of Harkinian".into(),
+                catalog_folder: "SoH".into(),
+                from: h.home.join("Applications/SoH-link"),
+                to: h.library.join("SoH"),
+                size: crate::fork::import::scan::Size::default(),
+                steam: vec![],
+            };
+            let plan = crate::fork::import::plan::plan_port(&request, None, SteamWrite::Now);
+            let Some(crate::fork::import::plan::Block::Link(target)) = &plan.block else { panic!("{:?}", plan.block) };
+            assert_eq!(*target, fs::canonicalize(h.home.join("Applications/SoH")).unwrap());
+            assert!(plan.steps(&h.home)[0].contains("this is a link to"), "{:?}", plan.steps(&h.home));
+            assert!(plan.steps(&h.home)[0].contains("import the real folder instead"));
+            // The engine refuses it too (a link would be copied as a link only).
+            let summary = run(&engine(&h, false), vec![plan], &NoPrompts);
+            assert!(matches!(summary.items[0].outcome, PortOutcome::Refused { space: false, .. }));
+            assert!(!h.library.join("SoH").exists());
+        }
+    }
+
+    #[test]
+    fn a_folder_that_holds_the_home_the_app_folder_the_ports_folder_or_a_scan_folder_is_not_importable() {
+        use crate::fork::import::plan::{plan_port_with, Block, PlanGuards};
+        let h = fake_home("real_protected");
+        let cfg = h.home.join("appdir");
+        fs::create_dir_all(&cfg).unwrap();
+        let guards = PlanGuards { home: h.home.clone(), config_dir: cfg.clone(), scan_roots: vec![h.home.join("Applications")] };
+        let request = |from: PathBuf| MoveRequest {
+            port_key: "k".into(),
+            port_name: "X".into(),
+            catalog_folder: "x".into(),
+            from,
+            to: h.library.join("x"),
+            size: crate::fork::import::scan::Size::default(),
+            steam: vec![],
+        };
+        let outer = h.home.parent().unwrap().to_path_buf();
+        for (from, what) in [(outer, "the home folder"), (h.home.join("DeckPorts"), "the ports folder"), (h.home.join("Applications"), "a scan folder")] {
+            let plan = plan_port_with(&request(from.clone()), None, SteamWrite::Now, &guards);
+            assert!(matches!(&plan.block, Some(Block::Protected(p, w)) if *p == from && *w == what), "{} -> {:?}", from.display(), plan.block);
+        }
+        // An ordinary port folder is fine, and so is a folder under a scan folder.
+        assert!(plan_port_with(&request(h.home.join("Applications/SoH")), None, SteamWrite::Now, &guards).block.is_none());
+        // The engine's own check (a plan made without these guards) refuses a folder holding the app folder.
+        let mut e = engine(&h, false);
+        e.home = h.home.join("Games/dusk-old/sub");
+        fs::create_dir_all(&e.home).unwrap();
+        let plans = plans_for(&h, &["Dusklight"], SteamWrite::Now);
+        let summary = run(&e, plans, &NoPrompts);
+        assert!(matches!(&summary.items[0].outcome, PortOutcome::Refused { space: false, reason } if reason.contains("holds the home folder")), "{:?}", summary.items[0].outcome);
+        assert!(!h.library.join("dusklight").exists());
+    }
+
+    #[test]
+    fn a_cancel_inside_a_copy_removes_the_partial_copy_and_leaves_no_staging_folder() {
+        let h = fake_home("real_cancel_copy");
+        for i in 0..4 {
+            put_file(&h.home.join(format!("Games/dusk-old/data{i}.bin")), &[7u8; 300]);
+        }
+        let cancel = AtomicBool::new(false);
+        let summary = move_selected(
+            &engine(&h, false),
+            plans_for(&h, &["Dusklight"], SteamWrite::Now),
+            &cancel,
+            &|text| {
+                if text.contains("copying") {
+                    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            },
+            &NoPrompts,
+        );
+        assert!(matches!(&summary.items[0].outcome, PortOutcome::Stopped { reason, .. } if reason.contains("cancelled while copying")), "{:?}", summary.items[0].outcome);
+        assert!(!h.library.join("dusklight").exists());
+        let leftovers: Vec<_> = fs::read_dir(&h.library).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(leftovers.is_empty(), "no staging folder is left: {leftovers:?}");
+        assert!(h.home.join("Games/dusk-old/dusk").exists() && h.home.join("Games/dusk-old/data3.bin").exists(), "the old folder is untouched");
+        assert!(crate::fork::port_mover::old_copies::load(&h.home.join("appdir")).unwrap().is_empty(), "no old-copy record for a copy that never happened");
+    }
+
+    mod removal {
+        use super::*;
+        use crate::fork::port_mover::old_copies::{removal_check, RemovalCtx};
+
+        fn check(h: &Home, record: &old_copies::OldCopy) -> Result<u64, String> {
+            let active = vec![h.library.join("dusklight"), h.library.join("SoH")];
+            let ctx = RemovalCtx {
+                home: &h.home,
+                config_dir: &h.home.join("appdir"),
+                library_dir: &h.library,
+                active_paths: &active,
+                running: &|_| Vec::new(),
+                save_folders: &|_, _| Some(Vec::new()),
+            };
+            removal_check(record, &ctx)
+        }
+
+        fn imported_dusk(h: &Home) -> old_copies::OldCopy {
+            let summary = run(&engine(h, false), plans_for(h, &["Dusklight"], SteamWrite::Now), &NoPrompts);
+            assert!(matches!(summary.items[0].outcome, PortOutcome::Moved { .. }));
+            old_copies::load(&h.home.join("appdir")).unwrap().into_iter().next().unwrap()
+        }
+
+        #[test]
+        fn an_import_under_a_different_folder_name_can_be_removed_and_the_record_says_why() {
+            let h = fake_home("removal_flag");
+            let record = imported_dusk(&h);
+            assert_eq!(record.old_path, h.home.join("Games/dusk-old"));
+            assert_eq!(record.import_folder.as_deref(), Some("dusklight"));
+            assert!(record.names_agree());
+            assert_eq!(check(&h, &record), Ok(700));
+            // The flag survives a reload from port-moves.json.
+            assert_eq!(old_copies::load(&h.home.join("appdir")).unwrap()[0].import_folder.as_deref(), Some("dusklight"));
+        }
+
+        #[test]
+        fn without_the_flag_or_with_another_new_name_the_name_rule_still_refuses() {
+            let h = fake_home("removal_noflag");
+            let record = imported_dusk(&h);
+            let plain = old_copies::OldCopy { import_folder: None, ..record.clone() };
+            assert!(check(&h, &plain).unwrap_err().contains("different folder names"));
+            let wrong = old_copies::OldCopy { import_folder: Some("someotherport".into()), ..record.clone() };
+            assert!(check(&h, &wrong).unwrap_err().contains("different folder names"));
+            let empty = old_copies::OldCopy { import_folder: Some(String::new()), ..record };
+            assert!(check(&h, &empty).unwrap_err().contains("different folder names"));
+        }
+
+        #[test]
+        fn every_other_removal_rule_still_applies_to_an_import() {
+            let h = fake_home("removal_others");
+            let record = imported_dusk(&h);
+            // Not switched yet.
+            let unfinished = old_copies::OldCopy { switched: false, ..record.clone() };
+            assert!(check(&h, &unfinished).unwrap_err().contains("did not finish"));
+            // The old folder holds the ports folder.
+            let holder = old_copies::OldCopy { old_path: h.home.join("DeckPorts"), ..record.clone() };
+            assert!(check(&h, &holder).unwrap_err().contains("never removed"));
+            // A port is installed at the old place now.
+            let installed_there = old_copies::OldCopy { old_path: h.library.join("SoH"), ..record.clone() };
+            fs::create_dir_all(h.library.join("SoH")).unwrap();
+            assert!(check(&h, &installed_there).is_err());
+            // The new copy is gone.
+            fs::remove_dir_all(h.library.join("dusklight")).unwrap();
+            assert!(check(&h, &record).unwrap_err().contains("missing"));
+        }
+
+        #[test]
+        fn a_newer_save_in_the_old_folder_keeps_it() {
+            let h = fake_home("removal_saves");
+            let record = imported_dusk(&h);
+            put_file(&h.home.join("Games/dusk-old/saves/slot.sav"), b"played after the copy");
+            let active = vec![h.library.join("dusklight")];
+            let save_dirs = |e: &old_copies::OldCopy, dir: &Path| -> Option<Vec<PathBuf>> { let _ = e; Some(vec![dir.join("saves")]) };
+            let ctx = RemovalCtx { home: &h.home, config_dir: &h.home.join("appdir"), library_dir: &h.library, active_paths: &active, running: &|_| Vec::new(), save_folders: &save_dirs };
+            assert!(removal_check(&record, &ctx).unwrap_err().contains("newer saves"));
+        }
+    }
+
+    #[test]
+    fn finishing_an_unfinished_import_switch_follows_the_same_name_rule() {
+        use crate::fork::port_mover::finish_switch;
+        let h = fake_home("finish_flag");
+        let summary = run(&engine(&h, false), plans_for(&h, &["Dusklight"], SteamWrite::Now), &NoPrompts);
+        assert!(matches!(summary.items[0].outcome, PortOutcome::Moved { .. }));
+        let cfg = h.home.join("appdir");
+        let record = old_copies::load(&cfg).unwrap().into_iter().next().unwrap();
+        let unfinished = old_copies::OldCopy { switched: false, ..record };
+        let settings = ForkSettings::load(&h.home.join("s.json"));
+        let steam = || -> std::io::Result<Vec<String>> { Ok(Vec::new()) };
+        let env = MoveEnv { home: &h.home, config_dir: &cfg, settings: &settings, steam: &steam, game_mode: false, running: &|_| Vec::new(), free_space: &|_| None };
+        let active = vec![unfinished.new_path.clone()];
+        let plain = old_copies::OldCopy { import_folder: None, ..unfinished.clone() };
+        assert!(finish_switch(&plain, &env, &h.library, &active).unwrap_err().contains("different names"));
+        assert!(finish_switch(&unfinished, &env, &h.library, &active).is_ok(), "an import record may differ in name");
+        let wrong = old_copies::OldCopy { import_folder: Some("other".into()), ..unfinished };
+        assert!(finish_switch(&wrong, &env, &h.library, &active).unwrap_err().contains("different names"));
     }
 }

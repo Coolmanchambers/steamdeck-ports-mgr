@@ -67,6 +67,10 @@ pub enum Block {
     SourceMissing(PathBuf),
     /// The old folder holds the ports folder or the other way round.
     Nested,
+    /// The old "folder" is a link; the real folder it points to is what should be imported.
+    Link(PathBuf),
+    /// The old folder holds the home folder, the app's folder, the ports folder or a scan folder.
+    Protected(PathBuf, &'static str),
     NotEnoughSpace { need: u64, free: u64 },
 }
 
@@ -77,6 +81,8 @@ impl Block {
             Block::DestinationExists(p) => format!("{} already exists, so nothing is copied over it", short_path(p, home)),
             Block::SourceMissing(p) => format!("{} is not there any more", short_path(p, home)),
             Block::Nested => "the old folder and the ports folder contain each other".to_string(),
+            Block::Link(target) => format!("this is a link to {}; import the real folder instead", short_path(target, home)),
+            Block::Protected(path, what) => format!("{} holds {what}, so it is not imported", short_path(path, home)),
             Block::NotEnoughSpace { need, free } => {
                 format!("not enough free space: needs {} plus {} spare, {} free", human_bytes(*need), human_bytes(SPACE_MARGIN), human_bytes(*free))
             }
@@ -107,19 +113,10 @@ pub struct PortPlan {
     pub steam_write: SteamWrite,
 }
 
-/// `path` re-rooted from the old install folder to the new one; unchanged when it is not inside it.
+/// `path` re-rooted from the old install folder to the new one (as the move does it); unchanged when it is
+/// not inside it.
 fn reroot(path: &str, from: &Path, to: &Path) -> String {
-    if path.is_empty() {
-        return String::new();
-    }
-    let real = fs::canonicalize(from).ok();
-    let p = Path::new(path);
-    let rel = p.strip_prefix(from).ok().or_else(|| real.as_deref().and_then(|r| p.strip_prefix(r).ok()));
-    match rel {
-        Some(rel) if rel.as_os_str().is_empty() => to.to_string_lossy().into_owned(),
-        Some(rel) => to.join(rel).to_string_lossy().into_owned(),
-        None => path.to_string(),
-    }
+    crate::fork::port_mover::steam::moved_path(path, from, to).unwrap_or_else(|| path.to_string())
 }
 
 fn single_component(name: &str) -> bool {
@@ -133,13 +130,43 @@ fn nested(a: &Path, b: &Path) -> bool {
     a.starts_with(&b) || b.starts_with(&a)
 }
 
+/// What a folder must never be or hold to be imported: the home folder, the app's folder, the ports folder
+/// (the parent of the destination) and the folders being scanned.
+#[derive(Debug, Clone, Default)]
+pub struct PlanGuards {
+    pub home: PathBuf,
+    pub config_dir: PathBuf,
+    pub scan_roots: Vec<PathBuf>,
+}
+
+fn protected_by(from: &Path, to: &Path, guards: &PlanGuards) -> Option<&'static str> {
+    let holds = crate::fork::port_mover::old_copies::holds;
+    let ports = to.parent().map(Path::to_path_buf).unwrap_or_default();
+    let fixed: [(&'static str, &Path); 3] = [("the home folder", &guards.home), ("the app's folder", &guards.config_dir), ("the ports folder", &ports)];
+    for (what, protected) in fixed {
+        if !protected.as_os_str().is_empty() && holds(from, protected) {
+            return Some(what);
+        }
+    }
+    guards.scan_roots.iter().any(|root| holds(from, root)).then_some("a scan folder")
+}
+
 /// Checks one request against the disk. `free` is the free space left for the ports folder (`None` when
 /// unknown, which never blocks). Reads only.
 pub fn plan_port(request: &MoveRequest, free: Option<u64>, steam_write: SteamWrite) -> PortPlan {
+    plan_port_with(request, free, steam_write, &PlanGuards::default())
+}
+
+pub fn plan_port_with(request: &MoveRequest, free: Option<u64>, steam_write: SteamWrite, guards: &PlanGuards) -> PortPlan {
+    let link_target = fs::symlink_metadata(&request.from).ok().filter(|m| m.file_type().is_symlink()).map(|_| fs::read_link(&request.from).unwrap_or_default());
     let block = if !single_component(&request.catalog_folder) {
         Some(Block::BadFolderName(request.catalog_folder.clone()))
     } else if !request.from.is_dir() {
         Some(Block::SourceMissing(request.from.clone()))
+    } else if let Some(target) = link_target {
+        Some(Block::Link(fs::canonicalize(&request.from).unwrap_or(target)))
+    } else if let Some(what) = protected_by(&request.from, &request.to, guards) {
+        Some(Block::Protected(request.from.clone(), what))
     } else if fs::symlink_metadata(&request.to).is_ok() {
         Some(Block::DestinationExists(request.to.clone()))
     } else if request.to.parent().is_some_and(|ports| nested(&request.from, ports)) {
@@ -164,11 +191,15 @@ pub fn plan_port(request: &MoveRequest, free: Option<u64>, steam_write: SteamWri
 
 /// Plans a whole batch: each port that will be copied uses up space the next one cannot count on.
 pub fn plan_all(requests: &[MoveRequest], free: Option<u64>, steam_write: SteamWrite) -> Vec<PortPlan> {
+    plan_all_with(requests, free, steam_write, &PlanGuards::default())
+}
+
+pub fn plan_all_with(requests: &[MoveRequest], free: Option<u64>, steam_write: SteamWrite, guards: &PlanGuards) -> Vec<PortPlan> {
     let mut left = free;
     requests
         .iter()
         .map(|r| {
-            let plan = plan_port(r, left, steam_write);
+            let plan = plan_port_with(r, left, steam_write, guards);
             if plan.block.is_none() {
                 left = left.map(|l| l.saturating_sub(r.size.bytes));
             }
@@ -232,6 +263,7 @@ mod tests {
             roots: ScanFolders::default().roots(&h.home, &h.library),
             catalog: catalog(),
             library_dir: h.library.clone(),
+            home: h.home.clone(),
             deeper: false,
             shortcuts: super::super::scan::read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
         };
@@ -381,7 +413,11 @@ mod tests {
         }
         // The old folder is the folder that holds the ports folder.
         let outer = MoveRequest { from: h.home.join("DeckPorts"), ..base.clone() };
-        assert_eq!(plan_port(&outer, None, SteamWrite::Now).block, Some(Block::Nested));
+        assert_eq!(plan_port(&outer, None, SteamWrite::Now).block, Some(Block::Protected(h.home.join("DeckPorts"), "the ports folder")));
+        // The old folder is inside the ports folder.
+        fs::create_dir_all(h.library.join("inner")).unwrap();
+        let inner = MoveRequest { from: h.library.join("inner"), ..base.clone() };
+        assert_eq!(plan_port(&inner, None, SteamWrite::Now).block, Some(Block::Nested));
     }
 
     #[test]

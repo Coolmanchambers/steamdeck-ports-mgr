@@ -4,7 +4,7 @@
 //! - [`after_install`]: called by the app when an install finishes. Once per port, only for a port
 //!   that names files it cannot run without and is not connected yet, it looks in the game files folder
 //!   on a worker thread (with progress and Cancel) and shows what it found.
-//! - [`after_ports_added`]: for screens that add several ports at once (adopt/import). One walk of
+//! - [`after_ports_added_then`]: for screens that add several ports at once (adopt/import). One walk of
 //!   the folder, then a list with each port's result. Returns false when there is nothing to show, so
 //!   the caller shows its own message instead.
 //! - [`find_for_port`]: the same search for one port from anywhere (the setup wizard, the port's Info
@@ -19,7 +19,7 @@
 use super::{
     choose_folder, load_store, message, open_connect, open_list, run_job, show_connect, store_path, Back, JobUi, Router, Then, JOB_RUNNING, TITLE,
 };
-use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_picker_dialog, DialogSlot};
+use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_picker_dialog, DialogSlot};
 use crate::app::state::AppState;
 use crate::core::models::Port;
 use crate::core::path_safety::safe_join;
@@ -141,7 +141,10 @@ pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
 /// After several ports were added at once (adopt or import). `intro` is the caller's own result text,
 /// shown at the top of the list. Returns false when none of the ports needs looking for (nothing was
 /// shown; the caller shows its own message).
-pub(crate) fn after_ports_added(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &str) -> bool {
+/// `then` runs when the user is done with what it shows: the Done row, B on the
+/// list, Continue on its notices, or B on the search's progress list. (Not when it returns false: nothing
+/// was shown and the caller carries on itself.)
+pub(crate) fn after_ports_added_then(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &str, then: Option<Back>) -> bool {
     if JOB_RUNNING.with(Cell::get) || ports_folder_busy(app) {
         return false;
     }
@@ -162,10 +165,13 @@ pub(crate) fn after_ports_added(app: &Rc<AppState>, router: &Router, keys: &[Str
     if store.rom_dir().is_none() {
         let outcomes = find_game_files_for_ports(&store, &reqs, &AtomicBool::new(false), &mut |_| {}).unwrap_or_default();
         mark_searched(app, &searched);
-        show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()));
+        show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()), then);
         return true;
     }
     let worker_reqs = reqs.clone();
+    if let Some(then) = &then {
+        super::ABANDON_HOOK.with(|h| *h.borrow_mut() = Some(then.clone()));
+    }
     run_job(
         app,
         router,
@@ -174,10 +180,10 @@ pub(crate) fn after_ports_added(app: &Rc<AppState>, router: &Router, keys: &[Str
         move |app, router, result| match result {
             Ok(Some(outcomes)) => {
                 mark_searched(app, &searched);
-                show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()));
+                show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()), then);
             }
-            Ok(None) => message(app, router, TITLE, &format!("{}\n\nThe search for game files was cancelled. {LATER_HINT}", intro.join("\n"))),
-            Err(e) => message(app, router, TITLE, &format!("{}\n\nCould not look for game files: {e}", intro.join("\n"))),
+            Ok(None) => notice_then(app, router, &format!("{}\n\nThe search for game files was cancelled. {LATER_HINT}", intro.join("\n")), &then),
+            Err(e) => notice_then(app, router, &format!("{}\n\nCould not look for game files: {e}", intro.join("\n")), &then),
         },
     );
     true
@@ -339,25 +345,53 @@ fn prompt(app: &Rc<AppState>, router: &Router, p: Rc<Prompt>) {
 
 // -- Several ports at once --------------------------------------------------------------------------
 
-fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items: Rc<Vec<(FindRequest, FindOutcome)>>) {
+/// A message; with a `then` it is a Continue dialog (also on B) that runs it.
+fn notice_then(app: &Rc<AppState>, router: &Router, text: &str, then: &Option<Back>) {
+    let Some(then) = then else { return message(app, router, TITLE, text) };
+    let on_confirm = then.clone();
+    open_confirm_dialog(app, router, TITLE.into(), format!("{text}\n").into(), "Continue".into(), move |app, router| on_confirm(app, router));
+    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
+        let (app, router, then) = (app.clone(), router.clone(), then.clone());
+        d.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            then(&app, &router);
+        });
+    }
+}
+
+fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items: Rc<Vec<(FindRequest, FindOutcome)>>, then: Option<Back>) {
     let mut labels: Vec<String> = intro.as_ref().clone();
     let first = labels.len();
     let shown: Vec<usize> = (0..items.len()).filter(|i| !matches!(items[*i].1, FindOutcome::NoFilesNeeded)).collect();
     labels.extend(shown.iter().map(|i| format!("Game files for {}: {}", ellipsize(items[*i].0.port.display_name(), 50), items[*i].1.short())));
     let done = labels.len();
     labels.push("Done".into());
+    let on_done = then.clone();
+    let then_for_close = then.clone();
     open_list_at(app, router, TITLE, labels, first, move |app, router, index| {
         if index == done {
-            return close_current_dialog(app, router);
+            close_current_dialog(app, router);
+            if let Some(then) = &on_done {
+                then(app, router);
+            }
+            return;
         }
         let Some(&i) = index.checked_sub(first).and_then(|n| shown.get(n)) else { return };
         let back: Back = {
-            let (intro, items) = (intro.clone(), items.clone());
-            Rc::new(move |app, router| show_batch(app, router, intro.clone(), items.clone()))
+            let (intro, items, then) = (intro.clone(), items.clone(), then.clone());
+            Rc::new(move |app, router| show_batch(app, router, intro.clone(), items.clone(), then.clone()))
         };
         let (req, outcome) = items[i].clone();
         show_outcome(app, router, req, outcome, back, None);
     });
+    // B on the list is Done too.
+    if let (Some(then), DialogSlot::Picker(d)) = (then_for_close, &*app.dialog_nav.dialogs.borrow()) {
+        let (app, router) = (app.clone(), router.clone());
+        d.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            then(&app, &router);
+        });
+    }
 }
 
 // -- Connect ----------------------------------------------------------------------------------------

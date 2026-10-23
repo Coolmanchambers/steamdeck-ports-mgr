@@ -5,7 +5,8 @@
 //! is only possible from an explicit confirm, and only when:
 //! - the record exists and says the switch finished (records are written before the switch with
 //!   `switched: false` and marked true once Steam and the records follow);
-//! - the new copy exists, has the same folder name, is where the app now looks for that port, and the
+//! - the new copy exists, has the same folder name (an import may differ: the new copy then carries the
+//!   catalog folder name recorded with it), is where the app now looks for that port, and the
 //!   old copy still holds everything at the top of the new one;
 //! - the old copy is not the app's folder, the home folder, a ports folder in use, or a folder that
 //!   holds any of them, and no port lives there now;
@@ -43,6 +44,24 @@ pub struct OldCopy {
     /// False while the switch to the new copy is under way (written before the ports folder setting
     /// changes); a record left false by a crash keeps the old copy.
     pub switched: bool,
+    /// Set only by Import ports, to the catalog folder the port was imported as: the old folder may be
+    /// named differently (`dusk-old` imported as `dusklight`), which is the one rule it relaxes (the name
+    /// equality in `removal_check` and `finish_check`); the new copy must then be named exactly that.
+    pub import_folder: Option<String>,
+}
+
+impl OldCopy {
+    /// Whether the old and new folder names agree, or this is an import whose new copy carries the
+    /// catalog folder name it was imported as.
+    pub fn names_agree(&self) -> bool {
+        if self.old_path.file_name() == self.new_path.file_name() {
+            return true;
+        }
+        match (&self.import_folder, self.new_path.file_name()) {
+            (Some(folder), Some(new)) => !folder.is_empty() && new == std::ffi::OsStr::new(folder),
+            _ => false,
+        }
+    }
 }
 
 impl OldCopy {
@@ -56,6 +75,7 @@ impl OldCopy {
             "moved_at": self.moved_at,
             "link_only": self.link_only,
             "switched": self.switched,
+            "import_folder": self.import_folder,
         })
     }
 
@@ -70,6 +90,7 @@ impl OldCopy {
             moved_at: text("moved_at").unwrap_or_default(),
             link_only: v.get("link_only").and_then(Value::as_bool).unwrap_or(false),
             switched: v.get("switched").and_then(Value::as_bool).unwrap_or(true),
+            import_folder: text("import_folder").filter(|f| !f.is_empty()),
         })
     }
 }
@@ -208,7 +229,7 @@ pub fn removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
     if fs::symlink_metadata(&entry.new_path).is_err() {
         return Err(format!("The new copy {} is missing, so the old one is kept.", entry.new_path.display()));
     }
-    if old.file_name() != entry.new_path.file_name() {
+    if !entry.names_agree() {
         return Err("The old and new copies have different folder names, so the old one is kept.".into());
     }
     if !ctx.active_paths.iter().any(|p| same(p, &entry.new_path)) {

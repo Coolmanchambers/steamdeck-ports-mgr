@@ -20,12 +20,24 @@ use crate::fork::vdf::Document;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-/// `path` moved from `from` to `to`, when it is `from` or inside it (whole path components only).
+/// `path` moved from `from` to `to`, when it is `from` or inside it (whole path components only). Tried as
+/// written first, then through links: a shortcut that names the folder by another route (an SD card
+/// reached through a symlink, or the real path while `from` is the alias) counts as inside it too.
 pub fn moved_path(path: &str, from: &Path, to: &Path) -> Option<String> {
     if path.is_empty() {
         return None;
     }
-    let rest = Path::new(path).strip_prefix(from).ok()?;
+    let p = Path::new(path);
+    let rest: PathBuf = match p.strip_prefix(from) {
+        Ok(rest) => rest.to_path_buf(),
+        Err(_) => {
+            let real_from = std::fs::canonicalize(from).ok()?;
+            match p.strip_prefix(&real_from) {
+                Ok(rest) => rest.to_path_buf(),
+                Err(_) => std::fs::canonicalize(p).ok()?.strip_prefix(&real_from).ok()?.to_path_buf(),
+            }
+        }
+    };
     let new = if rest.as_os_str().is_empty() { to.to_path_buf() } else { to.join(rest) };
     Some(new.to_string_lossy().into_owned())
 }

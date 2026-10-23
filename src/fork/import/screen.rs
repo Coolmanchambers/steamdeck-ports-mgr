@@ -4,7 +4,7 @@
 
 use super::folders::ScanFolders;
 use super::plan::{Block, PortPlan};
-use super::scan::{Found, ImportScan};
+use super::scan::{Confidence, Found, ImportScan};
 use crate::fork::adopt::WELL_KNOWN;
 use crate::fork::rom_screens::util::{ellipsize, human_bytes};
 use crate::fork::screens::{listed, short_path};
@@ -50,6 +50,9 @@ impl ImportScreen {
         let mut out: Vec<String> = Vec::new();
         if scan.found.is_empty() {
             out.push("No ports found outside your ports folder".to_string());
+        }
+        if scan.found.iter().any(|f| f.confidence == Confidence::CheckThis) {
+            out.push("\"Check this\" rows matched only by a program inside the folder, so they start unticked: look before you tick them".to_string());
         }
         out.extend(scan.ambiguous.iter().map(|a| format!("Not imported, fits {} ports: {}", a.matches.len(), short_path(&a.path, &self.home))));
         out.extend(scan.duplicates.iter().map(|(name, path)| format!("Also found {name} in {}: not imported", short_path(path, &self.home))));
@@ -144,6 +147,9 @@ impl ImportScreen {
 /// The confirm dialog before an import. `free` is the free space in the ports folder's drive when known.
 pub fn confirm_text(plans: &[PortPlan], ports_folder: &Path, home: &Path, free: Option<u64>, dry_run: bool) -> String {
     let (runnable, blocked): (Vec<&PortPlan>, Vec<&PortPlan>) = plans.iter().partition(|p| p.can_run());
+    if runnable.is_empty() {
+        return blocked_text(plans, home);
+    }
     let names: Vec<String> = runnable.iter().map(|p| format!("  {} ({})", p.request.port_name, human_bytes(p.request.size.bytes))).collect();
     let total: u64 = runnable.iter().map(|p| p.request.size.bytes).sum();
     let mut text = String::new();
@@ -161,6 +167,18 @@ pub fn confirm_text(plans: &[PortPlan], ports_folder: &Path, home: &Path, free: 
         text.push_str(&format!("\n\nNot imported now:\n{}", listed(&lines)));
     }
     text
+}
+
+/// What is said when every ticked port is blocked: only the reasons.
+pub fn blocked_text(plans: &[PortPlan], home: &Path) -> String {
+    let lines: Vec<String> = plans.iter().map(|p| format!("  {}: {}", p.request.port_name, p.block.as_ref().map_or(String::new(), |b| b.text(home)))).collect();
+    format!("Nothing can be imported now:\n{}", listed(&lines))
+}
+
+/// The requests of the ticked ports that are blocked only for lack of room: the ones that can be linked
+/// where they stand instead.
+pub fn space_blocked(plans: &[PortPlan]) -> Vec<super::plan::MoveRequest> {
+    plans.iter().filter(|p| p.block.as_ref().is_some_and(Block::is_space)).map(|p| p.request.clone()).collect()
 }
 
 /// Rows of the "what will importing do" list: one per ticked port.
@@ -207,6 +225,11 @@ pub struct FoldersScreen {
 impl FoldersScreen {
     pub fn new(home: &Path, folders: ScanFolders) -> FoldersScreen {
         FoldersScreen { home: home.to_path_buf(), folders, note: None }
+    }
+
+    /// The row the cursor starts on: the first real row, not the note.
+    pub fn first_row(&self) -> usize {
+        usize::from(self.note.is_some())
     }
 
     pub fn lines(&self) -> Vec<FolderLine> {
@@ -265,6 +288,7 @@ mod tests {
             roots: folders.roots(&h.home, &h.library),
             catalog: catalog(),
             library_dir: h.library.clone(),
+            home: h.home.clone(),
             deeper: false,
             shortcuts: read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
         };
@@ -315,6 +339,7 @@ mod tests {
         let i = s.scan.found.iter().position(|f| f.confidence == Confidence::CheckThis).unwrap();
         assert!(!s.selected[i]);
         assert!(s.labels()[3 + i].starts_with("[ ] Severed Chains (check this)"));
+        assert!(s.labels().iter().any(|l| l.starts_with("\"Check this\" rows matched only by a program inside the folder")), "{:?}", s.labels());
     }
 
     #[test]
@@ -374,8 +399,9 @@ mod tests {
         let plans = plans_of(&s, Some(free));
         // The margin plus 100 bytes free: Dusklight (700 B) cannot keep the margin, nor can the other.
         let text = confirm_text(&plans, &h.library, &h.home, Some(free), false);
-        assert!(text.starts_with("Import 0 ports into"), "{text}");
-        assert!(text.contains("Not imported now:\n  Dusklight: not enough free space"), "{text}");
+        assert!(text.starts_with("Nothing can be imported now:\n  Dusklight: not enough free space"), "{text}");
+        assert!(!text.contains("Import 0 ports"), "{text}");
+        assert_eq!(space_blocked(&plans).len(), 2, "both could be linked where they stand instead");
     }
 
     #[test]
@@ -419,6 +445,7 @@ mod tests {
         fs_screen.note = Some("Already in the list".into());
         assert_eq!(fs_screen.labels()[0], "Already in the list");
         assert_eq!(fs_screen.lines()[0], FolderLine::Note);
+        assert_eq!(fs_screen.first_row(), 1, "the cursor skips the note");
     }
 
     #[test]

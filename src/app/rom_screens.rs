@@ -42,7 +42,7 @@ const NOTE_READ_ONLY: &str = "Your game files are only read, never moved or dele
 // The "find this port's game files" flow (after an install, Info, Settings, and for other screens).
 mod find_flow;
 #[allow(unused_imports)]
-pub(crate) use find_flow::{after_install, after_ports_added, find_for_port, open_from_info, port_needs_game_files};
+pub(crate) use find_flow::{after_install, after_ports_added_then, find_for_port, open_from_info, port_needs_game_files};
 
 /// What to do once a folder is chosen (and where Back goes).
 #[derive(Clone)]
@@ -134,6 +134,13 @@ fn cancel_labels(progress: &str, cancelling: bool) -> Vec<String> {
     ]
 }
 
+thread_local! {
+    /// Run when the user closes the progress list of the next job with B (the job is cancelled and its result
+    /// dropped): lets a flow that waits for that job (the import screen's, in the setup wizard) still go on.
+    /// Set right before `run_job`, taken when that job ends either way.
+    static ABANDON_HOOK: RefCell<Option<Back>> = const { RefCell::new(None) };
+}
+
 fn stop_job_timer() {
     JOB_TIMER.with(|t| t.stop());
     JOB_RUNNING.with(|r| r.set(false));
@@ -195,7 +202,11 @@ fn run_job<T: Send + 'static>(
             }
             if let Some(result) = job.take() {
                 stop_job_timer();
+                let hook = ABANDON_HOOK.with(|h| h.borrow_mut().take());
                 if abandoned.get() {
+                    if let Some(hook) = hook {
+                        hook(&app, &router);
+                    }
                     return;
                 }
                 // Only close what this job opened: the user may have closed it and opened something else.

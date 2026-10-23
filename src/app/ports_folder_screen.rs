@@ -41,7 +41,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 type Router = Rc<RefCell<GamepadRouter>>;
-type EndHook = Rc<dyn Fn(&Rc<AppState>, &Router, String)>;
+/// Gets the summary when the questions ended, or `None` when they were abandoned (another dialog took the
+/// screen while an old copy was being checked), so a caller waiting on it can still finish its flow.
+type EndHook = Rc<dyn Fn(&Rc<AppState>, &Router, Option<String>)>;
 
 const TITLE: &str = "Ports folder";
 
@@ -756,13 +758,15 @@ fn take_end_hook(summary: &str) -> Option<(String, EndHook)> {
     Some((strip_end_token(summary), hook))
 }
 
-/// `prompt_old_copies`, then `then(app, router, summary)` instead of the closing message (the summary is
-/// what that message would have said). If the user abandons the questions (B), `then` is not called.
+/// `prompt_old_copies`, then `then(app, router, Some(summary))` instead of the closing message (the summary
+/// is what that message would have said). B on a question keeps the remaining old copies (they stay
+/// listed under Old copies) and the run still ends normally. `then` gets `None` only when the run was
+/// abandoned because another dialog took the screen.
 /// Used by the import screen to go on to the game file search after the questions. Only one hook is
 /// kept: a newer one replaces an abandoned older one.
-pub(crate) fn prompt_old_copies_then(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String, then: impl Fn(&Rc<AppState>, &Router, String) + 'static) {
+pub(crate) fn prompt_old_copies_then(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String, then: impl Fn(&Rc<AppState>, &Router, Option<String>) + 'static) {
     if copies.is_empty() {
-        return then(app, router, summary);
+        return then(app, router, Some(summary));
     }
     let token = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
     END_HOOK.with(|h| *h.borrow_mut() = Some((token.clone(), Rc::new(then))));
@@ -774,10 +778,10 @@ pub(crate) fn prompt_old_copies_then(app: &Rc<AppState>, router: &Router, copies
 pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies: VecDeque<OldCopy>, summary: String) {
     let Some(entry) = copies.pop_front() else {
         if let Some((rest, hook)) = take_end_hook(&summary) {
-            return hook(app, router, rest);
+            return hook(app, router, Some(rest));
         }
         if !summary.is_empty() {
-            message(app, router, &summary);
+            message(app, router, &strip_end_token(&summary));
         }
         return;
     };
@@ -820,6 +824,12 @@ pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies:
             } else if super::dialogs::dialog_is_open(&app2) {
                 // Something else is on screen now: leave it; the old copies stay listed under Old copies.
                 eprintln!("ports folder: old-copy prompt skipped, another dialog is open");
+                // The caller waiting on this run is told it was abandoned; nobody else's hook is touched.
+                if let Some((_, _, summary)) = pending.borrow_mut().take() {
+                    if let Some((_, hook)) = take_end_hook(&summary) {
+                        hook(&app2, &router2, None);
+                    }
+                }
                 return;
             }
             if let Some((entry, copies, summary)) = pending.borrow_mut().take() {
@@ -834,7 +844,8 @@ fn show_old_copy_prompt(app: &Rc<AppState>, router: &Router, entry: OldCopy, cop
     let why = check.err();
     let copies = Rc::new(RefCell::new(Some(copies)));
     let summary = Rc::new(summary);
-    open_model(app, router, "Remove the old copy now?", model, move |app, router, act| {
+    let (b_entry, b_copies, b_summary) = (entry.clone(), copies.clone(), summary.clone());
+    let dialog = open_model(app, router, "Remove the old copy now?", model, move |app, router, act| {
         let rest = || copies.borrow_mut().take().unwrap_or_default();
         match act {
             Act::RemoveOldCopy => remove_one(app, router, entry.clone(), rest(), summary.as_ref().clone()),
@@ -850,6 +861,20 @@ fn show_old_copy_prompt(app: &Rc<AppState>, router: &Router, entry: OldCopy, cop
             _ => {}
         }
     });
+    // B is "Keep for now" for this one and for every old copy still to be asked about: nothing is removed,
+    // they stay listed under Old copies, and the sequence ends with its summary as usual.
+    if let Some(dialog) = dialog {
+        let (app, router) = (app.clone(), router.clone());
+        dialog.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            let rest = b_copies.borrow_mut().take().unwrap_or_default();
+            let mut note = format!("{}\n\nKept the old copy of {} at {} (remove it later: Settings > Ports folder > Old copies).", b_summary, b_entry.name, b_entry.old_path.display());
+            for other in &rest {
+                note.push_str(&format!("\nKept the old copy of {} at {} (not asked about).", other.name, other.old_path.display()));
+            }
+            prompt_old_copies(&app, &router, VecDeque::new(), note.trim_start().to_string());
+        });
+    }
 }
 
 fn remove_one(app: &Rc<AppState>, router: &Router, entry: OldCopy, rest: VecDeque<OldCopy>, summary: String) {

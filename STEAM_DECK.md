@@ -314,11 +314,11 @@ pointed into the old folder is repointed to the new one and keeps its app ID (so
 or the change is queued for Desktop Mode when Steam is running (always, in Game Mode). **The old folder
 is kept.** After each verified move you are asked whether to remove the old copy now; the answer is
 never assumed and nothing is deleted automatically. A progress list shows each port's state and a
-**Cancel** row; a cancel waits for the port in progress and stops before the next one. The summary at
+**Cancel** row; a cancel stops the copy in progress and removes its partial copy, and the ports already moved stay moved. The summary at
 the end says what moved, which old copies are still on disk (with their size and a pointer to remove
 them yourself), what happened to each Steam shortcut, and any problem.
 
-If a game file the port needs is missing or broken, you are asked before anything is copied: **Fix in Game files** (skips that port; nothing is copied), **Move anyway**, or **Cancel** (stops the import there). A problem found after the copy always stops that port and removes the copy. Removing an old copy from the question is refused when its folder name differs from the port's catalog folder (for example `dusk-old` imported as `dusklight`); it then stays under Settings > Ports folder > Old copies, and you can delete it yourself.
+If a game file the port needs is missing or broken, you are asked before anything is copied: **Fix in Game files** (skips that port; nothing is copied), **Move anyway**, or **Cancel** (stops the import there). A problem found after the copy always stops that port and removes the copy. A port imported from a folder with a different name (for example `dusk-old` imported as `dusklight`) can still have its old copy removed from the question: the app remembers the name it was imported as. B on an old-copy question keeps that old copy and the ones still to be asked, and the import still ends with its summary. A folder that is a link, or that holds your home folder, the app's folder, the ports folder or a scan folder, is not imported; a program found directly under your home folder is never ticked for you.
 
 If a port does not fit (not enough free space: its size plus 64 MB; the same check the move itself makes), nothing is copied for it and the
 summary offers to **link it where it stands** instead: `Library/<port>` becomes a link and the port

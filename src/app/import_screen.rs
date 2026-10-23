@@ -7,11 +7,15 @@
 //! with a Cancel row. The import itself is the port mover (`crate::fork::port_mover`) through
 //! `crate::fork::import::real_engine`; this file only asks the user what it needs to ask: the game file
 //! problem question while the worker waits, and "Remove the old copy now?" per port afterwards
-//! (`ports_folder_screen::prompt_old_copies`, Keep for now preselected). The text is English only; it is
-//! not part of upstream's translation tables.
+//! (`ports_folder_screen::prompt_old_copies_then`, Keep for now preselected). The text is English only;
+//! it is not part of upstream's translation tables.
 //!
-//! Entry point for the setup wizard: `open(app, router, from_wizard)`, or `open_with` to be called back
-//! when the user chooses "Continue setup" (or finishes an import).
+//! Entry point for the setup wizard: `open(app, router, from_wizard)`, or `open_with(app, router, true,
+//! Some(finish))`. `finish` runs exactly once, whichever way the user leaves: "Continue setup", the end
+//! of an import (after the old-copy questions and the game file search), B on the main list, B on the
+//! scan's progress list, or a notice. Quitting the app is the one exit that does not call it.
+//! Back inside the flow (Cancel or B on a confirm, B on the scan folders or plan list) returns to the
+//! previous list, not out of the flow.
 
 use super::dialogs::{
     build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot,
@@ -19,15 +23,15 @@ use super::dialogs::{
 use super::folder_picker_screen::open_folder_picker;
 use super::ports_folder_screen::{blocked_reason, prompt_old_copies_then, refuse_when_blocked};
 use super::state::AppState;
-use crate::fork::folder_picker::{Purpose, PickerRequest};
+use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::import::engine::{move_selected, GameFileChoice, ImportSummary, Prompter};
 use crate::fork::import::fallback;
 use crate::fork::import::folders::{AddOutcome, ScanFolders};
-use crate::fork::import::plan::{build_requests, plan_all, steam_write_mode, PortPlan};
+use crate::fork::import::plan::{build_requests, plan_all_with, steam_write_mode, MoveRequest, PlanGuards, PortPlan};
+use crate::fork::import::ports_folder;
 use crate::fork::import::real_engine::engine_for_import;
 use crate::fork::import::scan::{read_shortcuts, run_scan, ScanInput};
-use crate::fork::import::screen::{confirm_text, plan_labels, plan_text, FolderLine, FoldersScreen, ImportLine, ImportScreen};
-use crate::fork::import::ports_folder;
+use crate::fork::import::screen::{blocked_text, confirm_text, plan_labels, plan_text, space_blocked, FolderLine, FoldersScreen, ImportLine, ImportScreen};
 use crate::fork::port_mover::game_files::Issue;
 use crate::fork::port_mover::old_copies;
 use crate::fork::ports_folder_view::{game_file_issues, Act};
@@ -50,6 +54,7 @@ use std::time::Duration;
 type Router = Rc<RefCell<GamepadRouter>>;
 /// Called when the wizard's step is over.
 pub(crate) type Finish = Rc<dyn Fn(&Rc<AppState>, &Router)>;
+type Step = Rc<dyn Fn(&Rc<AppState>, &Router)>;
 
 const TITLE: &str = "Import ports";
 
@@ -58,14 +63,39 @@ const TITLE: &str = "Import ports";
 struct Ctx {
     from_wizard: bool,
     finish: Option<Finish>,
+    /// `finish` ran already.
+    finished: Rc<Cell<bool>>,
 }
 
 impl Ctx {
+    fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
+        Ctx { from_wizard, finish, finished: Rc::new(Cell::new(false)) }
+    }
+
+    /// Whether the wizard is waiting for this screen.
+    fn waited_on(&self) -> bool {
+        self.from_wizard || self.finish.is_some()
+    }
+
+    /// Runs the wizard's `finish` once, whatever dialog is on screen now being closed first.
     fn finish(&self, app: &Rc<AppState>, router: &Router) {
         close_current_dialog(app, router);
+        self.finish_quiet(app, router);
+    }
+
+    /// As `finish`, for when the dialog on screen is already gone (or must stay).
+    fn finish_quiet(&self, app: &Rc<AppState>, router: &Router) {
+        if self.finished.replace(true) {
+            return;
+        }
         if let Some(finish) = &self.finish {
             finish(app, router);
         }
+    }
+
+    fn finisher(&self) -> Step {
+        let ctx = self.clone();
+        Rc::new(move |app, router| ctx.finish_quiet(app, router))
     }
 }
 
@@ -77,6 +107,39 @@ fn padded(text: &str) -> String {
 
 fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
     open_message_dialog(app, router, title, &padded(text));
+}
+
+/// A confirm dialog whose Cancel (and B) runs `on_cancel` instead of only closing, optionally starting on
+/// Cancel so a stray press does not do the work.
+#[allow(clippy::too_many_arguments)]
+fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, text: &str, label: &str, preselect_cancel: bool, on_confirm: impl Fn(&Rc<AppState>, &Router) + 'static, on_cancel: Step) {
+    open_confirm_dialog(app, router, title.into(), padded(text).into(), label.into(), on_confirm);
+    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
+        if preselect_cancel {
+            d.set_selected_index(1);
+            app.dialog_nav.confirm_nav_index.set(1);
+        }
+        let (app, router) = (app.clone(), router.clone());
+        d.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            on_cancel(&app, &router);
+        });
+    }
+}
+
+/// A notice inside the flow: OK (or B) goes to `then`.
+fn notice_back(app: &Rc<AppState>, router: &Router, text: &str, then: Step) {
+    let on_ok = then.clone();
+    confirm_back(app, router, TITLE, text, "OK", false, move |app, router| on_ok(app, router), then);
+}
+
+/// A notice that ends the flow: a message, or for the wizard a Continue dialog (B too) that finishes it.
+fn end_notice(app: &Rc<AppState>, router: &Router, ctx: &Ctx, title: &str, text: &str) {
+    if !ctx.waited_on() {
+        return message(app, router, title, text);
+    }
+    let ctx2 = ctx.clone();
+    confirm_back(app, router, title, text, "Continue setup", false, move |app, router| ctx2.finish_quiet(app, router), ctx.finisher());
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -94,14 +157,14 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router, from_wizard: bool) {
     open_with(app, router, from_wizard, None);
 }
 
-/// Like `open`; `finish` is called after "Continue setup" is chosen or an import has been reported.
+/// Like `open`; `finish` runs once when the user leaves the screen, whichever way (see the module docs).
 pub(crate) fn open_with(app: &Rc<AppState>, router: &Router, from_wizard: bool, finish: Option<Finish>) {
     // The wizard has its own dialog up when it calls this; the Settings entry must not open on top of one.
     if !from_wizard && dialog_is_open(app) {
         return;
     }
     let folders = ScanFolders::load(&ForkSettings::load(&settings_path(app)));
-    start_scan(app, router, &Ctx { from_wizard, finish }, folders);
+    start_scan(app, router, &Ctx::new(from_wizard, finish), folders);
 }
 
 // -- Background jobs ---------------------------------------------------------------------------------
@@ -187,7 +250,7 @@ fn show_list(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, cancel: &R
                 cancel();
                 view.cancelling.set(true);
                 if let Some(d) = weak.upgrade() {
-                    set_picker_items(&d, &job_rows(&view.text.borrow(), "Cancelling (stops after the current step)..."));
+                    set_picker_items(&d, &job_rows(&view.text.borrow(), "Cancelling (stops the copy in progress)..."));
                 }
             }
         });
@@ -197,26 +260,12 @@ fn show_list(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, cancel: &R
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
-/// The game file question: the problems, then Fix in Game files / Move anyway / Cancel.
-fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, request: PromptRequest) {
-    let named: Vec<(String, Issue)> = request.issues.iter().map(|i| (request.port.clone(), i.clone())).collect();
-    let model = game_file_issues(&named);
-    let labels: Vec<String> = model
-        .labels
-        .iter()
-        .enumerate()
-        .map(|(i, label)| match model.act(i) {
-            Act::Detail(n) => format!("  {}", ellipsize(&request.issues[n].line(), 90)),
-            _ => label.clone(),
-        })
-        .collect();
-    let Some(dialog) = build_picker_dialog(app, router, "Check the game files", &labels) else {
-        let _ = request.reply.send(GameFileChoice::Cancel);
-        return;
-    };
-    dialog.set_selected_index(model.select as i32);
-    app.dialog_nav.picker_index.set(model.select as i32);
-    *view.pending_reply.borrow_mut() = Some(request.reply);
+/// The game file question: the problems, then Fix in Game files / Move anyway / Cancel. A problem row opens
+/// its full text and comes back here. `reply` is the worker's answer channel (only the first time).
+fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc<String>, issues: Rc<Vec<Issue>>, reply: Option<mpsc::Sender<GameFileChoice>>) {
+    if let Some(reply) = reply {
+        *view.pending_reply.borrow_mut() = Some(reply);
+    }
     let answer = {
         let view = view.clone();
         Rc::new(move |choice: GameFileChoice| {
@@ -227,12 +276,42 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, request:
             view.reshow.set(true);
         })
     };
+    let named: Vec<(String, Issue)> = issues.iter().map(|i| (port.as_ref().clone(), i.clone())).collect();
+    let model = game_file_issues(&named);
+    let labels: Vec<String> = model
+        .labels
+        .iter()
+        .enumerate()
+        .map(|(i, label)| match model.act(i) {
+            Act::Detail(n) => format!("  {}", ellipsize(&issues[n].line(), 90)),
+            Act::FixInGameFiles => "Fix in Game files (then import again)".to_string(),
+            Act::Cancel => "Cancel (stops the whole import here)".to_string(),
+            _ => label.clone(),
+        })
+        .collect();
+    let Some(dialog) = build_picker_dialog(app, router, "Check the game files", &labels) else {
+        // The list could not be built: nothing is copied for this port and the import stops, rather
+        // than the worker waiting for an answer nobody can give.
+        answer(GameFileChoice::Cancel);
+        return;
+    };
+    dialog.set_selected_index(model.select as i32);
+    app.dialog_nav.picker_index.set(model.select as i32);
     {
-        let answer = answer.clone();
+        let (answer, app, router, view, port, issues) = (answer.clone(), app.clone(), router.clone(), view.clone(), port.clone(), issues.clone());
         dialog.on_item_selected(move |index| match model.act(index as usize) {
             Act::FixInGameFiles => answer(GameFileChoice::FixInGameFiles),
             Act::MoveAnyway => answer(GameFileChoice::MoveAnyway),
             Act::Cancel => answer(GameFileChoice::Cancel),
+            Act::Detail(n) => {
+                let again: Step = {
+                    let (view, port, issues) = (view.clone(), port.clone(), issues.clone());
+                    Rc::new(move |app, router| show_prompt(app, router, &view, port.clone(), issues.clone(), None))
+                };
+                let text = format!("{}\n\n{}", port, issues[n].line());
+                let on_ok = again.clone();
+                confirm_back(&app, &router, "Check the game files", &text, "Back to the question", false, move |app, router| on_ok(app, router), again);
+            }
             _ => {}
         });
     }
@@ -244,15 +323,16 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, request:
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
-/// Runs `work` on a worker thread behind a list of progress rows (one per line of the worker's progress
-/// text) and a Cancel row. Closing the list (B) cancels; the result is then dropped unless
-/// `deliver_after_close` (an import must still report what it did). `prompts` is where the worker's
-/// questions arrive; `on_cancel` is called besides raising the worker's cancel flag.
+/// Runs \`work\` on a worker thread behind a list of progress rows (one per line of the worker's progress
+/// text) and a Cancel row. Closing the list (B) cancels; the result is then dropped (and \`on_abandon\`
+/// runs) unless \`deliver_after_close\` (an import must still report what it did). \`prompts\` is where
+/// the worker's questions arrive.
 struct JobSpec<T> {
     title: &'static str,
     initial: String,
     cancel_label: &'static str,
     deliver_after_close: bool,
+    on_abandon: Option<Step>,
     prompts: Option<UiPrompter>,
     is_import: bool,
     work: Box<dyn FnOnce(&Ctl) -> T + Send>,
@@ -295,14 +375,14 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
 
     let done: RefCell<Option<Box<dyn FnOnce(&Rc<AppState>, &Router, Result<T, String>)>>> = RefCell::new(Some(Box::new(done)));
     let (app, router) = (app.clone(), router.clone());
-    let (prompts, deliver_after_close) = (spec.prompts, spec.deliver_after_close);
+    let (prompts, deliver_after_close, on_abandon) = (spec.prompts, spec.deliver_after_close, spec.on_abandon);
     JOB_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
             if !view.prompting.get() {
                 let next = prompts.as_ref().and_then(|p| p.queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front());
                 if let Some(request) = next {
                     view.prompting.set(true);
-                    return show_prompt(&app, &router, &view, request);
+                    return show_prompt(&app, &router, &view, Rc::new(request.port), Rc::new(request.issues), Some(request.reply));
                 }
             }
             if view.prompting.get() {
@@ -315,6 +395,9 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
                     return;
                 }
                 if view.closed.get() && !deliver_after_close {
+                    if let Some(abandon) = &on_abandon {
+                        abandon(&app, &router);
+                    }
                     return;
                 }
                 if let Some(done) = done.borrow_mut().take() {
@@ -340,7 +423,7 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
             *view.text.borrow_mut() = text.clone();
             view.cancel_row.set(job_rows(&text, view.cancel_label).len() - 1);
             if let Some(d) = view.weak.borrow().as_ref().and_then(slint::Weak::upgrade) {
-                let label = if view.cancelling.get() { "Cancelling (stops after the current step)..." } else { view.cancel_label };
+                let label = if view.cancelling.get() { "Cancelling (stops the copy in progress)..." } else { view.cancel_label };
                 set_picker_items(&d, &job_rows(&text, label));
             }
         });
@@ -351,14 +434,14 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
 
 fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders) {
     let Some(home) = home_dir() else {
-        return message(app, router, TITLE, "Could not find your home folder, so there is nowhere to look.");
+        return end_notice(app, router, ctx, TITLE, "Could not find your home folder, so there is nowhere to look.");
     };
     let settings = ForkSettings::load(&settings_path(app));
     let ports = ports_folder(&app.paths.library_dir());
     let roots = folders.roots(&home, &ports);
     let catalog = app.catalog.borrow().clone();
     let (work_home, work_ports, deeper) = (home.clone(), ports.clone(), folders.look_deeper);
-    let ctx = ctx.clone();
+    let ctx2 = ctx.clone();
     run_job(
         app,
         router,
@@ -367,17 +450,18 @@ fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolde
             initial: "Looking in your scan folders...".into(),
             cancel_label: "Cancel",
             deliver_after_close: false,
+            on_abandon: ctx.waited_on().then(|| ctx.finisher()),
             prompts: None,
             is_import: false,
             work: Box::new(move |ctl| {
                 let shortcuts = read_shortcuts(&work_home, &settings);
-                let input = ScanInput { roots, catalog, library_dir: work_ports, deeper, shortcuts };
+                let input = ScanInput { roots, catalog, library_dir: work_ports, home: work_home.clone(), deeper, shortcuts };
                 run_scan(&input, &|| ctl.cancelled(), &|t| ctl.set_progress(t))
             }),
         },
         move |app, router, result| match result {
-            Ok(scan) => show_main(app, router, &ctx, Rc::new(RefCell::new(ImportScreen::new(&home, &ports, folders, scan, ctx.from_wizard)))),
-            Err(e) => message(app, router, TITLE, &e),
+            Ok(scan) => show_main(app, router, &ctx2, Rc::new(RefCell::new(ImportScreen::new(&home, &ports, folders, scan, ctx2.from_wizard)))),
+            Err(e) => end_notice(app, router, &ctx2, TITLE, &e),
         },
     );
 }
@@ -419,6 +503,14 @@ fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<
             }
         });
     }
+    if ctx.waited_on() {
+        // B leaves the screen: the wizard is told.
+        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
+        dialog.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            ctx.finish_quiet(&app, &router);
+        });
+    }
     let _ = dialog.show();
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
@@ -437,9 +529,29 @@ fn save_folders(app: &AppState, folders: &ScanFolders) -> Option<String> {
     folders.save(&mut settings).err().map(|e| format!("Could not save the folder list: {e}"))
 }
 
+/// Back from the scan folders: a new scan when the list changed, else the main list as it was.
+fn folders_back(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: &Rc<FoldersState>) {
+    if state.changed.get() {
+        let folders = state.screen.borrow().folders.clone();
+        return start_scan(app, router, ctx, folders);
+    }
+    show_main(app, router, ctx, state.main.clone());
+}
+
 fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersState>) {
     let labels = state.screen.borrow().labels();
     let Some(dialog) = build_picker_dialog(app, router, "Scan folders", &labels) else { return };
+    // The cursor starts on the first real row, not on the note.
+    let first = state.screen.borrow().first_row() as i32;
+    dialog.set_selected_index(first);
+    app.dialog_nav.picker_index.set(first);
+    {
+        let (app, router, ctx, state) = (app.clone(), router.clone(), ctx.clone(), state.clone());
+        dialog.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            folders_back(&app, &router, &ctx, &state);
+        });
+    }
     {
         let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
         dialog.on_item_selected(move |index| {
@@ -454,28 +566,26 @@ fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<Folder
                 }
                 Some(FolderLine::User(i)) => {
                     let text = state.screen.borrow().remove_text(i);
-                    let (state, ctx) = (state.clone(), ctx.clone());
-                    return open_confirm_dialog(&app, &router, "Scan folder".into(), padded(&text).into(), "Remove".into(), move |app, router| {
+                    let (on_state, on_ctx) = (state.clone(), ctx.clone());
+                    let cancel: Step = {
+                        let (state, ctx) = (state.clone(), ctx.clone());
+                        Rc::new(move |app, router| show_folders(app, router, &ctx, state.clone()))
+                    };
+                    return confirm_back(&app, &router, "Scan folder", &text, "Remove", false, move |app, router| {
                         {
-                            let mut screen = state.screen.borrow_mut();
+                            let mut screen = on_state.screen.borrow_mut();
                             screen.folders.remove_user(i);
                             screen.note = save_folders(app, &screen.folders);
                         }
-                        state.changed.set(true);
-                        show_folders(app, router, &ctx, state.clone());
-                    });
+                        on_state.changed.set(true);
+                        show_folders(app, router, &on_ctx, on_state.clone());
+                    }, cancel);
                 }
                 Some(FolderLine::Deeper) => {
                     state.screen.borrow_mut().folders.toggle_deeper();
                     changed = true;
                 }
-                Some(FolderLine::Back) => {
-                    if state.changed.get() {
-                        let folders = state.screen.borrow().folders.clone();
-                        return start_scan(&app, &router, &ctx, folders);
-                    }
-                    return show_main(&app, &router, &ctx, state.main.clone());
-                }
+                Some(FolderLine::Back) => return folders_back(&app, &router, &ctx, &state),
             }
             if changed {
                 state.changed.set(true);
@@ -522,19 +632,32 @@ fn add_folder(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersS
 
 // -- Plans and the import ---------------------------------------------------------------------------------
 
-fn build_plans(screen: &ImportScreen) -> (Vec<PortPlan>, Option<u64>) {
+fn build_plans(app: &AppState, screen: &ImportScreen) -> (Vec<PortPlan>, Option<u64>) {
     let requests = build_requests(&screen.selected_found(), &screen.ports_folder);
     let free = free_bytes(&screen.ports_folder);
     let write = steam_write_mode(&SystemSteamCheck::new(), steam_queue::game_mode_from_env());
-    (plan_all(&requests, free, write), free)
+    let guards = PlanGuards { home: screen.home.clone(), config_dir: app.paths.config_dir.clone(), scan_roots: screen.scan.roots_scanned.clone() };
+    (plan_all_with(&requests, free, write, &guards), free)
+}
+
+fn back_to_main(ctx: &Ctx, screen: &Rc<RefCell<ImportScreen>>) -> Step {
+    let (ctx, screen) = (ctx.clone(), screen.clone());
+    Rc::new(move |app, router| show_main(app, router, &ctx, screen.clone()))
 }
 
 fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
-    let (plans, _) = build_plans(&screen.borrow());
+    let (plans, _) = build_plans(app, &screen.borrow());
     let mut labels = plan_labels(&plans);
     let back = labels.len();
     labels.push("Back".to_string());
     let Some(dialog) = build_picker_dialog(app, router, "What importing will do", &labels) else { return };
+    {
+        let (app, router, ctx, screen) = (app.clone(), router.clone(), ctx.clone(), screen.clone());
+        dialog.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            show_main(&app, &router, &ctx, screen.clone());
+        });
+    }
     {
         let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
         dialog.on_item_selected(move |index| {
@@ -544,11 +667,13 @@ fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell
             }
             let Some(plan) = plans.get(index) else { return };
             let home = screen.borrow().home.clone();
-            let text = padded(&plan_text(plan, &home));
-            let (screen, ctx) = (screen.clone(), ctx.clone());
-            open_confirm_dialog(&app, &router, plan.request.port_name.clone().into(), text.into(), "Back to the list".into(), move |app, router| {
-                show_plans(app, router, &ctx, screen.clone());
-            });
+            let text = plan_text(plan, &home);
+            let again: Step = {
+                let (screen, ctx) = (screen.clone(), ctx.clone());
+                Rc::new(move |app, router| show_plans(app, router, &ctx, screen.clone()))
+            };
+            let on_ok = again.clone();
+            confirm_back(&app, &router, &plan.request.port_name, &text, "Back to the list", false, move |app, router| on_ok(app, router), again);
         });
     }
     let _ = dialog.show();
@@ -556,26 +681,36 @@ fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell
 }
 
 fn confirm_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
+    let back = back_to_main(ctx, &screen);
     // The ports folder is missing (card out) or a move is running: nothing may be written there.
     if let Some(why) = blocked_reason(app) {
-        return message(app, router, TITLE, &why);
+        return notice_back(app, router, &why, back);
     }
-    let (plans, free) = build_plans(&screen.borrow());
+    let (plans, free) = build_plans(app, &screen.borrow());
     let (home, ports) = (screen.borrow().home.clone(), screen.borrow().ports_folder.clone());
-    let text = padded(&confirm_text(&plans, &ports, &home, free, false));
     if plans.iter().all(|p| !p.can_run()) {
-        return message(app, router, TITLE, &text);
+        // Only the reasons; and where the one reason is room, linking the port where it stands is offered.
+        let text = blocked_text(&plans, &home);
+        let linkable = space_blocked(&plans);
+        if linkable.is_empty() {
+            return notice_back(app, router, &text, back);
+        }
+        let ctx2 = ctx.clone();
+        let then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)> = Rc::new(move |app, router, text, keys| finish_after(app, router, &ctx2, text, VecDeque::new(), keys, false));
+        return offer_link(app, router, linkable, text, then, back);
     }
-    let ctx = ctx.clone();
-    open_confirm_dialog(app, router, TITLE.into(), text.into(), "Import".into(), move |app, router| run_import(app, router, &ctx, plans.clone(), home.clone()));
+    let text = confirm_text(&plans, &ports, &home, free, false);
+    let (ctx2, screen2) = (ctx.clone(), screen.clone());
+    confirm_back(app, router, TITLE, &text, "Import", true, move |app, router| run_import(app, router, &ctx2, &screen2, plans.clone(), home.clone()), back);
 }
 
-fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, plans: Vec<PortPlan>, home: PathBuf) {
+fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCell<ImportScreen>>, plans: Vec<PortPlan>, home: PathBuf) {
+    let back = back_to_main(ctx, screen);
     if let Some(why) = blocked_reason(app) {
-        return message(app, router, TITLE, &why);
+        return notice_back(app, router, &why, back);
     }
     if !app.install_runtime.installing.borrow().is_empty() {
-        return message(app, router, TITLE, "An install, update or save restore is running. Wait for it to finish, then try again.");
+        return notice_back(app, router, "An install, update or save restore is running. Wait for it to finish, then try again.", back);
     }
     // While it runs these ports count as busy, so nothing installs or updates them underneath it.
     let keys: Vec<String> = plans.iter().map(|p| p.request.port_key.clone()).collect();
@@ -593,8 +728,9 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, plans: Vec<PortPla
         JobSpec {
             title: "Importing ports",
             initial,
-            cancel_label: "Cancel (stops after the current port)",
+            cancel_label: "Cancel (the copy in progress is removed; finished ports stay)",
             deliver_after_close: true,
+            on_abandon: None,
             prompts: Some(prompter),
             is_import: true,
             work: Box::new(move |ctl| move_selected(engine.as_ref(), plans, ctl.flag(), &|t| ctl.set_progress(t), &worker_prompter)),
@@ -605,14 +741,14 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, plans: Vec<PortPla
             }
             match result {
                 Ok(summary) => show_result(app, router, &ctx, Rc::new(summary), &home),
-                Err(e) => message(app, router, "Import problem", &format!("The import stopped: {e}\nThe old folders were not changed by the app.")),
+                Err(e) => end_notice(app, router, &ctx, "Import problem", &format!("The import stopped: {e}\nThe old folders were not changed by the app.")),
             }
         },
     );
 }
 
 /// Marks what moved as installed, redraws, then continues: the link offer for ports that did not fit,
-/// then "Remove the old copy now?" for each port that moved.
+/// then "Remove the old copy now?" for each port that moved, then the game file search.
 fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<ImportSummary>, home: &std::path::Path) {
     {
         let dir = app.paths.library_dir();
@@ -636,25 +772,41 @@ fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<Impor
     let text = summary.text(home);
     let candidates = summary.link_candidates();
     let moved_keys: Vec<String> = summary.moved().map(|i| i.plan.request.port_key.clone()).collect();
+    let wants_game_files = summary.wants_game_files();
     if candidates.is_empty() {
-        return finish_after(app, router, ctx, text, copies, moved_keys, summary.wants_game_files());
+        return finish_after(app, router, ctx, text, copies, moved_keys, wants_game_files);
     }
-    let requests: Vec<_> = candidates.iter().map(|&i| summary.items[i].plan.request.clone()).collect();
-    let refs: Vec<_> = requests.iter().collect();
-    let mut question = format!("{text}\n\n{}", fallback::confirm_text(&refs));
-    if !copies.is_empty() {
-        question.push_str("\n\nIf you cancel here, the old copies of the ports that moved stay listed under Settings > Ports folder > Old copies.");
-    }
-    let (ctx, wants_game_files) = (ctx.clone(), summary.wants_game_files());
-    open_confirm_dialog(app, router, summary.title().into(), padded(&question).into(), "Link instead".into(), move |app, router| {
+    let requests: Vec<MoveRequest> = candidates.iter().map(|&i| summary.items[i].plan.request.clone()).collect();
+    let ctx2 = ctx.clone();
+    // Linking is offered after the summary; saying no goes on with the rest of the flow just the same.
+    let (carry_text, carry_copies, carry_keys) = (text.clone(), copies.clone(), moved_keys.clone());
+    let skip: Step = {
+        let ctx = ctx.clone();
+        Rc::new(move |app, router| finish_after(app, router, &ctx, carry_text.clone(), carry_copies.clone(), carry_keys.clone(), wants_game_files))
+    };
+    let base = text.clone();
+    let then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)> = Rc::new(move |app, router, link_text, linked_keys| {
+        let mut keys = moved_keys.clone();
+        keys.extend(linked_keys);
+        finish_after(app, router, &ctx2, format!("{base}\n\n{link_text}"), copies.clone(), keys, wants_game_files);
+    });
+    offer_link(app, router, requests, text, then, skip);
+}
+
+/// "These ports did not fit: link them where they stand instead?" `preface` is what came before (the
+/// summary or the reasons). Link instead runs the link and `then(text, keys)`; Cancel or B runs `on_cancel`.
+fn offer_link(app: &Rc<AppState>, router: &Router, requests: Vec<MoveRequest>, preface: String, then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)>, on_cancel: Step) {
+    let refs: Vec<&MoveRequest> = requests.iter().collect();
+    let question = format!("{preface}\n\n{}", fallback::confirm_text(&refs));
+    confirm_back(app, router, TITLE, &question, "Link instead", true, move |app, router| {
         if refuse_when_blocked(app) {
             return;
         }
         let local_json = app.paths.config_dir.join("ports.local.json");
         let catalog = app.catalog.borrow().clone();
-        let refs: Vec<_> = requests.iter().collect();
+        let refs: Vec<&MoveRequest> = requests.iter().collect();
         let done = fallback::link_instead(&refs, &catalog, &app.paths.library_dir(), &local_json);
-        let mut keys = moved_keys.clone();
+        let mut keys = Vec::new();
         for port in done.linked {
             keys.push(port.key().to_string());
             app.state.borrow_mut().mark_installed(port.key(), None);
@@ -663,28 +815,37 @@ fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<Impor
             *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
         }
         app.refresh_current_view();
-        finish_after(app, router, &ctx, format!("{text}\n\n{}", done.text), copies.clone(), keys, wants_game_files);
-    });
+        then(app, router, done.text, keys);
+    }, on_cancel);
 }
 
 /// The last steps of an import: the old-copy questions, then the game file search for the ports that came
-/// in (`rom_screens::after_ports_added`, which shows the summary at the top of its list when it has
-/// something to look for), else the summary alone.
+/// in (`rom_screens::after_ports_added_then`, which shows the summary at the top of its list when it has
+/// something to look for), else the summary alone, or Continue in the wizard.
 fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, keys: Vec<String>, wants_game_files: bool) {
     let ctx = ctx.clone();
-    prompt_old_copies_then(app, router, copies, text, move |app, router, text| conclude(app, router, &ctx, text, &keys, wants_game_files));
+    prompt_old_copies_then(app, router, copies, text, move |app, router, text| match text {
+        Some(text) => conclude(app, router, &ctx, text, &keys, wants_game_files),
+        // The questions were abandoned because another dialog took the screen: nothing more is shown here.
+        None => ctx.finish_quiet(app, router),
+    });
 }
 
 fn conclude(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, keys: &[String], wants_game_files: bool) {
-    if !keys.is_empty() && super::rom_screens::after_ports_added(app, router, keys, &text) {
-        return;
+    let next: Step = {
+        let (ctx, text, keys) = (ctx.clone(), text.clone(), keys.to_vec());
+        Rc::new(move |app, router| {
+            if !keys.is_empty() && super::rom_screens::after_ports_added_then(app, router, &keys, &text, Some(ctx.finisher())) {
+                return;
+            }
+            end_notice(app, router, &ctx, "Import finished", &text);
+        })
+    };
+    // Ports stopped for their game files: offer Game files first (the wizard just continues, its own step
+    // for game files comes later); "Not now" goes on to the search for the ports that came in.
+    if wants_game_files && !ctx.waited_on() {
+        let go_next = next.clone();
+        return confirm_back(app, router, "Import finished", &text, "Open Game files...", false, |app, router| super::rom_screens::open_game_files(app, router), go_next);
     }
-    if wants_game_files {
-        return open_confirm_dialog(app, router, "Import finished".into(), padded(&text).into(), "Open Game files...".into(), |app, router| super::rom_screens::open_game_files(app, router));
-    }
-    if ctx.from_wizard {
-        let ctx = ctx.clone();
-        return open_confirm_dialog(app, router, "Import finished".into(), padded(&text).into(), "Continue setup".into(), move |app, router| ctx.finish(app, router));
-    }
-    message(app, router, "Import finished", &text);
+    next(app, router);
 }

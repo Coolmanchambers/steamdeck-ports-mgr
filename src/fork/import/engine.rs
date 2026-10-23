@@ -246,9 +246,7 @@ impl ImportSummary {
         let size = human_bytes(item.plan.request.size.bytes);
         match &item.outcome {
             PortOutcome::Planned => format!("{name}: would move {size}{}", would_steam_clause(&item.plan)),
-            PortOutcome::Moved { steam, .. } => {
-                format!("{name}: moved; the old copy at {} ({size}) is still there{}", short_path(&item.plan.request.from, home), steam_clause(steam))
-            }
+            PortOutcome::Moved { steam, .. } => format!("{name}: moved (from {}, {size}){}", short_path(&item.plan.request.from, home), steam_clause(steam)),
             PortOutcome::Refused { reason, .. } => {
                 let reason = item.plan.block.as_ref().map_or_else(|| reason.clone(), |b| b.text(home));
                 format!("{name}: not moved, {reason}")
@@ -278,14 +276,14 @@ impl ImportSummary {
             out.push(format!("Moved {} of {} port{}.", self.moved_count(), self.items.len(), if self.items.len() == 1 { "" } else { "s" }));
         }
         if self.cancelled {
-            out.push("Stopped before the rest: you cancelled between ports.".to_string());
+            out.push("Stopped: you cancelled. The copy in progress was removed; ports already moved stay moved.".to_string());
         }
         let moved: Vec<&SummaryItem> = self.moved().collect();
         if !moved.is_empty() {
             let bytes: u64 = moved.iter().map(|i| i.plan.request.size.bytes).sum();
             out.push(format!(
-                "Old cop{} from this import: {} on disk ({}). Each one you are asked about gets Remove old copy or Keep for now; nothing is deleted unless you choose it. Kept ones stay listed under Settings > Ports folder > Old copies.",
-                if moved.len() == 1 { "y" } else { "ies" },
+                "Old folder{} from this import: {} ({}). You are asked about each: Remove old copy deletes it only when you choose that; whatever is kept stays listed under Settings > Ports folder > Old copies.",
+                if moved.len() == 1 { "" } else { "s" },
                 moved.len(),
                 human_bytes(bytes)
             ));
@@ -349,6 +347,7 @@ mod tests {
             roots: ScanFolders::default().roots(&h.home, &h.library),
             catalog: catalog(),
             library_dir: h.library.clone(),
+            home: h.home.clone(),
             deeper: false,
             shortcuts: read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
         };
@@ -457,7 +456,7 @@ mod tests {
         assert!(matches!(summary.items[0].outcome, PortOutcome::Moved { .. }), "the first one ran to the end");
         assert_eq!(summary.items[1].outcome, PortOutcome::NotStarted);
         assert_eq!(summary.title(), "Import stopped");
-        assert!(summary.text(&h.home).contains("Stopped before the rest: you cancelled between ports."));
+        assert!(summary.text(&h.home).contains("Stopped: you cancelled. The copy in progress was removed; ports already moved stay moved."));
         assert!(summary.item_label(1, &h.home).ends_with("not started (cancelled)"));
     }
 
@@ -484,10 +483,10 @@ mod tests {
         let text = summary.text(&h.home);
         assert_eq!(summary.title(), "Import finished");
         assert!(text.starts_with("Moved 1 of 2 ports."), "{text}");
-        assert!(text.contains("Old copy from this import: 1 on disk (8 KB). Each one you are asked about gets Remove old copy or Keep for now; nothing is deleted unless you choose it."), "{text}");
+        assert!(text.contains("Old folder from this import: 1 (8 KB). You are asked about each: Remove old copy deletes it only when you choose that;"), "{text}");
         assert!(text.contains("Steam shortcuts: 1 queued for Desktop Mode."), "{text}");
         assert!(text.contains("1 port had a problem (listed below)."), "{text}");
-        assert!(text.contains("Ship of Harkinian: moved; the old copy at ~/Applications/SoH (8 KB) is still there; 1 Steam shortcut queued for Desktop Mode"), "{text}");
+        assert!(text.contains("Ship of Harkinian: moved (from ~/Applications/SoH, 8 KB); 1 Steam shortcut queued for Desktop Mode"), "{text}");
         assert!(text.contains("\nShip of Harkinian:\nSteam: queued until Desktop Mode."), "{text}");
         assert!(text.contains("Dusklight: problem, the copy failed a check"), "{text}");
     }

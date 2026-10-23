@@ -36,6 +36,9 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
 | 2026-10-22 | `src/app/dialogs.rs`, `src/app/mod.rs` | Import ports: the Settings entry "Adopt installed ports..." renamed "Import ports..." (`SettingsEntry::ImportPorts`, opens `import_screen::open`); one module line |
 | 2026-10-22 | `tools/smoke-test.sh` | Opens Settings > Import ports... and closes it again |
+| 2026-10-23 | `src/fork/port_mover/{steam,old_copies,mod}.rs` | Import review fixes: `moved_path` also matches through links (and so the removal check's shortcut test); `OldCopy.import_folder` (new optional JSON key) relaxes only the name-equality rule of `removal_check` / `finish_check`, only when the new copy is named exactly that folder; `prepare` refuses (`MoveError::Protected`) a folder that holds the home folder, the app's folder or the ports folder; 8 tests in `fork::import::real_engine` |
+| 2026-10-23 | `src/app/ports_folder_screen.rs` | B on "Remove the old copy now?" keeps the rest and ends the run with its summary; the closing message never shows the hook token; the hook gets `None` when the run is abandoned (another dialog took the screen) |
+| 2026-10-23 | `src/app/rom_screens.rs`, `src/app/rom_screens/find_flow.rs` | `after_ports_added` became `after_ports_added_then(.., then)`: `then` runs on Done, B on its list, Continue on its notices and B on the search's progress list (`ABANDON_HOOK`) |
 | 2026-10-22 | `src/app/ports_folder_screen.rs` | `prompt_old_copies_then`: the old-copy questions followed by a caller's step instead of the closing message (a one-shot hook keyed by a token at the start of the summary, so another screen's run never fires it; 3 tests); `prompt_old_copies` itself unchanged for other callers |
 | 2026-10-22 | `src/main.rs` | Import ports: window Close (when it quits) and tray Quit also ask `import_screen::quit_waits_for_import`, so a running import is cancelled first |
 | 2026-10-21 | `src/core/installer.rs` | `refuse_adopted`: `install_port` and `install_extra` stop with a message when `Library/<folder>` is a symlink (an adopted port), whatever the catalog says, so a bad edit of `ports.local.json` cannot make the installer write into the user's own folder; 1 test |
@@ -278,15 +281,30 @@ steam links"). It is also step c of the setup wizard, which opens it through
   offered only after the summary shows why, and asks first.
 - Nothing is ever deleted by Import. The old folder stays after a verified move.
 - After the batch: the old-copy questions (`ports_folder_screen::prompt_old_copies_then`: the stage 1
-  sequence plus a hook that runs when it ends, so the next step follows it), then the game file search for
-  the ports that came in (`rom_screens::after_ports_added`, with the summary at the top of its list when
-  it has something to look for), else the summary alone, or "Continue setup" in the wizard.
-- Limits: an old copy whose folder name differs from the catalog folder (a "likely" or "check this" match,
-  say `~/Games/dusk-old` imported as `dusklight`) cannot be removed from the question: the mover's check
-  says "The old and new copies have different folder names, so the old one is kept". It stays listed under
-  Old copies. If the user presses B in the middle of the old-copy questions the rest are skipped (they stay
-  listed under Old copies) and the game file search is not offered. Not verified: a Deck (SD card paths,
-  exFAT, Game Mode wording, controller feel).
+  sequence plus a hook that runs when it ends; B on a question keeps that copy and every one still to be
+  asked, and the run ends normally), then the game file search for the ports that came in
+  (`rom_screens::after_ports_added_then`, with the summary at the top of its list when it has something to
+  look for; a continuation runs when its Done row, B, notices or progress list B are used), else the summary
+  alone, or "Continue setup" in the wizard. The wizard's `finish` (`open_with(.., Some(finish))`) runs
+  exactly once on every way out (Continue, the end of an import, B on the main list or the scan's progress
+  list, any notice; quitting excepted). Cancel or B on a confirm, and B on the scan folders or plan lists,
+  return to the previous list.
+- What is refused before any copy (plan and mover both): a folder that is a link ("this is a link to X;
+  import the real folder instead"), one that holds the home folder, the app's folder, the ports folder or a
+  scan folder (`MoveError::Protected`, `Block::Protected`), an existing destination, not enough room.
+  A match by program name only is never preselected directly under the home folder or below the first level.
+- Shortcut matching is one rule for the scan, the plan, the repoint and the removal check:
+  `port_mover::steam::moved_path` tries the path as written, then through links (the real path against an
+  aliased scan folder or the other way round).
+- Old copy removal for imports: the record carries `import_folder` (the catalog folder the port was imported
+  as; written by `RealEngine` after `switch_over`, JSON key `import_folder`, absent means false). It relaxes
+  only the folder-name equality in `removal_check` and in `finish_check`, and only when the new copy's
+  name is exactly that folder; every other removal rule is unchanged (switched, new copy present and in use,
+  not the same place, old folder holds no home/app/ports folder, no port installed there, top-level
+  containment, links into it, queued repoints and shortcuts, running programs, newer saves).
+- Limits: the old-copy questions are skipped (they stay under Old copies) when another dialog takes the
+  screen while an old copy is being checked; a game file search closed with B on its progress list ends the
+  flow. Not verified: a Deck (SD card paths, exFAT, Game Mode wording, controller feel).
 
 ## Linking an install in place (`src/fork/adopt.rs`)
 

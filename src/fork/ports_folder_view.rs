@@ -245,6 +245,7 @@ mod tests {
             moved_at: String::new(),
             link_only,
             switched: true,
+            import_folder: None,
         }
     }
 

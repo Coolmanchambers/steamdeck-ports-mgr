@@ -97,6 +97,8 @@ pub enum MoveError {
     TargetParentMissing(PathBuf),
     /// One folder is inside the other.
     Nested,
+    /// The folder to copy holds the home folder, the app's folder or the ports folder.
+    Protected(PathBuf, &'static str),
     NotEnoughSpace { needed: u64, free: u64 },
     GameFiles { stage: Stage, issues: Vec<Issue> },
     Cancelled,
@@ -113,6 +115,7 @@ impl std::fmt::Display for MoveError {
             MoveError::TargetExists(p) => write!(f, "There is already something at {}. {unchanged}", p.display()),
             MoveError::TargetParentMissing(p) => write!(f, "The folder {} does not exist. {unchanged}", p.display()),
             MoveError::Nested => write!(f, "The old and new places are inside each other. {unchanged}"),
+            MoveError::Protected(p, what) => write!(f, "{} holds {what}, so it is not copied. {unchanged}", p.display()),
             MoveError::NotEnoughSpace { needed, free } => write!(f, "Not enough space: the copy needs {} and {} is free. {unchanged}", human_bytes(*needed), human_bytes(*free)),
             MoveError::GameFiles { stage: Stage::BeforeCopy, issues } => {
                 write!(f, "Some game files of this port are missing or broken:\n{}\n{unchanged}", issues.iter().map(|i| format!("  {}", i.line())).collect::<Vec<_>>().join("\n"))
@@ -161,6 +164,13 @@ fn prepare_checks(from: &Path, to: &Path, env: &MoveEnv) -> Result<fs::Metadata,
     let real_parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
     if is_within(to, from) || is_within(from, to) || (!meta.file_type().is_symlink() && is_within(&real_parent, &real_from)) {
         return Err(MoveError::Nested);
+    }
+    // A folder that holds the home folder, the app's folder or the ports folder is never copied (and its
+    // old copy could never be removed): importing `~` itself, say, because a program sits in a folder of it.
+    for (what, protected) in [("the home folder", env.home), ("the app's folder", env.config_dir), ("the ports folder", parent)] {
+        if old_copies::holds(from, protected) {
+            return Err(MoveError::Protected(from.to_path_buf(), what));
+        }
     }
     let running = (env.running)(from);
     if !running.is_empty() {
@@ -325,6 +335,7 @@ fn old_copy_record(prepared: &Prepared, switched: bool) -> old_copies::OldCopy {
         moved_at: crate::fork::store::backup_stamp(),
         link_only: prepared.link_only,
         switched,
+        import_folder: None,
     }
 }
 
@@ -473,7 +484,7 @@ fn finish_check(record: &old_copies::OldCopy, env: &MoveEnv, library_dir: &Path,
     if old == new || (!record.link_only && old_copies::same(old, new)) {
         return refuse("the old and new places are the same");
     }
-    if old.file_name().is_none() || old.file_name() != new.file_name() {
+    if old.file_name().is_none() || !record.names_agree() {
         return refuse("the old and new folders have different names");
     }
     if is_within(old, new) || is_within(new, old) {
