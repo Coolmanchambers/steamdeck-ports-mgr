@@ -388,8 +388,8 @@ mod tests {
     fn a_shortcut_is_rerooted_only_when_it_points_inside_the_old_folder() {
         let from = Path::new("/home/d/Applications/SoH");
         let to = Path::new("/run/media/sd/Ports/SoH");
-        assert_eq!(reroot("/home/d/Applications/SoH/bin/soh", from, to), "/run/media/sd/Ports/SoH/bin/soh");
-        assert_eq!(reroot("/home/d/Applications/SoH", from, to), "/run/media/sd/Ports/SoH");
+        assert_eq!(Path::new(&reroot("/home/d/Applications/SoH/bin/soh", from, to)), Path::new("/run/media/sd/Ports/SoH/bin/soh"));
+        assert_eq!(Path::new(&reroot("/home/d/Applications/SoH", from, to)), Path::new("/run/media/sd/Ports/SoH"));
         assert_eq!(reroot("/usr/bin/env", from, to), "/usr/bin/env");
         assert_eq!(reroot("", from, to), "");
     }
