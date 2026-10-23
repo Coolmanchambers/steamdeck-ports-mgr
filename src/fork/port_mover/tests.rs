@@ -497,7 +497,12 @@ fn a_missing_game_file_stops_the_move_unless_the_user_moves_anyway() {
     let w = World::new("rom_missing");
     let port_dir = w.old_lib.join("SoH");
     let mapping = connect_link(&w, &port_dir);
-    fs::remove_file(w.roms.join("n64/Zelda.z64")).unwrap();
+    // A link needs its original; a copy (Windows has no links here) only needs itself.
+    if cfg!(unix) {
+        fs::remove_file(w.roms.join("n64/Zelda.z64")).unwrap();
+    } else {
+        fs::remove_file(port_dir.join("Zelda.z64")).unwrap();
+    }
     let files = GameFiles { mappings: vec![mapping], required: Vec::new() };
     let err = w.prepare_with(&MoveOptions { game_files: files.clone(), ..Default::default() }).unwrap_err();
     let MoveError::GameFiles { stage: Stage::BeforeCopy, issues } = &err else { panic!("{err}") };
@@ -777,7 +782,9 @@ fn leftover_staging_folders_of_dead_runs_are_swept() {
     }
     fs::write(&other, b"keep").unwrap();
     sweep_staging(&w.new_lib);
-    assert!(!dead.exists() && !own.exists());
+    assert!(!own.exists(), "this process's own leftover goes");
+    // Whether another process is gone can only be told on Linux (/proc); elsewhere its folder stays.
+    assert_eq!(dead.exists(), !cfg!(target_os = "linux"));
     assert!(other.exists(), "only staging folders are touched");
     #[cfg(target_os = "linux")]
     {
@@ -788,6 +795,8 @@ fn leftover_staging_folders_of_dead_runs_are_swept() {
     }
 }
 
+// Windows cannot rename a folder while files in it are open, which is how the test pulls the card.
+#[cfg(unix)]
 #[test]
 fn a_drive_pulled_out_during_a_batch_stops_it_with_one_message() {
     let w = World::new("yanked");

@@ -33,8 +33,8 @@ APP_DIR="$(mktemp -d)" || setup_fail "mktemp"
 cp "$BIN_DIR/ports_launcher" "$BIN_DIR/7zzs" "$APP_DIR/" || setup_fail "ports_launcher or 7zzs missing in $BIN_DIR"
 for f in ports.json themes.json; do [ -f "$BIN_DIR/$f" ] && cp "$BIN_DIR/$f" "$APP_DIR/"; done
 # A home of its own (the end-to-end move creates ~/Games/Ports) and two installed catalog ports.
-# Outside the app folder: a ports folder inside the app folder is refused.
-HOME_DIR="$(mktemp -d)" || setup_fail "mktemp home"
+# Outside the app folder (a ports folder inside it is refused) and outside /tmp (refused as a system folder).
+HOME_DIR="$(mktemp -d -p "${SMOKE_HOME_BASE:-$HOME}" dpm-smoke-home.XXXXXX)" || setup_fail "mktemp home"
 mkdir -p "$HOME_DIR/Games" "$APP_DIR/Library/SpaceCadetPinball" "$APP_DIR/Library/Abuse_2025" || setup_fail "mkdir $HOME_DIR"
 printf '#!/bin/sh\necho pinball\n' > "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball" && chmod 755 "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball"
 echo data > "$APP_DIR/Library/Abuse_2025/x"
