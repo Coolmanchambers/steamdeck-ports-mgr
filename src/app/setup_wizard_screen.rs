@@ -10,7 +10,7 @@
 //! The wizard hands over to the app's own screens (ports folder, import, game files, Add to Steam,
 //! Artwork sources). Those do not know about the wizard, so while one is open the wizard waits (`tick`)
 //! and, once no dialog is open for a moment, comes back at the same step and reads what changed. Their
-//! Back rows that lead to the Settings list come back to the wizard instead (`resume_instead_of_settings`).
+//! Back rows that lead to the Settings list come back to the wizard instead (`resume_instead_of_menu`).
 //!
 //! Integration points: `ports_folder_step` (the ports-folder screens: shared picker, checks, moving
 //! installed ports) and `import_step` (today Settings > Adopt installed ports; it will point at the new
@@ -21,7 +21,7 @@ use super::state::AppState;
 use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts};
 use crate::fork::rom_library::RomLibraryStore;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
-use crate::fork::setup_wizard::flow::{self, Action, Adapters, Mode, Wizard};
+use crate::fork::setup_wizard::flow::{self, Action, Adapters, Menu, Mode, Wizard};
 use crate::fork::setup_wizard::text::{self, Context, Focus, Page};
 use crate::fork::setup_wizard::{places, setup_state, SetupState};
 use crate::ui::gamepad_router::GamepadRouter;
@@ -126,10 +126,15 @@ fn with_wizard(app: &Rc<AppState>, router: &Router, f: impl FnOnce(&mut Wizard, 
     f(&mut wizard, &mut ui);
 }
 
-/// Settings' list is about to open. When the wizard is waiting for an existing screen to finish (that
-/// screen's Back row leads to Settings), come back to the wizard instead. True = handled.
-pub(crate) fn resume_instead_of_settings(app: &Rc<AppState>, router: &Router) -> bool {
-    let waiting = SESSION.with(|s| s.borrow().as_ref().is_some_and(|w| w.try_borrow().is_ok_and(|w| w.handoff.is_some())));
+/// A menu (Settings, Settings > Ports folder, Settings > Game files) is about to open. When the wizard is
+/// waiting for the screen it opened to finish and this menu is where that screen leads when the user backs
+/// out (`flow::menu_returns_to_wizard`), come back to the wizard instead. True = handled. A menu that a
+/// screen opens for its own purpose (the ports-folder flow sending the user to Game files to fix a file)
+/// is left alone.
+pub(crate) fn resume_instead_of_menu(app: &Rc<AppState>, router: &Router, menu: Menu) -> bool {
+    let waiting = SESSION.with(|s| {
+        s.borrow().as_ref().is_some_and(|w| w.try_borrow().is_ok_and(|w| w.handoff.is_some_and(|h| flow::menu_returns_to_wizard(h, menu))))
+    });
     if waiting {
         with_wizard(app, router, |w, ui| flow::resume(w, ui));
     }

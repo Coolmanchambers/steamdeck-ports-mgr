@@ -247,7 +247,7 @@ pub(crate) fn open_game_files(app: &Rc<AppState>, router: &Router) {
     // No "dialog already open" guard: the Back and Cancel rows of the deeper lists call this while their
     // own list is still up, and showing the menu replaces whatever is open.
     // Fork (setup wizard): backing out of a screen the wizard opened lands here; go back to the wizard.
-    if super::setup_wizard_screen::resume_instead_of_settings(app, router) {
+    if super::setup_wizard_screen::resume_instead_of_menu(app, router, crate::fork::setup_wizard::flow::Menu::GameFiles) {
         return;
     }
     let Some(store) = load_store(app, router) else { return };

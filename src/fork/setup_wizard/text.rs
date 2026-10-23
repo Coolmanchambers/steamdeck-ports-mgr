@@ -249,7 +249,7 @@ fn ports_page(w: &Wizard, ctx: &Context) -> Page {
         "If you pick a different folder, ports you already installed can be moved there. The old copies are kept until you choose to remove them.",
     ]);
     p.facts = vec![format!("Right now: {}", shown(&ctx.ports_folder))];
-    if !ctx.quick.iter().any(|c| c.kind == Kind::Drive) {
+    if !ctx.quick.iter().any(|c| c.kind == Kind::SdCard) {
         p.facts.push("No SD card found. Put one in and come back to this step (Settings > Setup wizard), or keep internal storage.".to_string());
     }
     for choice in &ctx.quick {
@@ -268,7 +268,7 @@ fn ports_page(w: &Wizard, ctx: &Context) -> Page {
     // With an SD card in and the default folder in use, start on the card: a reflex A offers the better
     // place, and the checks still run before anything changes.
     if ctx.current_is_default {
-        if let Some(i) = p.options.iter().zip(&ctx.quick).position(|(o, c)| o.enabled && c.kind == Kind::Drive) {
+        if let Some(i) = p.options.iter().zip(&ctx.quick).position(|(o, c)| o.enabled && c.kind == Kind::SdCard) {
             p.initial = Focus::Option(i);
         }
     }
@@ -395,7 +395,7 @@ mod tests {
             started_with: "/home/deck/Apps/dpm/Library".into(),
             current_is_default: true,
             quick: vec![
-                quick("SD card (SD512)", "/run/media/deck/SD512/Ports - new folder", "/run/media/deck/SD512/Ports", Kind::Drive, true),
+                quick("SD card (SD512)", "/run/media/deck/SD512/Ports - new folder", "/run/media/deck/SD512/Ports", Kind::SdCard, true),
                 quick("Internal storage", "/home/deck/Apps/dpm/Library - 94 GB free", "/home/deck/Apps/dpm/Library", Kind::Internal, true),
             ],
             rom_folder: None,
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn a_drive_that_cannot_hold_ports_is_listed_but_not_selectable() {
         let mut c = ctx();
-        c.quick.push(quick("SD card (EXFAT) (can't be used)", "/run/media/deck/EXFAT/Ports - exFAT cannot hold ports", "/run/media/deck/EXFAT/Ports", Kind::Drive, false));
+        c.quick.push(quick("SD card (EXFAT) (can't be used)", "/run/media/deck/EXFAT/Ports - exFAT cannot hold ports", "/run/media/deck/EXFAT/Ports", Kind::SdCard, false));
         let p = page_for(&at(Step::PortsFolder), &c);
         let bad = p.options.iter().find(|o| o.title.contains("can't be used")).unwrap();
         assert!(!bad.enabled);
@@ -580,9 +580,24 @@ mod tests {
     }
 
     #[test]
+    fn a_usb_drive_does_not_hide_the_no_sd_card_note_and_does_not_get_the_initial_focus() {
+        let mut c = no_card_ctx();
+        c.quick.insert(0, quick("USB drive (STICK)", "/run/media/deck/STICK/Ports - 30 GB free", "/run/media/deck/STICK/Ports", Kind::OtherDrive, true));
+        let p = page_for(&at(Step::PortsFolder), &c);
+        assert!(p.facts.iter().any(|f| f.contains("No SD card found")), "{:?}", p.facts);
+        assert!(p.options[0].enabled, "the USB drive is offered");
+        assert_eq!(focused(&p, initial_focus(&p)), Focus::Button(RIGHT), "the suggestion is for an SD card only");
+        // With an SD card as well, the card gets the cursor and the note goes away.
+        c.quick.insert(0, quick("SD card (SD512)", "/run/media/deck/SD512/Ports - new folder", "/run/media/deck/SD512/Ports", Kind::SdCard, true));
+        let p = page_for(&at(Step::PortsFolder), &c);
+        assert!(!p.facts.iter().any(|f| f.contains("No SD card found")));
+        assert_eq!(focused(&p, initial_focus(&p)), Focus::Option(0));
+    }
+
+    #[test]
     fn an_unusable_card_does_not_get_the_initial_focus() {
         let mut c = no_card_ctx();
-        c.quick.insert(0, quick("SD card (X) (can't be used)", "exFAT cannot hold ports", "/run/media/deck/X/Ports", Kind::Drive, false));
+        c.quick.insert(0, quick("SD card (X) (can't be used)", "exFAT cannot hold ports", "/run/media/deck/X/Ports", Kind::SdCard, false));
         let p = page_for(&at(Step::PortsFolder), &c);
         assert_eq!(focused(&p, initial_focus(&p)), Focus::Button(RIGHT));
     }
@@ -606,7 +621,7 @@ mod tests {
         assert_eq!(pg(Step::PortsFolder).facts.len(), 1, "no such line when a card is there");
         // A card that cannot be used still counts as a card, but is listed with its reason.
         let mut c = no_card_ctx();
-        c.quick.push(quick("SD card (X) (can't be used)", "exFAT cannot hold ports", "/run/media/deck/X/Ports", Kind::Drive, false));
+        c.quick.push(quick("SD card (X) (can't be used)", "exFAT cannot hold ports", "/run/media/deck/X/Ports", Kind::SdCard, false));
         assert_eq!(page_for(&at(Step::PortsFolder), &c).facts.len(), 1);
     }
 

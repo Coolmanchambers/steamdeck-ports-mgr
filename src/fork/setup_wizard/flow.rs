@@ -248,19 +248,44 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     }
 }
 
+/// A menu an existing screen is about to open. The screens the wizard opens end in these menus when the user
+/// backs out; the wizard comes back instead, but only when the menu is the one that hand-off leads to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Menu {
+    /// The Settings list.
+    Settings,
+    /// Settings > Ports folder.
+    PortsFolder,
+    /// Settings > Game files.
+    GameFiles,
+}
+
+/// Whether opening `menu` while `handoff` is pending means "back to the wizard". The ports-folder flow
+/// itself opens Game files ("Fix in Game files") and the game files flow never leads to the ports menu, so
+/// those two only match their own hand-off; Settings matches whichever screen was left through its Back row.
+pub fn menu_returns_to_wizard(handoff: HandOff, menu: Menu) -> bool {
+    match menu {
+        Menu::Settings => true,
+        Menu::PortsFolder => handoff == HandOff::PortsFolder,
+        Menu::GameFiles => handoff == HandOff::RomFolder,
+    }
+}
+
 /// The screen opened by a hand-off was closed: note what it did and show the step again. The ports
-/// folder is read again by the screen when it draws, so it needs no note here.
+/// folder is read again by the screen when it draws, so it needs no note here. With no hand-off pending
+/// (an unrelated dialog came and went) the current view is drawn again as it was, so a question or a
+/// failed-save page is not turned back into the step.
 pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
-    match w.handoff.take() {
-        Some(HandOff::Import { installed_before, opened: true }) => {
+    let Some(handoff) = w.handoff.take() else { return a.show(w) };
+    match handoff {
+        HandOff::Import { installed_before, opened: true } => {
             let added = a.installed_count().saturating_sub(installed_before);
             w.summary.imported = Some(w.summary.imported.unwrap_or(0) + added);
         }
-        Some(HandOff::Import { opened: false, .. }) => {}
-        Some(HandOff::RomFolder) => w.summary.rom_folder_opened = true,
-        Some(HandOff::Steam) => w.summary.steam_opened = true,
-        Some(HandOff::Art) => w.summary.art_opened = true,
-        Some(HandOff::PortsFolder) | None => {}
+        HandOff::Import { opened: false, .. } | HandOff::PortsFolder => {}
+        HandOff::RomFolder => w.summary.rom_folder_opened = true,
+        HandOff::Steam => w.summary.steam_opened = true,
+        HandOff::Art => w.summary.art_opened = true,
     }
     show_step(w, a);
 }
@@ -567,11 +592,47 @@ mod tests {
     }
 
     #[test]
-    fn resuming_with_no_hand_off_just_redraws() {
+    fn resuming_with_no_hand_off_draws_the_same_view_again_as_it_was() {
         let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
         resume(&mut w, &mut a);
         assert_eq!(a.calls, ["show Steam Step"]);
+        // A question or a failed-save page that an unrelated dialog covered is shown again, not turned into the step.
+        for view in [View::ConfirmSkipSetup, View::SaveFailed("disk full".into()), View::Notice("n".into())] {
+            let (mut w, mut a) = (at(Step::Done, Mode::FirstRun), Fake::default());
+            w.view = view.clone();
+            resume(&mut w, &mut a);
+            assert_eq!(w.view, view);
+            assert_eq!(a.calls, [format!("show Done {view:?}")]);
+            assert!(!a.calls.iter().any(|c| c == "mark_done"));
+        }
     }
+
+    #[test]
+    fn resuming_after_a_hand_off_shows_the_step() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::OpenSteam, &mut a);
+        w.view = View::Notice("stale".into());
+        resume(&mut w, &mut a);
+        assert_eq!(w.view, View::Step);
+    }
+
+    #[test]
+    fn a_menu_only_returns_to_the_wizard_for_the_hand_off_that_leads_to_it() {
+        let all = [
+            HandOff::PortsFolder,
+            HandOff::Import { installed_before: 0, opened: true },
+            HandOff::RomFolder,
+            HandOff::Steam,
+            HandOff::Art,
+        ];
+        for h in all {
+            // The ports-folder flow opens Game files itself ("Fix in Game files"): that must not resume the wizard.
+            assert_eq!(menu_returns_to_wizard(h, Menu::GameFiles), h == HandOff::RomFolder, "{h:?}");
+            assert_eq!(menu_returns_to_wizard(h, Menu::PortsFolder), h == HandOff::PortsFolder, "{h:?}");
+            assert!(menu_returns_to_wizard(h, Menu::Settings), "{h:?}");
+        }
+    }
+
 
     #[test]
     fn resuming_after_the_other_screens_notes_that_they_were_opened() {

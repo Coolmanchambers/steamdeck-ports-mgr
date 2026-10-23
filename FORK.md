@@ -170,8 +170,8 @@ Files added by this fork:
 | 2026-10-22 | `src/app/gamepad_target.rs` | `DialogSlot::SetupWizard`: B (close-requested), A (activate-requested) and the D-pad (move-requested) reach the wizard page |
 | 2026-10-22 | `src/main.rs` | One call after `start_queue_watch`: `app::setup_wizard_screen::start_if_first_run(&app, &router)` |
 | 2026-10-22 | `src/app/dialogs.rs` | `DialogSlot::SetupWizard` and `build_setup_wizard_dialog` (sized from the work area, 88% high, kept on screen); Settings entry "Setup wizard..." (first row, `SettingsEntry::SetupWizard`); `open_settings_dialog` hands back to the wizard when an existing screen it opened leads back to Settings |
-| 2026-10-22 | `src/app/rom_screens.rs` | Setup wizard: `open_folder_chooser`, the folder choice of Game files without the menu in front (4 lines, wraps `choose_folder`); `open_game_files` first asks `setup_wizard_screen::resume_instead_of_settings` (3 lines), so backing out of a screen the wizard opened returns to the wizard |
-| 2026-10-22 | `src/app/ports_folder_screen.rs` | Setup wizard: `open_menu` first asks `setup_wizard_screen::resume_instead_of_settings` (3 lines), so cancelling the ports-folder flow the wizard opened returns to the wizard |
+| 2026-10-22 | `src/app/rom_screens.rs` | Setup wizard: `open_folder_chooser`, the folder choice of Game files without the menu in front (4 lines, wraps `choose_folder`); `open_game_files` first asks `setup_wizard_screen::resume_instead_of_menu` (3 lines), so backing out of a screen the wizard opened returns to the wizard |
+| 2026-10-22 | `src/app/ports_folder_screen.rs` | Setup wizard: `open_menu` first asks `setup_wizard_screen::resume_instead_of_menu` (3 lines), so cancelling the ports-folder flow the wizard opened returns to the wizard |
 | 2026-10-22 | `src/app/mod.rs`, `src/fork/mod.rs` | One module line each (`setup_wizard_screen`, `setup_wizard`) |
 | 2026-10-22 | `tools/smoke-test.sh` | The main run starts with `fork-settings.json` holding `setup_done`; a new first part starts a fresh folder and checks by keyboard that the wizard opens, a resting mouse pointer does not move the highlight, the ports step opens the shared picker and cancelling it returns to the wizard, Skip setup asks, quitting half-way leaves setup unfinished, the wizard returns, a confirmed skip is remembered, and walking every page to Finish writes setup_done; click offsets for Settings rows moved down one row |
 | 2026-10-22 | `tools/test-app-update.sh` | The old install it builds has `setup_done` set, so the wizard does not cover the main window |
@@ -422,7 +422,7 @@ Welcome and showing the current values. English only, plain wording.
   neither, then a folder an earlier build of the wizard recorded as `setup_ports_folder` (offered once in the first
   run after this build, then the key is removed), then drives that cannot hold ports (exFAT, FAT, NTFS: listed with
   "(can't be used)", dimmed, not selectable), and "Choose another folder...". The folder in use is shown dimmed as
-  "in use now" and cannot be chosen again. With no usable drive the card says "No SD card found. Put one in and come
+  "in use now" and cannot be chosen again. With no SD card (a USB drive does not count) the card says "No SD card found. Put one in and come
   back to this step (Settings > Setup wizard), or keep internal storage." Choosing an option hands over to the app's
   own ports-folder flow (`ports_folder_screen::consider` for a quick choice, `choose_folder` for the shared folder
   picker): the folder is checked (exFAT, permissions, system folders and the rest of `ports_folder::check`), created
@@ -432,8 +432,10 @@ Welcome and showing the current values. English only, plain wording.
   Those do not know about the wizard, so while one is open the wizard waits, and once no dialog has been open for
   half a second it comes back at the same step. Their Back and Cancel rows that lead to a menu (Settings, Settings >
   Ports folder, Settings > Game files) come back to the wizard at once: `open_settings_dialog`,
-  `ports_folder_screen::open_menu` and `rom_screens::open_game_files` ask `resume_instead_of_settings` first (it only
-  acts while the wizard is waiting for a hand-off). "Ports you already had: N added" is the change in the number of
+  `ports_folder_screen::open_menu` and `rom_screens::open_game_files` ask `resume_instead_of_menu` first, which only
+  acts while the wizard waits for the hand-off that leads to that menu (`flow::menu_returns_to_wizard`: the ports
+  menu for the ports-folder step, Game files for the game-files step, Settings for any). The ports-folder flow
+  opening Game files itself ("Fix in Game files") is therefore left alone. "Ports you already had: N added" is the change in the number of
   installed ports across the import screen (only when that screen really opened), so it needs no callback.
 - **Adapters (the integration points):** `flow::Adapters` is everything the wizard needs from the rest of the app and
   the only thing the tests fake. In `setup_wizard_screen.rs`: `ports_folder_step` (calls
@@ -444,7 +446,7 @@ Welcome and showing the current values. English only, plain wording.
 - **Not done by the wizard:** it never moves, deletes or overwrites anything itself. What the screens it opens do
   (including moving ports) is governed by their own rules.
 - **Known limits:** if an unrelated dialog replaces the wizard's page (a Steam queue offer, say) the wizard shows the
-  same page again when that dialog is closed; only the title bar's X, the window's own close button, Finish or a
+  same page again (a skip question or failed-save page as it was) when that dialog is closed; only the title bar's X, the window's own close button, Finish or a
   confirmed skip end it (it returns at the next start unless setup is done). The shared folder picker opens on "Use
   this folder", which the ports-folder check refuses in the home folder (not changed here: the end-to-end move test
   in the smoke test depends on that starting row). Fullscreen layout on a real Deck is not verified (Xvfb has no

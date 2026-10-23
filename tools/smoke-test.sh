@@ -110,6 +110,19 @@ if [ -n "$wiz" ]; then
             press_keys "$resting" Escape   # B goes back to the ports folder step
             next=$(find_window '^Setup wizard: Ports folder') || next=""
         fi
+    if [ -n "$next" ]; then
+        # Positive control: the pointer still rests over an option of this page. A few small real moves must
+        # now take the highlight, so Return opens the picker. If the layout ever shifted so the pointer was
+        # nowhere near an enabled option, the check above would pass for the wrong reason and this one fails.
+        for _ in 1 2 3; do xdotool mousemove_relative -- 6 0; sleep 0.3; done
+        press_keys "$next" Return
+        moved=$(find_window '^Choose the ports folder') || moved=""
+        check "moving the pointer over an option does take the highlight (positive control)" '[ -n "$moved" ]'
+        if [ -n "$moved" ]; then
+            press_keys "$moved" Escape
+            next=$(find_window '^Setup wizard: Ports folder') || next=""
+        fi
+    fi
     fi
     if [ -n "$next" ]; then
         # "Choose another folder..." (the last option) opens the app's shared folder picker; Escape in the

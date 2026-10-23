@@ -12,7 +12,10 @@ pub const SUBFOLDER: &str = "Ports";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    Drive,
+    /// An SD card: what the step suggests first.
+    SdCard,
+    /// A USB drive or any other removable drive.
+    OtherDrive,
     Internal,
     Current,
     Earlier,
@@ -54,7 +57,7 @@ pub fn quick_choices(current: &Path, internal_default: &Path, drives: &[Drive], 
             title: if can_hold { drive.title() } else { format!("{} (can't be used)", drive.title()) },
             detail: detail(&path, Some(&drive.fs_type)),
             path,
-            kind: Kind::Drive,
+            kind: if drive.kind == "SD card" { Kind::SdCard } else { Kind::OtherDrive },
             usable: can_hold,
         };
         if can_hold { &mut usable } else { &mut unusable }.push(choice);
@@ -109,6 +112,19 @@ mod tests {
     }
 
     #[test]
+    fn sd_cards_and_other_drives_are_told_apart() {
+        let t = temp();
+        let (sd, usb, other) = (t.path().join("SD"), t.path().join("USB"), t.path().join("OTHER"));
+        for d in [&sd, &usb, &other] {
+            fs::create_dir_all(d).unwrap();
+        }
+        let internal = t.path().join("Library");
+        let drives = [drive(&sd, "SD card", "SD", "ext4"), drive(&usb, "USB drive", "USB", "ext4"), drive(&other, "Drive", "OTHER", "ext4")];
+        let kinds: Vec<Kind> = quick_choices(&internal, &internal, &drives, None).iter().map(|c| c.kind).collect();
+        assert_eq!(kinds, [Kind::SdCard, Kind::OtherDrive, Kind::OtherDrive, Kind::Internal]);
+    }
+
+    #[test]
     fn a_drive_that_cannot_hold_ports_is_listed_after_the_usable_choices_and_cannot_be_chosen() {
         let t = temp();
         let bad = t.path().join("EXFAT");
@@ -123,7 +139,7 @@ mod tests {
         assert_eq!(order, [("USB drive (GOOD)", true), ("Internal storage", true), ("SD card (EXFAT) (can't be used)", false)]);
         assert!(choices[2].detail.contains("exFAT cannot hold ports"), "{}", choices[2].detail);
         assert!(!choices[2].detail.contains("new folder"));
-        assert_eq!(choices[2].kind, Kind::Drive);
+        assert_eq!(choices[2].kind, Kind::SdCard);
     }
 
     #[test]

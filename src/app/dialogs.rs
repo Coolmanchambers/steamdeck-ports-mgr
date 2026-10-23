@@ -727,7 +727,7 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
         return;
     }
     // Fork: the Back row of an existing screen the setup wizard opened leads here; go back to the wizard.
-    if super::setup_wizard_screen::resume_instead_of_settings(app, router) {
+    if super::setup_wizard_screen::resume_instead_of_menu(app, router, crate::fork::setup_wizard::flow::Menu::Settings) {
         return;
     }
     let title = tr!(app).invoke_dialog_title_settings();
