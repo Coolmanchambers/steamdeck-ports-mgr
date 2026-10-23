@@ -108,7 +108,7 @@ pub fn new_folder_problem(parent: &Path, name: &str) -> Option<String> {
         return Some("Names starting with a dot make hidden folders. Pick a name without the dot.".into());
     }
     if name.len() > MAX_NAME_BYTES {
-        return Some(format!("The name is too long (at most {MAX_NAME_BYTES} bytes)."));
+        return Some(format!("The name is too long (at most {MAX_NAME_BYTES} characters)."));
     }
     if fs::symlink_metadata(parent.join(name)).is_ok() {
         return Some(format!("There is already something called \"{name}\" here."));

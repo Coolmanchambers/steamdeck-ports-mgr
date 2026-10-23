@@ -630,7 +630,7 @@ fn a_copied_game_file_with_another_checksum_after_the_copy_stops_the_move() {
     let manifest = copy::Copier::new(&cancel, &mut flag).copy_tree(&port_dir, &copy_dir).unwrap();
     corrupt(&copy_dir);
     let issues = game_files::check_after(&port_dir, &copy_dir, &manifest, &files);
-    assert!(issues.iter().any(|i| i.problem.contains("checksum")), "{issues:?}");
+    assert!(issues.iter().any(|i| i.problem.contains("not the same file as the one connected")), "{issues:?}");
 }
 
 // -- review fixes ------------------------------------------------------------------------------------
@@ -656,7 +656,7 @@ fn newer_saves_in_the_old_copy_keep_it() {
     fs::File::options().write(true).open(&save).unwrap().set_modified(later).unwrap();
     let refused = old_copies::removal_check(&entry, &w.removal_ctx(&active)).unwrap_err();
     assert!(refused.contains("The old copy has newer saves (last played"), "{refused}");
-    assert!(refused.contains("Info > Restore saves"));
+    assert!(refused.contains("Copy the save files from"));
 }
 
 #[test]
@@ -838,4 +838,129 @@ fn the_queued_repoint_summary_warns_that_steam_still_runs_the_old_copy() {
     let report = switch_over(&p, &w.env(&steam_up, &nothing_running, &plenty));
     let text = report.text();
     assert!(text.contains("starting Ship of Harkinian from Steam still runs the OLD copy"), "{text}");
+}
+
+// -- review round 2 ------------------------------------------------------------------------------------
+
+/// A kept old copy of the fixture port at `stale`, recorded, with the port in use at `current`.
+fn kept_copy(w: &World, stale: &Path, current: &Path) -> old_copies::OldCopy {
+    put(&stale.join("soh.appimage"), b"#!/bin/sh\necho soh\n");
+    put(&stale.join("saves/slot1.sav"), b"old save");
+    put(&current.join("saves/slot1.sav"), b"current save");
+    let entry = old_copies::OldCopy {
+        port_key: w.port().key,
+        name: w.port().name,
+        old_path: stale.to_path_buf(),
+        new_path: current.to_path_buf(),
+        bytes: 10,
+        moved_at: String::new(),
+        link_only: false,
+        switched: true,
+    };
+    old_copies::record(&w.app, entry.clone()).unwrap();
+    entry
+}
+
+fn set_time(path: &Path, t: SystemTime) {
+    fs::File::options().write(true).open(path).unwrap().set_modified(t).unwrap();
+}
+
+#[test]
+fn replacing_a_kept_old_copy_is_checked_first() {
+    let w = World::new("replace_check");
+    let current = w.old_lib.join("SoH");
+    let stale = w.new_lib.join("SoH");
+    let entry = kept_copy(&w, &stale, &current);
+    let now = SystemTime::now();
+    set_time(&current.join("saves/slot1.sav"), now);
+    set_time(&stale.join("saves/slot1.sav"), now - std::time::Duration::from_secs(3600));
+    let ctx = w.removal_ctx(&[]);
+    assert!(old_copies::replace_check(&entry, &current, &ctx).is_ok(), "older saves: fine to replace");
+
+    // Newer saves in the kept copy: refused, naming both save folders.
+    set_time(&stale.join("saves/slot1.sav"), now + std::time::Duration::from_secs(3600));
+    let refused = old_copies::replace_check(&entry, &current, &ctx).unwrap_err();
+    assert!(refused.contains("has newer saves (last played") && refused.contains("than the copy in use"), "{refused}");
+    assert!(refused.contains(&stale.join("saves").display().to_string()) && refused.contains(&current.join("saves").display().to_string()), "{refused}");
+    set_time(&stale.join("saves/slot1.sav"), now - std::time::Duration::from_secs(3600));
+
+    // A game running from it.
+    let running = |_: &Path| vec!["soh (process 9)".to_string()];
+    let ctx_running = RemovalCtx { running: &running, ..w.removal_ctx(&[]) };
+    assert!(old_copies::replace_check(&entry, &current, &ctx_running).unwrap_err().contains("is running from the old copy"));
+
+    // Not what was recorded (a link expected).
+    let as_link = old_copies::OldCopy { link_only: true, ..entry.clone() };
+    assert!(old_copies::replace_check(&as_link, &current, &ctx).unwrap_err().contains("not what was recorded"));
+
+    // A protected folder: the app folder, or one holding the copy in use.
+    let app_entry = old_copies::OldCopy { old_path: w.app.clone(), ..entry.clone() };
+    assert!(old_copies::replace_check(&app_entry, &current, &ctx).unwrap_err().contains("never removed"));
+    let holder = old_copies::OldCopy { old_path: w.old_lib.clone(), ..entry.clone() };
+    assert!(old_copies::replace_check(&holder, &current, &ctx).unwrap_err().contains("never removed"));
+
+    // The port left the catalog.
+    let unknown = |_: &old_copies::OldCopy, _: &Path| None;
+    let ctx_unknown = RemovalCtx { save_folders: &unknown, ..w.removal_ctx(&[]) };
+    assert!(old_copies::replace_check(&entry, &current, &ctx_unknown).unwrap_err().contains("not in the catalog"));
+
+    // Already gone: nothing to replace.
+    copy::remove_copy(&stale).unwrap();
+    assert!(old_copies::replace_check(&entry, &current, &ctx).is_ok());
+}
+
+#[test]
+fn an_unfinished_switch_is_finished_from_its_record() {
+    let w = World::new("finish_switch");
+    let p = w.prepare_with(&MoveOptions::default()).unwrap();
+    // The app closed after the records and the setting, before Steam followed.
+    record_pending(&w.app, std::slice::from_ref(&p)).unwrap();
+    let record = old_copies::load(&w.app).unwrap().remove(0);
+    assert!(!record.switched);
+    let active = vec![p.to.clone()];
+    let refused = old_copies::removal_check(&record, &w.removal_ctx(&active)).unwrap_err();
+    assert!(refused.contains("Finish switching Ship of Harkinian") && refused.contains("Settings > Ports folder"), "{refused}");
+    assert!(w.shortcuts()[0].exe_path().starts_with(p.from.to_str().unwrap()), "Steam still points at the old copy");
+
+    let report = finish_switch(&record, &w.env(&no_steam, &nothing_running, &plenty));
+    assert_eq!(report.steam.changed_count(), 1);
+    assert_eq!(w.shortcuts()[0].exe_path(), p.to.join("soh.appimage").to_str().unwrap());
+    let record = old_copies::load(&w.app).unwrap().remove(0);
+    assert!(record.switched);
+    assert!(old_copies::removal_check(&record, &w.removal_ctx(&active)).is_ok());
+}
+
+#[test]
+fn a_shortcut_steam_has_not_set_up_names_itself_in_the_refusal() {
+    let w = World::new("no_app_id_refusal");
+    let (p, entry) = moved_and_switched(&w);
+    let exe = p.from.join("soh.appimage");
+    fs::write(&w.vdf, file_of(&[object("0", &[str_field("AppName", b"Hand Made"), str_field("Exe", format!("\"{}\"", exe.display()).as_bytes()), str_field("StartDir", b"\"/x\"")])])).unwrap();
+    let refused = old_copies::removal_check(&entry, &w.removal_ctx(&[p.to.clone()])).unwrap_err();
+    assert!(refused.contains("\"Hand Made\"") && refused.contains("open Steam, quit it, then try again"), "{refused}");
+}
+
+#[test]
+fn the_newer_saves_refusal_says_where_to_copy_them() {
+    let w = World::new("newer_saves_text");
+    let (p, entry) = moved_and_switched(&w);
+    let save = p.from.join("saves/slot1.sav");
+    set_time(&save, SystemTime::now() + std::time::Duration::from_secs(60));
+    let refused = old_copies::removal_check(&entry, &w.removal_ctx(&[p.to.clone()])).unwrap_err();
+    let expected = format!("Copy the save files from {} into {} (or play once from the new copy to check), then try again; or keep the old copy.", p.from.join("saves").display(), p.to.join("saves").display());
+    assert!(refused.contains(&expected), "{refused}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_relative_link_that_leaves_the_port_on_its_way_is_made_safe() {
+    let w = World::new("steps_outside");
+    let port_dir = w.old_lib.join("SoH");
+    fs::create_dir_all(port_dir.join("sub")).unwrap();
+    std::os::unix::fs::symlink("../../SoH/saves", port_dir.join("sub/saves-link")).unwrap();
+    assert!(copy::steps_outside(&port_dir, &port_dir.join("sub/saves-link"), Path::new("../../SoH/saves")));
+    assert!(!copy::steps_outside(&port_dir, &port_dir.join("sub/x"), Path::new("../saves")));
+    let p = w.prepare_with(&MoveOptions::default()).unwrap();
+    assert_eq!(fs::read_link(p.to.join("sub/saves-link")).unwrap(), PathBuf::from("../saves"));
+    assert!(p.rewritten_links.contains(&p.to.join("sub/saves-link")));
 }

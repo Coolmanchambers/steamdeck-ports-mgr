@@ -251,7 +251,7 @@ impl Check {
             parts.push(format!("{} free", human_bytes(free)));
         }
         if let Some(fs_type) = &self.fs_type {
-            parts.push(fs_type.clone());
+            parts.push(mounts::fs_label(fs_type));
         }
         if !self.where_.is_empty() {
             parts.push(self.where_.clone());
@@ -260,15 +260,7 @@ impl Check {
     }
 }
 
-/// The kernel's name for a file system, as people know it.
-pub fn fs_display_name(fs_type: &str) -> &str {
-    match fs_type {
-        "exfat" => "exFAT",
-        "vfat" | "msdos" => "FAT",
-        "ntfs" | "ntfs3" | "fuseblk" => "NTFS",
-        other => other,
-    }
-}
+pub use super::folder_picker::mounts::fs_display_name;
 
 pub fn non_linux_text(fs_type: &str) -> String {
     format!(
@@ -305,7 +297,7 @@ pub fn check(dir: &Path, ctx: &CheckCtx, probe: &dyn FolderProbe) -> Check {
         return c;
     }
     if let Some(drive) = mounts::unmounted_drive_for(dir, ctx.mounts, ctx.media_roots) {
-        c.problems.push(format!("Nothing is mounted at {}. Is the SD card in?", drive.display()));
+        c.problems.push(format!("No drive is plugged in at {}. Is the SD card in?", drive.display()));
         return c;
     }
     let real = mounts::existing_real_path(dir);
@@ -313,9 +305,9 @@ pub fn check(dir: &Path, ctx: &CheckCtx, probe: &dyn FolderProbe) -> Check {
     let equals = |other: &Path| dir == other || real == mounts::existing_real_path(other);
 
     if ctx.system_exact.iter().any(|p| equals(p)) || ctx.system_trees.iter().any(|t| either_inside(t)) || ctx.media_roots.iter().any(|r| equals(r)) {
-        c.problems.push("That is a system folder. Pick or create a folder of your own, like ~/Games/Ports or a folder on the SD card.".into());
+        c.problems.push("That is a system folder. Pick or create a folder of your own, like Games/Ports in your home folder or a folder on the SD card.".into());
     } else if ctx.home.is_some_and(|h| equals(h)) {
-        c.problems.push("Not the home folder itself: pick or create a folder inside it, like ~/Games/Ports.".into());
+        c.problems.push("Not the home folder itself: pick or create a folder inside it, like Games/Ports in your home folder.".into());
     } else if mounts::removable_drives(ctx.mounts, ctx.media_roots).iter().any(|d| equals(&d.mount_point)) {
         c.problems.push("Not the top of the drive: create a folder on it for ports (New folder here...), like Ports.".into());
     }
@@ -370,7 +362,7 @@ pub fn check(dir: &Path, ctx: &CheckCtx, probe: &dyn FolderProbe) -> Check {
 /// drive is not mounted, so nothing is ever created at an empty mount point.
 pub fn create(dir: &Path, mounts: &[MountEntry], media_roots: &[PathBuf]) -> Result<(), String> {
     if let Some(drive) = mounts::unmounted_drive_for(dir, mounts, media_roots) {
-        return Err(format!("Nothing is mounted at {}, so the folder was not created. Is the SD card in?", drive.display()));
+        return Err(format!("No drive is plugged in at {}, so the folder was not created. Is the SD card in?", drive.display()));
     }
     fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))
 }
@@ -613,7 +605,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let c = w.check(&dir, &good);
         assert!(c.ok(), "{:?}", c.problems);
-        assert_eq!(c.summary(), "5.0 GB free, ext4, SD card (SD512)");
+        assert_eq!(c.summary(), "5.0 GB free, Linux format (ext4), SD card (SD512)");
         let missing = w.check(&w.home.join("Games").join("Ports"), &good);
         assert!(missing.ok() && !missing.exists, "{:?}", missing.problems);
         assert!(w.check(&default_dir(&w.app), &good).same_as_current);

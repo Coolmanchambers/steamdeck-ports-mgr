@@ -157,6 +157,27 @@ pub fn absolute_target(link: &Path, target: &Path) -> PathBuf {
     }
 }
 
+/// A relative link whose path leaves `root` on the way, even if it ends inside again
+/// (`../../SoH/saves` from `SoH/sub/`): it only works while the folder keeps its name and place.
+pub fn steps_outside(root: &Path, link: &Path, target: &Path) -> bool {
+    let base = normalize(link.parent().unwrap_or(root));
+    let Ok(rel) = base.strip_prefix(normalize(root)) else { return true };
+    let mut depth = rel.components().count() as i64;
+    for c in target.components() {
+        match c {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return true;
+                }
+            }
+            Component::Normal(_) => depth += 1,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// `target` as seen from the folder `from` (both absolute and normalized): `../x/y`.
 pub fn relative_path(from: &Path, target: &Path) -> PathBuf {
     let from: Vec<Component> = from.components().collect();
@@ -176,14 +197,15 @@ pub fn relative_path(from: &Path, target: &Path) -> PathBuf {
 }
 
 /// The target the copy of a link gets. A relative link that leaves `root` would break at the new
-/// place, so it becomes absolute; an absolute link into `root` itself would keep pointing at the old
+/// place, so it becomes absolute; an absolute link into `root` itself (or a relative one that leaves
+/// `root` on its way back in) would keep depending on the old place
 /// folder, so it becomes relative (and moves with the copy). Everything else stays as written.
 pub fn copied_link_target(root: &Path, link: &Path, target: &Path) -> PathBuf {
     let abs = absolute_target(link, target);
     let inside = is_within(&abs, root);
     if target.is_relative() && !inside {
         abs
-    } else if target.is_absolute() && inside {
+    } else if (target.is_absolute() && inside) || (target.is_relative() && steps_outside(root, link, target)) {
         relative_path(&normalize(link.parent().unwrap_or(root)), &abs)
     } else {
         target.to_path_buf()

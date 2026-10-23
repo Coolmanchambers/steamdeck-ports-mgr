@@ -238,14 +238,16 @@ folder in use, its free space and file system. (In Desktop Mode there is also **
 3. **Switch the ports folder?** lists the new folder and offers:
    - **Move N ports here, then switch**: each installed port is copied, checked file by file and only
      then used from the new place. The old copies are kept (see below). Progress shows on screen;
-     Cancel stops after the current file, removes the copies made so far and changes nothing. If the card
+     Cancel stops within a moment (it is checked every 1 MB copied), removes the copies made so far and changes nothing. If the card
      is pulled out during the move, it stops with one message and nothing changes.
    - **Switch without moving**: the ports in the old folder stay there and show as not installed here.
      Useful when the new folder already holds your ports (another card).
    - If the new folder holds an **old copy you kept** after an earlier move (moving back), the screen says
-     so ("the copy at ... is newer and is the one in use") and only offers **Replace the old copy with the
-     current one, then move** (its saves are zipped to `Saves Backup/Update Backups/` first) or Cancel.
-     The old copy is never used in place of the current one.
+     so ("the copy at ... is the one in use") and only offers **Replace the old copy with the current one,
+     then move** or Cancel. The old copy is checked first: if a game runs from it, or it has saves newer
+     than the copy in use ("Copy the save files from <old save folder> into <new save folder>, or keep the
+     old copy and cancel"), it is left alone and that port is not moved. Otherwise its saves are zipped to
+     `Saves Backup/Update Backups/` and it is removed. The old copy is never used in place of the current one.
    Moving and switching wait while a game runs from a port that would move.
 4. Before copying, the app checks each port's game files: the ROM links and copies made in Game files,
    and links inside the port folder that point at game files. If something is missing it lists which
@@ -270,8 +272,14 @@ folder in use, its free space and file system. (In Desktop Mode there is also **
    copies are listed later under Settings > Ports folder > **Old copies kept after moves**. Removal waits
    while a Steam shortcut still points into the old copy (including a queued change not applied yet, or a
    launch option naming it), while a game runs from it, or when the old copy has newer saves than the new
-   one ("Restore them to the new copy first (Info > Restore saves) or keep the old copy"). A port that left
-   the catalog keeps its old copy (its saves can't be found).
+   one ("Copy the save files from <old save folder> into <new save folder> (or play once from the new copy
+   to check), then try again; or keep the old copy"). A shortcut Steam has not finished setting up is named:
+   open Steam, quit it, then try again. A port that left the catalog keeps its old copy (its saves can't be
+   found). Checking a big old copy takes a moment ("Checking the old copy...").
+
+If the app was closed in the middle of a switch (after the new folder was saved, before Steam followed),
+Settings > Ports folder shows **Finish switching <port> (Steam and game files still point at the old
+copy)**: choose it to finish; the old copy can be removed after that.
 
 If the ports folder is on the SD card and the card is out when the app starts, it says "Your ports folder
 ... is not available. Is the SD card in?" with **Try again (the card is in now)**, Choose another folder,

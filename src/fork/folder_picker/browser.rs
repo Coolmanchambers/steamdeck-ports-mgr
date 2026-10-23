@@ -226,7 +226,7 @@ impl Picker {
             parts.push(free);
         }
         if let Some(fs_type) = mounts::fs_type_of(&self.current, &self.env.mounts) {
-            parts.push(fs_type);
+            parts.push(mounts::fs_label(&fs_type));
         }
         if let Some(drive) = mounts::drive_of(&self.current, &self.env.mounts, &self.env.media_roots) {
             parts.push(drive.title());
@@ -468,7 +468,7 @@ mod tests {
         let e = env(&root);
         let sd = root.join("media").join("SD512");
         let picker = Picker::open(&sd.join("Ports"), Purpose::PortsFolder, e);
-        assert_eq!(picker.info_line(), "391.0 GB free, ext4, SD card (SD512)");
+        assert_eq!(picker.info_line(), "391.0 GB free, Linux format (ext4), SD card (SD512)");
         assert_eq!(picker.hint_line(), Purpose::PortsFolder.hint());
         let home = Picker::open(&root.join("home"), Purpose::Any, env(&root));
         assert!(home.info_line().ends_with("internal storage"), "{}", home.info_line());

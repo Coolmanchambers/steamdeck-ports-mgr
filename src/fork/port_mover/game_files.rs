@@ -214,6 +214,10 @@ pub fn check_after(old_dir: &Path, new_dir: &Path, manifest: &Manifest, files: &
             issues.push(Issue { file: name_of(&new_link), expected_at: target.clone(), problem: "this link still points into the old folder".into() });
             continue;
         }
+        if target.is_relative() && is_within(&old_abs, old_dir) && super::copy::steps_outside(new_dir, &new_link, target) {
+            issues.push(Issue { file: name_of(&new_link), expected_at: absolute_target(&new_link, target), problem: "this link leaves the port folder on its way, so it depends on the folder's old name".into() });
+            continue;
+        }
         if is_within(&old_abs, old_dir) {
             continue;
         }
@@ -240,7 +244,7 @@ pub fn check_after(old_dir: &Path, new_dir: &Path, manifest: &Manifest, files: &
                 Ok(_) => {
                     if let Some(crc) = m.crc32 {
                         if crc32_of(&new_dest) != Some(crc) {
-                            issues.push(Issue { file: name_of(dest), expected_at: new_dest.clone(), problem: "the copied game file does not match its known checksum at the new place".into() });
+                            issues.push(Issue { file: name_of(dest), expected_at: new_dest.clone(), problem: "the copied game file is not the same file as the one connected (checked at the new place)".into() });
                         }
                     }
                 }

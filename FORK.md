@@ -105,7 +105,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it. A failed check prints the copy count, the processes under the test folder and the log tail (since 2026-10-21) |
-| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), opens Settings > Artwork sources and its Back row, Game files, and Settings > Ports folder with its folder picker (since 2026-10-22), and quits on Close. CI runs it and blocks the release on failure |
+| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), opens Settings > Artwork sources and its Back row, Game files, and Settings > Ports folder with its folder picker, then moves two seeded ports end to end into a new folder (New folder here, Use this folder, Move, Keep for now twice) and checks the setting, the copy's program bits, the kept old copies, their records and a relaunch (since 2026-10-22), and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-21 | `tools/test-app-update.sh` | Offline in-app update test: the packaged app, started from an old copy (marker appended to the program, old `BUILD_INFO`), runs Settings > Force update from the UI against a fake release on `file://`; checks the swap, `.previous/`, the restart on the new file and that saves, catalogs and state survive, then a tampered-checksum case (nothing changes, `update-failed.txt`, app reopens). CI runs it after the smoke test and blocks the release on failure |
 | 2026-10-22 | `tools/installer.sh` | The one-file installer's script: downloads the rolling release, checks its SHA-256, installs into `~/Applications/steamdeck-ports-mgr` or updates an existing install exactly like the updater, writes the app-menu entry (same bytes as the app's own) and a desktop shortcut, starts the app. Not shipped on its own (see Builds) |
 | 2026-10-22 | `tools/build-installer.sh` | Builds `steamdeck-ports-mgr-installer.desktop`: a desktop-entry launcher with `tools/installer.sh` embedded as comment lines, which its Exec line extracts from its own file (`%k`) and runs |
@@ -377,8 +377,8 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
 - **Missing at startup.** A chosen folder that is not there (SD card out, drive not mounted) is never
   created and nothing is marked installed or uninstalled: `state.json` is left alone. The app first shows
   "Your ports folder ... is not available" with "Try again (the card is in now)", Choose another folder...,
-  Continue without it and Quit; the Steam queue offer and the setup wizard wait while it is due or showing
-  (`startup_dialog_pending`). While the folder is missing (or a move runs), installs, updates, adopting and
+  Continue without it and Quit; the Steam queue offer (and any other startup dialog that asks
+  `startup_dialog_pending`) waits while it is due or showing. While the folder is missing (or a move runs), installs, updates, adopting and
   save restores are refused with a message (`refuse_when_blocked` / `blocked_reason`), so nothing is ever
   created at an unmounted ports folder. Ports there show as not installed until it is back (they are not
   forgotten). The default folder is re-created when missing, as upstream did. The startup log line names
@@ -416,7 +416,7 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   sizes, permission bits, link targets, modification times; every file read back and compared by SHA-1
   when the port is up to 4 GB, else programs and game files). Only then is it renamed into place. Any
   failure or Cancel removes only the staging folder. An adopted port (a link in the ports folder) moves as
-  a new link to the same folder. Cancel works between files; ports already copied in that run are
+  a new link to the same folder. Cancel is checked between files and after every 1 MB copied; ports already copied in that run are
   removed again (their originals were never touched) and the setting does not change. If the target or
   source drive goes away during the batch (card pulled out), it stops at once with one message and the
   copies made so far are removed. When some ports fail, the user picks Switch anyway (the others stay in
@@ -424,9 +424,14 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   stop it first (copies removed), then quit; during an old-copy removal they wait for it.
 - **Moving onto a kept old copy.** When the target already holds a folder that `port-moves.json` lists as
   an old copy the user kept, the switch screen says "<port>: an old copy you kept is already there; the
-  copy at <current> is newer and is the one in use" and offers only "Replace the old copy with the current
-  one, then move" (its saves zipped to `Saves Backup/Update Backups/`, then removed, its record dropped)
-  or Cancel; Switch without moving is not offered, so the stale copy is never used silently.
+  copy at <current> is the one in use" and offers only "Replace the old copy with the current one, then
+  move" or Cancel; Switch without moving is not offered, so the stale copy is never used silently. Before
+  the old copy is removed (`old_copies::replace_check`): it must be what was recorded (folder or link),
+  not a protected folder (the ports folder in use, the app folder, home, or a folder holding the copy in
+  use), nothing may run from it, and it must not have saves newer than the copy in use ("The old copy at
+  <path> has newer saves (last played <date>) than the copy in use. Copy the save files from <old save
+  folder> into <new save folder>, or keep the old copy and cancel."). A refusal stops only that port.
+  Then its saves are zipped to `Saves Backup/Update Backups/`, it is removed and its record dropped.
 - **Game file check** (`port_mover::game_files`). Before copying: every connection recorded by Game files
   for the port must be healthy (for a copied game file only the copy in the port folder counts; a link or
   "use original" also needs its original), and every link in the port folder that points outside it must
@@ -439,9 +444,12 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   files must have the same size and, where a CRC is known, the same CRC (they are always read back by hash
   too). A mismatch after the copy always stops that port's move (the copy is removed); there is no
   "anyway" for it. A relative link that points outside the port folder (`../../roms/x.z64`) gets the
-  absolute path of what it pointed at, and an absolute link into the port folder itself becomes relative,
+  absolute path of what it pointed at, and an absolute link into the port folder itself, or a relative one
+  that leaves the folder on its way back in (`../../SoH/saves` from `SoH/sub/`), becomes a plain relative one,
   so both keep working at the new place; other links stay as written.
-- **Switch over.** The old-copy records are written first (marked "switch not finished"), then the setting
+- **Switch over.** The old-copy records are written first (marked "switch not finished"; if the app closes
+  before Steam follows, Settings > Ports folder shows "Finish switching <port> (Steam and game files still
+  point at the old copy)", which runs the rest of the switch for that record), then the setting
   is saved, then for each moved port: every non-Steam shortcut in every Steam account whose program, start
   folder or icon is inside the old folder gets the same path under the new one, app ID kept (artwork and
   play time stay attached), through the safe write (refused while Steam runs, verified backup, atomic
@@ -464,13 +472,16 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   options) and no repoint for the port is still queued; no program runs from it; it is not the app
   folder, the home folder or a folder holding a ports folder in use; the port is still in the catalog (so
   its saves can be found); and the old copy has no saves newer than the new copy's (otherwise: "The old
-  copy has newer saves (last played <date>). Restore them to the new copy first (Info > Restore saves) or
-  keep the old copy."). The zip comes first; if it fails nothing is removed. An adopted port's old link is
-  removed as a link; its target folder is never touched.
-- **API for other screens** (setup wizard, import): `folder_picker_screen::open_folder_picker`,
+  copy has newer saves (last played <date>). Copy the save files from <old save folder> into <new save
+  folder> (or play once from the new copy to check), then try again; or keep the old copy."). A shortcut
+  Steam has not finished setting up (no stored app ID) is named in the refusal ("open Steam, quit it, then
+  try again"). The zip comes first; if it fails nothing is removed. An adopted port's old link is removed
+  as a link; its target folder is never touched. The check walks the old copy, so it runs on the worker
+  thread behind a "Checking the old copy..." note.
+- **API for other screens** (import, and later screens): `folder_picker_screen::open_folder_picker`,
   `fork::ports_folder::{current, configured, save_choice, check, create, at_startup, plan_move}`,
-  `port_mover::{prepare, record_pending, switch_over, discard, run_batch, sweep_staging}` with `MoveEnv` /
-  `MoveOptions` / `game_files::GameFiles::for_port`, `port_mover::old_copies::{load, removal_check, remove,
+  `port_mover::{prepare, record_pending, switch_over, finish_switch, discard, run_batch, sweep_staging}` with `MoveEnv` /
+  `MoveOptions` / `game_files::GameFiles::for_port`, `port_mover::old_copies::{load, removal_check, replace_check, remove,
   forget}`, `ports_folder_screen::{choose_folder, consider, prompt_old_copies, open_old_copies,
   refuse_when_blocked, blocked_reason, startup_dialog_pending, quit_waits_for_move}`, the list models in
   `fork::ports_folder_view`, `ForkSettings::set_adopt_folders`.

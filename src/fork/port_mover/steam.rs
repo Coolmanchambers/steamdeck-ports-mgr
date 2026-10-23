@@ -44,7 +44,7 @@ pub struct RepointResult {
     pub skipped: Vec<(String, String)>,
 }
 
-pub const NO_APP_ID: &str = "it has no stored app ID yet; open Steam and quit it once, then try again";
+pub const NO_APP_ID: &str = "Steam has not finished setting this shortcut up yet; open Steam, quit it, then move again";
 
 /// Rewrites, in `doc`, every shortcut that points inside `from`. Pure: nothing is written.
 pub fn repoint_doc(doc: &mut Document, from: &Path, to: &Path) -> RepointResult {
@@ -109,6 +109,12 @@ pub fn device_accounts(home: &Path) -> Vec<AccountFile> {
 /// Names of shortcuts (any account) that still point inside `dir`. An unreadable file is an error, so
 /// a caller never takes "could not tell" for "none".
 pub fn shortcuts_pointing_into(home: &Path, dir: &Path) -> Result<Vec<String>, String> {
+    Ok(shortcuts_pointing_into_detailed(home, dir)?.into_iter().map(|(name, _)| name).collect())
+}
+
+/// As [`shortcuts_pointing_into`], with whether each shortcut has a stored app ID (one without is never
+/// repointed: Steam has not finished setting it up).
+pub fn shortcuts_pointing_into_detailed(home: &Path, dir: &Path) -> Result<Vec<(String, bool)>, String> {
     let mut names = Vec::new();
     for account in device_accounts(home) {
         if !account.shortcuts.exists() {
@@ -120,7 +126,7 @@ pub fn shortcuts_pointing_into(home: &Path, dir: &Path) -> Result<Vec<String>, S
             // Launch options are not rewritten by a move; a path in them still needs the old copy.
             let in_options = dir.to_str().is_some_and(|d| !d.is_empty() && s.launch_options.contains(d));
             if inside(s.exe_path()) || inside(s.start_dir_path()) || inside(&s.icon) || in_options {
-                names.push(s.app_name.clone());
+                names.push((s.app_name.clone(), s.app_id.is_some()));
             }
         }
     }

@@ -198,7 +198,12 @@ pub fn removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
         return Err(format!("{} is not what was recorded (a {} was expected), so it is left alone.", old.display(), if entry.link_only { "link" } else { "folder" }));
     }
     if !entry.switched {
-        return Err("The switch to the new copy did not finish (the app closed during it), so the old copy is kept. Choose the ports folder again in Settings > Ports folder to finish it.".into());
+        return Err(format!(
+            "The switch to the new copy did not finish (the app closed during it), so the old copy is kept. If {} now runs from {}, choose \"Finish switching {}\" in Settings > Ports folder first.",
+            entry.name,
+            entry.new_path.display(),
+            entry.name
+        ));
     }
     if fs::symlink_metadata(&entry.new_path).is_err() {
         return Err(format!("The new copy {} is missing, so the old one is kept.", entry.new_path.display()));
@@ -246,7 +251,13 @@ pub fn removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
     if queued {
         return Err("A Steam shortcut change for this port is still queued (it applies once Steam is closed in Desktop Mode). Until then Steam still starts the old copy, so it is kept.".into());
     }
-    let pointing = super::steam::shortcuts_pointing_into(ctx.home, old)?;
+    let pointing = super::steam::shortcuts_pointing_into_detailed(ctx.home, old)?;
+    if let Some((name, _)) = pointing.iter().find(|(_, has_id)| !has_id) {
+        return Err(format!(
+            "The Steam shortcut \"{name}\" still points into it, and Steam has not finished setting that shortcut up, so it could not be moved: open Steam, quit it, then try again."
+        ));
+    }
+    let pointing: Vec<String> = pointing.into_iter().map(|(name, _)| name).collect();
     if !pointing.is_empty() {
         return Err(format!(
             "Steam shortcuts still point into it ({}). If the change is queued, it applies once Steam is closed in Desktop Mode; remove the old copy after that.",
@@ -269,14 +280,64 @@ pub fn removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
                 Some(new_time) => old_time.duration_since(new_time).is_ok_and(|d| d > std::time::Duration::from_secs(2)),
             };
             if newer {
+                let new_dir = new_saves.get(i).map(|d| d.display().to_string()).unwrap_or_else(|| "the new copy".into());
                 return Err(format!(
-                    "The old copy has newer saves (last played {}). Restore them to the new copy first (Info > Restore saves) or keep the old copy.",
-                    local_time(old_time)
+                    "The old copy has newer saves (last played {}). Copy the save files from {} into {new_dir} (or play once from the new copy to check), then try again; or keep the old copy.",
+                    local_time(old_time),
+                    old_dir.display()
                 ));
             }
         }
     }
     Ok(if entry.link_only { 0 } else { tree_size(old) })
+}
+
+/// Before an old copy the user kept is replaced (a port moving back onto it): it is not a protected
+/// folder, nothing runs from it, it is what was recorded, and it has no saves newer than the copy in use
+/// (`current`). An old copy that is already gone needs no replacing (Ok).
+pub fn replace_check(entry: &OldCopy, current: &Path, ctx: &RemovalCtx) -> Result<(), String> {
+    let stale = &entry.old_path;
+    let Ok(meta) = fs::symlink_metadata(stale) else { return Ok(()) };
+    if entry.link_only != meta.file_type().is_symlink() {
+        return Err(format!(
+            "The old copy at {} is not what was recorded (a {} was expected), so it is left alone and this port is not moved.",
+            stale.display(),
+            if entry.link_only { "link" } else { "folder" }
+        ));
+    }
+    for (what, protected) in [("the ports folder in use", ctx.library_dir), ("the app's folder", ctx.config_dir), ("the home folder", ctx.home), ("the copy in use", current)] {
+        if holds(stale, protected) {
+            return Err(format!("{} holds {what}, so it is never removed and this port is not moved.", stale.display()));
+        }
+    }
+    let running = (ctx.running)(stale);
+    if !running.is_empty() {
+        return Err(format!("{} is running from the old copy at {}. Close it first, then move again.", running.join(", "), stale.display()));
+    }
+    if entry.link_only {
+        return Ok(());
+    }
+    let Some(old_saves) = (ctx.save_folders)(entry, stale) else {
+        return Err(format!("{} is not in the catalog any more, so the app can't tell where its saves are; the old copy at {} is kept and this port is not moved.", entry.name, stale.display()));
+    };
+    let new_saves = (ctx.save_folders)(entry, current).unwrap_or_default();
+    for (i, old_dir) in old_saves.iter().enumerate() {
+        let Some(old_time) = newest_file_time(old_dir) else { continue };
+        let newer = match new_saves.get(i).and_then(|d| newest_file_time(d)) {
+            None => true,
+            Some(new_time) => old_time.duration_since(new_time).is_ok_and(|d| d > std::time::Duration::from_secs(2)),
+        };
+        if newer {
+            let new_dir = new_saves.get(i).map(|d| d.display().to_string()).unwrap_or_else(|| "the copy in use".into());
+            return Err(format!(
+                "The old copy at {} has newer saves (last played {}) than the copy in use. Copy the save files from {} into {new_dir}, or keep the old copy and cancel.",
+                stale.display(),
+                local_time(old_time),
+                old_dir.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

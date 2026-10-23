@@ -21,6 +21,24 @@ pub fn is_non_linux_fs(fs_type: &str) -> bool {
     NON_LINUX_FS.contains(&fs_type)
 }
 
+/// The kernel's name for a file system, as people know it.
+pub fn fs_display_name(fs_type: &str) -> &str {
+    match fs_type {
+        "exfat" => "exFAT",
+        "vfat" | "msdos" => "FAT",
+        "ntfs" | "ntfs3" | "fuseblk" => "NTFS",
+        other => other,
+    }
+}
+
+/// How screens name a file system: "Linux format (ext4)", "exFAT", or the kernel name for anything else.
+pub fn fs_label(fs_type: &str) -> String {
+    match fs_type {
+        "ext2" | "ext3" | "ext4" | "btrfs" | "xfs" | "f2fs" => format!("Linux format ({fs_type})"),
+        other => fs_display_name(other).to_string(),
+    }
+}
+
 /// Undoes the octal escapes the kernel uses in the mounts list (`\040` space, `\011` tab, `\012`
 /// newline, `\134` backslash).
 fn unescape(field: &str) -> String {

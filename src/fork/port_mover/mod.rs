@@ -308,7 +308,7 @@ impl SwitchReport {
             lines.push(steam);
         }
         if self.rom_records > 0 {
-            lines.push(format!("Game files: {} connection record(s) follow the new folder.", self.rom_records));
+            lines.push(format!("Game files: the {} connected file(s) now point at the new folder.", self.rom_records));
         }
         lines.extend(self.notes.iter().cloned());
         lines.join("\n")
@@ -433,4 +433,27 @@ pub fn run_batch(
         }
     }
     result
+}
+
+impl Prepared {
+    /// The move an old-copy record describes, for finishing a switch that was cut short.
+    pub fn from_record(record: &old_copies::OldCopy) -> Prepared {
+        Prepared {
+            port: PortRef { key: record.port_key.clone(), name: record.name.clone() },
+            from: record.old_path.clone(),
+            to: record.new_path.clone(),
+            bytes: record.bytes,
+            files: 0,
+            hashed: 0,
+            link_only: record.link_only,
+            rewritten_links: Vec::new(),
+            accepted_issues: Vec::new(),
+        }
+    }
+}
+
+/// Finishes a switch the app was closed in the middle of (a record with `switched: false` whose new copy
+/// is the one in use): Steam and the game files records follow, and the record is marked finished.
+pub fn finish_switch(record: &old_copies::OldCopy, env: &MoveEnv) -> SwitchReport {
+    switch_over(&Prepared::from_record(record), env)
 }

@@ -8,13 +8,13 @@
 //! - `refuse_when_blocked(app)`: true (and tells the user) while the ports folder is missing or a
 //!   move is running; installs, adopting and restores call it. `blocked_reason(app)` without the message.
 //! - `startup_dialog_pending()`: true while the "not available" message is due or showing; other
-//!   startup dialogs (the setup wizard) wait for it.
+//!   startup dialogs wait for it.
 //! - `quit_waits_for_move(app, router)`: Close and Quit ask it; a running move is stopped first.
 //! - `prompt_old_copies(app, router, copies, summary)`: the "Remove the old copy now?" prompts that
 //!   follow a move (stage 2's import calls it after its own moves).
 //! - `open_old_copies(app, router)`: the list of old copies kept after moves.
 //! - `choose_folder(app, router)` and `consider(app, router, folder)`: the whole ports folder change
-//!   (picker, checks, create, move, switch, old-copy prompts), for the setup wizard.
+//!   (picker, checks, create, move, switch, old-copy prompts).
 
 use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_progress_dialog, set_picker_items, update_progress_dialog, DialogSlot};
 use super::folder_picker_screen::open_folder_picker;
@@ -54,6 +54,7 @@ thread_local! {
     static CANCEL_JOB: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
     static STARTUP_PENDING: Cell<bool> = const { Cell::new(false) };
     static JOB_TIMER: slint::Timer = slint::Timer::default();
+    static CHECK_TIMER: slint::Timer = slint::Timer::default();
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -156,7 +157,7 @@ fn job_finished() -> bool {
     false
 }
 
-/// The other startup dialogs (setup wizard) wait while this is true.
+/// The other startup dialogs wait while this is true.
 pub(crate) fn startup_dialog_pending() -> bool {
     STARTUP_PENDING.with(Cell::get)
 }
@@ -194,8 +195,8 @@ pub(crate) fn startup_check(app: &Rc<AppState>, router: &Router, startup: Startu
     if startup.available() {
         return;
     }
-    // First of the startup dialogs: the Steam queue offer skips while a dialog is open, the setup wizard
-    // waits for `startup_dialog_pending`.
+    // First of the startup dialogs: the Steam queue offer skips while a dialog is open, other startup dialogs
+    // wait for `startup_dialog_pending`.
     STARTUP_PENDING.with(|p| p.set(true));
     let (app, router) = (app.clone(), router.clone());
     slint::Timer::single_shot(Duration::from_millis(300), move || show_missing(&app, &router, false));
@@ -249,7 +250,7 @@ pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
                 parts.push(format!("{} free", human_bytes(free)));
             }
             if let Some(t) = crate::fork::folder_picker::mounts::fs_type_of(&dir, &mounts) {
-                parts.push(t);
+                parts.push(crate::fork::folder_picker::mounts::fs_label(&t));
             }
             if let Some(d) = crate::fork::folder_picker::mounts::drive_of(&dir, &mounts, &default_media_roots()) {
                 parts.push(d.title());
@@ -259,8 +260,17 @@ pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
     };
     let old = old_copies::load(&app.paths.config_dir).unwrap_or_default();
     let old_summary = (old.len(), old.iter().map(|o| o.bytes).sum());
-    let model = view::menu(&dir, &state, is_default(app, &dir), old_summary, &ports_folder::default_dir(&app.paths.config_dir), game_mode());
-    open_model(app, router, TITLE, model, |app, router, act| match act {
+    // Switches cut short (the app closed between the setting and Steam), whose new copy is in use.
+    let active = RemovalParts::of(app).active;
+    let unfinished: Vec<OldCopy> = old.into_iter().filter(|o| !o.switched && active.contains(&o.new_path)).collect();
+    let names: Vec<String> = unfinished.iter().map(|o| o.name.clone()).collect();
+    let model = view::menu(&dir, &state, is_default(app, &dir), old_summary, &ports_folder::default_dir(&app.paths.config_dir), game_mode(), &names);
+    open_model(app, router, TITLE, model, move |app, router, act| match act {
+        Act::FinishSwitch(i) => {
+            if let Some(record) = unfinished.get(i) {
+                finish_switch(app, router, record);
+            }
+        }
         Act::ChooseAnother => choose_folder(app, router),
         Act::OpenFolder => crate::core::launch::open_folder(&app.paths.library_dir()),
         Act::OldCopies => open_old_copies(app, router),
@@ -274,7 +284,7 @@ pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
 }
 
 /// The picker for a new ports folder, then the whole change (check, create, move, switch, old-copy prompts).
-/// Cancel returns to the Ports folder list. The setup wizard can call this.
+/// Cancel returns to the Ports folder list.
 pub(crate) fn choose_folder(app: &Rc<AppState>, router: &Router) {
     let current = app.paths.library_dir();
     // The default folder sits inside the app folder: start at home instead of among the app's own files.
@@ -287,7 +297,7 @@ pub(crate) fn choose_folder(app: &Rc<AppState>, router: &Router) {
 }
 
 /// The user picked `dir`: check it, create it if needed (asked first), then plan the switch. For callers
-/// that already have a folder (the setup wizard): the same flow as Settings > Ports folder.
+/// that already have a folder (other screens): the same flow as Settings > Ports folder.
 pub(crate) fn consider(app: &Rc<AppState>, router: &Router, dir: PathBuf) {
     let current = app.paths.library_dir();
     let (mounts, roots, home) = (system_mounts(), default_media_roots(), home_dir());
@@ -409,8 +419,14 @@ fn free_space(dir: &Path) -> Option<u64> {
 
 /// Replaces an old copy the user kept that sits where a port is moving to: its saves are zipped, then
 /// it is removed and its record dropped. Runs on the worker thread.
-fn replace_stale(stale: &PortToMove, port: Option<&Port>, saves_dir: &Path, config_dir: &Path) -> Result<(), String> {
+fn replace_stale(stale: &PortToMove, record: Option<&OldCopy>, port: Option<&Port>, saves_dir: &Path, parts: &RemovalParts) -> Result<(), String> {
+    let config_dir = &parts.config_dir;
     let Some(port) = port else { return Err("it is not in the catalog any more, so its saves cannot be found; remove that old copy by hand".into()) };
+    let Some(record) = record else { return Err(format!("{} is no longer listed as an old copy, so it is left alone", stale.to.display())) };
+    // The same guards as removing an old copy: protected folders, a game running from it, newer saves.
+    let saves = |e: &OldCopy, dir: &Path| parts.save_folders(e, dir);
+    let ctx = RemovalCtx { home: &parts.home, config_dir: &parts.config_dir, library_dir: &parts.library, active_paths: &parts.active, running: &running_in, save_folders: &saves };
+    old_copies::replace_check(record, &stale.from, &ctx)?;
     crate::core::save_backup::backup_before_update(port, saves_dir, &stale.to, &crate::fork::store::backup_stamp(), &mut |_| {})
         .map_err(|e| format!("the saves in the old copy at {} could not be zipped, so it was left alone: {e}", stale.to.display()))?;
     port_mover::copy::remove_copy(&stale.to).map_err(|e| format!("could not remove the old copy at {}: {e}", stale.to.display()))?;
@@ -438,7 +454,9 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
     let port_of = move |key: &str| catalog.iter().find(|p| p.key() == key).cloned();
     let config_dir = app.paths.config_dir.clone();
     let files: Vec<GameFiles> = plan.ports.iter().chain(&plan.stale).map(|p| port_of(&p.key).map(|port| GameFiles::for_port(&port, &config_dir)).unwrap_or_default()).collect();
-    let stale: Vec<(PortToMove, Option<Port>)> = plan.stale.iter().map(|s| (s.clone(), port_of(&s.key))).collect();
+    let records = old_copies::load(&config_dir).unwrap_or_default();
+    let stale: Vec<(PortToMove, Option<OldCopy>, Option<Port>)> = plan.stale.iter().map(|s| (s.clone(), records.iter().find(|r| r.old_path == s.to).cloned(), port_of(&s.key))).collect();
+    let parts = RemovalParts::of(app);
     let items: Vec<BatchItem> = plan.ports.iter().chain(&plan.stale).map(|p| BatchItem { port: PortRef { key: p.key.clone(), name: p.name.clone() }, from: p.from.clone(), to: p.to.clone() }).collect();
     let (home, _) = move_env_parts(app);
     let saves_dir = app.paths.saves_backup_dir.clone();
@@ -448,11 +466,11 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
         let steam = SystemSteamCheck::new();
         let env = MoveEnv { home: &home, config_dir: &config_dir, settings: &settings, steam: &steam, game_mode: false, running: &running_in, free_space: &free_space };
         let mut run = MoveRun { moved: Vec::new(), failed: Vec::new(), cancelled: false, drive_gone: None };
-        // Kept old copies in the way go first (saves zipped, then removed), so their ports can move.
+        // Kept old copies in the way go first (checked, saves zipped, then removed), so their ports can move.
         let mut blocked: Vec<String> = Vec::new();
-        for (s, port) in &stale {
-            ctl.set_progress(format!("Replacing the old copy of {}\n{}", s.name, s.to.display()));
-            if let Err(e) = replace_stale(s, port.as_ref(), &saves_dir, &config_dir) {
+        for (s, record, port) in &stale {
+            ctl.set_progress(format!("Checking and replacing the old copy of {}\n{}", s.name, s.to.display()));
+            if let Err(e) = replace_stale(s, record.as_ref(), port.as_ref(), &saves_dir, &parts) {
                 run.failed.push((s.name.clone(), e, false));
                 blocked.push(s.key.clone());
             }
@@ -706,7 +724,28 @@ pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies:
         }
         return;
     };
-    let check = RemovalParts::of(app).check(&entry);
+    // The check walks the old copy (gigabytes on an SD card): on the worker thread, with a progress note.
+    let parts = RemovalParts::of(app);
+    let checked = entry.clone();
+    let job = Rc::new(Background::spawn(move |_| parts.check(&checked)));
+    open_progress_dialog(app, router, "Checking the old copy", &format!("Checking the old copy of {}...", entry.name));
+    let (app2, router2) = (app.clone(), router.clone());
+    let pending = RefCell::new(Some((entry, copies, summary)));
+    CHECK_TIMER.with(|timer| {
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(150), move || {
+            let Some(result) = job.take() else { return };
+            CHECK_TIMER.with(|t| t.stop());
+            if matches!(&*app2.dialog_nav.dialogs.borrow(), DialogSlot::Progress(_)) {
+                close_current_dialog(&app2, &router2);
+            }
+            if let Some((entry, copies, summary)) = pending.borrow_mut().take() {
+                show_old_copy_prompt(&app2, &router2, entry, copies, summary, result.and_then(|r| r));
+            }
+        });
+    });
+}
+
+fn show_old_copy_prompt(app: &Rc<AppState>, router: &Router, entry: OldCopy, copies: VecDeque<OldCopy>, summary: String, check: Result<u64, String>) {
     let model = view::old_copy_prompt(&entry, &check);
     let why = check.err();
     let copies = Rc::new(RefCell::new(Some(copies)));
@@ -808,4 +847,18 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
         Act::Back => open_menu(app, router),
         _ => {}
     });
+}
+
+/// Settings > Ports folder > "Finish switching <port>": Steam and the game files records follow the
+/// copy in use, and the record is marked finished (so its old copy can be removed later).
+fn finish_switch(app: &Rc<AppState>, router: &Router, record: &OldCopy) {
+    let (home, config_dir) = move_env_parts(app);
+    let settings = ForkSettings::load(&settings_path(app));
+    let steam = SystemSteamCheck::new();
+    let env = MoveEnv { home: &home, config_dir: &config_dir, settings: &settings, steam: &steam, game_mode: game_mode(), running: &running_in, free_space: &free_space };
+    let report = port_mover::finish_switch(record, &env);
+    let text = report.text();
+    let summary = if text.is_empty() { format!("Finished switching {}.", record.name) } else { format!("Finished switching {}.\n\n{text}", record.name) };
+    let entry = old_copies::load(&config_dir).unwrap_or_default().into_iter().find(|o| o.old_path == record.old_path);
+    prompt_old_copies(app, router, entry.into_iter().collect(), summary);
 }

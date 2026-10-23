@@ -26,6 +26,8 @@ pub enum Act {
     // Menu
     OpenFolder,
     OldCopies,
+    /// Finish switching the unfinished record `n` (the app closed in the middle of a switch).
+    FinishSwitch(usize),
     UseDefault,
     Back,
     // Switch screen
@@ -116,7 +118,7 @@ pub fn switch_screen(new_dir: &Path, summary: &str, plan: &MovePlan, free: Optio
         m.push(format!("Already in the new folder (used from there): {}", plan.already_there.join(", ")), Act::Info);
     }
     for s in &plan.stale {
-        m.push(format!("{}: an old copy you kept is already there; the copy at {} is newer and is the one in use", s.name, ellipsize(&s.from.to_string_lossy(), 50)), Act::Info);
+        m.push(format!("{}: an old copy you kept is already there; the copy at {} is the one in use", s.name, ellipsize(&s.from.to_string_lossy(), 50)), Act::Info);
     }
     if !plan.other_folders.is_empty() {
         m.push(format!("Not ports, never moved: {}", ellipsize(&plan.other_folders.join(", "), 60)), Act::Info);
@@ -166,11 +168,18 @@ pub fn missing(dir: &Path, why: &Missing, again: bool) -> ListModel {
 }
 
 /// Settings > Ports folder...
-pub fn menu(dir: &Path, state: &str, is_default: bool, old: (usize, u64), default_dir: &Path, game_mode: bool) -> ListModel {
+/// `unfinished` names the ports whose switch was cut short and whose new copy is the one in use.
+pub fn menu(dir: &Path, state: &str, is_default: bool, old: (usize, u64), default_dir: &Path, game_mode: bool, unfinished: &[String]) -> ListModel {
     let mut m = ListModel::default();
     m.push(format!("Ports folder: {}", ellipsize(&dir.to_string_lossy(), 64)), Act::Info);
     m.push(format!("  {state}{}", if is_default { " (default, next to the app)" } else { "" }), Act::Info);
     m.select = m.push("Choose another folder...", Act::ChooseAnother);
+    for (i, name) in unfinished.iter().enumerate() {
+        let row = m.push(format!("Finish switching {name} (Steam and game files still point at the old copy)"), Act::FinishSwitch(i));
+        if i == 0 {
+            m.select = row;
+        }
+    }
     // A file manager window cannot be used in Game Mode.
     if !game_mode {
         m.push("Open the ports folder (Desktop Mode)", Act::OpenFolder);
@@ -284,7 +293,7 @@ mod tests {
 
         let plan = MovePlan { ports: vec![port("SoH", "/a/SoH", "/b/SoH")], stale: vec![port("Dusk", "/a/Dusk", "/b/Dusk")], bytes: 20, ..Default::default() };
         let m = switch_screen(Path::new("/b"), "5 GB free", &plan, Some(1 << 40), 20);
-        assert!(m.labels.iter().any(|l| l.starts_with("Dusk: an old copy you kept is already there; the copy at /a/Dusk is newer")));
+        assert!(m.labels.iter().any(|l| l == "Dusk: an old copy you kept is already there; the copy at /a/Dusk is the one in use"));
         assert_eq!(m.act(m.select), Act::ReplaceStaleAndMove);
         assert!(m.row_of(Act::Move).is_none() && m.row_of(Act::SwitchWithoutMoving).is_none(), "no way to switch onto the stale copy");
 
@@ -300,12 +309,15 @@ mod tests {
         assert_eq!(m.labels[m.select], "Try again (the card is in now)");
         assert_eq!(m.labels[2], "Is the SD card in?");
         assert_eq!(m.row_of(Act::Quit), Some(m.labels.len() - 1));
-        let menu_desktop = menu(Path::new("/x"), "ok", true, (0, 0), Path::new("/d"), false);
+        let menu_desktop = menu(Path::new("/x"), "ok", true, (0, 0), Path::new("/d"), false, &[]);
         assert!(menu_desktop.row_of(Act::OpenFolder).is_some() && menu_desktop.row_of(Act::UseDefault).is_none());
-        let menu_game = menu(Path::new("/x"), "ok", false, (2, 5_000_000), Path::new("/d"), true);
+        let menu_game = menu(Path::new("/x"), "ok", false, (2, 5_000_000), Path::new("/d"), true, &[]);
         assert!(menu_game.row_of(Act::OpenFolder).is_none(), "no file manager in Game Mode");
         assert!(menu_game.labels[menu_game.row_of(Act::OldCopies).unwrap()].contains("(2, 5.0 MB)"));
         assert_eq!(menu_game.act(menu_game.select), Act::ChooseAnother);
+        let unfinished = menu(Path::new("/x"), "ok", true, (1, 10), Path::new("/d"), false, &["Ship of Harkinian".to_string()]);
+        assert_eq!(unfinished.act(unfinished.select), Act::FinishSwitch(0), "an unfinished switch comes first");
+        assert_eq!(unfinished.labels[unfinished.select], "Finish switching Ship of Harkinian (Steam and game files still point at the old copy)");
     }
 
     #[test]
