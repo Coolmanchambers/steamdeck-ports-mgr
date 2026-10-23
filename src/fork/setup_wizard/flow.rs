@@ -89,7 +89,7 @@ pub enum Action {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandOff {
     PortsFolder,
-    Import { installed_before: usize, opened: bool },
+    Import { installed_before: usize },
     RomFolder,
     Steam,
     Art,
@@ -99,7 +99,7 @@ pub enum HandOff {
 /// game files folder) are read again by the screen when it draws; this holds what only the wizard knows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Summary {
-    /// How many ports the import screen added, summed over the times it was opened; `None` = not opened.
+    /// How many ports the import screen moved in, summed over the times it was opened; `None` = not opened.
     pub imported: Option<usize>,
     pub rom_folder_opened: bool,
     pub steam_opened: bool,
@@ -130,9 +130,10 @@ pub trait Adapters {
     /// flow takes over (check, create after a confirm, offer to move installed ports, old-copy prompts);
     /// the wizard comes back when it is closed.
     fn ports_folder_step(&mut self, chosen: Option<PathBuf>);
-    /// Open the import screen (finding ports installed elsewhere). False when it did not open (refused,
-    /// with a message), so nothing is said about what it found.
-    fn import_step(&mut self) -> bool;
+    /// Open the import screen (finding ports installed elsewhere and moving them into the ports folder). It
+    /// tells the wizard when the user leaves it (`resume`), whichever way; quitting the app is the one exit that
+    /// does not.
+    fn import_step(&mut self);
     /// Open the game files folder choice and scan.
     fn rom_folder_step(&mut self);
     /// Open Add to Steam.
@@ -228,9 +229,9 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
             a.ports_folder_step(None);
         }
         Action::FindPorts if w.step == Step::Import => {
-            let installed_before = a.installed_count();
-            let opened = a.import_step();
-            w.handoff = Some(HandOff::Import { installed_before, opened });
+            // Recorded first: the import screen can tell the wizard it is done before `import_step` returns.
+            w.handoff = Some(HandOff::Import { installed_before: a.installed_count() });
+            a.import_step();
         }
         Action::ChooseRomFolder if w.step == Step::RomFolder => {
             w.handoff = Some(HandOff::RomFolder);
@@ -278,11 +279,11 @@ pub fn menu_returns_to_wizard(handoff: HandOff, menu: Menu) -> bool {
 pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
     let Some(handoff) = w.handoff.take() else { return a.show(w) };
     match handoff {
-        HandOff::Import { installed_before, opened: true } => {
+        HandOff::Import { installed_before } => {
             let added = a.installed_count().saturating_sub(installed_before);
             w.summary.imported = Some(w.summary.imported.unwrap_or(0) + added);
         }
-        HandOff::Import { opened: false, .. } | HandOff::PortsFolder => {}
+        HandOff::PortsFolder => {}
         HandOff::RomFolder => w.summary.rom_folder_opened = true,
         HandOff::Steam => w.summary.steam_opened = true,
         HandOff::Art => w.summary.art_opened = true,
@@ -300,8 +301,6 @@ pub(crate) mod fake {
         pub calls: Vec<String>,
         pub done_error: Option<String>,
         pub installed: usize,
-        /// Whether `import_step` reports that the screen opened (a `Fake` built with `..Default` says no).
-        pub import_refused: bool,
     }
 
     impl Adapters for Fake {
@@ -314,9 +313,8 @@ pub(crate) mod fake {
                 None => "ports_folder picker".into(),
             });
         }
-        fn import_step(&mut self) -> bool {
+        fn import_step(&mut self) {
             self.calls.push("import".into());
-            !self.import_refused
         }
         fn rom_folder_step(&mut self) {
             self.calls.push("rom".into());
@@ -503,13 +501,26 @@ mod tests {
     }
 
     #[test]
-    fn an_import_screen_that_did_not_open_adds_nothing_to_the_summary() {
-        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake { installed: 3, import_refused: true, ..Fake::default() });
+    fn the_import_hand_off_is_recorded_before_the_screen_opens_and_a_second_resume_counts_nothing_twice() {
+        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake { installed: 3, ..Fake::default() });
         press(&mut w, Action::FindPorts, &mut a);
+        assert_eq!(w.handoff, Some(HandOff::Import { installed_before: 3 }));
+        // The screen's finish and the wizard's own watcher can both come back; only the first reads the result.
+        a.installed = 5;
+        resume(&mut w, &mut a);
+        assert_eq!(w.summary.imported, Some(2));
         a.installed = 9;
         resume(&mut w, &mut a);
-        assert_eq!(w.summary.imported, None, "a refused open must not say that nothing new was found");
-        assert_eq!(w.step, Step::Import);
+        assert_eq!(w.summary.imported, Some(2));
+        assert_eq!((w.step, w.view.clone()), (Step::Import, View::Step));
+    }
+
+    #[test]
+    fn an_import_that_moved_nothing_is_reported_as_zero() {
+        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake { installed: 3, ..Fake::default() });
+        press(&mut w, Action::FindPorts, &mut a);
+        resume(&mut w, &mut a);
+        assert_eq!(w.summary.imported, Some(0));
     }
 
     #[test]
@@ -549,7 +560,7 @@ mod tests {
     #[test]
     fn each_hand_off_calls_its_adapter_once_and_records_it() {
         let cases = [
-            (Step::Import, Action::FindPorts, "import", HandOff::Import { installed_before: 7, opened: true }),
+            (Step::Import, Action::FindPorts, "import", HandOff::Import { installed_before: 7 }),
             (Step::RomFolder, Action::ChooseRomFolder, "rom", HandOff::RomFolder),
             (Step::Steam, Action::OpenSteam, "steam", HandOff::Steam),
             (Step::Steam, Action::OpenArtSources, "art", HandOff::Art),
@@ -620,7 +631,7 @@ mod tests {
     fn a_menu_only_returns_to_the_wizard_for_the_hand_off_that_leads_to_it() {
         let all = [
             HandOff::PortsFolder,
-            HandOff::Import { installed_before: 0, opened: true },
+            HandOff::Import { installed_before: 0 },
             HandOff::RomFolder,
             HandOff::Steam,
             HandOff::Art,

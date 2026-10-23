@@ -13,8 +13,7 @@
 //! Back rows that lead to the Settings list come back to the wizard instead (`resume_instead_of_menu`).
 //!
 //! Integration points: `ports_folder_step` (the ports-folder screens: shared picker, checks, moving
-//! installed ports) and `import_step` (today Settings > Adopt installed ports; it will point at the new
-//! import screen).
+//! installed ports) and `import_step` (the import screen, which tells the wizard when the user leaves it).
 
 use super::dialogs::{build_setup_wizard_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, DialogSlot};
 use super::state::AppState;
@@ -331,8 +330,8 @@ impl Adapters for Ui {
         ports_folder_step(&self.app, &self.router, chosen);
     }
 
-    fn import_step(&mut self) -> bool {
-        import_step(&self.app, &self.router)
+    fn import_step(&mut self) {
+        import_step(&self.app, &self.router);
     }
 
     fn rom_folder_step(&mut self) {
@@ -371,17 +370,16 @@ fn rom_folder(app: &AppState) -> Option<PathBuf> {
     RomLibraryStore::load(&app.paths.config_dir.join("rom_library.json")).ok().and_then(|s| s.rom_dir().map(Path::to_path_buf))
 }
 
-// -- Integration point: the import step ------------------------------------------------------------
+// -- The import step -----------------------------------------------------------------------------------
 
-/// Opens the screen that finds ports installed elsewhere. Today that is Settings > Adopt installed
-/// ports; it will be switched to the new import screen. The wizard counts the ports it added by
-/// comparing installed ports before and after, so the screen needs no callback.
-/// True when the screen really opened (it can refuse with a message), so a refusal is not reported as
-/// "no new ports".
-fn import_step(app: &Rc<AppState>, router: &Router) -> bool {
-    close_current_dialog(app, router);
-    super::steam_screens::open_adopt_screen(app, router);
-    matches!(&*app.dialog_nav.dialogs.borrow(), DialogSlot::Picker(d) if d.get_dialog_title() == "Adopt installed ports")
+/// Opens the import screen (`import_screen`, as step c of the wizard). It runs `finish` once when the user
+/// leaves it, whichever way (Continue setup, the end of an import with its old-copy questions and game
+/// file search, B on its main list or its progress list, or a notice); quitting the app is the one exit
+/// that does not. `finish` hands control back to the wizard, which counts the ports now installed against
+/// the count taken when the step was opened, so the Done page reports what the import really moved.
+fn import_step(app: &Rc<AppState>, router: &Router) {
+    let finish: super::import_screen::Finish = Rc::new(|app, router| with_wizard(app, router, |w, ui| flow::resume(w, ui)));
+    super::import_screen::open_with(app, router, true, Some(finish));
 }
 
 // -- The ports folder step -------------------------------------------------------------------------

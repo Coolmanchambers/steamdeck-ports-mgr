@@ -109,8 +109,9 @@ page B asks whether to skip setup; the cursor starts on "Keep going with setup")
    checked, a folder that does not exist yet is created only after you say so, and ports you already
    installed can be moved there. The old copies are kept until you choose to remove them. When you close those
    screens you are back in the wizard. The button reads "Keep this folder" until you pick a different one.
-3. **Ports you already have:** opens Adopt installed ports, which finds ports installed outside the app. When
-   you close it you are back in the wizard, which says how many ports were added.
+3. **Ports you already have:** opens Import ports, which finds ports installed outside the ports folder and moves
+   them in (game files checked first, old copies kept until you remove them). Continue setup, or B, brings you
+   back to the wizard, which says how many ports were moved.
 4. **Game files:** choose the folder that holds your ROMs and disc images (they are only read), then the app
    scans it. Close the results to come back.
 5. **Steam:** opens Add to Steam (Desktop Mode, Steam closed; in Game Mode you can queue the change) and,

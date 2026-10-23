@@ -435,12 +435,14 @@ Welcome and showing the current values. English only, plain wording.
   `ports_folder_screen::open_menu` and `rom_screens::open_game_files` ask `resume_instead_of_menu` first, which only
   acts while the wizard waits for the hand-off that leads to that menu (`flow::menu_returns_to_wizard`: the ports
   menu for the ports-folder step, Game files for the game-files step, Settings for any). The ports-folder flow
-  opening Game files itself ("Fix in Game files") is therefore left alone. "Ports you already had: N added" is the change in the number of
-  installed ports across the import screen (only when that screen really opened), so it needs no callback.
+  opening Game files itself ("Fix in Game files") is therefore left alone. "Ports you already had: N moved" is the change in the number of
+  installed ports across the import screen (the ports it moved into the ports folder). The import screen calls the
+  wizard back through its `finish` (once, on every exit except quitting the app); the watcher also resumes the
+  wizard if no dialog is open for a moment, and a second resume changes nothing.
 - **Adapters (the integration points):** `flow::Adapters` is everything the wizard needs from the rest of the app and
   the only thing the tests fake. In `setup_wizard_screen.rs`: `ports_folder_step` (calls
   `ports_folder_screen::{consider, choose_folder}`; the wizard keeps no ports-folder checks of its own) and
-  `import_step` (today Settings > Adopt installed ports; it will be pointed at the new import screen).
+  `import_step` (the import screen: `import_screen::open_with(app, router, true, Some(finish))`; `finish` runs once when the user leaves it, whichever way except quitting, and hands control back to the wizard).
   `start_if_first_run` waits while `ports_folder_screen::startup_dialog_pending()` is true (the missing ports
   folder message is due or showing) or any dialog is open.
 - **Not done by the wizard:** it never moves, deletes or overwrites anything itself. What the screens it opens do

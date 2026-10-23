@@ -195,12 +195,12 @@ fn step_page(w: &Wizard, ctx: &Context) -> Page {
         Step::PortsFolder => ports_page(w, ctx),
         Step::Import => {
             let mut p = page(w, "Ports you already have");
-            p.paragraphs = paras(&["Do you already have ports installed outside this app? It can find them and add them to your list. Nothing is deleted, and you are asked before anything is moved."]);
+            p.paragraphs = paras(&["Do you already have ports installed outside the ports folder? It can find them and move them in, checking their game files first. The old copies are kept until you choose to remove them."]);
             if let Some(n) = w.summary.imported {
                 p.facts = vec![match n {
-                    0 => "No new ports were added.".to_string(),
-                    1 => "1 port was added to your list.".to_string(),
-                    n => format!("{n} ports were added to your list."),
+                    0 => "No ports were moved.".to_string(),
+                    1 => "1 port was moved into your ports folder.".to_string(),
+                    n => format!("{n} ports were moved into your ports folder."),
                 }];
             }
             p.options.push(action_option("Find ports I already have...", "Look for ports installed elsewhere", Action::FindPorts));
@@ -282,8 +282,8 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
     p.facts = vec![
         format!("Ports folder: {}", shown(&ctx.ports_folder)),
         match s.imported {
-            Some(0) => "Ports you already had: none added".to_string(),
-            Some(n) => format!("Ports you already had: {n} added"),
+            Some(0) => "Ports you already had: none moved".to_string(),
+            Some(n) => format!("Ports you already had: {n} moved into the ports folder"),
             None if s.skipped.contains(&Step::Import) => "Ports you already had: skipped".to_string(),
             None => "Ports you already had: not checked".to_string(),
         },
@@ -649,10 +649,10 @@ mod tests {
         let mut w = at(Step::Import);
         let p = page_for(&w, &ctx());
         let t = all_text(&p);
-        assert!(t.contains("already have ports installed outside this app") && t.contains("Nothing is deleted"));
+        assert!(t.contains("already have ports installed outside the ports folder") && t.contains("old copies are kept until you choose to remove them"));
         assert!(p.facts.is_empty());
         assert_eq!(p.options[0].action, Action::FindPorts);
-        for (n, text) in [(0, "No new ports were added."), (1, "1 port was added to your list."), (4, "4 ports were added to your list.")] {
+        for (n, text) in [(0, "No ports were moved."), (1, "1 port was moved into your ports folder."), (4, "4 ports were moved into your ports folder.")] {
             w.summary.imported = Some(n);
             assert_eq!(page_for(&w, &ctx()).facts, [text]);
         }
@@ -694,7 +694,7 @@ mod tests {
             p.facts,
             [
                 "Ports folder: /home/deck/Apps/dpm/Library",
-                "Ports you already had: 3 added",
+                "Ports you already had: 3 moved into the ports folder",
                 "Game files folder: /roms",
                 "Steam: opened Add to Steam (it says there what was added)",
                 "Artwork sources: opened"
