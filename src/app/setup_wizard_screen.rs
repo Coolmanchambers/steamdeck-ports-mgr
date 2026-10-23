@@ -1,6 +1,6 @@
 //! The setup wizard's screen: one page per view (`ui/fork/setup-wizard.slint`: header with the step
 //! count and a progress bar, a title, wrapped text, a summary card, a few real options and a footer of
-//! buttons), drawn from `crate::fork::setup_wizard::text::Page`.
+//! buttons), drawn from `crate::fork::setup_wizard::text::Page` by `page_dialog::show_page`.
 //!
 //! It opens by itself at the first start (`start_if_first_run`, called once from `main.rs`) and any
 //! time from Settings > Setup wizard... (`open_from_settings`). Focus moves only between options and
@@ -15,18 +15,17 @@
 //! Integration points: `ports_folder_step` (the ports-folder screens: shared picker, checks, moving
 //! installed ports) and `import_step` (the import screen, which tells the wizard when the user leaves it).
 
-use super::dialogs::{build_setup_wizard_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, DialogSlot};
+use super::dialogs::{close_current_dialog, dialog_is_open};
+use super::page_dialog::{show_page, Handlers};
 use super::state::AppState;
 use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts};
 use crate::fork::rom_library::RomLibraryStore;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
-use crate::fork::setup_wizard::flow::{self, Action, Adapters, Menu, Mode, Wizard};
-use crate::fork::setup_wizard::text::{self, Context, Focus, Page};
+use crate::fork::setup_wizard::flow::{self, Adapters, Menu, Mode, Wizard};
+use crate::fork::setup_wizard::text::{self, Context};
 use crate::fork::setup_wizard::{places, setup_state, SetupState};
 use crate::ui::gamepad_router::GamepadRouter;
-use crate::{SetupWizardDialog, WizardOption};
 use serde_json::Value;
-use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -50,8 +49,6 @@ thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
     static WATCH: slint::Timer = slint::Timer::default();
     static QUIET: Cell<u32> = const { Cell::new(0) };
-    /// The focused item of the page on screen (an index into `text::focusables`).
-    static FOCUS: Cell<usize> = const { Cell::new(0) };
     /// The folder an earlier build recorded, offered in this run only.
     static EARLIER: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     /// The ports folder when this wizard run started.
@@ -188,132 +185,23 @@ fn context(app: &AppState) -> Context {
     }
 }
 
-fn model<T: Clone + 'static>(items: Vec<T>) -> slint::ModelRc<T> {
-    slint::ModelRc::new(slint::VecModel::from(items))
-}
-
-fn fill(d: &SetupWizardDialog, w: &Wizard, page: &Page) {
-    d.set_dialog_title(text::title(w).into());
-    d.set_header_text(text::APP_NAME.into());
-    d.set_step_text(text::step_text(page).into());
-    d.set_step_count(page.step_count as i32);
-    d.set_step_index(page.step_number as i32 - 1);
-    d.set_page_title(page.title.clone().into());
-    d.set_paragraphs(model(page.paragraphs.iter().map(|p| p.clone().into()).collect::<Vec<slint::SharedString>>()));
-    d.set_facts(model(page.facts.iter().map(|f| f.clone().into()).collect::<Vec<slint::SharedString>>()));
-    d.set_options(model(
-        page.options
-            .iter()
-            .enumerate()
-            .map(|(i, o)| WizardOption {
-                title: o.title.clone().into(),
-                detail: o.detail.clone().into(),
-                kind: i32::from(o.choice.is_some()),
-                chosen: o.choice == Some(true),
-                enabled: o.enabled,
-                focus: text::option_number(page, i),
-            })
-            .collect::<Vec<_>>(),
-    ));
-    d.set_footnote(page.footnote.clone().into());
-    let label = |slot: usize| page.buttons[slot].as_ref().map(|b| b.label.clone()).unwrap_or_default();
-    d.set_left_text(label(text::LEFT).into());
-    d.set_middle_text(label(text::MIDDLE).into());
-    d.set_extra_text(label(text::EXTRA).into());
-    d.set_right_text(label(text::RIGHT).into());
-    d.set_primary_slot(page.primary.map_or(-1, |s| s as i32));
-    d.set_focus_left(text::button_number(page, text::LEFT));
-    d.set_focus_middle(text::button_number(page, text::MIDDLE));
-    d.set_focus_extra(text::button_number(page, text::EXTRA));
-    d.set_focus_right(text::button_number(page, text::RIGHT));
-}
-
-/// Marks focus number `n` as selected: the window draws it, and scrolls to it when it is an option.
-fn select(d: &SetupWizardDialog, page: &Page, n: usize) {
-    FOCUS.with(|f| f.set(n));
-    let option = match text::focus_at(page, n) {
-        Some(Focus::Option(i)) => i as i32,
-        _ => -1,
-    };
-    d.set_selected_option(option);
-    d.set_selected_index(n as i32);
-}
-
 fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
     let ctx = context(app);
-    let page = Rc::new(text::page_for(w, &ctx));
-    let Some(dialog) = build_setup_wizard_dialog(app, router) else { return };
-    fill(&dialog, w, &page);
-    select(&dialog, &page, text::initial_focus(&page));
-
-    let press = |app: &Rc<AppState>, router: &Router, action: Action| with_wizard(app, router, |w, ui| flow::press(w, action, ui));
-    {
-        let (app, router, page) = (app.clone(), router.clone(), page.clone());
-        dialog.on_option_requested(move |i| {
-            // A disabled option (the folder in use, a drive that cannot hold ports) does nothing.
-            if let Some(option) = page.options.get(i as usize).filter(|o| o.enabled) {
-                press(&app, &router, option.action.clone());
-            }
-        });
-    }
-    {
-        let (app, router, page) = (app.clone(), router.clone(), page.clone());
-        dialog.on_button_requested(move |slot| {
-            if let Some(button) = page.buttons.get(slot as usize).and_then(Option::as_ref) {
-                press(&app, &router, button.action.clone());
-            }
-        });
-    }
-    {
-        let (weak, page) = (dialog.as_weak(), page.clone());
-        dialog.on_nav_hovered(move |n| {
-            if let (Some(d), true) = (weak.upgrade(), n >= 0) {
-                select(&d, &page, n as usize);
-            }
-        });
-    }
-    {
-        let (weak, page) = (dialog.as_weak(), page.clone());
-        dialog.on_move_requested(move |dx, dy| {
-            let next = text::move_focus(&page, FOCUS.with(Cell::get), dx, dy);
-            if let Some(d) = weak.upgrade() {
-                select(&d, &page, next);
-            }
-        });
-    }
-    {
-        let (app, router, page) = (app.clone(), router.clone(), page.clone());
-        dialog.on_activate_requested(move || {
-            if let Some(action) = text::action_at(&page, FOCUS.with(Cell::get)) {
-                press(&app, &router, action);
-            }
-        });
-    }
-    {
+    let page = text::page_for(w, &ctx);
+    let handlers = Handlers {
+        on_action: Rc::new(|app, router, action| with_wizard(app, router, |w, ui| flow::press(w, action, ui))),
         // B and Escape: back one step (a question or a notice: its own way out).
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_close_requested(move || {
-            with_wizard(&app, &router, |w, ui| {
+        on_back: Rc::new(|app, router| {
+            with_wizard(app, router, |w, ui| {
                 let action = flow::back_action(w);
                 flow::press(w, action, ui);
             });
-        });
-    }
-    {
-        // The title bar's X: leave the wizard. Setup stays unfinished, so it returns at the next start.
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_exit_requested(move || end_session(&app, &router));
-    }
-    let _ = dialog.show();
-    let for_window = dialog.clone_strong();
-    finish_dialog_open(app, router, DialogSlot::SetupWizard(dialog));
-    // The window system's own close (a window manager's button, Alt+F4) leaves the wizard like the X does;
-    // `finish_dialog_open` would only close the page, which the wizard would then draw again.
-    let (app, router) = (app.clone(), router.clone());
-    for_window.window().on_close_requested(move || {
-        end_session(&app, &router);
-        slint::CloseRequestResponse::HideWindow
-    });
+        }),
+        // The title bar's X, or the window system's own close: leave the wizard. Setup stays unfinished, so it
+        // returns at the next start.
+        on_exit: Rc::new(end_session),
+    };
+    show_page(app, router, page, handlers);
 }
 
 // -- The adapters ----------------------------------------------------------------------------------

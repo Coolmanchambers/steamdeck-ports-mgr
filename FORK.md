@@ -104,6 +104,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `ui/dialogs/info.slint` | ROM search: a second `DialogButton`, "Game files..." (button index 11), on the same row as "Restore saves..." (the two are centered side by side; the row and its height appear when either is shown). Property `game-files-enabled`, callback `game-files-requested` |
 | 2026-10-22 | `src/app/gamepad_target.rs` | ROM search: `INFO_BUTTON_COUNT` 11 to 12; the new button in `info_buttons_enabled` and `invoke_info_button` |
 | 2026-10-22 | `src/app/dialogs.rs` | ROM search: Info sets `game-files-enabled` for an installed port that names game files and wires it to `rom_screens::open_from_info` (one import, two lines) |
+| 2026-10-23 | `src/app/mod.rs` | Simple setup, stages 1-2: two lines registering `import_cards_screen` and `page_dialog` |
+| 2026-10-23 | `ui/app-window.slint` | Simple setup: `WizardCard` and `WizardTile` imported from `ui/fork/setup-wizard.slint` and exported with the wizard's other types (one line each place) |
+| 2026-10-23 | `tools/smoke-test.sh` | Simple setup: the Import ports window is found by the `Import ports: ` title prefix (each card page has its own title: found, port N of M, move, old copies) instead of the exact title of the old list |
+| 2026-10-23 | `src/fork/page.rs`, `src/fork/art/thumbs.rs`, `src/fork/custom_repo/parse.rs`, `src/fork/import/{cards,old_batch}.rs`, `src/app/{page_dialog,import_cards_screen}.rs`, `src/app/ports_folder_screen/batch.rs`, `ui/fork/setup-wizard.slint` | Simple setup, stages 1-2 (fork-owned files, listed for the record): Import ports shows cards instead of a list (found page with cover tiles, one card per port, a move page), "Not a port" is saved in `fork-settings.json` (`import_ignored`), and one page asks about all the old copies of an import (`prompt_old_copies_batch_then`; Settings > Ports folder keeps the per-copy questions). The wizard's page type became the shared generic `Page<A>`; its window draws through `page_dialog::show_page`. `prompt_old_copies_then` and its end-hook (used only by the old import list) are gone |
 
 Files added by this fork:
 

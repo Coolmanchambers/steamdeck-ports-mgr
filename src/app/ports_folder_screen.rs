@@ -10,6 +10,8 @@
 //! - `startup_dialog_pending()`: true while the "not available" message is due or showing; other
 //!   startup dialogs wait for it.
 //! - `quit_waits_for_move(app, router)`: Close and Quit ask it; a running move is stopped first.
+//! - `prompt_old_copies_batch_then(app, router, copies, summary, then)`: the one page about all the old copies of an
+//!   import (`batch.rs`); Settings > Ports folder keeps the per-copy prompts below.
 //! - `prompt_old_copies(app, router, copies, summary)`: the "Remove the old copy now?" prompts that
 //!   follow a move (stage 2's import calls it after its own moves).
 //! - `open_old_copies(app, router)`: the list of old copies kept after moves.
@@ -41,9 +43,6 @@ use std::rc::Rc;
 use std::time::Duration;
 
 type Router = Rc<RefCell<GamepadRouter>>;
-/// Gets the summary when the questions ended, or `None` when they were abandoned (another dialog took the
-/// screen while an old copy was being checked), so a caller waiting on it can still finish its flow.
-type EndHook = Rc<dyn Fn(&Rc<AppState>, &Router, Option<String>)>;
 
 const TITLE: &str = "Ports folder";
 
@@ -59,8 +58,6 @@ thread_local! {
     static JOB_TIMER: slint::Timer = slint::Timer::default();
     static CHECK_TIMER: slint::Timer = slint::Timer::default();
     static CHECK_RUNNING: Cell<bool> = const { Cell::new(false) };
-    /// What the import screen wants done when its run of old-copy questions ends (see `prompt_old_copies_then`).
-    static END_HOOK: RefCell<Option<(String, EndHook)>> = const { RefCell::new(None) };
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -701,6 +698,9 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
 
 // -- Old copies -----------------------------------------------------------------------------------
 
+mod batch;
+pub(crate) use batch::prompt_old_copies_batch_then;
+
 /// Everything the removal check needs, owned, so it can also run on the worker thread.
 struct RemovalParts {
     home: PathBuf,
@@ -740,77 +740,24 @@ impl RemovalParts {
     }
 }
 
-/// Marks a summary as belonging to one `prompt_old_copies_then` run: the hook fires only when that run's
-/// own summary arrives at the end, never for another screen's run.
-const END_TOKEN: char = '\u{2063}';
-
-fn strip_end_token(summary: &str) -> String {
-    match summary.strip_prefix(END_TOKEN).and_then(|r| r.split_once(END_TOKEN)) {
-        Some((_, rest)) => rest.to_string(),
-        None => summary.to_string(),
-    }
-}
-
-fn take_end_hook(summary: &str) -> Option<(String, EndHook)> {
-    let token = summary.strip_prefix(END_TOKEN)?.split_once(END_TOKEN)?.0.to_string();
-    let (mine, hook) = END_HOOK.with(|h| h.borrow_mut().take())?;
-    if mine != token {
-        // Another run's hook: leave it for its own run.
-        END_HOOK.with(|h| *h.borrow_mut() = Some((mine, hook)));
-        return None;
-    }
-    Some((strip_end_token(summary), hook))
-}
-
-/// A run's summary split into the hook waiting on it (taken, so it fires once) and the text without the token.
-fn split_run(summary: &str) -> (Option<EndHook>, String) {
-    match take_end_hook(summary) {
-        Some((rest, hook)) => (Some(hook), rest),
-        None => (None, strip_end_token(summary)),
-    }
-}
-
-/// `prompt_old_copies`, then `then(app, router, Some(summary))` instead of the closing message (the summary
-/// is what that message would have said). B on a question keeps the remaining old copies (they stay
-/// listed under Old copies) and the run still ends normally. `then` gets `None` only when the run was
-/// abandoned because another dialog took the screen.
-/// Used by the import screen to go on to the game file search after the questions. Only one hook is
-/// kept: a newer one replaces an abandoned older one.
-pub(crate) fn prompt_old_copies_then(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String, then: impl Fn(&Rc<AppState>, &Router, Option<String>) + 'static) {
-    if copies.is_empty() {
-        return then(app, router, Some(summary));
-    }
-    let token = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
-    END_HOOK.with(|h| *h.borrow_mut() = Some((token.clone(), Rc::new(then))));
-    prompt_old_copies(app, router, copies, format!("{END_TOKEN}{token}{END_TOKEN}{summary}"));
-}
-
 /// "Remove the old copy now?" for each entry in turn, then `summary` (with what was removed or kept).
 /// Nothing is removed without the user choosing "Remove old copy" for that entry; Keep is preselected.
 pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies: VecDeque<OldCopy>, summary: String) {
     let Some(entry) = copies.pop_front() else {
-        if let Some((rest, hook)) = take_end_hook(&summary) {
-            return hook(app, router, Some(rest));
-        }
         if !summary.is_empty() {
-            message(app, router, &strip_end_token(&summary));
+            message(app, router, &summary);
         }
         return;
     };
     // One check at a time: a second request (another screen) is not allowed to replace the first.
     if CHECK_RUNNING.with(Cell::get) {
-        let (hook, summary) = split_run(&summary);
         let mut text = "Another old copy is being checked right now. These old copies stay listed under Settings > Ports folder > Old copies, to remove later.".to_string();
         if !summary.is_empty() {
             text = format!("{summary}
 
 {text}");
         }
-        // A caller waiting on this run gets the text to show instead of the closing message.
-        return match hook {
-            Some(hook) => hook(app, router, Some(text)),
-            None => message(app, router, &text),
-        };
+        return message(app, router, &text);
     }
     // The check walks the old copy (gigabytes on an SD card): on the worker thread, with a progress note.
     let parts = RemovalParts::of(app);
@@ -840,12 +787,6 @@ pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies:
             } else if super::dialogs::dialog_is_open(&app2) {
                 // Something else is on screen now: leave it; the old copies stay listed under Old copies.
                 eprintln!("ports folder: old-copy prompt skipped, another dialog is open");
-                // The caller waiting on this run is told it was abandoned; nobody else's hook is touched.
-                if let Some((_, _, summary)) = pending.borrow_mut().take() {
-                    if let Some((_, hook)) = take_end_hook(&summary) {
-                        hook(&app2, &router2, None);
-                    }
-                }
                 return;
             }
             if let Some((entry, copies, summary)) = pending.borrow_mut().take() {
@@ -1025,62 +966,4 @@ fn finish_switch(app: &Rc<AppState>, router: &Router, record: &OldCopy) {
     let summary = if text.is_empty() { format!("Finished switching {}.", record.name) } else { format!("Finished switching {}.\n\n{text}", record.name) };
     let entry = old_copies::load(&config_dir).unwrap_or_default().into_iter().find(|o| o.old_path == record.old_path);
     prompt_old_copies(app, router, entry.into_iter().collect(), summary);
-}
-
-#[cfg(test)]
-mod end_hook_tests {
-    use super::*;
-
-    fn tagged(token: &str, text: &str) -> String {
-        format!("{END_TOKEN}{token}{END_TOKEN}{text}")
-    }
-
-    fn set_hook(token: &str) {
-        END_HOOK.with(|h| *h.borrow_mut() = Some((token.to_string(), Rc::new(|_, _, _| {}))));
-    }
-
-    #[test]
-    fn the_hook_fires_only_for_the_run_that_registered_it_and_gets_the_summary_back() {
-        set_hook("7");
-        // Another screen's summary (no token) and another run's token leave the hook alone.
-        assert!(take_end_hook("Moved 2 port(s).").is_none());
-        assert!(take_end_hook(&tagged("8", "other run")).is_none());
-        assert!(END_HOOK.with(|h| h.borrow().is_some()), "still waiting for its own run");
-        let (rest, _) = take_end_hook(&tagged("7", "Moved 1.\n\nKept the old copy.")).expect("its own run");
-        assert_eq!(rest, "Moved 1.\n\nKept the old copy.");
-        assert!(END_HOOK.with(|h| h.borrow().is_none()), "fires once");
-        assert!(take_end_hook(&tagged("7", "again")).is_none());
-    }
-
-    #[test]
-    fn a_busy_check_takes_the_hook_so_it_neither_leaks_nor_waits_forever() {
-        set_hook("9");
-        let (hook, text) = split_run(&tagged("9", "Moved 2."));
-        assert!(hook.is_some(), "its own hook is handed over");
-        assert_eq!(text, "Moved 2.");
-        assert!(END_HOOK.with(|h| h.borrow().is_none()), "nothing left behind");
-        // Someone else's run, or no hook at all: no hook, and the token never shows.
-        set_hook("9");
-        let (other, text) = split_run(&tagged("1", "Other."));
-        assert!(other.is_none() && text == "Other.");
-        assert!(END_HOOK.with(|h| h.borrow().is_some()), "another run's hook stays for its own run");
-        END_HOOK.with(|h| h.borrow_mut().take());
-        let (none, text) = split_run("plain");
-        assert!(none.is_none() && text == "plain");
-    }
-
-    #[test]
-    fn the_token_never_shows_in_a_message() {
-        assert_eq!(strip_end_token(&tagged("7", "text")), "text");
-        assert_eq!(strip_end_token("plain"), "plain");
-        assert_eq!(strip_end_token(&tagged("7", "")), "");
-    }
-
-    #[test]
-    fn the_token_survives_the_edits_the_questions_make_to_the_summary() {
-        let summary = tagged("7", "Moved 1.");
-        let kept = format!("{}\n\nKept the old copy of X at /a (remove it later).", summary);
-        assert!(kept.trim_start().starts_with(END_TOKEN), "trim_start must not eat the token");
-        assert_eq!(strip_end_token(kept.trim_start()), "Moved 1.\n\nKept the old copy of X at /a (remove it later).");
-    }
 }

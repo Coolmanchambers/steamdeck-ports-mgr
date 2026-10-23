@@ -91,7 +91,7 @@ impl Batch {
         let freed = self.freed_bytes();
         let size = if freed > 0 { format!(" The old {} {} {}.", copies(n), if n == 1 { "uses" } else { "use" }, human_bytes(freed)) } else { String::new() };
         p.paragraphs = vec![format!("Your ports were copied and checked.{size}")];
-        p.tiles = removable.iter().map(|c| Tile { art: c.art.clone(), label: c.copy.name.clone() }).collect();
+        p.tiles = removable.iter().map(|c| Tile::shown(c.art.clone(), c.copy.name.clone())).collect();
         let (keep, remove) = if n == 1 { ("Keep it", "Remove it") } else { ("Keep them", "Remove them") };
         p.options = vec![
             PageOption { title: keep.to_string(), detail: "Nothing is deleted. You can remove them later from Settings.".to_string(), choice: None, enabled: true, recommended: true, action: BatchAction::Keep },

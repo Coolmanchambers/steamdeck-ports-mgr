@@ -35,10 +35,16 @@ pub fn link_instead(requests: &[&MoveRequest], catalog: &[Port], library_dir: &P
     let mut failures = Vec::new();
     let mut lines = Vec::new();
     for request in requests {
-        let Some(port) = catalog.iter().find(|p| p.key() == request.port_key) else { continue };
-        match adopt::adopt(&request.from, port, library_dir, local_json, &backup_stamp()) {
+        // A Deck-ready project the catalog lacks is not in the catalog when the import refuses it (its entry is
+        // added only just before a move that can run), so the link builds it from the same entry.
+        let from_entry = || request.new_entry.as_ref().and_then(|n| crate::core::models::port_from_value(&n.value).ok());
+        let Some(port) = catalog.iter().find(|p| p.key() == request.port_key).cloned().or_else(from_entry) else {
+            failures.push(format!("{} was not linked: it is not in your port list.", request.port_name));
+            continue;
+        };
+        match adopt::adopt(&request.from, &port, library_dir, local_json, &backup_stamp()) {
             Ok(_) => {
-                if let Ok(mut registered) = crate::core::models::port_from_value(&adopt::local_entry(port)) {
+                if let Ok(mut registered) = crate::core::models::port_from_value(&adopt::local_entry(&port)) {
                     registered.user_managed = true;
                     linked.push(registered);
                 }
@@ -154,5 +160,33 @@ mod tests {
         assert!(!confirm_text(&reqs.iter().collect::<Vec<_>>()).to_lowercase().contains("json"));
         let failure = adopt::AdoptError::AlreadyRegistered("SoH".into()).to_string();
         assert!(!failure.to_lowercase().contains("json"), "{failure}");
+    }
+
+    #[test]
+    fn a_deck_ready_only_port_is_linked_from_its_own_entry_when_the_catalog_lacks_it() {
+        use crate::fork::import::targets::NewEntry;
+        let h = fake_home("link_new_entry");
+        let value = serde_json::json!({"name": "The Legend of Dragoon", "folder": "Severed-Chains", "source": "https://github.com/Legend-of-Dragoon-Modding/Severed-Chains"});
+        put_exe(&h.home.join("Games/Severed_Chains_Steam_Deck/run.sh"), b"x");
+        let mut f = found(&h, "Games/Severed_Chains_Steam_Deck", "The Legend of Dragoon (Severed-Chains)", "Legend-of-Dragoon-Modding/Severed-Chains", "Severed-Chains");
+        f.new_entry = Some(NewEntry { list_name: "The Legend of Dragoon (Severed-Chains)".into(), value });
+        let reqs = build_requests(&[&f], &h.library);
+        let local = h.home.join("ports.local.json");
+        let done = link_instead(&reqs.iter().collect::<Vec<_>>(), &catalog(), &h.library, &local);
+        assert_eq!(done.linked.len(), 1, "{}", done.text);
+        assert!(done.text.contains("Linked 1:"), "{}", done.text);
+        assert!(fs::symlink_metadata(h.library.join("Severed-Chains")).unwrap().file_type().is_symlink());
+        assert!(h.home.join("Games/Severed_Chains_Steam_Deck/run.sh").exists(), "the original stays");
+    }
+
+    #[test]
+    fn a_port_that_is_in_no_list_is_reported_not_skipped_silently() {
+        let h = fake_home("link_unknown");
+        let f = found(&h, "Applications/SoH", "Mystery", "nobody/mystery", "mystery");
+        let reqs = build_requests(&[&f], &h.library);
+        let done = link_instead(&reqs.iter().collect::<Vec<_>>(), &catalog(), &h.library, &h.home.join("ports.local.json"));
+        assert!(done.linked.is_empty());
+        assert_eq!(done.text, "Mystery was not linked: it is not in your port list.");
+        assert!(fs::symlink_metadata(h.library.join("mystery")).is_err(), "nothing was made");
     }
 }

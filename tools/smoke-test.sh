@@ -110,11 +110,11 @@ if [ -n "$wiz" ]; then
             # "Find ports I already have..." (the only option) opens the real Import ports screen; B on it
             # hands control back to the wizard's import step.
             press_keys "$resting" Up Return
-            imp=$(find_window '^Import ports$') || imp=""
+            imp=$(find_window '^Import ports: ') || imp=""
             import -window root "$OUT/fresh-import-screen.png" 2>/dev/null
             check "the wizard's import step opens the Import ports screen" '[ -n "$imp" ]'
             if [ -n "$imp" ]; then
-                sleep 3; imp=$(find_window '^Import ports$') || imp=""   # the scan list gives way to the main list
+                sleep 3; imp=$(find_window '^Import ports: ') || imp=""   # the scan list gives way to the main list
                 press_keys "$imp" Escape
                 resting=$(find_window '^Setup wizard: Ports you already have') || resting=""
                 check "B on the Import ports screen returns to the wizard's import step" '[ -n "$resting" ]'
@@ -240,12 +240,12 @@ if [ "$alive" = yes ]; then
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
             xdotool mousemove $((X + 71)) $((Y + 353)) click 1; sleep 4
             import -window root "$OUT/import-ports.png" 2>/dev/null
-            imp=$(xdotool search --name "^Import ports$" 2>/dev/null | head -1)
+            imp=$(xdotool search --name "^Import ports: " 2>/dev/null | head -1)
             imp_alive=no; kill -0 "$APP" 2>/dev/null && imp_alive=yes
             check "Import ports screen opens and the app keeps running" '[ "$imp_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$imp" ]'
             if [ -n "$imp" ]; then
                 xdotool windowfocus "$imp" 2>/dev/null; sleep 0.3; xdotool key Escape
-                for _wait in $(seq 1 15); do [ -z "$(xdotool search --name "^Import ports$" 2>/dev/null)" ] && break; sleep 0.2; done
+                for _wait in $(seq 1 15); do [ -z "$(xdotool search --name "^Import ports: " 2>/dev/null)" ] && break; sleep 0.2; done
                 xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
                 eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
                 # The gear only reacts to a click once the pointer has been seen over it (no window manager here).

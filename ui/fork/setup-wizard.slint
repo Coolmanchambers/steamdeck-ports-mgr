@@ -19,7 +19,23 @@ export struct WizardOption {
     chosen: bool,
     // false: shown dimmed and cannot be chosen or focused (the folder in use, a drive that cannot hold ports)
     enabled: bool,
+    // drawn as the recommended choice: filled with the accent colour
+    recommended: bool,
     // the focus number of this option (-1 when it cannot take focus)
+    focus: int,
+}
+
+// One port shown big: its cover (an empty image shows the name instead), its name and a few short lines.
+export struct WizardCard {
+    image: image,
+    title: string,
+    lines: [string],
+}
+
+// A cover with its name under it. `focus` is the focus number when the tile can be chosen (-1: shown only).
+export struct WizardTile {
+    image: image,
+    label: string,
     focus: int,
 }
 
@@ -67,6 +83,7 @@ component OptionRow inherits Rectangle {
     in property <int> kind: 0;
     in property <bool> chosen: false;
     in property <bool> enabled: true;
+    in property <bool> recommended: false;
     in property <bool> selected: false;
     in property <length> border-px: 1px;
     in property <length> font-size: 14px;
@@ -74,9 +91,11 @@ component OptionRow inherits Rectangle {
     callback moved(length, length);
 
     opacity: root.enabled ? 1.0 : 0.5;
-    background: root.selected ? Theme.selected-background : Theme.list-background;
-    border-width: root.border-px;
-    border-color: root.selected ? SemanticColors.selection-border : Theme.border-color;
+    background: root.recommended
+        ? (root.selected ? SemanticColors.info-hover : SemanticColors.info)
+        : (root.selected ? Theme.selected-background : Theme.list-background);
+    border-width: root.recommended && root.selected ? root.border-px * 2 : root.border-px;
+    border-color: root.selected ? SemanticColors.selection-border : (root.recommended ? SemanticColors.info : Theme.border-color);
 
     TouchArea {
         enabled: root.enabled;
@@ -90,7 +109,7 @@ component OptionRow inherits Rectangle {
 
     property <length> mark-size: root.font-size * 1.1;
     property <length> text-x: root.kind == 1 ? root.font-size * 0.9 + root.mark-size + root.font-size * 0.7 : root.font-size * 0.9;
-    property <color> text-color: root.selected ? Theme.selected-text : Theme.list-text;
+    property <color> text-color: root.recommended ? SemanticColors.text-on-accent : (root.selected ? Theme.selected-text : Theme.list-text);
 
     if root.kind == 1: Rectangle {
         x: root.font-size * 0.9;
@@ -117,7 +136,7 @@ component OptionRow inherits Rectangle {
         text: root.title;
         color: root.text-color;
         font-size: root.font-size;
-        font-weight: root.kind == 1 && root.chosen ? 700 : 400;
+        font-weight: (root.kind == 1 && root.chosen) || root.recommended ? 700 : 400;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -127,10 +146,130 @@ component OptionRow inherits Rectangle {
         width: root.width - root.text-x - root.font-size * 0.9;
         height: root.height * 0.4;
         text: root.detail;
-        color: root.selected ? Theme.selected-text : Theme.search-text;
+        color: root.recommended ? SemanticColors.text-on-accent : (root.selected ? Theme.selected-text : Theme.search-text);
         font-size: root.font-size * 0.85;
         vertical-alignment: center;
         overflow: elide;
+    }
+}
+
+// A cover, or the port's name on a plain tile when there is no picture (yet).
+component Cover inherits Rectangle {
+    in property <image> source;
+    in property <string> label: "";
+    in property <length> font-size: 14px;
+    in property <length> border-px: 1px;
+    in property <bool> selected: false;
+
+    background: Theme.search-background;
+    border-width: root.selected ? root.border-px * 3 : root.border-px;
+    border-color: root.selected ? SemanticColors.selection-border : Theme.border-color;
+    clip: true;
+
+    if root.source.width > 0: Image {
+        source: root.source;
+        width: 100%;
+        height: 100%;
+        image-fit: contain;
+    }
+    if root.source.width == 0: Text {
+        x: root.font-size * 0.4;
+        width: root.width - root.font-size * 0.8;
+        height: root.height;
+        text: root.label;
+        color: Theme.list-text;
+        font-size: root.font-size;
+        font-weight: 700;
+        wrap: word-wrap;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// One port big: the cover on the left, the name and a few short lines beside it.
+component CardBox inherits Rectangle {
+    in property <WizardCard> card;
+    in property <length> font-size: 14px;
+    in property <length> border-px: 1px;
+    property <length> pad: root.font-size * 0.9;
+
+    background: Theme.search-background;
+    border-width: root.border-px;
+    border-color: Theme.border-color;
+
+    cover := Cover {
+        x: root.pad;
+        y: root.pad;
+        height: root.height - root.pad * 2;
+        width: self.height * 0.68;
+        source: root.card.image;
+        label: root.card.title;
+        font-size: root.font-size * 0.9;
+        border-px: root.border-px;
+    }
+    VerticalLayout {
+        x: cover.x + cover.width + root.pad;
+        y: root.pad;
+        width: root.width - self.x - root.pad;
+        height: root.height - root.pad * 2;
+        alignment: start;
+        spacing: root.font-size * 0.5;
+        Text {
+            text: root.card.title;
+            color: Theme.list-text;
+            font-size: root.font-size * 1.5;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        for line in root.card.lines: Text {
+            text: line;
+            color: Theme.list-text;
+            font-size: root.font-size;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// A cover with the port's name under it.
+component TileBox inherits Rectangle {
+    in property <WizardTile> tile;
+    in property <bool> selected: false;
+    in property <length> font-size: 14px;
+    in property <length> border-px: 1px;
+    callback clicked();
+    callback moved(length, length);
+    property <length> label-h: root.font-size * 2.6;
+
+    VerticalLayout {
+        spacing: root.font-size * 0.25;
+        Cover {
+            vertical-stretch: 1;
+            source: root.tile.image;
+            label: root.tile.label;
+            font-size: root.font-size * 0.85;
+            border-px: root.border-px;
+            selected: root.selected;
+        }
+        Text {
+            height: root.label-h - root.font-size * 0.25;
+            text: root.tile.label;
+            color: Theme.list-text;
+            font-size: root.font-size * 0.85;
+            wrap: word-wrap;
+            overflow: elide;
+            horizontal-alignment: center;
+            vertical-alignment: top;
+        }
+    }
+    TouchArea {
+        enabled: root.tile.focus >= 0;
+        clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.move) {
+                root.moved(self.mouse-x, self.mouse-y);
+            }
+        }
     }
 }
 
@@ -154,6 +293,11 @@ export component SetupWizardDialog inherits Window {
     in property <string> page-title: "";
     in property <[string]> paragraphs: [];
     in property <[string]> facts: [];
+    // One port shown big (the Import ports cards), and a row of covers (found ports, ports to move).
+    in property <bool> large: false;
+    in property <bool> has-card: false;
+    in property <WizardCard> card;
+    in property <[WizardTile]> tiles: [];
     in property <[WizardOption]> options: [];
     in property <string> footnote: "";
     // The footer, left to right: left (Back), middle (Skip), extra (Close the wizard in a rerun), right
@@ -173,6 +317,7 @@ export component SetupWizardDialog inherits Window {
     in property <int> selected-option: -1;
 
     callback option-requested(int);
+    callback tile-requested(int);
     callback button-requested(int);
     callback nav-hovered(int);
     callback close-requested();
@@ -195,7 +340,9 @@ export component SetupWizardDialog inherits Window {
     property <length> gutter: 14px / Theme.scale-factor;
     property <length> spacing: 8px / Theme.scale-factor;
     property <length> button-padding: 18px / Theme.scale-factor;
-    property <length> option-height: root.row-height * 1.3;
+    // The Import ports cards read from further away: bigger text, taller choices, bigger covers.
+    property <length> body-font: root.item-font-px * (root.large ? 1.25 : 1.0);
+    property <length> option-height: root.large ? max(root.row-height * 1.6, root.height * 0.088) : root.row-height * 1.3;
     property <length> bar-thickness: root.item-font-px * 0.4;
 
     // A pointer that merely rests where a page opened must not take the highlight from the controller
@@ -352,7 +499,7 @@ export component SetupWizardDialog inherits Window {
                     for p in root.paragraphs: Text {
                         text: p;
                         color: Theme.list-text;
-                        font-size: root.item-font-px;
+                        font-size: root.body-font;
                         wrap: word-wrap;
                     }
                     if root.facts.length > 0: Rectangle {
@@ -369,9 +516,34 @@ export component SetupWizardDialog inherits Window {
                             for f in root.facts: Text {
                                 text: f;
                                 color: Theme.list-text;
-                                font-size: root.item-font-px;
+                                font-size: root.body-font;
                                 wrap: word-wrap;
                             }
+                        }
+                    }
+                    if root.has-card: CardBox {
+                        height: root.large ? root.height * 0.34 : root.row-height * 4.2;
+                        card: root.card;
+                        font-size: root.body-font;
+                        border-px: root.border-px;
+                    }
+                    if root.tiles.length > 0: Rectangle {
+                        property <length> cover-h: root.large ? root.height * 0.24 : root.row-height * 3.4;
+                        property <length> tile-w: self.cover-h * 0.68;
+                        property <length> tile-h: self.cover-h + root.body-font * 3.0;
+                        property <float> per-row: max(1, Math.floor((body.width - root.gutter) / (self.tile-w + root.spacing)));
+                        height: Math.ceil(root.tiles.length / self.per-row) * (self.tile-h + root.spacing);
+                        for t[i] in root.tiles: TileBox {
+                            x: Math.mod(i, parent.per-row) * (parent.tile-w + root.spacing);
+                            y: Math.floor(i / parent.per-row) * (parent.tile-h + root.spacing);
+                            width: parent.tile-w;
+                            height: parent.tile-h;
+                            tile: t;
+                            selected: t.focus >= 0 && root.selected-index == t.focus;
+                            font-size: root.body-font;
+                            border-px: root.border-px;
+                            clicked => { root.tile-requested(i); }
+                            moved(x, y) => { root.pointer-moved(t.focus, x, y); }
                         }
                     }
                     opts-box := VerticalLayout {
@@ -383,9 +555,10 @@ export component SetupWizardDialog inherits Window {
                             kind: o.kind;
                             chosen: o.chosen;
                             enabled: o.enabled;
+                            recommended: o.recommended;
                             selected: o.enabled && root.selected-index == o.focus;
                             border-px: root.border-px;
-                            font-size: root.item-font-px;
+                            font-size: root.body-font;
                             clicked => { root.option-requested(i); }
                             moved(x, y) => { root.pointer-moved(o.focus, x, y); }
                         }
@@ -393,7 +566,7 @@ export component SetupWizardDialog inherits Window {
                     if root.footnote != "": Text {
                         text: root.footnote;
                         color: Theme.search-text;
-                        font-size: root.item-font-px * 0.9;
+                        font-size: root.body-font * 0.9;
                         wrap: word-wrap;
                     }
                 }

@@ -1,27 +1,27 @@
 //! "Import ports..." (Settings menu, and step c of the setup wizard): finds ports installed outside the
 //! ports folder and moves them in. It replaces "Adopt installed ports".
 //!
-//! Every screen is a list built from the picker dialog the app already has, so it works with the
-//! controller, keyboard and mouse. What the lists say and do is decided in `crate::fork::import` (tested
-//! without any UI); this file draws it and runs the slow parts (the scan, the import) on a worker thread
-//! with a Cancel row. The import itself is the port mover (`crate::fork::port_mover`) through
-//! `crate::fork::import::real_engine`; this file only asks the user what it needs to ask: the game file
-//! problem question while the worker waits, and "Remove the old copy now?" per port afterwards
-//! (`ports_folder_screen::prompt_old_copies_then`, Keep for now preselected). The text is English only;
-//! it is not part of upstream's translation tables.
+//! The user sees cards, not lists: a page of what was found, one card per port to confirm, and one page to
+//! start the move (`import_cards_screen`, drawn by `page_dialog`; what they say is `crate::fork::import::cards`).
+//! This file runs the rest: the scan and the import on a worker thread behind a progress list with a Cancel
+//! row, the plan list behind Details, the scan folders list behind Details of the found page, the game
+//! file question while the worker waits, and one page about all the old copies afterwards
+//! (`ports_folder_screen::prompt_old_copies_batch_then`, Keep them preselected). The import itself is the
+//! port mover (`crate::fork::port_mover`) through `crate::fork::import::real_engine`. The text is English
+//! only; it is not part of upstream's translation tables.
 //!
 //! Entry point for the setup wizard: `open(app, router, from_wizard)`, or `open_with(app, router, true,
 //! Some(finish))`. `finish` runs exactly once, whichever way the user leaves: "Continue setup", the end
-//! of an import (after the old-copy questions and the game file search), B on the main list, B on the
+//! of an import (after the old-copy page and the game file search), B on the found page, B on the
 //! scan's progress list, or a notice. Quitting the app is the one exit that does not call it.
-//! Back inside the flow (Cancel or B on a confirm, B on the scan folders or plan list) returns to the
-//! previous list, not out of the flow.
+//! Back inside the flow (B on a card, on the move page, on the scan folders or plan list) returns to the
+//! previous page, not out of the flow.
 
 use super::dialogs::{
     build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot,
 };
 use super::folder_picker_screen::open_folder_picker;
-use super::ports_folder_screen::{blocked_reason, prompt_old_copies_then};
+use super::ports_folder_screen::{blocked_reason, prompt_old_copies_batch_then};
 use super::state::AppState;
 use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::import::engine::{move_selected, GameFileChoice, ImportSummary, Prompter};
@@ -30,11 +30,9 @@ use crate::fork::import::folders::{AddOutcome, ScanFolders};
 use crate::fork::import::plan::{build_requests, plan_all_with, steam_write_mode, MoveRequest, PlanGuards, PortPlan};
 use crate::fork::import::{ports_folder, Once};
 use crate::fork::import::real_engine::engine_for_import;
-use crate::fork::import::scan::{measure_choice, read_shortcuts, run_scan, Choice, Choices, ScanInput};
-use crate::fork::import::screen::{
-    blocked_text, confirm_text, plan_labels, plan_text, space_blocked, ChoiceTarget, ChooseLine, ChooserScreen, FolderLine, FoldersScreen, ImportLine, ImportScreen,
-    PortListLine, PortListScreen,
-};
+use crate::fork::import::cards::{Cards};
+use crate::fork::import::scan::{read_shortcuts, run_scan, Choices, ScanInput};
+use crate::fork::import::screen::{blocked_text, plan_labels, plan_text, space_blocked, FolderLine, FoldersScreen, ImportScreen};
 use crate::fork::import::targets;
 use crate::fork::port_mover::game_files::Issue;
 use crate::fork::port_mover::old_copies;
@@ -58,28 +56,28 @@ use std::time::Duration;
 type Router = Rc<RefCell<GamepadRouter>>;
 /// Called when the wizard's step is over.
 pub(crate) type Finish = Rc<dyn Fn(&Rc<AppState>, &Router)>;
-type Step = Rc<dyn Fn(&Rc<AppState>, &Router)>;
+pub(super) type Step = Rc<dyn Fn(&Rc<AppState>, &Router)>;
 
-const TITLE: &str = "Import ports";
+pub(super) const TITLE: &str = "Import ports";
 
 /// What opened the screen: the Settings menu, or the setup wizard (which wants to be told when to go on).
 #[derive(Clone)]
-struct Ctx {
-    from_wizard: bool,
+pub(super) struct Ctx {
+    pub(super) from_wizard: bool,
     finish: Option<Finish>,
     /// Makes `finish` run once, whichever exit is taken.
     finished: Once,
     /// What the user said about folders (which port, or not a port), kept while the screen is open.
-    choices: Rc<RefCell<Choices>>,
+    pub(super) choices: Rc<RefCell<Choices>>,
 }
 
 impl Ctx {
-    fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
+    pub(super) fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
         Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default() }
     }
 
     /// Whether the wizard is waiting for this screen.
-    fn waited_on(&self) -> bool {
+    pub(super) fn waited_on(&self) -> bool {
         self.from_wizard || self.finish.is_some()
     }
 
@@ -90,7 +88,7 @@ impl Ctx {
     }
 
     /// As `finish`, for when the dialog on screen is already gone (or must stay).
-    fn finish_quiet(&self, app: &Rc<AppState>, router: &Router) {
+    pub(super) fn finish_quiet(&self, app: &Rc<AppState>, router: &Router) {
         self.finished.run(|| {
             if let Some(finish) = &self.finish {
                 finish(app, router);
@@ -98,7 +96,7 @@ impl Ctx {
         });
     }
 
-    fn finisher(&self) -> Step {
+    pub(super) fn finisher(&self) -> Step {
         let ctx = self.clone();
         Rc::new(move |app, router| ctx.finish_quiet(app, router))
     }
@@ -110,14 +108,14 @@ fn padded(text: &str) -> String {
     format!("{text}\n")
 }
 
-fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
+pub(super) fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
     open_message_dialog(app, router, title, &padded(text));
 }
 
 /// A confirm dialog whose Cancel (and B) runs `on_cancel` instead of only closing, optionally starting on
 /// Cancel so a stray press does not do the work.
 #[allow(clippy::too_many_arguments)]
-fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, text: &str, label: &str, preselect_cancel: bool, on_confirm: impl Fn(&Rc<AppState>, &Router) + 'static, on_cancel: Step) {
+pub(super) fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, text: &str, label: &str, preselect_cancel: bool, on_confirm: impl Fn(&Rc<AppState>, &Router) + 'static, on_cancel: Step) {
     open_confirm_dialog(app, router, title.into(), padded(text).into(), label.into(), on_confirm);
     if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
         if preselect_cancel {
@@ -140,13 +138,13 @@ fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, text: &str, la
 }
 
 /// A notice inside the flow: OK (or B) goes to `then`.
-fn notice_back(app: &Rc<AppState>, router: &Router, text: &str, then: Step) {
+pub(super) fn notice_back(app: &Rc<AppState>, router: &Router, text: &str, then: Step) {
     let on_ok = then.clone();
     confirm_back(app, router, TITLE, text, "OK", false, move |app, router| on_ok(app, router), then);
 }
 
 /// A notice that ends the flow: a message, or for the wizard a Continue dialog (B too) that finishes it.
-fn end_notice(app: &Rc<AppState>, router: &Router, ctx: &Ctx, title: &str, text: &str) {
+pub(super) fn end_notice(app: &Rc<AppState>, router: &Router, ctx: &Ctx, title: &str, text: &str) {
     if !ctx.waited_on() {
         return message(app, router, title, text);
     }
@@ -154,11 +152,11 @@ fn end_notice(app: &Rc<AppState>, router: &Router, ctx: &Ctx, title: &str, text:
     confirm_back(app, router, title, text, "Continue setup", false, move |app, router| ctx2.finish_quiet(app, router), ctx.finisher());
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(super) fn home_dir() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v)).map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
-fn settings_path(app: &AppState) -> PathBuf {
+pub(super) fn settings_path(app: &AppState) -> PathBuf {
     app.paths.config_dir.join(FILE_NAME)
 }
 
@@ -359,18 +357,18 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
 /// unless `deliver_after_close` (an import must still report what it did). `leave` is also what a notice
 /// goes on to when the job cannot start because another is running. `prompts` is where the worker's
 /// questions arrive.
-struct JobSpec<T> {
-    title: &'static str,
-    initial: String,
-    cancel_label: &'static str,
-    deliver_after_close: bool,
-    leave: Option<Step>,
-    prompts: Option<UiPrompter>,
-    is_import: bool,
-    work: Box<dyn FnOnce(&Ctl) -> T + Send>,
+pub(super) struct JobSpec<T> {
+    pub(super) title: &'static str,
+    pub(super) initial: String,
+    pub(super) cancel_label: &'static str,
+    pub(super) deliver_after_close: bool,
+    pub(super) leave: Option<Step>,
+    pub(super) prompts: Option<UiPrompter>,
+    pub(super) is_import: bool,
+    pub(super) work: Box<dyn FnOnce(&Ctl) -> T + Send>,
 }
 
-fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec<T>, done: impl FnOnce(&Rc<AppState>, &Router, Result<T, String>) + 'static) {
+pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec<T>, done: impl FnOnce(&Rc<AppState>, &Router, Result<T, String>) + 'static) {
     if JOB_RUNNING.with(Cell::get) {
         let text = "A scan or an import is still running. Wait for it to finish, then try again.";
         return match &spec.leave {
@@ -484,13 +482,13 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
 
 // -- Scanning ----------------------------------------------------------------------------------------
 
-fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders) {
+pub(super) fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders) {
     scan(app, router, ctx, folders, ctx.waited_on().then(|| ctx.finisher()));
 }
 
 /// The scan, with what B on its progress list does: leave the step (the first scan), or for a rescan from the
 /// main list go back to that list.
-fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, leave: Option<Step>) {
+pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, leave: Option<Step>) {
     let Some(home) = home_dir() else {
         return end_notice(app, router, ctx, TITLE, "Could not find your home folder, so there is nowhere to look.");
     };
@@ -539,7 +537,13 @@ fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, le
             }),
         },
         move |app, router, result| match result {
-            Ok(scan) => show_main(app, router, &ctx2, Rc::new(RefCell::new(ImportScreen::new(&home, &ports, folders, scan, ctx2.from_wizard)))),
+            Ok(scan) => {
+                // What the scan matched becomes the cards; folders the user said are not ports are left out.
+                let ignored = crate::fork::import::cards::ignored_paths(&ForkSettings::load(&settings_path(app)));
+                let cards = Cards::from_scan(&scan, &ignored, &ports);
+                let screen = Rc::new(RefCell::new(ImportScreen::new(&home, &ports, folders, scan, cards, ctx2.from_wizard)));
+                super::import_cards_screen::show_found(app, router, &ctx2, screen);
+            }
             Err(e) => end_notice(app, router, &ctx2, TITLE, &e),
         },
     );
@@ -565,200 +569,37 @@ fn fetch_deck_ready(cache_dir: &std::path::Path, ctl: &Ctl) -> Option<crate::for
     }
 }
 
-// -- The main list -------------------------------------------------------------------------------------
-
-fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
-    let labels = screen.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, TITLE, &labels) else { return ctx.finish_quiet(app, router) };
-    let first = screen.borrow().start_row() as i32;
-    dialog.set_selected_index(first);
-    app.dialog_nav.picker_index.set(first);
-    {
-        let (app, router, ctx, weak) = (app.clone(), router.clone(), ctx.clone(), dialog.as_weak());
-        dialog.on_item_selected(move |index| {
-            screen.borrow_mut().last_row = Some(index as usize);
-            let line = screen.borrow().lines().get(index as usize).copied();
-            match line {
-                Some(ImportLine::Found(i)) => screen.borrow_mut().toggle(i),
-                Some(line @ (ImportLine::Choose(_) | ImportLine::Unrecognised(_))) => {
-                    let target = screen.borrow().choice_target(line);
-                    if let Some(target) = target {
-                        return show_chooser(&app, &router, &ctx, screen.clone(), Rc::new(target));
-                    }
-                }
-                Some(ImportLine::Folders) => {
-                    let state = Rc::new(FoldersState { main: screen.clone(), screen: RefCell::new(FoldersScreen::new(&screen.borrow().home, screen.borrow().folders.clone())), changed: Cell::new(false) });
-                    return show_folders(&app, &router, &ctx, state);
-                }
-                Some(ImportLine::Rescan) => {
-                    let folders = screen.borrow().folders.clone();
-                    // B on the rescan's progress list returns to this list, not out of the step.
-                    let back: Step = {
-                        let (ctx, screen) = (ctx.clone(), screen.clone());
-                        Rc::new(move |app, router| show_main(app, router, &ctx, screen.clone()))
-                    };
-                    return scan(&app, &router, &ctx, folders, Some(back));
-                }
-                Some(ImportLine::Preview) => {
-                    if screen.borrow().selected_count() > 0 {
-                        return show_plans(&app, &router, &ctx, screen.clone());
-                    }
-                }
-                Some(ImportLine::Import) => {
-                    if screen.borrow().selected_count() > 0 {
-                        return confirm_import(&app, &router, &ctx, screen.clone());
-                    }
-                }
-                Some(ImportLine::Continue) => return ctx.finish(&app, &router),
-                Some(ImportLine::Intro | ImportLine::PortsFolder | ImportLine::Info(_)) | None => {}
-            }
-            if let Some(d) = weak.upgrade() {
-                set_picker_items(&d, &screen.borrow().labels());
-            }
-        });
-    }
-    if ctx.waited_on() {
-        // B leaves the screen: the wizard is told.
-        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
-        dialog.on_close_requested(move || {
-            close_current_dialog(&app, &router);
-            ctx.finish_quiet(&app, &router);
-        });
-    }
-    let _ = dialog.show();
-    // The row it comes back on may be below the fold: scroll it into view once the list is laid out.
-    let weak = dialog.as_weak();
-    slint::Timer::single_shot(Duration::from_millis(60), move || {
-        if let Some(d) = weak.upgrade() {
-            d.set_scroll_trigger(!d.get_scroll_trigger());
-        }
-    });
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
-}
-
-// -- Choosing the port for a folder -----------------------------------------------------------------------
-
-/// "Which port is in <folder>?": the ports it could be, Another port..., Not a port (leave it), Back. B goes
-/// back to the main list.
-fn show_chooser(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>, target: Rc<ChoiceTarget>) {
-    let model = Rc::new(ChooserScreen::new(&screen.borrow(), (*target).clone()));
-    let Some(dialog) = build_picker_dialog(app, router, "Which port is this?", &model.labels()) else { return ctx.finish_quiet(app, router) };
-    let first = model.first_row() as i32;
-    dialog.set_selected_index(first);
-    app.dialog_nav.picker_index.set(first);
-    {
-        let (app, router, ctx, screen) = (app.clone(), router.clone(), ctx.clone(), screen.clone());
-        dialog.on_close_requested(move || {
-            close_current_dialog(&app, &router);
-            show_main(&app, &router, &ctx, screen.clone());
-        });
-    }
-    {
-        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
-        dialog.on_item_selected(move |index| match model.lines().get(index as usize).copied() {
-            Some(ChooseLine::Match(i)) => choose_port(&app, &router, &ctx, screen.clone(), target.clone(), model.matches[i].key.clone()),
-            Some(ChooseLine::Another) => show_port_list(&app, &router, &ctx, screen.clone(), target.clone()),
-            Some(ChooseLine::NotAPort) => {
-                ctx.choices.borrow_mut().set(&target.path, Choice::NotAPort);
-                screen.borrow_mut().leave_alone(&target.path);
-                show_main(&app, &router, &ctx, screen.clone());
-            }
-            Some(ChooseLine::Back) => show_main(&app, &router, &ctx, screen.clone()),
-            Some(ChooseLine::Header) | None => {}
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
-}
-
-/// "Another port...": every port, those named like the folder first. B goes back to the chooser.
-fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>, target: Rc<ChoiceTarget>) {
-    let model = Rc::new(PortListScreen::new(&screen.borrow(), &target));
-    let Some(dialog) = build_picker_dialog(app, router, "Choose the port", &model.labels()) else { return ctx.finish_quiet(app, router) };
-    let first = model.first_row() as i32;
-    dialog.set_selected_index(first);
-    app.dialog_nav.picker_index.set(first);
-    {
-        let (app, router, ctx, screen, target) = (app.clone(), router.clone(), ctx.clone(), screen.clone(), target.clone());
-        dialog.on_close_requested(move || {
-            close_current_dialog(&app, &router);
-            show_chooser(&app, &router, &ctx, screen.clone(), target.clone());
-        });
-    }
-    {
-        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
-        dialog.on_item_selected(move |index| match model.lines().get(index as usize).copied() {
-            Some(PortListLine::Port(i)) => choose_port(&app, &router, &ctx, screen.clone(), target.clone(), model.ports[i].key.clone()),
-            Some(PortListLine::Back) => show_chooser(&app, &router, &ctx, screen.clone(), target.clone()),
-            Some(PortListLine::Header) | None => {}
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
-}
-
-/// The user chose `key` for the folder: it is measured on the worker (size, Steam shortcuts), then shows as a
-/// ticked find ("you chose") and goes through the same plan and checks as any other. B on the measuring list
-/// goes back to the main list with nothing chosen.
-fn choose_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>, target: Rc<ChoiceTarget>, key: String) {
-    let (port, shortcuts, new_entry) = {
-        let s = screen.borrow();
-        let Some(port) = s.port(&key).cloned() else { return };
-        let new_entry = s.scan.new_entries.iter().find(|(k, _)| *k == key).map(|(_, e)| e.clone());
-        (port, s.scan.shortcuts.clone(), new_entry)
-    };
-    let path = target.path.clone();
-    let back = back_to_main(ctx, &screen);
-    let (ctx2, screen2) = (ctx.clone(), screen.clone());
-    run_job(
-        app,
-        router,
-        JobSpec {
-            title: "Looking at the folder",
-            initial: format!("Measuring {}...", ellipsize(&path.to_string_lossy(), 70)),
-            cancel_label: "Cancel",
-            deliver_after_close: false,
-            leave: Some(back),
-            prompts: None,
-            is_import: false,
-            work: Box::new(move |ctl| measure_choice(&path, &port, &shortcuts, new_entry, &|| ctl.cancelled())),
-        },
-        move |app, router, result| {
-            if let Ok(found) = result {
-                if found.size.complete {
-                    ctx2.choices.borrow_mut().set(&found.path, Choice::Port(found.port_key.clone()));
-                    screen2.borrow_mut().apply_choice(found);
-                }
-            }
-            show_main(app, router, &ctx2, screen2.clone());
-        },
-    );
-}
-
 // -- Scan folders ----------------------------------------------------------------------------------------
 
-struct FoldersState {
+pub(super) struct FoldersState {
     main: Rc<RefCell<ImportScreen>>,
     screen: RefCell<FoldersScreen>,
     /// The folder list changed, so going back scans again.
     changed: Cell<bool>,
 }
 
-fn save_folders(app: &AppState, folders: &ScanFolders) -> Option<String> {
+impl FoldersState {
+    pub(super) fn new(main: Rc<RefCell<ImportScreen>>) -> Rc<FoldersState> {
+        let screen = FoldersScreen::new(&main.borrow().home, main.borrow().folders.clone());
+        Rc::new(FoldersState { main, screen: RefCell::new(screen), changed: Cell::new(false) })
+    }
+}
+
+pub(super) fn save_folders(app: &AppState, folders: &ScanFolders) -> Option<String> {
     let mut settings = ForkSettings::load(&settings_path(app));
     folders.save(&mut settings).err().map(|e| format!("Could not save the folder list: {e}"))
 }
 
-/// Back from the scan folders: a new scan when the list changed, else the main list as it was.
+/// Back from the scan folders: a new scan when the list changed, else the found page as it was.
 fn folders_back(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: &Rc<FoldersState>) {
     if state.changed.get() {
         let folders = state.screen.borrow().folders.clone();
         return start_scan(app, router, ctx, folders);
     }
-    show_main(app, router, ctx, state.main.clone());
+    super::import_cards_screen::show_found(app, router, ctx, state.main.clone());
 }
 
-fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersState>) {
+pub(super) fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersState>) {
     let labels = state.screen.borrow().labels();
     let Some(dialog) = build_picker_dialog(app, router, "Scan folders", &labels) else { return ctx.finish_quiet(app, router) };
     // The cursor starts on the first real row, not on the note.
@@ -852,7 +693,7 @@ fn add_folder(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersS
 
 // -- Plans and the import ---------------------------------------------------------------------------------
 
-fn build_plans(app: &AppState, screen: &ImportScreen) -> (Vec<PortPlan>, Option<u64>) {
+pub(super) fn build_plans(app: &AppState, screen: &ImportScreen) -> (Vec<PortPlan>, Option<u64>) {
     let requests = build_requests(&screen.selected_found(), &screen.ports_folder);
     let free = free_bytes(&screen.ports_folder);
     let write = steam_write_mode(&SystemSteamCheck::new(), steam_queue::game_mode_from_env());
@@ -860,12 +701,12 @@ fn build_plans(app: &AppState, screen: &ImportScreen) -> (Vec<PortPlan>, Option<
     (plan_all_with(&requests, free, write, &guards), free)
 }
 
-fn back_to_main(ctx: &Ctx, screen: &Rc<RefCell<ImportScreen>>) -> Step {
+pub(super) fn back_to_confirm(ctx: &Ctx, screen: &Rc<RefCell<ImportScreen>>) -> Step {
     let (ctx, screen) = (ctx.clone(), screen.clone());
-    Rc::new(move |app, router| show_main(app, router, &ctx, screen.clone()))
+    Rc::new(move |app, router| super::import_cards_screen::show_confirm(app, router, &ctx, screen.clone()))
 }
 
-fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
+pub(super) fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
     let (plans, _) = build_plans(app, &screen.borrow());
     let mut labels = plan_labels(&plans);
     let back = labels.len();
@@ -875,7 +716,7 @@ fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell
         let (app, router, ctx, screen) = (app.clone(), router.clone(), ctx.clone(), screen.clone());
         dialog.on_close_requested(move || {
             close_current_dialog(&app, &router);
-            show_main(&app, &router, &ctx, screen.clone());
+            super::import_cards_screen::show_confirm(&app, &router, &ctx, screen.clone());
         });
     }
     {
@@ -883,7 +724,7 @@ fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell
         dialog.on_item_selected(move |index| {
             let index = index as usize;
             if index == back {
-                return show_main(&app, &router, &ctx, screen.clone());
+                return super::import_cards_screen::show_confirm(&app, &router, &ctx, screen.clone());
             }
             let Some(plan) = plans.get(index) else { return };
             let home = screen.borrow().home.clone();
@@ -900,14 +741,16 @@ fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
-fn confirm_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
-    let back = back_to_main(ctx, &screen);
+/// "Move 4 ports" was chosen on the move page: refuses while the ports folder is missing, offers to link in
+/// place the ports that do not fit, and otherwise starts the copies. The move page was the confirmation.
+pub(super) fn start_move(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
+    let back = back_to_confirm(ctx, &screen);
     // The ports folder is missing (card out) or a move is running: nothing may be written there.
     if let Some(why) = blocked_reason(app) {
         return notice_back(app, router, &why, back);
     }
-    let (plans, free) = build_plans(app, &screen.borrow());
-    let (home, ports) = (screen.borrow().home.clone(), screen.borrow().ports_folder.clone());
+    let (plans, _) = build_plans(app, &screen.borrow());
+    let home = screen.borrow().home.clone();
     if plans.iter().all(|p| !p.can_run()) {
         // Only the reasons; and where the one reason is room, linking the port where it stands is offered.
         let text = blocked_text(&plans, &home);
@@ -919,13 +762,11 @@ fn confirm_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<Ref
         let then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)> = Rc::new(move |app, router, text, keys| finish_after(app, router, &ctx2, text, VecDeque::new(), keys, false));
         return offer_link(app, router, linkable, text, then, back);
     }
-    let text = confirm_text(&plans, &ports, &home, free, false);
-    let (ctx2, screen2) = (ctx.clone(), screen.clone());
-    confirm_back(app, router, TITLE, &text, "Import", true, move |app, router| run_import(app, router, &ctx2, &screen2, plans.clone(), home.clone()), back);
+    run_import(app, router, ctx, &screen, plans, home);
 }
 
 fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCell<ImportScreen>>, plans: Vec<PortPlan>, home: PathBuf) {
-    let back = back_to_main(ctx, screen);
+    let back = back_to_confirm(ctx, screen);
     if let Some(why) = blocked_reason(app) {
         return notice_back(app, router, &why, back);
     }
@@ -1120,7 +961,7 @@ fn offer_link(app: &Rc<AppState>, router: &Router, requests: Vec<MoveRequest>, p
 /// something to look for), else the summary alone, or Continue in the wizard.
 fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, keys: Vec<String>, wants_game_files: bool) {
     let ctx = ctx.clone();
-    prompt_old_copies_then(app, router, copies, text, move |app, router, text| match text {
+    prompt_old_copies_batch_then(app, router, copies, text, move |app, router, text| match text {
         Some(text) => conclude(app, router, &ctx, text, &keys, wants_game_files),
         // The questions were abandoned because another dialog took the screen: nothing more is shown here.
         None => ctx.finish_quiet(app, router),

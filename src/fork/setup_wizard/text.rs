@@ -1,23 +1,23 @@
-//! What each wizard page says and which parts of it can take focus. A [`Page`] is plain data: a title,
-//! paragraphs (wrapped by the window, never selectable), an optional summary card, a few real options
-//! and up to four footer buttons (Back on the left, Skip next to it, the rerun's "Close the wizard",
-//! and the primary Next or Finish on the right). Only enabled options and buttons take the controller's
-//! focus; [`move_focus`] decides where the D-pad goes. Plain words for someone who has never used the
-//! app; English only, not part of upstream's translation tables.
+//! What each wizard page says. The wizard's pages are [`Page`]s of `crate::fork::page` (plain data: a title,
+//! paragraphs, a summary box, a few real options and up to four footer buttons: Back on the left, Skip next
+//! to it, the rerun's "Close the wizard", and the primary Next or Finish on the right); the focus rules
+//! (only enabled options and buttons take the controller's focus, where the D-pad goes) live there too and
+//! are re-exported here. Plain words for someone who has never used the app; English only, not part of
+//! upstream's translation tables.
 
 use super::flow::{Action, Mode, Step, View, Wizard};
 use super::places::{Kind, QuickChoice};
 use crate::fork::rom_screens::util::ellipsize;
+pub use crate::fork::page::{Focus, EXTRA, LEFT, MIDDLE, RIGHT};
+#[cfg(test)]
+pub use crate::fork::page::{action_at, button_number, focus_at, focus_number, focusables, initial_focus, move_focus, option_number};
 use std::path::{Path, PathBuf};
 
 pub const APP_NAME: &str = "Deck Ports Manager";
 
-/// Footer slots, left to right.
-pub const LEFT: usize = 0;
-pub const MIDDLE: usize = 1;
-pub const EXTRA: usize = 2;
-pub const RIGHT: usize = 3;
-pub const SLOTS: usize = 4;
+pub type Page = crate::fork::page::Page<Action>;
+pub type PageOption = crate::fork::page::PageOption<Action>;
+pub type PageButton = crate::fork::page::PageButton<Action>;
 
 /// What the screen reads from the app when it draws.
 #[derive(Debug, Clone, Default)]
@@ -31,48 +31,6 @@ pub struct Context {
     pub current_is_default: bool,
     pub quick: Vec<QuickChoice>,
     pub rom_folder: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageOption {
-    pub title: String,
-    pub detail: String,
-    /// `Some(chosen)` draws a radio mark (a choice); `None` is an action that opens something.
-    pub choice: Option<bool>,
-    /// False: shown dimmed, cannot be chosen or focused (the folder in use, a drive that cannot hold ports).
-    pub enabled: bool,
-    pub action: Action,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageButton {
-    pub label: String,
-    pub action: Action,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Page {
-    pub step_number: usize,
-    pub step_count: usize,
-    pub title: String,
-    pub paragraphs: Vec<String>,
-    /// Lines of the summary card (what is set, what was found).
-    pub facts: Vec<String>,
-    pub options: Vec<PageOption>,
-    pub footnote: String,
-    /// Left, middle, extra, right.
-    pub buttons: [Option<PageButton>; SLOTS],
-    /// Which button is drawn as the primary one.
-    pub primary: Option<usize>,
-    /// Where the cursor starts.
-    pub initial: Focus,
-}
-
-/// Something that can take focus: option `n`, or the button in slot `n`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    Option(usize),
-    Button(usize),
 }
 
 fn btn(label: impl Into<String>, action: Action) -> Option<PageButton> {
@@ -89,16 +47,12 @@ fn paras(items: &[&str]) -> Vec<String> {
 
 fn page(w: &Wizard, title: &str) -> Page {
     Page {
+        header: APP_NAME.to_string(),
         step_number: w.step.index() + 1,
         step_count: Step::ALL.len(),
+        step_text: format!("Step {} of {}", w.step.index() + 1, Step::ALL.len()),
         title: title.to_string(),
-        paragraphs: Vec::new(),
-        facts: Vec::new(),
-        options: Vec::new(),
-        footnote: String::new(),
-        buttons: [None, None, None, None],
-        primary: None,
-        initial: Focus::Button(RIGHT),
+        ..Page::default()
     }
 }
 
@@ -128,10 +82,16 @@ fn step_name(step: Step) -> &'static str {
 
 /// "Step 2 of 6" for the header.
 pub fn step_text(page: &Page) -> String {
-    format!("Step {} of {}", page.step_number, page.step_count)
+    page.step_text.clone()
 }
 
 pub fn page_for(w: &Wizard, ctx: &Context) -> Page {
+    let mut page = page_inside(w, ctx);
+    page.window_title = title(w);
+    page
+}
+
+fn page_inside(w: &Wizard, ctx: &Context) -> Page {
     match &w.view {
         View::ConfirmSkipSetup => {
             let mut p = page(w, "Skip setup?");
@@ -175,7 +135,7 @@ fn nav(p: &mut Page, w: &Wizard, next_label: &str) {
 }
 
 fn action_option(title: &str, detail: &str, action: Action) -> PageOption {
-    PageOption { title: title.into(), detail: detail.into(), choice: None, enabled: true, action }
+    PageOption { title: title.into(), detail: detail.into(), choice: None, enabled: true, recommended: false, action }
 }
 
 fn step_page(w: &Wizard, ctx: &Context) -> Page {
@@ -260,6 +220,7 @@ fn ports_page(w: &Wizard, ctx: &Context) -> Page {
             choice: Some(in_use),
             // The folder in use and a drive that cannot hold ports are shown but cannot be chosen.
             enabled: choice.usable && !in_use,
+            recommended: false,
             action: Action::UseFolder(choice.path.clone()),
         });
     }
@@ -312,72 +273,6 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
     p.buttons[RIGHT] = btn("Finish", Action::Finish);
     p.primary = Some(RIGHT);
     p
-}
-
-/// Everything that can take focus, in order: the enabled options, then the buttons that exist.
-pub fn focusables(page: &Page) -> Vec<Focus> {
-    let mut out: Vec<Focus> = (0..page.options.len()).filter(|i| page.options[*i].enabled).map(Focus::Option).collect();
-    out.extend((0..SLOTS).filter(|s| page.buttons[*s].is_some()).map(Focus::Button));
-    out
-}
-
-/// Position of `focus` in [`focusables`] (the number the window draws as selected).
-pub fn focus_number(page: &Page, focus: Focus) -> usize {
-    focusables(page).iter().position(|f| *f == focus).unwrap_or(0)
-}
-
-/// The focus number of option `index`, or -1 when it cannot take focus.
-pub fn option_number(page: &Page, index: usize) -> i32 {
-    focusables(page).iter().position(|f| *f == Focus::Option(index)).map_or(-1, |n| n as i32)
-}
-
-/// The number of the button in `slot`, or -1 when it is not shown.
-pub fn button_number(page: &Page, slot: usize) -> i32 {
-    focusables(page).iter().position(|f| *f == Focus::Button(slot)).map_or(-1, |n| n as i32)
-}
-
-/// What a focus number stands for.
-pub fn focus_at(page: &Page, number: usize) -> Option<Focus> {
-    focusables(page).get(number).copied()
-}
-
-pub fn initial_focus(page: &Page) -> usize {
-    let items = focusables(page);
-    let wanted = if items.contains(&page.initial) { page.initial } else { page.primary.map_or(items[0], Focus::Button) };
-    focus_number(page, wanted)
-}
-
-/// The D-pad: up and down walk the options and then drop to the buttons (the primary one first), left
-/// and right move between buttons. It never lands on text or a disabled option, and stays put at an edge.
-pub fn move_focus(page: &Page, current: usize, dx: i32, dy: i32) -> usize {
-    let items = focusables(page);
-    let Some(here) = items.get(current).copied() else { return initial_focus(page) };
-    let index_of = |f: Focus| items.iter().position(|x| *x == f);
-    let enabled: Vec<usize> = (0..page.options.len()).filter(|i| page.options[*i].enabled).collect();
-    let present: Vec<usize> = (0..SLOTS).filter(|s| page.buttons[*s].is_some()).collect();
-    let target = match here {
-        Focus::Option(i) if dy > 0 => match enabled.iter().find(|o| **o > i) {
-            Some(next) => Some(Focus::Option(*next)),
-            None => page.primary.filter(|s| present.contains(s)).or_else(|| present.last().copied()).map(Focus::Button),
-        },
-        Focus::Option(i) if dy < 0 => enabled.iter().rev().find(|o| **o < i).map(|o| Focus::Option(*o)),
-        Focus::Button(_) if dy < 0 => enabled.last().map(|o| Focus::Option(*o)),
-        Focus::Button(slot) if dx != 0 => {
-            let at = present.iter().position(|s| *s == slot).unwrap_or(0) as i32;
-            let next = at + dx.signum();
-            (next >= 0).then(|| present.get(next as usize)).flatten().map(|s| Focus::Button(*s))
-        }
-        _ => None,
-    };
-    target.and_then(index_of).unwrap_or(current)
-}
-
-/// What choosing the focused item does.
-pub fn action_at(page: &Page, number: usize) -> Option<Action> {
-    match focus_at(page, number)? {
-        Focus::Option(i) => page.options.get(i).map(|o| o.action.clone()),
-        Focus::Button(s) => page.buttons[s].as_ref().map(|b| b.action.clone()),
-    }
 }
 
 #[cfg(test)]

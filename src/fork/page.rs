@@ -43,11 +43,23 @@ pub struct Card {
     pub lines: Vec<String>,
 }
 
-/// A cover with its name under it. Tiles are shown, not chosen, unless a screen gives them an action later.
+/// A cover with its name under it. A tile with an action can be chosen (the ports a folder could be); one
+/// without is only shown (the ports found, the ports to move).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tile {
+pub struct Tile<A> {
     pub art: Option<ArtRef>,
     pub label: String,
+    pub action: Option<A>,
+}
+
+impl<A> Tile<A> {
+    pub fn shown(art: Option<ArtRef>, label: impl Into<String>) -> Tile<A> {
+        Tile { art, label: label.into(), action: None }
+    }
+
+    pub fn choice(art: Option<ArtRef>, label: impl Into<String>, action: A) -> Tile<A> {
+        Tile { art, label: label.into(), action: Some(action) }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +80,7 @@ pub struct Page<A> {
     /// Lines of the summary box (what is set, what was found).
     pub facts: Vec<String>,
     pub card: Option<Card>,
-    pub tiles: Vec<Tile>,
+    pub tiles: Vec<Tile<A>>,
     pub options: Vec<PageOption<A>>,
     pub footnote: String,
     /// Left, middle, extra, right.
@@ -102,9 +114,10 @@ impl<A> Default for Page<A> {
     }
 }
 
-/// Something that can take focus: option `n`, or the button in slot `n`.
+/// Something that can take focus: tile `n`, option `n`, or the button in slot `n`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
+    Tile(usize),
     Option(usize),
     Button(usize),
 }
@@ -122,9 +135,19 @@ impl<A: Clone> Page<A> {
     }
 }
 
-/// Everything that can take focus, in order: the enabled options, then the buttons that exist.
+fn tile_indexes<A>(page: &Page<A>) -> Vec<usize> {
+    (0..page.tiles.len()).filter(|i| page.tiles[*i].action.is_some()).collect()
+}
+
+fn enabled_options<A>(page: &Page<A>) -> Vec<usize> {
+    (0..page.options.len()).filter(|i| page.options[*i].enabled).collect()
+}
+
+/// Everything that can take focus, in order: the tiles that can be chosen, the enabled options, then the
+/// buttons that exist.
 pub fn focusables<A>(page: &Page<A>) -> Vec<Focus> {
-    let mut out: Vec<Focus> = (0..page.options.len()).filter(|i| page.options[*i].enabled).map(Focus::Option).collect();
+    let mut out: Vec<Focus> = tile_indexes(page).into_iter().map(Focus::Tile).collect();
+    out.extend(enabled_options(page).into_iter().map(Focus::Option));
     out.extend((0..SLOTS).filter(|s| page.buttons[*s].is_some()).map(Focus::Button));
     out
 }
@@ -132,6 +155,11 @@ pub fn focusables<A>(page: &Page<A>) -> Vec<Focus> {
 /// Position of `focus` in [`focusables`] (the number the window draws as selected).
 pub fn focus_number<A>(page: &Page<A>, focus: Focus) -> usize {
     focusables(page).iter().position(|f| *f == focus).unwrap_or(0)
+}
+
+/// The focus number of tile `index`, or -1 when it cannot be chosen.
+pub fn tile_number<A>(page: &Page<A>, index: usize) -> i32 {
+    focusables(page).iter().position(|f| *f == Focus::Tile(index)).map_or(-1, |n| n as i32)
 }
 
 /// The focus number of option `index`, or -1 when it cannot take focus.
@@ -156,21 +184,33 @@ pub fn initial_focus<A>(page: &Page<A>) -> usize {
     focus_number(page, wanted)
 }
 
-/// The D-pad: up and down walk the options and then drop to the buttons (the primary one first), left
-/// and right move between buttons. It never lands on text or a disabled option, and stays put at an edge.
+/// The D-pad. The page is a column: a row of tiles you can choose, the options, the buttons. Up and down move
+/// between those groups and along the options (down from the last option drops to the primary button, down
+/// from a tile goes to the first option); left and right move along the tiles and along the buttons. It never
+/// lands on text or a disabled option, and stays put at an edge.
 pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize {
     let items = focusables(page);
     let Some(here) = items.get(current).copied() else { return initial_focus(page) };
     let index_of = |f: Focus| items.iter().position(|x| *x == f);
-    let enabled: Vec<usize> = (0..page.options.len()).filter(|i| page.options[*i].enabled).collect();
+    let tiles = tile_indexes(page);
+    let enabled = enabled_options(page);
     let present: Vec<usize> = (0..SLOTS).filter(|s| page.buttons[*s].is_some()).collect();
+    let to_buttons = || page.primary.filter(|s| present.contains(s)).or_else(|| present.last().copied()).map(Focus::Button);
     let target = match here {
+        Focus::Tile(i) if dx != 0 => {
+            let at = tiles.iter().position(|t| *t == i).unwrap_or(0) as i32 + dx.signum();
+            (at >= 0).then(|| tiles.get(at as usize)).flatten().map(|t| Focus::Tile(*t))
+        }
+        Focus::Tile(_) if dy > 0 => enabled.first().map(|o| Focus::Option(*o)).or_else(to_buttons),
         Focus::Option(i) if dy > 0 => match enabled.iter().find(|o| **o > i) {
             Some(next) => Some(Focus::Option(*next)),
-            None => page.primary.filter(|s| present.contains(s)).or_else(|| present.last().copied()).map(Focus::Button),
+            None => to_buttons(),
         },
-        Focus::Option(i) if dy < 0 => enabled.iter().rev().find(|o| **o < i).map(|o| Focus::Option(*o)),
-        Focus::Button(_) if dy < 0 => enabled.last().map(|o| Focus::Option(*o)),
+        Focus::Option(i) if dy < 0 => match enabled.iter().rev().find(|o| **o < i) {
+            Some(prev) => Some(Focus::Option(*prev)),
+            None => tiles.first().map(|t| Focus::Tile(*t)),
+        },
+        Focus::Button(_) if dy < 0 => enabled.last().map(|o| Focus::Option(*o)).or_else(|| tiles.first().map(|t| Focus::Tile(*t))),
         Focus::Button(slot) if dx != 0 => {
             let at = present.iter().position(|s| *s == slot).unwrap_or(0) as i32;
             let next = at + dx.signum();
@@ -184,6 +224,7 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
 /// What choosing the focused item does.
 pub fn action_at<A: Clone>(page: &Page<A>, number: usize) -> Option<A> {
     match focus_at(page, number)? {
+        Focus::Tile(i) => page.tiles.get(i).and_then(|t| t.action.clone()),
         Focus::Option(i) => page.options.get(i).map(|o| o.action.clone()),
         Focus::Button(s) => page.buttons[s].as_ref().map(|b| b.action.clone()),
     }
@@ -259,11 +300,55 @@ mod tests {
         let mut p = card_page();
         p.card = Some(Card { art: art("dusk"), title: "Dusklight".into(), lines: vec![] });
         p.tiles = vec![
-            Tile { art: art("soh"), label: "SoH".into() },
-            Tile { art: art("dusk"), label: "Dusklight".into() },
-            Tile { art: None, label: "No art".into() },
+            Tile::shown(art("soh"), "SoH"),
+            Tile::shown(art("dusk"), "Dusklight"),
+            Tile::shown(None, "No art"),
         ];
         let folders: Vec<String> = p.art_refs().into_iter().map(|a| a.folder).collect();
         assert_eq!(folders, ["dusk", "soh"]);
+    }
+
+    fn tile_page() -> Page<Act> {
+        let mut p = card_page();
+        p.tiles = vec![Tile::choice(None, "A", Act::Yes), Tile::shown(None, "shown only"), Tile::choice(None, "B", Act::Other), Tile::choice(None, "C", Act::Skip)];
+        p.initial = Focus::Tile(0);
+        p
+    }
+
+    #[test]
+    fn only_tiles_with_an_action_can_be_focused_and_they_come_first() {
+        let p = tile_page();
+        assert_eq!(focusables(&p)[..3], [Focus::Tile(0), Focus::Tile(2), Focus::Tile(3)]);
+        assert_eq!(tile_number(&p, 0), 0);
+        assert_eq!(tile_number(&p, 1), -1, "a shown-only tile");
+        assert_eq!(tile_number(&p, 2), 1);
+        assert_eq!(option_number(&p, 0), 3, "the options follow the tiles");
+        assert_eq!(action_at(&p, 1), Some(Act::Other));
+    }
+
+    #[test]
+    fn left_and_right_walk_the_tiles_down_goes_to_the_options_and_up_comes_back() {
+        let p = tile_page();
+        let mut at = initial_focus(&p);
+        assert_eq!(action_at(&p, at), Some(Act::Yes));
+        at = move_focus(&p, at, 1, 0);
+        assert_eq!(action_at(&p, at), Some(Act::Other), "right skips the tile that cannot be chosen");
+        at = move_focus(&p, at, 1, 0);
+        assert_eq!(action_at(&p, at), Some(Act::Skip));
+        assert_eq!(move_focus(&p, at, 1, 0), at, "stays put at the end of the row");
+        assert_eq!(move_focus(&p, initial_focus(&p), -1, 0), initial_focus(&p), "and at the start");
+        let down = move_focus(&p, at, 0, 1);
+        assert_eq!(focus_at(&p, down), Some(Focus::Option(0)));
+        assert_eq!(focus_at(&p, move_focus(&p, down, 0, -1)), Some(Focus::Tile(0)), "up from the first option reaches the tiles");
+        assert_eq!(move_focus(&p, initial_focus(&p), 0, -1), initial_focus(&p), "nothing above the tiles");
+    }
+
+    #[test]
+    fn without_options_down_from_a_tile_reaches_the_buttons() {
+        let mut p = tile_page();
+        p.options.clear();
+        let down = move_focus(&p, initial_focus(&p), 0, 1);
+        assert_eq!(focus_at(&p, down), Some(Focus::Button(LEFT)));
+        assert_eq!(focus_at(&p, move_focus(&p, down, 0, -1)), Some(Focus::Tile(0)));
     }
 }

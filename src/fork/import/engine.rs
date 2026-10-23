@@ -282,7 +282,7 @@ impl ImportSummary {
         if !moved.is_empty() {
             let bytes: u64 = moved.iter().map(|i| i.plan.request.size.bytes).sum();
             out.push(format!(
-                "Old folder{} from this import: {} ({}). You are asked about each: Remove old copy deletes it only when you choose that; whatever is kept stays listed under Settings > Ports folder > Old copies.",
+                "Old folder{} from this import: {} ({}). Nothing is removed unless you choose to remove it; whatever is kept stays listed under Settings > Ports folder > Old copies.",
                 if moved.len() == 1 { "" } else { "s" },
                 moved.len(),
                 human_bytes(bytes)
@@ -484,7 +484,7 @@ mod tests {
         let text = summary.text(&h.home);
         assert_eq!(summary.title(), "Import finished");
         assert!(text.starts_with("Moved 1 of 2 ports."), "{text}");
-        assert!(text.contains("Old folder from this import: 1 (8 KB). You are asked about each: Remove old copy deletes it only when you choose that;"), "{text}");
+        assert!(text.contains("Old folder from this import: 1 (8 KB). Nothing is removed unless you choose to remove it;"), "{text}");
         assert!(text.contains("Steam shortcuts: 1 queued for Desktop Mode."), "{text}");
         assert!(text.contains("1 port had a problem (listed below)."), "{text}");
         assert!(text.contains("Ship of Harkinian: moved (from ~/Applications/SoH, 8 KB); 1 Steam shortcut queued for Desktop Mode"), "{text}");
