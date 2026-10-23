@@ -335,10 +335,24 @@ your game folder: nothing in it is ever moved, renamed, changed or deleted.
    A big folder takes a while the first time; later scans only read new or changed files.
 2. **Results by system** lists, per console, which ports have their files (Found, Several matches, Wrong version, Missing...).
    "(check this)" means a file was matched by name only. Open a port to see exactly what was found and what it wants.
-3. **Connect game files...** (from the port's row under Results by system, or offered once right after it installs): pick how each file reaches the port.
+3. **Connect game files...** (from the port's row under Results by system, or right after it installs, see below): pick how each file reaches the port.
    **Use original** writes nothing, **Link** puts a pointer in the port's folder (no extra space), **Copy** makes a second
    copy and asks first, showing its size. Then **Connect now**.
 4. **Connected ports** shows what is connected and whether it still holds. **Forget** removes only the record.
+
+**After you install a port that needs game files**, the app looks for them in your game files folder by itself (once per
+port). If the file is there, the Connect step opens (with a pick list first when several files match). If not, it says so plainly:
+which file the port needs (with its CRC32 when the catalog gives one) and where it looked, for example "No matching game file
+found for Ship of Harkinian. It needs: oot.z64 (CRC32 ...). Looked in: /run/media/.../Emulation/roms (12,431 files)". Then:
+
+- **Search again** after you copied the file into that folder (only new or changed files are read again, so it is quick).
+- **Connect by hand...** to pick the file anywhere yourself. A file the port does not list is named with its checksum, and
+  you can still **Use it anyway**.
+- **Later** closes it. The port's **Info** (X) > **Game files...** and Settings > Game files > **Find game files for a port...**
+  run the same search whenever you like.
+
+If no game files folder is set yet, the prompt offers **Choose ROM folder...**. Adopting installed ports does the same for
+every adopted port that needs files and lists the results under the adopt summary.
 
 A Link is made inside the port's folder in `Library/`, so the drive the app is installed on needs a Linux file system (ext4);
 your ROM folder can be on any file system. If the app sits on an exFAT card, it says that drive does not support links and

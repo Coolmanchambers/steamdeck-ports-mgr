@@ -1,48 +1,54 @@
-//! The offer made once after a port installs: "this port needs game files, connect them now?"
+//! When the app looks for a port's game files on its own: once per port, right after the port is
+//! installed or adopted, and only when it names files it cannot run without.
+//!
+//! The search itself is `find::find_game_files_for_port`; this file only decides whether to start it,
+//! so the old "connect now?" offer and the automatic search can never both appear. The memory of which
+//! ports were already handled is `rom_prompted_ports` in `fork-settings.json` (the same key the earlier
+//! offer used, so a port offered before is not asked again). "Later" does not forget a port: the port's
+//! Info dialog (Game files...) and Settings > Game files > Find game files for a port always reach it.
 
-use super::util::ellipsize;
-use crate::fork::rom_library::{RomSpec, Slot};
+use super::find::FindRequest;
 
-/// Does the port name any file it cannot run without.
-pub fn needs_game_files(spec: &RomSpec) -> bool {
-    spec.requirement.slots.iter().any(|s| !s.optional)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoSearch {
+    Search,
+    /// Why not, for the log and the tests.
+    Skip(&'static str),
 }
 
-pub fn offer_text(port_name: &str, spec: &RomSpec) -> String {
-    let mut text = format!("{port_name} needs game files from your own copy of the game:\n");
-    let wanted: Vec<&Slot> = spec.requirement.slots.iter().filter(|s| !s.optional).collect();
-    for slot in wanted.iter().take(4) {
-        let what = slot.alternatives.first().map(|a| a.display.as_str()).filter(|d| !d.is_empty()).unwrap_or(slot.label.as_str());
-        text.push_str(&format!("\n  {}", ellipsize(what, 70)));
+/// Decide whether to look for a port's game files right after it was installed or adopted.
+/// `already_handled`: the search (or the earlier offer) was already made for this port.
+pub fn after_install(req: &FindRequest, android_only: bool, already_handled: bool) -> AutoSearch {
+    if android_only {
+        AutoSearch::Skip("Android-only port")
+    } else if !req.needs_files() {
+        AutoSearch::Skip("needs no game files")
+    } else if already_handled {
+        AutoSearch::Skip("already looked for once")
+    } else if req.already_connected() {
+        AutoSearch::Skip("already connected")
+    } else {
+        AutoSearch::Search
     }
-    if wanted.len() > 4 {
-        text.push_str(&format!("\n  and {} more", wanted.len() - 4));
-    }
-    text.push_str(
-        "\n\nLook for them in your game files folder and connect them now? Nothing is moved or deleted, and you can do this later from Settings > Game files. You are only asked once per port.",
-    );
-    text
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::report::tests_support::port;
     use super::*;
-    use crate::fork::rom_library::{parse_instructions, Access};
 
-    fn spec(text: &str) -> RomSpec {
-        RomSpec { requirement: parse_instructions(text), access: Access::Link, dest_subdir: String::new() }
+    fn req(text: &str) -> FindRequest {
+        FindRequest::new(port("Zelda Port", "ZeldaPort", &["n64"], text), true, None, vec![])
     }
 
     #[test]
-    fn only_ports_that_name_required_files_get_an_offer() {
-        assert!(needs_game_files(&spec("Required files: Zelda (USA).z64 (CRC32: AABBCCDD)")));
-        assert!(!needs_game_files(&spec("A fan made game. No files needed.")));
-        assert!(!needs_game_files(&spec("")));
-    }
-
-    #[test]
-    fn the_offer_names_the_file_and_says_nothing_is_moved() {
-        let text = offer_text("Zelda Port", &spec("Required files: Zelda (USA).z64 (CRC32: AABBCCDD)"));
-        assert!(text.contains("Zelda (USA).z64") && text.contains("Nothing is moved or deleted") && text.contains("once per port"), "{text}");
+    fn only_ports_that_name_required_files_are_searched_and_only_once() {
+        let needs = req("Required files: Zelda (USA).z64 (CRC32: AABBCCDD)");
+        assert_eq!(after_install(&needs, false, false), AutoSearch::Search);
+        assert_eq!(after_install(&needs, false, true), AutoSearch::Skip("already looked for once"));
+        assert_eq!(after_install(&needs, true, false), AutoSearch::Skip("Android-only port"));
+        assert_eq!(after_install(&req("A fan made game. No files needed."), false, false), AutoSearch::Skip("needs no game files"));
+        assert_eq!(after_install(&req(""), false, false), AutoSearch::Skip("needs no game files"));
+        assert!(super::super::find::needs_game_files(&needs.spec));
     }
 }

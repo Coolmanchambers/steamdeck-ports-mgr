@@ -1,4 +1,4 @@
-//! The "Game files" screens (Settings menu) and the offer after a port installs.
+//! The "Game files" screens (Settings menu) and the search for a port's game files after it installs.
 //!
 //! Every screen is a list built from the picker dialog the app already has, so it works with the
 //! controller, keyboard and mouse, in a window or fullscreen. What the lists say and do is decided in
@@ -10,23 +10,21 @@
 //! with its size shown, and forgetting a connection removes the record and no files.
 
 use super::dialogs::{
-    build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, open_progress_dialog,
+    build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, open_progress_dialog,
     set_picker_items, update_progress_dialog, DialogSlot,
 };
 use super::state::AppState;
 use crate::core::path_safety::safe_join;
-use crate::fork::rom_library::{load_local_entries, Approval, RomLibraryStore, RomSpec};
+use crate::fork::rom_library::{Approval, RomLibraryStore};
 use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::rom_screens::browse;
 use super::folder_picker_screen::open_folder_picker;
 use crate::fork::rom_screens::connect_screen::{self, ConnectScreen, Line as ConnectLine, PlanOutput};
 use crate::fork::rom_screens::connections::connection_groups;
 use crate::fork::rom_screens::job::{Background, Ctl};
-use crate::fork::rom_screens::offer::{needs_game_files, offer_text};
 use crate::fork::rom_screens::report::{scan_time, PortRow, Report, ReportInput};
 use crate::fork::rom_screens::scan_work::{self, ScanOutput};
 use crate::fork::rom_screens::util::ellipsize;
-use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::ui::gamepad_router::GamepadRouter;
 use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
@@ -41,12 +39,25 @@ const TITLE: &str = "Game files";
 const STORE_FILE: &str = "rom_library.json";
 const NOTE_READ_ONLY: &str = "Your game files are only read, never moved or deleted.";
 
-/// What to do once a scan has finished.
+// The "find this port's game files" flow (after an install, Info, Settings, and for other screens).
+mod find_flow;
+#[allow(unused_imports)]
+pub(crate) use find_flow::{after_install, after_ports_added, find_for_port, open_from_info, port_needs_game_files};
+
+/// What to do once a folder is chosen (and where Back goes).
 #[derive(Clone)]
 enum Then {
     Results,
-    /// Open the Connect step for this port (`Port::key()`).
-    Connect(String),
+    /// Look for this port's game files (`Port::key()`); `back` is where its flow returns.
+    Find { key: String, back: Back },
+}
+
+/// Leave the folder chooser without choosing.
+fn leave(app: &Rc<AppState>, router: &Router, then: &Then) {
+    match then {
+        Then::Results => open_game_files(app, router),
+        Then::Find { key, back } => find_flow::resume(app, router, key, back),
+    }
 }
 
 /// The dialogs size themselves from a text estimate that comes out a line short for wrapped text, which
@@ -238,6 +249,7 @@ fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
         "Scan the folder now".to_string(),
         format!("Results by system ({scanned})"),
         format!("Connected ports ({})", connection_count(&store)),
+        "Find game files for a port...".to_string(),
     ];
     open_list(app, router, TITLE, labels, move |app, router, index| match index {
         1 => choose_folder(app, router, Then::Results),
@@ -247,6 +259,7 @@ fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
         },
         3 => show_saved_results(app, router),
         4 => show_connections(app, router),
+        5 => find_flow::show_ports_needing_files(app, router),
         _ => {}
     });
 }
@@ -262,6 +275,7 @@ fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
     let home = home_dir();
     let mut request = PickerRequest::new("Where are your game files?", home.as_deref().unwrap_or(Path::new("/")), Purpose::ScanFolder);
     request.extra_places = browse::start_points(home.as_deref(), &browse::system_mounts());
+    let on_cancel = then.clone();
     open_folder_picker(
         app,
         router,
@@ -269,17 +283,22 @@ fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
         move |app, router, path| {
             let Some(mut store) = load_store(app, router) else { return };
             match store.set_rom_dir(Some(path)) {
+                // `Then::Find` goes back to the find flow through `start_scan`.
                 Ok(()) => start_scan(app, router, then.clone()),
                 Err(e) => message(app, router, TITLE, &format!("Could not use that folder: {e}")),
             }
         },
-        open_game_files,
+        // Cancel returns to where the picker was opened from: the Game files menu or the find prompt.
+        move |app, router| leave(app, router, &on_cancel),
     );
 }
 
 // -- Scanning -------------------------------------------------------------------------------------
 
 fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
+    if let Then::Find { key, back } = &then {
+        return find_flow::resume(app, router, key, back);
+    }
     let Some(store) = load_store(app, router) else { return };
     let Some(root) = store.rom_dir().map(Path::to_path_buf) else { return choose_folder(app, router, then) };
     let input = report_input(app, &store);
@@ -291,12 +310,12 @@ fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
         move |app, router, result| match result.and_then(|r| r) {
             Err(e) => message(app, router, TITLE, &e),
             Ok(None) => open_game_files(app, router),
-            Ok(Some(out)) => after_scan(app, router, out, then),
+            Ok(Some(out)) => after_scan(app, router, out),
         },
     );
 }
 
-fn after_scan(app: &Rc<AppState>, router: &Router, out: ScanOutput, then: Then) {
+fn after_scan(app: &Rc<AppState>, router: &Router, out: ScanOutput) {
     if out.scan.files.is_empty() {
         message(
             app,
@@ -312,10 +331,7 @@ fn after_scan(app: &Rc<AppState>, router: &Router, out: ScanOutput, then: Then) 
     }
     let mut report = out.report;
     report.note = out.cache_error.map(|err| format!("This scan could not be saved ({}), so it will run again next time.", ellipsize(&err, 50)));
-    match then {
-        Then::Results => show_systems(app, router, Rc::new(report)),
-        Then::Connect(key) => connect_from_report(app, router, &Rc::new(report), &key),
-    }
+    show_systems(app, router, Rc::new(report));
 }
 
 fn show_saved_results(app: &Rc<AppState>, router: &Router) {
@@ -420,25 +436,6 @@ fn show_port(app: &Rc<AppState>, router: &Router, report: Rc<Report>, group: usi
 }
 
 // -- Connect --------------------------------------------------------------------------------------
-
-fn connect_from_report(app: &Rc<AppState>, router: &Router, report: &Rc<Report>, key: &str) {
-    let row = report.groups.iter().flat_map(|g| g.ports.iter()).find(|r| r.port.key() == key);
-    match row {
-        Some(row) if row.can_connect() => {
-            let back: Back = Rc::new(|app, router| open_game_files(app, router));
-            open_connect(app, router, row, back);
-        }
-        Some(row) => {
-            let mut text = format!("None of the files {} needs were found in {}.\n", row.port.display_name(), report.root.display());
-            for line in row.detail_lines().iter().take(4) {
-                text.push_str(&format!("\n  {line}"));
-            }
-            text.push_str("\n\nAdd the files to your game folder, then use Settings > Game files > Scan the folder now.");
-            message(app, router, &format!("Game files for {}", row.port.display_name()), &text);
-        }
-        None => message(app, router, TITLE, "That port does not need game files, or it is not installed."),
-    }
-}
 
 fn open_connect(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back) {
     let Some(store) = load_store(app, router) else { return };
@@ -561,50 +558,3 @@ fn show_connections(app: &Rc<AppState>, router: &Router) {
     });
 }
 
-// -- After a port installs -------------------------------------------------------------------------
-
-/// Offered once per port, right after it installs, when the port names files it cannot run without.
-/// Declining is final for that port; Settings > Game files stays available.
-pub(crate) fn offer_after_install(app: &Rc<AppState>, router: &Router, key: &str) {
-    if dialog_is_open(app) {
-        return;
-    }
-    let Some(port) = app.find_port(key) else { return };
-    if port.is_android_only() {
-        return;
-    }
-    let settings_path = app.paths.config_dir.join(FILE_NAME);
-    let mut settings = ForkSettings::load(&settings_path);
-    if settings.rom_prompted(key) {
-        return;
-    }
-    let local = load_local_entries(&app.paths.config_dir.join("ports.local.json"));
-    let spec = RomSpec::for_port(&port, local.get(&port.folder));
-    if !needs_game_files(&spec) {
-        return;
-    }
-    let key = key.to_string();
-    open_confirm_dialog(
-        app,
-        router,
-        format!("Game files for {}", port.display_name()).into(),
-        padded(&offer_text(port.display_name(), &spec)).into(),
-        "Connect".into(),
-        {
-            let key = key.clone();
-            move |app, router| connect_port(app, router, &key)
-        },
-    );
-    // Marked only once the dialog is really up, so a failure to open it does not use up the offer.
-    if dialog_is_open(app) {
-        let _ = settings.mark_rom_prompted(&key);
-    }
-}
-
-fn connect_port(app: &Rc<AppState>, router: &Router, key: &str) {
-    let Some(store) = load_store(app, router) else { return };
-    match store.rom_dir() {
-        None => choose_folder(app, router, Then::Connect(key.to_string())),
-        Some(_) => start_scan(app, router, Then::Connect(key.to_string())),
-    }
-}

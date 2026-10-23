@@ -99,8 +99,8 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                         launch_flow(app, router, &port);
                     }
                 } else {
-                    // Fork: offer to connect the port's game files (once per port).
-                    super::rom_screens::offer_after_install(app, router, &key);
+                    // Fork: look for the port's game files in the ROM folder (once per port).
+                    super::rom_screens::after_install(app, router, &key);
                 }
             }
             AppEvent::InstallAssetAmbiguous { key, assets, release_override } => {

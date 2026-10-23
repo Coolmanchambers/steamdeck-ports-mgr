@@ -184,7 +184,7 @@ pub fn row_visible(status: PortStatus, installed: bool) -> bool {
     }
 }
 
-fn all_slots_connected(matched: &PortMatch, mappings: &[Mapping]) -> bool {
+pub fn all_slots_connected(matched: &PortMatch, mappings: &[Mapping]) -> bool {
     let required: Vec<&SlotResult> = matched.slots.iter().filter(|s| !s.optional).collect();
     !required.is_empty()
         && required.iter().all(|s| {

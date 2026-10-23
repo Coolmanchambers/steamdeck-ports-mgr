@@ -91,6 +91,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `ui/app-window.slint` | One line exporting `FolderPickerDialog` and `FolderRow` from `ui/fork/folder-picker.slint` |
 | 2026-10-22 | `src/ui/slint_layout_lint.rs` | The new Slint file is linted too |
 | 2026-10-22 | `src/main.rs` | Window Close (when it quits) and tray Quit also wait for a running ports move (`ports_folder_screen::quit_waits_for_move`: the move is cancelled, its copies removed, then the app quits) |
+| 2026-10-22 | `src/app/events.rs` | ROM search (branch `rom-search`): the after-install call is now `rom_screens::after_install` (looks for the port's game files in the ROM folder once per port) instead of `offer_after_install`; same place, same condition |
+| 2026-10-22 | `ui/dialogs/info.slint` | ROM search: a second `DialogButton`, "Game files..." (button index 11), on the same row as "Restore saves..." (the two are centered side by side; the row and its height appear when either is shown). Property `game-files-enabled`, callback `game-files-requested` |
+| 2026-10-22 | `src/app/gamepad_target.rs` | ROM search: `INFO_BUTTON_COUNT` 11 to 12; the new button in `info_buttons_enabled` and `invoke_info_button` |
+| 2026-10-22 | `src/app/dialogs.rs` | ROM search: Info sets `game-files-enabled` for an installed port that names game files and wires it to `rom_screens::open_from_info` (one import, two lines) |
 
 Files added by this fork:
 
@@ -141,8 +145,11 @@ Files added by this fork:
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
 | 2026-10-22 | `src/fork/steam_queue.rs` | Steam changes queued from Game Mode: `steam-queue.json` (versioned, atomic), applying it through the screen's safe write, the startup/30-second offer decision, the mode wording; since 2026-10-22 also `repoint` entries for moved ports (applied first); tested without UI |
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
-| 2026-10-22 | `src/fork/rom_screens/` | The logic of the game-files screens (R2): folder browser, background job runner, scan and report, results by system, Connect step, connected ports, the after-install offer; tested without UI |
+| 2026-10-22 | `src/fork/rom_screens/` | The logic of the game-files screens (R2): folder browser, background job runner, scan and report, results by system, Connect step, connected ports, the after-install search decision (`offer.rs`); tested without UI |
 | 2026-10-22 | `src/app/rom_screens.rs` | The screens themselves: list dialogs, a timer that polls the worker thread |
+| 2026-10-22 | `src/fork/rom_screens/find.rs` | "Find the game files for this port": `find_game_files_for_port` / `_for_ports` (saved scan reused, only new or changed files read), outcomes (found, several, not found, no folder, folder unreadable, no files needed), prompt text, connect by hand; tested without UI |
+| 2026-10-22 | `src/fork/rom_screens/file_pick.rs` | A file chooser list for "Connect by hand..." (folders, then game files first) |
+| 2026-10-22 | `src/app/rom_screens/find_flow.rs` | The screens around `find`: after an install or adopt, from Info and Settings; entry points for other screens |
 | 2026-10-22 | `src/fork/save_restore/` | Restore saves: list a port's backups (before update, Backup Saves, before restore), resolve its save folders for this system without guessing, and restore one (safety zip first, zip-slip check, swap by rename); `zip_index.rs` reads a zip's table of contents; `view.rs` holds the screen text; tested without UI |
 | 2026-10-22 | `src/app/save_restore_screen.rs` | The Restore saves screens (Info button and Settings entry): list dialogs, confirm, a progress dialog polling the worker thread |
 | 2026-10-21 | `src/fork/deck_ready/index.rs` | Reads `index/deck-ready.json` (schema 1); unusable entries are skipped, an unusable file is refused |
@@ -302,15 +309,30 @@ screens. The text is English only.
   connection is saved in `rom_library.json`.
 - **Connected ports:** each recorded connection with its health (OK, game file missing, game file changed, link or copy gone).
   Choosing one offers "Forget": only the record goes, never a file.
-- **After an install:** once per port, when the port names files it cannot run without, one confirm offers to connect them
-  (the answer is final; `rom_prompted_ports` in `fork-settings.json`). Not offered when the install is followed by Play.
-  It sets the folder first if none is set, rescans, then opens the Connect step.
+- **After an install (ROM search, 2026-10-22):** once per port, when the port names files it cannot run without and is not
+  connected yet, the app looks for them in the game files folder on its own (`find.rs`; `rom_prompted_ports` in
+  `fork-settings.json` remembers it, the same key the earlier offer used, so there is never a second prompt). The folder is walked
+  on the worker thread with progress and Cancel; only new or changed files are read (a folder that did not change costs one walk
+  and no reads, and the saved scan is not rewritten). Found: the Connect step. Several files: a pick list per slot, then Connect.
+  Not found: a list naming the port, each missing file with its CRC32 (or "SHA-1 listed", or "only the game is named"), the
+  folder and its file count, notes for a wrong version or the files that were found, then **Search again**, **Connect by
+  hand...** and **Later**. No folder set: the same prompt with **Choose ROM folder...**. Folder unreadable (card out): **Search
+  again** and **Choose another folder...**. Nothing when a launch follows the install (Play), when the port needs no files, or when
+  a dialog or another game-files task is already up. Adopting ports does the same with one walk for all of them and a list of
+  results under the adopt summary (`after_ports_added`).
+- **Finding a port's files later:** the port's Info dialog has **Game files...** (installed ports that name files; beside
+  Restore saves) and Settings > Game files has **Find game files for a port...** (installed ports that name files, not yet
+  connected first). Both run the same search. **Connect by hand...** walks folders (starting at the game files folder), lists
+  game files first, reads and checksums the chosen file: a listed file opens Connect; any other file says so with its CRC32 and
+  offers **Use it anyway** (marked "matched by name, check this" in Connect), Choose another file or Cancel.
+- **API for other screens:** `fork::rom_screens::find::find_game_files_for_port` (pure, any thread) and
+  `app::rom_screens::{find_for_port, after_ports_added}` (the screens). See the module docs of `find.rs` and `find_flow.rs`.
 - **Known limits:** B closes the whole flow from any list (each deeper list has a Back or Cancel row; the copy confirm's Cancel
   returns to the main window); an abandoned scan (B) stops within a second and a new job is refused until it has; a disc whose
-  `.cue` lists a track that is missing is still reported Found (the cue's `FILE` lines are not read); declining the after-install
-  offer is final for that port; an install that finishes while a scan list is up closes that list and so cancels the scan (upstream's
+  `.cue` lists a track that is missing is still reported Found (the cue's `FILE` lines are not read); the automatic search
+  runs once per port (Later keeps the Info and Settings ways in); a disc picked by hand connects only the chosen file; an install that finishes while a scan list is up closes that list and so cancels the scan (upstream's
   `finish_operation`, same for the Steam screens); the browser cursor returns to the first row after each step.
-- **Not done:** no button in the Info dialog (its 5+5 button grid is fixed; the offer and Settings cover it); the BIOS folder
+- **Not done:** the BIOS folder
   setting and N64 byte-order conversion of R1's backlog; a startup health check of recorded connections (the list shows health
   when opened); "Use original" does not pass the path to the port, it only records it and says where the file is.
 - **Not verified on a Deck:** fullscreen layout, controller input through Steam Input, SD card start points

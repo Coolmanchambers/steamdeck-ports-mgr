@@ -427,6 +427,7 @@ fn confirm_adopt(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<AdoptSc
         let local_json = app.paths.config_dir.join("ports.local.json");
         let catalog = app.catalog.borrow().clone();
         let done = screens::adopt_selected(&screen.borrow(), &catalog, &app.paths.library_dir(), &local_json);
+        let adopted_keys: Vec<String> = done.adopted.iter().map(|p| p.key().to_string()).collect();
         for port in done.adopted {
             app.state.borrow_mut().mark_installed(port.key(), None);
             let mut catalog = app.catalog.borrow_mut();
@@ -434,6 +435,9 @@ fn confirm_adopt(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<AdoptSc
             *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
         }
         app.refresh_current_view();
-        open_message_dialog(app, router, ADOPT_TITLE, &padded(&done.text));
+        // Fork (ROM search): adopted ports that need game files get looked for; the result text leads that list.
+        if !super::rom_screens::after_ports_added(app, router, &adopted_keys, &done.text) {
+            open_message_dialog(app, router, ADOPT_TITLE, &padded(&done.text));
+        }
     });
 }
