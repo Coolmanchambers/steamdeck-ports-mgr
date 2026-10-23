@@ -291,6 +291,14 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
     show_step(w, a);
 }
 
+/// The import screen is done (its `finish`): resume only when the hand-off still pending is the import. A late
+/// finish (the wizard already came back, or moved on to another hand-off) changes nothing.
+pub fn resume_import(w: &mut Wizard, a: &mut dyn Adapters) {
+    if matches!(w.handoff, Some(HandOff::Import { .. })) {
+        resume(w, a);
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod fake {
     use super::*;
@@ -513,6 +521,29 @@ mod tests {
         resume(&mut w, &mut a);
         assert_eq!(w.summary.imported, Some(2));
         assert_eq!((w.step, w.view.clone()), (Step::Import, View::Step));
+    }
+
+    #[test]
+    fn a_late_import_finish_resumes_only_the_import_hand_off() {
+        // Another hand-off is pending (the game files chooser): the import's late finish must not take it.
+        let (mut w, mut a) = (at(Step::RomFolder, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::ChooseRomFolder, &mut a);
+        let calls = a.calls.len();
+        resume_import(&mut w, &mut a);
+        assert_eq!(w.handoff, Some(HandOff::RomFolder), "the game files hand-off is still pending");
+        assert!(!w.summary.rom_folder_opened);
+        assert_eq!(a.calls.len(), calls, "and nothing was drawn");
+        // Nothing pending at all (the wizard already came back): also nothing.
+        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake::default());
+        resume_import(&mut w, &mut a);
+        assert!(a.calls.is_empty());
+        // The import hand-off itself resumes as usual, counting what the import moved.
+        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake { installed: 4, ..Fake::default() });
+        press(&mut w, Action::FindPorts, &mut a);
+        a.installed = 6;
+        resume_import(&mut w, &mut a);
+        assert_eq!((w.summary.imported, w.handoff), (Some(2), None));
+        assert_eq!(a.calls.last().unwrap(), "show Import Step");
     }
 
     #[test]

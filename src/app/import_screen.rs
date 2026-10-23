@@ -183,6 +183,13 @@ thread_local! {
     static QUIT_AFTER_IMPORT: Cell<bool> = const { Cell::new(false) };
 }
 
+/// True while the scan or the import runs on its worker thread, including after B closed its progress list and the
+/// worker is still stopping (removing a half copy can take seconds): its late result and questions still come.
+/// The setup wizard waits for this before it takes control back.
+pub(crate) fn import_running() -> bool {
+    JOB_RUNNING.with(Cell::get)
+}
+
 /// Close and Quit ask this: a running import is cancelled (the copy in progress is removed, the ports
 /// already moved stay moved) and the app quits when the worker has stopped.
 pub(crate) fn quit_waits_for_import(app: &Rc<AppState>, router: &Router) -> bool {
@@ -472,6 +479,12 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
 // -- Scanning ----------------------------------------------------------------------------------------
 
 fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders) {
+    scan(app, router, ctx, folders, ctx.waited_on().then(|| ctx.finisher()));
+}
+
+/// The scan, with what B on its progress list does: leave the step (the first scan), or for a rescan from the
+/// main list go back to that list.
+fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, leave: Option<Step>) {
     let Some(home) = home_dir() else {
         return end_notice(app, router, ctx, TITLE, "Could not find your home folder, so there is nowhere to look.");
     };
@@ -489,7 +502,7 @@ fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolde
             initial: "Looking in your scan folders...".into(),
             cancel_label: "Cancel",
             deliver_after_close: false,
-            leave: ctx.waited_on().then(|| ctx.finisher()),
+            leave,
             prompts: None,
             is_import: false,
             work: Box::new(move |ctl| {
@@ -510,6 +523,9 @@ fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolde
 fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
     let labels = screen.borrow().labels();
     let Some(dialog) = build_picker_dialog(app, router, TITLE, &labels) else { return ctx.finish_quiet(app, router) };
+    let first = screen.borrow().first_row() as i32;
+    dialog.set_selected_index(first);
+    app.dialog_nav.picker_index.set(first);
     {
         let (app, router, ctx, weak) = (app.clone(), router.clone(), ctx.clone(), dialog.as_weak());
         dialog.on_item_selected(move |index| {
@@ -522,7 +538,12 @@ fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<
                 }
                 Some(ImportLine::Rescan) => {
                     let folders = screen.borrow().folders.clone();
-                    return start_scan(&app, &router, &ctx, folders);
+                    // B on the rescan's progress list returns to this list, not out of the step.
+                    let back: Step = {
+                        let (ctx, screen) = (ctx.clone(), screen.clone());
+                        Rc::new(move |app, router| show_main(app, router, &ctx, screen.clone()))
+                    };
+                    return scan(&app, &router, &ctx, folders, Some(back));
                 }
                 Some(ImportLine::Preview) => {
                     if screen.borrow().selected_count() > 0 {

@@ -153,7 +153,9 @@ fn tick(app: &Rc<AppState>, router: &Router) {
     if SESSION.with(|s| s.borrow().is_none()) {
         return WATCH.with(|t| t.stop());
     }
-    if dialog_is_open(app) {
+    // A running import counts as "something is open": after B on its progress list nothing is on screen while the
+    // worker stops, and its late result and questions must not meet a different wizard page.
+    if dialog_is_open(app) || super::import_screen::import_running() {
         QUIET.with(|q| q.set(0));
         return;
     }
@@ -378,7 +380,8 @@ fn rom_folder(app: &AppState) -> Option<PathBuf> {
 /// that does not. `finish` hands control back to the wizard, which counts the ports now installed against
 /// the count taken when the step was opened, so the Done page reports what the import really moved.
 fn import_step(app: &Rc<AppState>, router: &Router) {
-    let finish: super::import_screen::Finish = Rc::new(|app, router| with_wizard(app, router, |w, ui| flow::resume(w, ui)));
+    // Only the import hand-off is resumed: a late finish must not take another hand-off (the game files chooser, say).
+    let finish: super::import_screen::Finish = Rc::new(|app, router| with_wizard(app, router, |w, ui| flow::resume_import(w, ui)));
     super::import_screen::open_with(app, router, true, Some(finish));
 }
 

@@ -438,7 +438,7 @@ Welcome and showing the current values. English only, plain wording.
   opening Game files itself ("Fix in Game files") is therefore left alone. "Ports you already had: N moved" is the change in the number of
   installed ports across the import screen (the ports it moved into the ports folder). The import screen calls the
   wizard back through its `finish` (once, on every exit except quitting the app); the watcher also resumes the
-  wizard if no dialog is open for a moment, and a second resume changes nothing.
+  wizard if no dialog is open for a moment (it also waits while the import screen's worker is still running, `import_screen::import_running()`), and a second resume changes nothing; the finisher resumes only while the import is still the pending hand-off (`flow::resume_import`).
 - **Adapters (the integration points):** `flow::Adapters` is everything the wizard needs from the rest of the app and
   the only thing the tests fake. In `setup_wizard_screen.rs`: `ports_folder_step` (calls
   `ports_folder_screen::{consider, choose_folder}`; the wizard keeps no ports-folder checks of its own) and

@@ -887,6 +887,7 @@ fn show_old_copy_prompt(app: &Rc<AppState>, router: &Router, entry: OldCopy, cop
     let copies = Rc::new(RefCell::new(Some(copies)));
     let summary = Rc::new(summary);
     let (b_entry, b_copies, b_summary) = (entry.clone(), copies.clone(), summary.clone());
+    let (app_x, router_x) = (app.clone(), router.clone());
     let (e_copies, e_summary) = (copies.clone(), summary.clone());
     let dialog = open_model(app, router, "Remove the old copy now?", model, move |app, router, act| {
         let rest = || copies.borrow_mut().take().unwrap_or_default();
@@ -907,15 +908,22 @@ fn show_old_copy_prompt(app: &Rc<AppState>, router: &Router, entry: OldCopy, cop
     // B is "Keep for now" for this one and for every old copy still to be asked about: nothing is removed,
     // they stay listed under Old copies, and the sequence ends with its summary as usual.
     if let Some(dialog) = dialog {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_close_requested(move || {
-            close_current_dialog(&app, &router);
+        let keep_rest: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(move |app, router| {
+            close_current_dialog(app, router);
             let rest = b_copies.borrow_mut().take().unwrap_or_default();
             let mut note = format!("{}\n\nKept the old copy of {} at {} (remove it later: Settings > Ports folder > Old copies).", b_summary, b_entry.name, b_entry.old_path.display());
             for other in &rest {
                 note.push_str(&format!("\nKept the old copy of {} at {} (not asked about).", other.name, other.old_path.display()));
             }
-            prompt_old_copies(&app, &router, VecDeque::new(), note.trim_start().to_string());
+            prompt_old_copies(app, router, VecDeque::new(), note.trim_start().to_string());
+        });
+        let (b_app, b_router, on_b) = (app_x.clone(), router_x.clone(), keep_rest.clone());
+        dialog.on_close_requested(move || on_b(&b_app, &b_router));
+        // The title bar's X only hides the window; it goes where B goes, so the run (and the hook waiting on
+        // it) ends instead of being left behind.
+        dialog.window().on_close_requested(move || {
+            keep_rest(&app_x, &router_x);
+            slint::CloseRequestResponse::HideWindow
         });
     }
 }

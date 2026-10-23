@@ -88,6 +88,12 @@ impl ImportScreen {
         lines
     }
 
+    /// Where the cursor starts: the first row that does something (Scan folders, a find, Import, Continue), not
+    /// the intro, the ports folder line or an information line.
+    pub fn first_row(&self) -> usize {
+        self.lines().iter().position(|l| !matches!(l, ImportLine::Intro | ImportLine::PortsFolder | ImportLine::Info(_))).unwrap_or(0)
+    }
+
     pub fn selected_count(&self) -> usize {
         self.selected.iter().filter(|&&s| s).count()
     }
@@ -312,6 +318,17 @@ mod tests {
         assert_eq!(labels[4], "[x] Ship of Harkinian (exact match) 8 KB, ~/Applications/SoH, Steam shortcut");
         assert_eq!(labels[5], "Looked in: ~/Applications, ~/Games");
         assert_eq!(&labels[6..], ["Scan again", "Show what importing will do...", "Import 2 ports..."]);
+    }
+
+    #[test]
+    fn the_cursor_starts_on_the_first_row_that_does_something() {
+        let h = fake_home("screen_first_row");
+        for from_wizard in [false, true] {
+            let s = screen(&h, from_wizard);
+            let first = s.first_row();
+            assert_eq!(s.lines()[first], ImportLine::Folders, "not the intro, the ports folder line or an information line");
+            assert!(first > 1);
+        }
     }
 
     #[test]
