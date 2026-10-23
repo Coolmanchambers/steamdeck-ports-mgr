@@ -16,13 +16,13 @@
 //! installed ports) and `import_step` (today Settings > Adopt installed ports; it will point at the new
 //! import screen).
 
-use super::dialogs::{build_setup_wizard_dialog, close_current_dialog, dialog_is_open, finish_dialog_open};
+use super::dialogs::{build_setup_wizard_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, DialogSlot};
 use super::state::AppState;
 use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts};
 use crate::fork::rom_library::RomLibraryStore;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::fork::setup_wizard::flow::{self, Action, Adapters, Mode, Wizard};
-use crate::fork::setup_wizard::text::{self, Context, Page};
+use crate::fork::setup_wizard::text::{self, Context, Focus, Page};
 use crate::fork::setup_wizard::{places, setup_state, SetupState};
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::{SetupWizardDialog, WizardOption};
@@ -55,6 +55,8 @@ thread_local! {
     static FOCUS: Cell<usize> = const { Cell::new(0) };
     /// The folder an earlier build recorded, offered in this run only.
     static EARLIER: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    /// The ports folder when this wizard run started.
+    static STARTED: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
 fn settings_path(app: &AppState) -> PathBuf {
@@ -76,6 +78,11 @@ pub(crate) fn start_if_first_run(app: &Rc<AppState>, router: &Router) {
 fn start_when_quiet(app: Rc<AppState>, router: Router, waited: u32) {
     // After the first frame, so the dialog finds the main window already placed.
     slint::Timer::single_shot(START_DELAY, move || {
+        // Setup was finished meanwhile (the wizard was run and finished from Settings), or a wizard is
+        // already showing: nothing to open.
+        if !crate::fork::setup_wizard::opens_at_start(&settings_path(&app)) || SESSION.with(|s| s.borrow().is_some()) {
+            return;
+        }
         if super::ports_folder_screen::startup_dialog_pending() || dialog_is_open(&app) {
             if waited < MAX_START_WAITS {
                 start_when_quiet(app, router, waited + 1);
@@ -95,6 +102,7 @@ pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
 fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
     let session: Session = Rc::new(RefCell::new(Wizard::new(mode)));
     EARLIER.with(|e| *e.borrow_mut() = take_earlier_choice(app));
+    STARTED.with(|s| *s.borrow_mut() = Some(app.paths.library_dir()));
     SESSION.with(|s| *s.borrow_mut() = Some(session.clone()));
     QUIET.with(|q| q.set(0));
     start_watch(app, router);
@@ -133,11 +141,14 @@ fn start_watch(app: &Rc<AppState>, router: &Router) {
     WATCH.with(|t| t.start(slint::TimerMode::Repeated, TICK, move || tick(&app, &router)));
 }
 
-/// While an existing screen is open the wizard waits. When no dialog has been open for a moment: after a
-/// hand-off, the user closed that screen, so the wizard returns; otherwise the user closed the wizard
-/// itself (the window's close button), so it is over for this run and is offered again at the next start.
+/// While an existing screen is open the wizard waits. When no dialog has been open for a moment, the
+/// wizard comes back: after a hand-off it reads what the other screen did; with none pending (an
+/// unrelated dialog took its place and was closed) it just shows the same page again. It ends only when
+/// the user leaves it (the title bar's X or the window's close button), or finishes.
 fn tick(app: &Rc<AppState>, router: &Router) {
-    let Some(session) = SESSION.with(|s| s.borrow().clone()) else { return WATCH.with(|t| t.stop()) };
+    if SESSION.with(|s| s.borrow().is_none()) {
+        return WATCH.with(|t| t.stop());
+    }
     if dialog_is_open(app) {
         QUIET.with(|q| q.set(0));
         return;
@@ -150,12 +161,8 @@ fn tick(app: &Rc<AppState>, router: &Router) {
         return;
     }
     QUIET.with(|q| q.set(0));
-    let waiting = session.try_borrow().is_ok_and(|w| w.handoff.is_some());
-    if waiting {
-        with_wizard(app, router, |w, ui| flow::resume(w, ui));
-    } else {
-        end_session(app, router);
-    }
+    // `resume` shows the page again whether or not a hand-off is pending.
+    with_wizard(app, router, |w, ui| flow::resume(w, ui));
 }
 
 // -- Drawing ---------------------------------------------------------------------------------------
@@ -165,7 +172,14 @@ fn context(app: &AppState) -> Context {
     let internal_default = crate::fork::ports_folder::default_dir(&app.paths.config_dir);
     let drives = removable_drives(&system_mounts(), &default_media_roots());
     let earlier = EARLIER.with(|e| e.borrow().clone());
-    Context { quick: places::quick_choices(&current, &internal_default, &drives, earlier.as_deref()), ports_folder: current, rom_folder: rom_folder(app) }
+    let started_with = STARTED.with(|s| s.borrow().clone()).unwrap_or_else(|| current.clone());
+    Context {
+        quick: places::quick_choices(&current, &internal_default, &drives, earlier.as_deref()),
+        current_is_default: current == internal_default,
+        started_with,
+        ports_folder: current,
+        rom_folder: rom_folder(app),
+    }
 }
 
 fn model<T: Clone + 'static>(items: Vec<T>) -> slint::ModelRc<T> {
@@ -184,18 +198,39 @@ fn fill(d: &SetupWizardDialog, w: &Wizard, page: &Page) {
     d.set_options(model(
         page.options
             .iter()
-            .map(|o| WizardOption { title: o.title.clone().into(), detail: o.detail.clone().into(), kind: i32::from(o.choice.is_some()), chosen: o.choice == Some(true) })
+            .enumerate()
+            .map(|(i, o)| WizardOption {
+                title: o.title.clone().into(),
+                detail: o.detail.clone().into(),
+                kind: i32::from(o.choice.is_some()),
+                chosen: o.choice == Some(true),
+                enabled: o.enabled,
+                focus: text::option_number(page, i),
+            })
             .collect::<Vec<_>>(),
     ));
     d.set_footnote(page.footnote.clone().into());
     let label = |slot: usize| page.buttons[slot].as_ref().map(|b| b.label.clone()).unwrap_or_default();
-    d.set_left_text(label(0).into());
-    d.set_middle_text(label(1).into());
-    d.set_right_text(label(2).into());
+    d.set_left_text(label(text::LEFT).into());
+    d.set_middle_text(label(text::MIDDLE).into());
+    d.set_extra_text(label(text::EXTRA).into());
+    d.set_right_text(label(text::RIGHT).into());
     d.set_primary_slot(page.primary.map_or(-1, |s| s as i32));
-    d.set_focus_left(text::button_number(page, 0));
-    d.set_focus_middle(text::button_number(page, 1));
-    d.set_focus_right(text::button_number(page, 2));
+    d.set_focus_left(text::button_number(page, text::LEFT));
+    d.set_focus_middle(text::button_number(page, text::MIDDLE));
+    d.set_focus_extra(text::button_number(page, text::EXTRA));
+    d.set_focus_right(text::button_number(page, text::RIGHT));
+}
+
+/// Marks focus number `n` as selected: the window draws it, and scrolls to it when it is an option.
+fn select(d: &SetupWizardDialog, page: &Page, n: usize) {
+    FOCUS.with(|f| f.set(n));
+    let option = match text::focus_at(page, n) {
+        Some(Focus::Option(i)) => i as i32,
+        _ => -1,
+    };
+    d.set_selected_option(option);
+    d.set_selected_index(n as i32);
 }
 
 fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
@@ -203,15 +238,14 @@ fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
     let page = Rc::new(text::page_for(w, &ctx));
     let Some(dialog) = build_setup_wizard_dialog(app, router) else { return };
     fill(&dialog, w, &page);
-    let start = text::initial_focus(&page);
-    dialog.set_selected_index(start as i32);
-    FOCUS.with(|f| f.set(start));
+    select(&dialog, &page, text::initial_focus(&page));
 
     let press = |app: &Rc<AppState>, router: &Router, action: Action| with_wizard(app, router, |w, ui| flow::press(w, action, ui));
     {
         let (app, router, page) = (app.clone(), router.clone(), page.clone());
         dialog.on_option_requested(move |i| {
-            if let Some(option) = page.options.get(i as usize) {
+            // A disabled option (the folder in use, a drive that cannot hold ports) does nothing.
+            if let Some(option) = page.options.get(i as usize).filter(|o| o.enabled) {
                 press(&app, &router, option.action.clone());
             }
         });
@@ -225,11 +259,10 @@ fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
         });
     }
     {
-        let weak = dialog.as_weak();
+        let (weak, page) = (dialog.as_weak(), page.clone());
         dialog.on_nav_hovered(move |n| {
-            FOCUS.with(|f| f.set(n.max(0) as usize));
-            if let Some(d) = weak.upgrade() {
-                d.set_selected_index(n);
+            if let (Some(d), true) = (weak.upgrade(), n >= 0) {
+                select(&d, &page, n as usize);
             }
         });
     }
@@ -237,9 +270,8 @@ fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
         let (weak, page) = (dialog.as_weak(), page.clone());
         dialog.on_move_requested(move |dx, dy| {
             let next = text::move_focus(&page, FOCUS.with(Cell::get), dx, dy);
-            FOCUS.with(|f| f.set(next));
             if let Some(d) = weak.upgrade() {
-                d.set_selected_index(next as i32);
+                select(&d, &page, next);
             }
         });
     }
@@ -267,7 +299,15 @@ fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
         dialog.on_exit_requested(move || end_session(&app, &router));
     }
     let _ = dialog.show();
-    finish_dialog_open(app, router, super::dialogs::DialogSlot::SetupWizard(dialog));
+    let for_window = dialog.clone_strong();
+    finish_dialog_open(app, router, DialogSlot::SetupWizard(dialog));
+    // The window system's own close (a window manager's button, Alt+F4) leaves the wizard like the X does;
+    // `finish_dialog_open` would only close the page, which the wizard would then draw again.
+    let (app, router) = (app.clone(), router.clone());
+    for_window.window().on_close_requested(move || {
+        end_session(&app, &router);
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 // -- The adapters ----------------------------------------------------------------------------------
@@ -286,8 +326,8 @@ impl Adapters for Ui {
         ports_folder_step(&self.app, &self.router, chosen);
     }
 
-    fn import_step(&mut self) {
-        import_step(&self.app, &self.router);
+    fn import_step(&mut self) -> bool {
+        import_step(&self.app, &self.router)
     }
 
     fn rom_folder_step(&mut self) {
@@ -331,9 +371,12 @@ fn rom_folder(app: &AppState) -> Option<PathBuf> {
 /// Opens the screen that finds ports installed elsewhere. Today that is Settings > Adopt installed
 /// ports; it will be switched to the new import screen. The wizard counts the ports it added by
 /// comparing installed ports before and after, so the screen needs no callback.
-fn import_step(app: &Rc<AppState>, router: &Router) {
+/// True when the screen really opened (it can refuse with a message), so a refusal is not reported as
+/// "no new ports".
+fn import_step(app: &Rc<AppState>, router: &Router) -> bool {
     close_current_dialog(app, router);
     super::steam_screens::open_adopt_screen(app, router);
+    matches!(&*app.dialog_nav.dialogs.borrow(), DialogSlot::Picker(d) if d.get_dialog_title() == "Adopt installed ports")
 }
 
 // -- The ports folder step -------------------------------------------------------------------------

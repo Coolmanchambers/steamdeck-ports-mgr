@@ -57,6 +57,8 @@ pub enum View {
     Step,
     ConfirmSkipSetup,
     Notice(String),
+    /// `setup_done` could not be saved: the page offers "Close anyway" as well as OK.
+    SaveFailed(String),
 }
 
 /// What an option or button does.
@@ -79,13 +81,15 @@ pub enum Action {
     Yes,
     No,
     Ok,
+    /// Leave the wizard without marking setup done (after a failed save).
+    CloseAnyway,
 }
 
 /// An existing screen the wizard sent the user to; [`resume`] runs when it has been closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandOff {
     PortsFolder,
-    Import { installed_before: usize },
+    Import { installed_before: usize, opened: bool },
     RomFolder,
     Steam,
     Art,
@@ -126,8 +130,9 @@ pub trait Adapters {
     /// flow takes over (check, create after a confirm, offer to move installed ports, old-copy prompts);
     /// the wizard comes back when it is closed.
     fn ports_folder_step(&mut self, chosen: Option<PathBuf>);
-    /// Open the import screen (finding ports installed elsewhere).
-    fn import_step(&mut self);
+    /// Open the import screen (finding ports installed elsewhere). False when it did not open (refused,
+    /// with a message), so nothing is said about what it found.
+    fn import_step(&mut self) -> bool;
     /// Open the game files folder choice and scan.
     fn rom_folder_step(&mut self);
     /// Open Add to Steam.
@@ -145,16 +150,11 @@ pub trait Adapters {
 /// What B (or Escape) does in the current view.
 pub fn back_action(wizard: &Wizard) -> Action {
     match &wizard.view {
-        View::Notice(_) => Action::Ok,
+        View::Notice(_) | View::SaveFailed(_) => Action::Ok,
         View::ConfirmSkipSetup => Action::No,
         View::Step if wizard.step == Step::Welcome => Action::SkipSetup,
         View::Step => Action::Back,
     }
-}
-
-fn notice(w: &mut Wizard, a: &mut dyn Adapters, text: impl Into<String>) {
-    w.view = View::Notice(text.into());
-    a.show(w);
 }
 
 fn show_step(w: &mut Wizard, a: &mut dyn Adapters) {
@@ -170,14 +170,18 @@ fn go_to(w: &mut Wizard, step: Step, a: &mut dyn Adapters) {
 fn finish(w: &mut Wizard, a: &mut dyn Adapters) {
     match a.mark_done() {
         Ok(()) => a.close(),
-        Err(e) => notice(w, a, format!("Setup could not be saved as finished, so it will open again next time.\n\n{e}")),
+        Err(e) => {
+            w.view = View::SaveFailed(format!("Setup could not be saved as finished, so it will open again next time.\n\n{e}"));
+            a.show(w);
+        }
     }
 }
 
 /// The user chose an item (or pressed B, which the screen turns into [`back_action`]).
 pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     match (w.view.clone(), action) {
-        (View::Notice(_), Action::Ok) => show_step(w, a),
+        (View::Notice(_) | View::SaveFailed(_), Action::Ok) => show_step(w, a),
+        (View::SaveFailed(_), Action::CloseAnyway) => a.close(),
         (View::ConfirmSkipSetup, Action::Yes) => finish(w, a),
         (View::ConfirmSkipSetup, Action::No) => show_step(w, a),
         (View::Step, action) => press_in_step(w, action, a),
@@ -224,8 +228,9 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
             a.ports_folder_step(None);
         }
         Action::FindPorts if w.step == Step::Import => {
-            w.handoff = Some(HandOff::Import { installed_before: a.installed_count() });
-            a.import_step();
+            let installed_before = a.installed_count();
+            let opened = a.import_step();
+            w.handoff = Some(HandOff::Import { installed_before, opened });
         }
         Action::ChooseRomFolder if w.step == Step::RomFolder => {
             w.handoff = Some(HandOff::RomFolder);
@@ -247,10 +252,11 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
 /// folder is read again by the screen when it draws, so it needs no note here.
 pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
     match w.handoff.take() {
-        Some(HandOff::Import { installed_before }) => {
+        Some(HandOff::Import { installed_before, opened: true }) => {
             let added = a.installed_count().saturating_sub(installed_before);
             w.summary.imported = Some(w.summary.imported.unwrap_or(0) + added);
         }
+        Some(HandOff::Import { opened: false, .. }) => {}
         Some(HandOff::RomFolder) => w.summary.rom_folder_opened = true,
         Some(HandOff::Steam) => w.summary.steam_opened = true,
         Some(HandOff::Art) => w.summary.art_opened = true,
@@ -269,6 +275,8 @@ pub(crate) mod fake {
         pub calls: Vec<String>,
         pub done_error: Option<String>,
         pub installed: usize,
+        /// Whether `import_step` reports that the screen opened (a `Fake` built with `..Default` says no).
+        pub import_refused: bool,
     }
 
     impl Adapters for Fake {
@@ -281,8 +289,9 @@ pub(crate) mod fake {
                 None => "ports_folder picker".into(),
             });
         }
-        fn import_step(&mut self) {
+        fn import_step(&mut self) -> bool {
             self.calls.push("import".into());
+            !self.import_refused
         }
         fn rom_folder_step(&mut self) {
             self.calls.push("rom".into());
@@ -405,24 +414,77 @@ mod tests {
     }
 
     #[test]
-    fn quitting_midway_never_marks_setup_done() {
-        // Closing the page (X, or B somewhere unwired) is the screen's doing, not an Action: walking
-        // through every step except the last never reaches mark_done.
-        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake::default());
-        for _ in 0..4 {
-            press(&mut w, Action::Next, &mut a);
+    fn setup_done_is_only_ever_marked_by_finish_on_the_last_page_or_a_confirmed_skip() {
+        // Every action in every view and step, from a fresh wizard each time: the only presses that mark
+        // setup done are Finish on the last page and Yes on the skip question. (Quitting half-way is the
+        // screen closing the page, which is not an action at all, so it can never reach mark_done.)
+        let actions = [
+            Action::Next,
+            Action::Back,
+            Action::Skip,
+            Action::SkipSetup,
+            Action::UseFolder("/x".into()),
+            Action::ChooseFolder,
+            Action::FindPorts,
+            Action::ChooseRomFolder,
+            Action::OpenSteam,
+            Action::OpenArtSources,
+            Action::Finish,
+            Action::Yes,
+            Action::No,
+            Action::Ok,
+            Action::CloseAnyway,
+        ];
+        let views = [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into())];
+        for mode in [Mode::FirstRun, Mode::Rerun] {
+            for step in Step::ALL {
+                for view in &views {
+                    for action in &actions {
+                        let (mut w, mut a) = (at(step, mode), Fake::default());
+                        w.view = view.clone();
+                        press(&mut w, action.clone(), &mut a);
+                        let marks = a.calls.iter().any(|c| c == "mark_done");
+                        let allowed = (*view == View::Step && step == Step::Done && *action == Action::Finish) || (*view == View::ConfirmSkipSetup && *action == Action::Yes);
+                        assert_eq!(marks, allowed, "{mode:?} {step:?} {view:?} {action:?}");
+                    }
+                }
+            }
         }
-        assert!(!a.calls.iter().any(|c| c == "mark_done"));
     }
 
     #[test]
-    fn a_failed_save_of_setup_done_is_shown_and_does_not_close() {
+    fn a_failed_save_of_setup_done_is_shown_and_can_be_left_or_dismissed() {
         let (mut w, mut a) = (at(Step::Done, Mode::FirstRun), Fake { done_error: Some("disk full".into()), ..Fake::default() });
         press(&mut w, Action::Finish, &mut a);
-        assert!(matches!(&w.view, View::Notice(t) if t.contains("disk full") && t.contains("open again next time")));
+        assert!(matches!(&w.view, View::SaveFailed(t) if t.contains("disk full") && t.contains("open again next time")));
         assert!(!a.calls.iter().any(|c| c == "close"));
+        assert_eq!(back_action(&w), Action::Ok);
+        // OK goes back to the page.
         press(&mut w, Action::Ok, &mut a);
         assert_eq!(w.view, View::Step);
+        // Close anyway leaves without trying to mark setup done again.
+        press(&mut w, Action::Finish, &mut a);
+        let marks_before = a.calls.iter().filter(|c| *c == "mark_done").count();
+        press(&mut w, Action::CloseAnyway, &mut a);
+        assert_eq!(a.calls.last().unwrap(), "close");
+        assert_eq!(a.calls.iter().filter(|c| *c == "mark_done").count(), marks_before);
+    }
+
+    #[test]
+    fn close_anyway_belongs_to_the_failed_save_notice_only() {
+        let (mut w, mut a) = (at(Step::Done, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::CloseAnyway, &mut a);
+        assert!(a.calls.is_empty());
+    }
+
+    #[test]
+    fn an_import_screen_that_did_not_open_adds_nothing_to_the_summary() {
+        let (mut w, mut a) = (at(Step::Import, Mode::FirstRun), Fake { installed: 3, import_refused: true, ..Fake::default() });
+        press(&mut w, Action::FindPorts, &mut a);
+        a.installed = 9;
+        resume(&mut w, &mut a);
+        assert_eq!(w.summary.imported, None, "a refused open must not say that nothing new was found");
+        assert_eq!(w.step, Step::Import);
     }
 
     #[test]
@@ -462,7 +524,7 @@ mod tests {
     #[test]
     fn each_hand_off_calls_its_adapter_once_and_records_it() {
         let cases = [
-            (Step::Import, Action::FindPorts, "import", HandOff::Import { installed_before: 7 }),
+            (Step::Import, Action::FindPorts, "import", HandOff::Import { installed_before: 7, opened: true }),
             (Step::RomFolder, Action::ChooseRomFolder, "rom", HandOff::RomFolder),
             (Step::Steam, Action::OpenSteam, "steam", HandOff::Steam),
             (Step::Steam, Action::OpenArtSources, "art", HandOff::Art),

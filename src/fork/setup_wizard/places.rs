@@ -10,6 +10,14 @@ use std::path::{Path, PathBuf};
 /// The folder suggested on a drive.
 pub const SUBFOLDER: &str = "Ports";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Drive,
+    Internal,
+    Current,
+    Earlier,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuickChoice {
     /// What it is: "Internal storage", an SD card.
@@ -17,6 +25,9 @@ pub struct QuickChoice {
     /// The folder, and what is known about it ("new folder", free space, a file system that cannot hold ports).
     pub detail: String,
     pub path: PathBuf,
+    pub kind: Kind,
+    /// False for a drive whose file system cannot hold ports (exFAT, FAT, NTFS): shown, not selectable.
+    pub usable: bool,
 }
 
 fn notes(path: &Path, fs_type: Option<&str>) -> String {
@@ -28,27 +39,39 @@ fn notes(path: &Path, fs_type: Option<&str>) -> String {
     note.map(|n| format!(" - {n}")).unwrap_or_default()
 }
 
-/// Drives first (SD cards before USB drives, as `removable_drives` sorts them), then the internal default,
-/// then the current folder when it is neither, then `earlier` (a folder chosen in a build before the real
-/// ports folder setting, offered once).
+/// Usable drives first (SD cards before USB drives, as `removable_drives` sorts them), then the internal
+/// default, then the current folder when it is neither, then `earlier` (a folder chosen in a build before
+/// the real ports folder setting, offered once), then the drives that cannot hold ports (listed, but not
+/// selectable).
 pub fn quick_choices(current: &Path, internal_default: &Path, drives: &[Drive], earlier: Option<&Path>) -> Vec<QuickChoice> {
-    let mut out: Vec<QuickChoice> = Vec::new();
-    let mut add = |title: String, path: PathBuf, fs_type: Option<&str>| {
-        if out.iter().any(|c| c.path == path) {
+    let mut usable: Vec<QuickChoice> = Vec::new();
+    let mut unusable: Vec<QuickChoice> = Vec::new();
+    let detail = |path: &Path, fs_type: Option<&str>| format!("{}{}", ellipsize(&path.to_string_lossy(), 60), notes(path, fs_type));
+    for drive in drives {
+        let path = drive.mount_point.join(SUBFOLDER);
+        let can_hold = !is_non_linux_fs(&drive.fs_type);
+        let choice = QuickChoice {
+            title: if can_hold { drive.title() } else { format!("{} (can't be used)", drive.title()) },
+            detail: detail(&path, Some(&drive.fs_type)),
+            path,
+            kind: Kind::Drive,
+            usable: can_hold,
+        };
+        if can_hold { &mut usable } else { &mut unusable }.push(choice);
+    }
+    let mut add = |title: &str, path: &Path, kind: Kind| {
+        if usable.iter().chain(unusable.iter()).any(|c| c.path == path) {
             return;
         }
-        let detail = format!("{}{}", ellipsize(&path.to_string_lossy(), 60), notes(&path, fs_type));
-        out.push(QuickChoice { title, detail, path });
+        usable.push(QuickChoice { title: title.to_string(), detail: detail(path, None), path: path.to_path_buf(), kind, usable: true });
     };
-    for drive in drives {
-        add(drive.title(), drive.mount_point.join(SUBFOLDER), Some(&drive.fs_type));
-    }
-    add("Internal storage".to_string(), internal_default.to_path_buf(), None);
-    add("Current folder".to_string(), current.to_path_buf(), None);
+    add("Internal storage", internal_default, Kind::Internal);
+    add("Current folder", current, Kind::Current);
     if let Some(path) = earlier {
-        add("Folder you chose earlier".to_string(), path.to_path_buf(), None);
+        add("Folder you chose earlier", path, Kind::Earlier);
     }
-    out
+    usable.extend(unusable);
+    usable
 }
 
 #[cfg(test)]
@@ -86,14 +109,21 @@ mod tests {
     }
 
     #[test]
-    fn a_drive_that_cannot_hold_ports_says_so() {
+    fn a_drive_that_cannot_hold_ports_is_listed_after_the_usable_choices_and_cannot_be_chosen() {
         let t = temp();
-        let sd = t.path().join("SD");
-        fs::create_dir_all(&sd).unwrap();
+        let bad = t.path().join("EXFAT");
+        let good = t.path().join("GOOD");
+        fs::create_dir_all(&bad).unwrap();
+        fs::create_dir_all(&good).unwrap();
         let internal = t.path().join("Library");
-        let choices = quick_choices(&internal, &internal, &[drive(&sd, "SD card", "SD", "exfat")], None);
-        assert!(choices[0].detail.contains("exFAT cannot hold ports"), "{}", choices[0].detail);
-        assert!(!choices[0].detail.contains("new folder"));
+        // The exFAT card sorts first (SD cards come first), but it is listed after everything usable.
+        let drives = [drive(&bad, "SD card", "EXFAT", "exfat"), drive(&good, "USB drive", "GOOD", "ext4")];
+        let choices = quick_choices(&internal, &internal, &drives, None);
+        let order: Vec<(&str, bool)> = choices.iter().map(|c| (c.title.as_str(), c.usable)).collect();
+        assert_eq!(order, [("USB drive (GOOD)", true), ("Internal storage", true), ("SD card (EXFAT) (can't be used)", false)]);
+        assert!(choices[2].detail.contains("exFAT cannot hold ports"), "{}", choices[2].detail);
+        assert!(!choices[2].detail.contains("new folder"));
+        assert_eq!(choices[2].kind, Kind::Drive);
     }
 
     #[test]

@@ -95,16 +95,20 @@ still open from the same folder is recognized too; quit old copies from the tray
 ## First launch: the setup wizard
 
 The first time the app starts (and on an install from before the wizard existed) it opens **Setup wizard**
-on top of the list instead of leaving you in it. It takes a few minutes and every step except the ports
-folder can be skipped. A chooses, the D-pad moves, B goes back one step (on the first page B asks whether
-to skip setup; the cursor starts on "Keep going with setup").
+on top of the list instead of leaving you in it. It takes a few minutes; the steps after the ports folder can
+be skipped, and on the ports folder step Next keeps the current folder. A chooses, the D-pad moves between
+the options and buttons (the button that moves on is selected first), B goes back one step (on the first
+page B asks whether to skip setup; the cursor starts on "Keep going with setup"). The header shows
+"Step N of 6".
 
-1. **Welcome:** what the app does and the four steps. "Start setup" or "Skip setup...".
-2. **Ports folder:** where installed ports are kept. Your SD card is offered first (a `Ports` folder on it),
-   then internal storage, then "Choose another folder..." (the same folder picker as Settings > Ports folder).
-   The folder is checked (a card formatted exFAT is refused with how to fix it), a folder that does not exist
-   yet is created only after you say so, and ports you already installed can be moved there. The old copies are
-   kept until you choose to remove them. When you close those screens you are back in the wizard.
+1. **Welcome:** what the app does and the steps. "Start setup" or "Skip setup...".
+2. **Ports folder:** where installed ports are kept. With an SD card in, it is offered first (a `Ports` folder
+   on it) and selected, so one press of A offers it; then internal storage, then "Choose another folder..."
+   (the same folder picker as Settings > Ports folder). The folder in use is dimmed ("in use now"), and a
+   card formatted exFAT is listed as "(can't be used)". Without a card the page says so. The folder is
+   checked, a folder that does not exist yet is created only after you say so, and ports you already
+   installed can be moved there. The old copies are kept until you choose to remove them. When you close those
+   screens you are back in the wizard. The button reads "Keep this folder" until you pick a different one.
 3. **Ports you already have:** opens Adopt installed ports, which finds ports installed outside the app. When
    you close it you are back in the wizard, which says how many ports were added.
 4. **Game files:** choose the folder that holds your ROMs and disc images (they are only read), then the app
@@ -115,7 +119,7 @@ to skip setup; the cursor starts on "Keep going with setup").
    If you quit the app half-way, the wizard opens again next time.
 
 **Run it again any time:** Settings (Y) > **Setup wizard...**, the first row. It starts at Welcome and shows
-what is set now; "Close the wizard" on the first page leaves without changing anything.
+what is set now; every page has a "Close the wizard" button, and it leaves without changing anything.
 
 ## Updating
 

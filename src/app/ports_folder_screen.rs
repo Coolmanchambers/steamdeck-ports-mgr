@@ -246,6 +246,10 @@ fn show_missing(app: &Rc<AppState>, router: &Router, again: bool) {
 
 /// Settings > Ports folder...
 pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
+    // Fork (setup wizard): backing out of a screen the wizard opened lands here; go back to the wizard.
+    if super::setup_wizard_screen::resume_instead_of_settings(app, router) {
+        return;
+    }
     let dir = app.paths.library_dir();
     let state = match unavailable(app) {
         Some(_) => "Not available now (SD card out?)".to_string(),
