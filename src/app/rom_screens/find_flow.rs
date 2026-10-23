@@ -81,6 +81,12 @@ fn mark_searched(app: &AppState, keys: &[String]) {
     }
 }
 
+/// The ports folder is missing or being moved, or its startup message is still due: the automatic
+/// search waits (the port is not marked, so it is searched after its next install) rather than open over it.
+fn ports_folder_busy(app: &AppState) -> bool {
+    crate::app::ports_folder_screen::startup_dialog_pending() || crate::app::ports_folder_screen::blocked_reason(app).is_some()
+}
+
 /// A list whose cursor starts on `start` (the first action row) instead of the first text row.
 fn open_list_at(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, start: usize, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) {
     let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
@@ -100,7 +106,7 @@ fn open_list_at(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<St
 /// Right after a port finished installing. Once per port; quiet when there is nothing to do or a
 /// dialog or another game files task is already up (the port stays reachable from Info and Settings).
 pub(crate) fn after_install(app: &Rc<AppState>, router: &Router, key: &str) {
-    if dialog_is_open(app) || JOB_RUNNING.with(Cell::get) {
+    if dialog_is_open(app) || JOB_RUNNING.with(Cell::get) || ports_folder_busy(app) {
         return;
     }
     let Some(port) = app.find_port(key) else { return };
@@ -136,7 +142,7 @@ pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
 /// shown at the top of the list. Returns false when none of the ports needs looking for (nothing was
 /// shown; the caller shows its own message).
 pub(crate) fn after_ports_added(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &str) -> bool {
-    if JOB_RUNNING.with(Cell::get) {
+    if JOB_RUNNING.with(Cell::get) || ports_folder_busy(app) {
         return false;
     }
     let Ok(store) = RomLibraryStore::load(&store_path(app)) else { return false };
