@@ -17,7 +17,7 @@ use super::dialogs::{
     build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot,
 };
 use super::folder_picker_screen::open_folder_picker;
-use super::ports_folder_screen::{blocked_reason, prompt_old_copies, refuse_when_blocked};
+use super::ports_folder_screen::{blocked_reason, prompt_old_copies_then, refuse_when_blocked};
 use super::state::AppState;
 use crate::fork::folder_picker::{Purpose, PickerRequest};
 use crate::fork::import::engine::{move_selected, GameFileChoice, ImportSummary, Prompter};
@@ -635,8 +635,9 @@ fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<Impor
     let copies: VecDeque<old_copies::OldCopy> = old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().filter(|o| moved_from.contains(&o.old_path)).collect();
     let text = summary.text(home);
     let candidates = summary.link_candidates();
+    let moved_keys: Vec<String> = summary.moved().map(|i| i.plan.request.port_key.clone()).collect();
     if candidates.is_empty() {
-        return finish_after(app, router, ctx, text, copies, summary.wants_game_files());
+        return finish_after(app, router, ctx, text, copies, moved_keys, summary.wants_game_files());
     }
     let requests: Vec<_> = candidates.iter().map(|&i| summary.items[i].plan.request.clone()).collect();
     let refs: Vec<_> = requests.iter().collect();
@@ -653,23 +654,30 @@ fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<Impor
         let catalog = app.catalog.borrow().clone();
         let refs: Vec<_> = requests.iter().collect();
         let done = fallback::link_instead(&refs, &catalog, &app.paths.library_dir(), &local_json);
+        let mut keys = moved_keys.clone();
         for port in done.linked {
+            keys.push(port.key().to_string());
             app.state.borrow_mut().mark_installed(port.key(), None);
             let mut catalog = app.catalog.borrow_mut();
             let old = std::mem::take(&mut *catalog);
             *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
         }
         app.refresh_current_view();
-        finish_after(app, router, &ctx, format!("{text}\n\n{}", done.text), copies.clone(), wants_game_files);
+        finish_after(app, router, &ctx, format!("{text}\n\n{}", done.text), copies.clone(), keys, wants_game_files);
     });
 }
 
-/// The last step of an import: the old-copy questions (which end with the summary), or the summary alone.
-fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, wants_game_files: bool) {
-    if !copies.is_empty() {
-        // Ends with a message dialog holding `text`; it has no completion callback, so the wizard's
-        // "Continue setup" is not offered after these questions (the wizard's own flow takes over).
-        return prompt_old_copies(app, router, copies, text);
+/// The last steps of an import: the old-copy questions, then the game file search for the ports that came
+/// in (`rom_screens::after_ports_added`, which shows the summary at the top of its list when it has
+/// something to look for), else the summary alone.
+fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, keys: Vec<String>, wants_game_files: bool) {
+    let ctx = ctx.clone();
+    prompt_old_copies_then(app, router, copies, text, move |app, router, text| conclude(app, router, &ctx, text, &keys, wants_game_files));
+}
+
+fn conclude(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, keys: &[String], wants_game_files: bool) {
+    if !keys.is_empty() && super::rom_screens::after_ports_added(app, router, keys, &text) {
+        return;
     }
     if wants_game_files {
         return open_confirm_dialog(app, router, "Import finished".into(), padded(&text).into(), "Open Game files...".into(), |app, router| super::rom_screens::open_game_files(app, router));

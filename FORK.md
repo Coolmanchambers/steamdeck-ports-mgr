@@ -36,6 +36,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
 | 2026-10-22 | `src/app/dialogs.rs`, `src/app/mod.rs` | Import ports: the Settings entry "Adopt installed ports..." renamed "Import ports..." (`SettingsEntry::ImportPorts`, opens `import_screen::open`); one module line |
 | 2026-10-22 | `tools/smoke-test.sh` | Opens Settings > Import ports... and closes it again |
+| 2026-10-22 | `src/app/ports_folder_screen.rs` | `prompt_old_copies_then`: the old-copy questions followed by a caller's step instead of the closing message (a one-shot hook keyed by a token at the start of the summary, so another screen's run never fires it; 3 tests); `prompt_old_copies` itself unchanged for other callers |
 | 2026-10-22 | `src/main.rs` | Import ports: window Close (when it quits) and tray Quit also ask `import_screen::quit_waits_for_import`, so a running import is cancelled first |
 | 2026-10-21 | `src/core/installer.rs` | `refuse_adopted`: `install_port` and `install_extra` stop with a message when `Library/<folder>` is a symlink (an adopted port), whatever the catalog says, so a bad edit of `ports.local.json` cannot make the installer write into the user's own folder; 1 test |
 | 2026-10-21 | `README.md` | Item 4 (adopt) set to "Testing", item 5 (Steam shortcuts) to "In progress" |
@@ -276,13 +277,16 @@ steam links"). It is also step c of the setup wizard, which opens it through
   the work and its rules stand: nothing in the install is touched, no updates through the link). It is
   offered only after the summary shows why, and asks first.
 - Nothing is ever deleted by Import. The old folder stays after a verified move.
+- After the batch: the old-copy questions (`ports_folder_screen::prompt_old_copies_then`: the stage 1
+  sequence plus a hook that runs when it ends, so the next step follows it), then the game file search for
+  the ports that came in (`rom_screens::after_ports_added`, with the summary at the top of its list when
+  it has something to look for), else the summary alone, or "Continue setup" in the wizard.
 - Limits: an old copy whose folder name differs from the catalog folder (a "likely" or "check this" match,
-  say `~/Games/dusk-old` imported as `dusklight`) cannot be removed from the prompt: the mover's check
+  say `~/Games/dusk-old` imported as `dusklight`) cannot be removed from the question: the mover's check
   says "The old and new copies have different folder names, so the old one is kept". It stays listed under
-  Old copies. The wizard's "Continue setup" is not offered after the old-copy questions
-  (`prompt_old_copies` has no completion callback). The game files search after a move
-  (`rom_screens::after_ports_added`, rom-search branch) is not called yet: that function is not on `main`.
-  Not verified: a Deck (SD card paths, exFAT, Game Mode wording, controller feel).
+  Old copies. If the user presses B in the middle of the old-copy questions the rest are skipped (they stay
+  listed under Old copies) and the game file search is not offered. Not verified: a Deck (SD card paths,
+  exFAT, Game Mode wording, controller feel).
 
 ## Linking an install in place (`src/fork/adopt.rs`)
 
