@@ -21,14 +21,14 @@ use super::dialogs::{
     build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot,
 };
 use super::folder_picker_screen::open_folder_picker;
-use super::ports_folder_screen::{blocked_reason, prompt_old_copies_then, refuse_when_blocked};
+use super::ports_folder_screen::{blocked_reason, prompt_old_copies_then};
 use super::state::AppState;
 use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::import::engine::{move_selected, GameFileChoice, ImportSummary, Prompter};
 use crate::fork::import::fallback;
 use crate::fork::import::folders::{AddOutcome, ScanFolders};
 use crate::fork::import::plan::{build_requests, plan_all_with, steam_write_mode, MoveRequest, PlanGuards, PortPlan};
-use crate::fork::import::ports_folder;
+use crate::fork::import::{ports_folder, Once};
 use crate::fork::import::real_engine::engine_for_import;
 use crate::fork::import::scan::{read_shortcuts, run_scan, ScanInput};
 use crate::fork::import::screen::{blocked_text, confirm_text, plan_labels, plan_text, space_blocked, FolderLine, FoldersScreen, ImportLine, ImportScreen};
@@ -63,13 +63,13 @@ const TITLE: &str = "Import ports";
 struct Ctx {
     from_wizard: bool,
     finish: Option<Finish>,
-    /// `finish` ran already.
-    finished: Rc<Cell<bool>>,
+    /// Makes `finish` run once, whichever exit is taken.
+    finished: Once,
 }
 
 impl Ctx {
     fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
-        Ctx { from_wizard, finish, finished: Rc::new(Cell::new(false)) }
+        Ctx { from_wizard, finish, finished: Once::default() }
     }
 
     /// Whether the wizard is waiting for this screen.
@@ -85,12 +85,11 @@ impl Ctx {
 
     /// As `finish`, for when the dialog on screen is already gone (or must stay).
     fn finish_quiet(&self, app: &Rc<AppState>, router: &Router) {
-        if self.finished.replace(true) {
-            return;
-        }
-        if let Some(finish) = &self.finish {
-            finish(app, router);
-        }
+        self.finished.run(|| {
+            if let Some(finish) = &self.finish {
+                finish(app, router);
+            }
+        });
     }
 
     fn finisher(&self) -> Step {
@@ -239,6 +238,17 @@ struct JobView {
     pending_reply: RefCell<Option<mpsc::Sender<GameFileChoice>>>,
 }
 
+impl JobView {
+    /// The answer to the question on screen goes to the worker; the progress list comes back.
+    fn answer_prompt(&self, choice: GameFileChoice) {
+        if let Some(reply) = self.pending_reply.borrow_mut().take() {
+            let _ = reply.send(choice);
+        }
+        self.prompting.set(false);
+        self.reshow.set(true);
+    }
+}
+
 fn show_list(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, cancel: &Rc<dyn Fn()>) {
     let rows = job_rows(&view.text.borrow(), view.cancel_label);
     view.cancel_row.set(rows.len() - 1);
@@ -268,13 +278,7 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
     }
     let answer = {
         let view = view.clone();
-        Rc::new(move |choice: GameFileChoice| {
-            if let Some(reply) = view.pending_reply.borrow_mut().take() {
-                let _ = reply.send(choice);
-            }
-            view.prompting.set(false);
-            view.reshow.set(true);
-        })
+        Rc::new(move |choice: GameFileChoice| view.answer_prompt(choice))
     };
     let named: Vec<(String, Issue)> = issues.iter().map(|i| (port.as_ref().clone(), i.clone())).collect();
     let model = game_file_issues(&named);
@@ -323,16 +327,17 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
-/// Runs \`work\` on a worker thread behind a list of progress rows (one per line of the worker's progress
-/// text) and a Cancel row. Closing the list (B) cancels; the result is then dropped (and \`on_abandon\`
-/// runs) unless \`deliver_after_close\` (an import must still report what it did). \`prompts\` is where
-/// the worker's questions arrive.
+/// Runs `work` on a worker thread behind a list of progress rows (one per line of the worker's progress
+/// text) and a Cancel row. Closing the list (B) cancels; the result is then dropped (and `leave` runs)
+/// unless `deliver_after_close` (an import must still report what it did). `leave` is also what a notice
+/// goes on to when the job cannot start because another is running. `prompts` is where the worker's
+/// questions arrive.
 struct JobSpec<T> {
     title: &'static str,
     initial: String,
     cancel_label: &'static str,
     deliver_after_close: bool,
-    on_abandon: Option<Step>,
+    leave: Option<Step>,
     prompts: Option<UiPrompter>,
     is_import: bool,
     work: Box<dyn FnOnce(&Ctl) -> T + Send>,
@@ -340,7 +345,11 @@ struct JobSpec<T> {
 
 fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec<T>, done: impl FnOnce(&Rc<AppState>, &Router, Result<T, String>) + 'static) {
     if JOB_RUNNING.with(Cell::get) {
-        return message(app, router, TITLE, "A scan or an import is still running. Wait for it to finish, then try again.");
+        let text = "A scan or an import is still running. Wait for it to finish, then try again.";
+        return match &spec.leave {
+            Some(step) => notice_back(app, router, text, step.clone()),
+            None => message(app, router, TITLE, text),
+        };
     }
     let job = Rc::new(Background::spawn(spec.work));
     JOB_RUNNING.with(|r| r.set(true));
@@ -361,10 +370,8 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
         Rc::new(move || {
             job.cancel();
             // A question on screen is answered "Cancel" so the worker is not left waiting.
-            if let Some(reply) = view.pending_reply.borrow_mut().take() {
-                let _ = reply.send(GameFileChoice::Cancel);
-                view.prompting.set(false);
-                view.reshow.set(true);
+            if view.prompting.get() {
+                view.answer_prompt(GameFileChoice::Cancel);
             }
         })
     };
@@ -375,17 +382,32 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
 
     let done: RefCell<Option<Box<dyn FnOnce(&Rc<AppState>, &Router, Result<T, String>)>>> = RefCell::new(Some(Box::new(done)));
     let (app, router) = (app.clone(), router.clone());
-    let (prompts, deliver_after_close, on_abandon) = (spec.prompts, spec.deliver_after_close, spec.on_abandon);
+    let (prompts, deliver_after_close, leave) = (spec.prompts, spec.deliver_after_close, spec.leave);
     JOB_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
+            // The list was closed with B (not while a question stands in for it, nor between a question
+            // and the list coming back): the work is cancelled.
+            if !view.prompting.get() && !view.reshow.get() && !view.closed.get() && !view.weak.borrow().as_ref().and_then(slint::Weak::upgrade).is_some_and(|d| d.window().is_visible()) {
+                cancel();
+                view.closed.set(true);
+            }
             if !view.prompting.get() {
                 let next = prompts.as_ref().and_then(|p| p.queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front());
                 if let Some(request) = next {
+                    // Cancelling or closed: a question that was queued meanwhile is not asked.
+                    if view.closed.get() || view.cancelling.get() {
+                        let _ = request.reply.send(GameFileChoice::Cancel);
+                        return;
+                    }
                     view.prompting.set(true);
                     return show_prompt(&app, &router, &view, Rc::new(request.port), Rc::new(request.issues), Some(request.reply));
                 }
             }
             if view.prompting.get() {
+                // The question was closed with the title bar's X, which only hides it: that is Cancel.
+                if !dialog_is_open(&app) {
+                    view.answer_prompt(GameFileChoice::Cancel);
+                }
                 return;
             }
             if let Some(result) = job.take() {
@@ -395,8 +417,8 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
                     return;
                 }
                 if view.closed.get() && !deliver_after_close {
-                    if let Some(abandon) = &on_abandon {
-                        abandon(&app, &router);
+                    if let Some(leave) = &leave {
+                        leave(&app, &router);
                     }
                     return;
                 }
@@ -408,10 +430,6 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
             if view.reshow.get() {
                 view.reshow.set(false);
                 return show_list(&app, &router, &view, &cancel);
-            }
-            if !view.closed.get() && !view.weak.borrow().as_ref().and_then(slint::Weak::upgrade).is_some_and(|d| d.window().is_visible()) {
-                cancel();
-                view.closed.set(true);
             }
             if view.closed.get() {
                 return;
@@ -450,7 +468,7 @@ fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolde
             initial: "Looking in your scan folders...".into(),
             cancel_label: "Cancel",
             deliver_after_close: false,
-            on_abandon: ctx.waited_on().then(|| ctx.finisher()),
+            leave: ctx.waited_on().then(|| ctx.finisher()),
             prompts: None,
             is_import: false,
             work: Box::new(move |ctl| {
@@ -470,7 +488,7 @@ fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolde
 
 fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
     let labels = screen.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, TITLE, &labels) else { return };
+    let Some(dialog) = build_picker_dialog(app, router, TITLE, &labels) else { return ctx.finish_quiet(app, router) };
     {
         let (app, router, ctx, weak) = (app.clone(), router.clone(), ctx.clone(), dialog.as_weak());
         dialog.on_item_selected(move |index| {
@@ -540,7 +558,7 @@ fn folders_back(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: &Rc<Folde
 
 fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersState>) {
     let labels = state.screen.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, "Scan folders", &labels) else { return };
+    let Some(dialog) = build_picker_dialog(app, router, "Scan folders", &labels) else { return ctx.finish_quiet(app, router) };
     // The cursor starts on the first real row, not on the note.
     let first = state.screen.borrow().first_row() as i32;
     dialog.set_selected_index(first);
@@ -650,7 +668,7 @@ fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell
     let mut labels = plan_labels(&plans);
     let back = labels.len();
     labels.push("Back".to_string());
-    let Some(dialog) = build_picker_dialog(app, router, "What importing will do", &labels) else { return };
+    let Some(dialog) = build_picker_dialog(app, router, "What importing will do", &labels) else { return ctx.finish_quiet(app, router) };
     {
         let (app, router, ctx, screen) = (app.clone(), router.clone(), ctx.clone(), screen.clone());
         dialog.on_close_requested(move || {
@@ -730,7 +748,7 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCel
             initial,
             cancel_label: "Cancel (the copy in progress is removed; finished ports stay)",
             deliver_after_close: true,
-            on_abandon: None,
+            leave: Some(back.clone()),
             prompts: Some(prompter),
             is_import: true,
             work: Box::new(move |ctl| move_selected(engine.as_ref(), plans, ctl.flag(), &|t| ctl.set_progress(t), &worker_prompter)),
@@ -799,8 +817,9 @@ fn offer_link(app: &Rc<AppState>, router: &Router, requests: Vec<MoveRequest>, p
     let refs: Vec<&MoveRequest> = requests.iter().collect();
     let question = format!("{preface}\n\n{}", fallback::confirm_text(&refs));
     confirm_back(app, router, TITLE, &question, "Link instead", true, move |app, router| {
-        if refuse_when_blocked(app) {
-            return;
+        // Refused (the ports folder is missing or a move runs): the flow goes on with the reason, not a dead end.
+        if let Some(why) = blocked_reason(app) {
+            return then(app, router, format!("Nothing was linked: {why}"), Vec::new());
         }
         let local_json = app.paths.config_dir.join("ports.local.json");
         let catalog = app.catalog.borrow().clone();

@@ -154,6 +154,8 @@ fn run_job<T: Send + 'static>(
     done: impl FnOnce(&Rc<AppState>, &Router, Result<T, String>) + 'static,
 ) {
     if JOB_RUNNING.with(Cell::get) {
+        // The job does not start, so a hook set for it would be left for an unrelated job.
+        ABANDON_HOOK.with(|h| h.borrow_mut().take());
         return message(app, router, TITLE, "Another game files task is still running. Wait for it to finish, then try again.");
     }
     let job = Rc::new(Background::spawn(work));

@@ -13,7 +13,6 @@ use super::engine::{GameFileChoice, MoveContext, MoveEngine, PortOutcome, SteamR
 use super::plan::MoveRequest;
 use crate::core::models::Port;
 use crate::fork::port_mover::game_files::{required_not_found, GameFiles};
-use crate::fork::port_mover::old_copies;
 use crate::fork::port_mover::{prepare, switch_over, MoveEnv, MoveError, MoveOptions, PortRef, Stage};
 use crate::fork::rom_screens::util::human_bytes;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
@@ -129,13 +128,12 @@ impl MoveEngine for RealEngine {
         };
 
         (ctx.progress)("switching over".into());
+        // Every old-copy record of this move (the pending one and the finished one) says it is an import: the
+        // old folder may be named differently from the catalog folder, and that is the one removal rule this
+        // relaxes (the new copy must carry exactly this folder name).
+        let mut prepared = prepared;
+        prepared.import_folder = Some(request.catalog_folder.clone());
         let report = switch_over(&prepared, &env);
-        // Mark the record as an import: the old folder may be named differently from the catalog folder, and
-        // that is the one removal rule this relaxes (the new copy must carry exactly this folder name).
-        if let Some(mut record) = old_copies::load(&self.config_dir).ok().and_then(|list| list.into_iter().find(|o| o.old_path == prepared.from)) {
-            record.import_folder = Some(request.catalog_folder.clone());
-            let _ = old_copies::record(&self.config_dir, record);
-        }
         let mut notes: Vec<String> = Vec::new();
         let text = report.text();
         if !text.is_empty() {
@@ -166,6 +164,7 @@ mod tests {
     use super::super::scan::{read_shortcuts, run_scan, Found, ScanInput};
     use super::*;
     use crate::fork::port_mover::game_files::Issue;
+    use crate::fork::port_mover::old_copies;
     use crate::fork::shortcuts;
     use crate::fork::store::ShortcutsFile;
     use std::fs;
@@ -628,7 +627,32 @@ mod tests {
         let plain = old_copies::OldCopy { import_folder: None, ..unfinished.clone() };
         assert!(finish_switch(&plain, &env, &h.library, &active).unwrap_err().contains("different names"));
         assert!(finish_switch(&unfinished, &env, &h.library, &active).is_ok(), "an import record may differ in name");
-        let wrong = old_copies::OldCopy { import_folder: Some("other".into()), ..unfinished };
+        let wrong = old_copies::OldCopy { import_folder: Some("other".into()), ..unfinished.clone() };
         assert!(finish_switch(&wrong, &env, &h.library, &active).unwrap_err().contains("different names"));
+        // Finishing the switch writes a record that is still marked as an import.
+        let after = old_copies::load(&cfg).unwrap().into_iter().next().unwrap();
+        assert!(after.switched && after.import_folder.as_deref() == Some("dusklight"), "{after:?}");
+    }
+
+    #[test]
+    fn the_pending_record_written_before_the_switch_already_carries_the_import_mark() {
+        use crate::fork::port_mover::{record_pending, Prepared};
+        let h = fake_home("pending_flag");
+        let summary = run(&engine(&h, false), plans_for(&h, &["Dusklight"], SteamWrite::Now), &NoPrompts);
+        assert!(matches!(summary.items[0].outcome, PortOutcome::Moved { .. }));
+        let cfg = h.home.join("appdir");
+        let done = old_copies::load(&cfg).unwrap().into_iter().next().unwrap();
+        // The record a crash would leave (written first, "switch not finished"), rebuilt from the finished one.
+        let prepared = Prepared::from_record(&done);
+        assert_eq!(prepared.import_folder.as_deref(), Some("dusklight"), "from_record keeps the mark");
+        old_copies::forget(&cfg, &done.old_path).unwrap();
+        record_pending(&cfg, &[prepared]).unwrap();
+        let pending = old_copies::load(&cfg).unwrap().into_iter().next().unwrap();
+        assert!(!pending.switched && pending.import_folder.as_deref() == Some("dusklight"), "{pending:?}");
+        // And "Finish switching" accepts it, although the folder names differ.
+        let settings = ForkSettings::load(&h.home.join("s.json"));
+        let steam = || -> std::io::Result<Vec<String>> { Ok(Vec::new()) };
+        let env = MoveEnv { home: &h.home, config_dir: &cfg, settings: &settings, steam: &steam, game_mode: false, running: &|_| Vec::new(), free_space: &|_| None };
+        assert!(crate::fork::port_mover::finish_switch(&pending, &env, &h.library, &[pending.new_path.clone()]).is_ok());
     }
 }

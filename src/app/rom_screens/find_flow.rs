@@ -235,6 +235,8 @@ fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibra
         return;
     }
     let worker_req = req.clone();
+    // B on the progress list goes where Cancel does: `back`.
+    super::ABANDON_HOOK.with(|h| *h.borrow_mut() = Some(back.clone()));
     run_job(
         app,
         router,
@@ -470,6 +472,12 @@ fn show_file_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<Fi
 
 fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrowser>>, req: Rc<FindRequest>, path: PathBuf, back: Back, cancel: Back) {
     let worker_req = (*req).clone();
+    // B on the progress list goes where Cancel does: back to the same folder to pick again.
+    {
+        let (browser, req, back, cancel) = (browser.clone(), req.clone(), back.clone(), cancel.clone());
+        let again: Back = Rc::new(move |app, router| show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone()));
+        super::ABANDON_HOOK.with(|h| *h.borrow_mut() = Some(again));
+    }
     run_job(
         app,
         router,

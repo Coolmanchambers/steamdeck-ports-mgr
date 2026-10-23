@@ -24,9 +24,44 @@ pub mod real_engine;
 pub mod scan;
 pub mod screen;
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+/// Runs something at most once, however many exits of a flow call it (the wizard's `finish`). Clones share
+/// the one flag.
+#[derive(Clone, Default)]
+pub struct Once(Rc<Cell<bool>>);
+
+impl Once {
+    /// Runs `f` the first time; later calls do nothing. True when it ran.
+    pub fn run(&self, f: impl FnOnce()) -> bool {
+        if self.0.replace(true) {
+            return false;
+        }
+        f();
+        true
+    }
+}
 
 /// Where imported ports go: the ports folder in use (`AppPaths::library_dir()`).
 pub fn ports_folder(library_dir: &Path) -> PathBuf {
     library_dir.to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_once_runs_the_first_call_only_and_clones_share_it() {
+        let once = Once::default();
+        let other = once.clone();
+        let count = Cell::new(0);
+        assert!(once.run(|| count.set(count.get() + 1)));
+        assert!(!other.run(|| count.set(count.get() + 1)));
+        assert!(!once.run(|| count.set(count.get() + 1)));
+        assert_eq!(count.get(), 1, "however many exits call it");
+        assert!(Once::default().run(|| {}), "another flow has its own");
+    }
 }

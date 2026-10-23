@@ -37,6 +37,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `src/app/dialogs.rs`, `src/app/mod.rs` | Import ports: the Settings entry "Adopt installed ports..." renamed "Import ports..." (`SettingsEntry::ImportPorts`, opens `import_screen::open`); one module line |
 | 2026-10-22 | `tools/smoke-test.sh` | Opens Settings > Import ports... and closes it again |
 | 2026-10-23 | `src/fork/port_mover/{steam,old_copies,mod}.rs` | Import review fixes: `moved_path` also matches through links (and so the removal check's shortcut test); `OldCopy.import_folder` (new optional JSON key) relaxes only the name-equality rule of `removal_check` / `finish_check`, only when the new copy is named exactly that folder; `prepare` refuses (`MoveError::Protected`) a folder that holds the home folder, the app's folder or the ports folder; 8 tests in `fork::import::real_engine` |
+| 2026-10-23 | `src/fork/port_mover/mod.rs`, `src/app/ports_folder_screen.rs`, `src/app/rom_screens.rs`, `src/app/rom_screens/find_flow.rs` | Import re-check fixes: `Prepared.import_folder` (set by Import after `prepare`) is written into both the pending and the finished old-copy record, so "Finish switching" and the removal check keep working for an import; "Why it is kept" returns to the same question; a busy old-copy check hands its text to the waiting hook; B on the file search's and the file check's progress lists goes where their Cancel does (`ABANDON_HOOK`, cleared when a job does not start) |
 | 2026-10-23 | `src/app/ports_folder_screen.rs` | B on "Remove the old copy now?" keeps the rest and ends the run with its summary; the closing message never shows the hook token; the hook gets `None` when the run is abandoned (another dialog took the screen) |
 | 2026-10-23 | `src/app/rom_screens.rs`, `src/app/rom_screens/find_flow.rs` | `after_ports_added` became `after_ports_added_then(.., then)`: `then` runs on Done, B on its list, Continue on its notices and B on the search's progress list (`ABANDON_HOOK`) |
 | 2026-10-22 | `src/app/ports_folder_screen.rs` | `prompt_old_copies_then`: the old-copy questions followed by a caller's step instead of the closing message (a one-shot hook keyed by a token at the start of the summary, so another screen's run never fires it; 3 tests); `prompt_old_copies` itself unchanged for other callers |
@@ -287,7 +288,9 @@ steam links"). It is also step c of the setup wizard, which opens it through
   look for; a continuation runs when its Done row, B, notices or progress list B are used), else the summary
   alone, or "Continue setup" in the wizard. The wizard's `finish` (`open_with(.., Some(finish))`) runs
   exactly once on every way out (Continue, the end of an import, B on the main list or the scan's progress
-  list, any notice; quitting excepted). Cancel or B on a confirm, and B on the scan folders or plan lists,
+  list, any notice, a dialog that cannot be built; quitting excepted; `fork::import::Once` is the once-only
+  guard). The game file question closed with the title bar's X counts as Cancel, and a question queued after
+  the list was closed is answered Cancel, not asked. Cancel or B on a confirm, and B on the scan folders or plan lists,
   return to the previous list.
 - What is refused before any copy (plan and mover both): a folder that is a link ("this is a link to X;
   import the real folder instead"), one that holds the home folder, the app's folder, the ports folder or a

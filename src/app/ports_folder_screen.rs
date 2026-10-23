@@ -758,6 +758,14 @@ fn take_end_hook(summary: &str) -> Option<(String, EndHook)> {
     Some((strip_end_token(summary), hook))
 }
 
+/// A run's summary split into the hook waiting on it (taken, so it fires once) and the text without the token.
+fn split_run(summary: &str) -> (Option<EndHook>, String) {
+    match take_end_hook(summary) {
+        Some((rest, hook)) => (Some(hook), rest),
+        None => (None, strip_end_token(summary)),
+    }
+}
+
 /// `prompt_old_copies`, then `then(app, router, Some(summary))` instead of the closing message (the summary
 /// is what that message would have said). B on a question keeps the remaining old copies (they stay
 /// listed under Old copies) and the run still ends normally. `then` gets `None` only when the run was
@@ -787,14 +795,18 @@ pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies:
     };
     // One check at a time: a second request (another screen) is not allowed to replace the first.
     if CHECK_RUNNING.with(Cell::get) {
-        let summary = strip_end_token(&summary);
+        let (hook, summary) = split_run(&summary);
         let mut text = "Another old copy is being checked right now. These old copies stay listed under Settings > Ports folder > Old copies, to remove later.".to_string();
         if !summary.is_empty() {
             text = format!("{summary}
 
 {text}");
         }
-        return message(app, router, &text);
+        // A caller waiting on this run gets the text to show instead of the closing message.
+        return match hook {
+            Some(hook) => hook(app, router, Some(text)),
+            None => message(app, router, &text),
+        };
     }
     // The check walks the old copy (gigabytes on an SD card): on the worker thread, with a progress note.
     let parts = RemovalParts::of(app);
@@ -839,19 +851,39 @@ pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies:
     });
 }
 
+/// Why an old copy can't be removed now. OK (or B) comes back to the same question, so the questions that
+/// follow, the summary and whatever waits for them carry on.
+fn explain_kept(app: &Rc<AppState>, router: &Router, why: &str, entry: OldCopy, copies: Rc<RefCell<Option<VecDeque<OldCopy>>>>, summary: Rc<String>, check: Result<u64, String>) {
+    let again: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(move |app, router| {
+        let rest = copies.borrow_mut().take().unwrap_or_default();
+        show_old_copy_prompt(app, router, entry.clone(), rest, summary.as_ref().clone(), check.clone());
+    });
+    let on_ok = again.clone();
+    open_confirm_dialog(app, router, "Why it is kept".into(), format!("{why}\n").into(), "Back to the question".into(), move |app, router| on_ok(app, router));
+    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
+        let (app, router) = (app.clone(), router.clone());
+        d.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            again(&app, &router);
+        });
+    }
+}
+
 fn show_old_copy_prompt(app: &Rc<AppState>, router: &Router, entry: OldCopy, copies: VecDeque<OldCopy>, summary: String, check: Result<u64, String>) {
     let model = view::old_copy_prompt(&entry, &check);
+    let reshow_check = check.clone();
     let why = check.err();
     let copies = Rc::new(RefCell::new(Some(copies)));
     let summary = Rc::new(summary);
     let (b_entry, b_copies, b_summary) = (entry.clone(), copies.clone(), summary.clone());
+    let (e_copies, e_summary) = (copies.clone(), summary.clone());
     let dialog = open_model(app, router, "Remove the old copy now?", model, move |app, router, act| {
         let rest = || copies.borrow_mut().take().unwrap_or_default();
         match act {
             Act::RemoveOldCopy => remove_one(app, router, entry.clone(), rest(), summary.as_ref().clone()),
             Act::ExplainKept => {
                 if let Some(why) = &why {
-                    message(app, router, why);
+                    explain_kept(app, router, why, entry.clone(), e_copies.clone(), e_summary.clone(), reshow_check.clone());
                 }
             }
             Act::KeepForNow => {
@@ -999,6 +1031,23 @@ mod end_hook_tests {
         assert_eq!(rest, "Moved 1.\n\nKept the old copy.");
         assert!(END_HOOK.with(|h| h.borrow().is_none()), "fires once");
         assert!(take_end_hook(&tagged("7", "again")).is_none());
+    }
+
+    #[test]
+    fn a_busy_check_takes_the_hook_so_it_neither_leaks_nor_waits_forever() {
+        set_hook("9");
+        let (hook, text) = split_run(&tagged("9", "Moved 2."));
+        assert!(hook.is_some(), "its own hook is handed over");
+        assert_eq!(text, "Moved 2.");
+        assert!(END_HOOK.with(|h| h.borrow().is_none()), "nothing left behind");
+        // Someone else's run, or no hook at all: no hook, and the token never shows.
+        set_hook("9");
+        let (other, text) = split_run(&tagged("1", "Other."));
+        assert!(other.is_none() && text == "Other.");
+        assert!(END_HOOK.with(|h| h.borrow().is_some()), "another run's hook stays for its own run");
+        END_HOOK.with(|h| h.borrow_mut().take());
+        let (none, text) = split_run("plain");
+        assert!(none.is_none() && text == "plain");
     }
 
     #[test]

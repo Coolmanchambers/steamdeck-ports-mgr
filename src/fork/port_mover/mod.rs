@@ -147,6 +147,9 @@ pub struct Prepared {
     pub rewritten_links: Vec<PathBuf>,
     /// Game file problems the user accepted before the copy ("Move anyway").
     pub accepted_issues: Vec<Issue>,
+    /// Set by Import ports (after `prepare`, before anything is recorded) to the catalog folder the port is
+    /// imported as; the old-copy records (pending and finished) carry it (see `OldCopy::import_folder`).
+    pub import_folder: Option<String>,
 }
 
 fn staging_path(to: &Path) -> PathBuf {
@@ -247,6 +250,7 @@ pub fn prepare(
         link_only,
         rewritten_links: manifest.rewritten_links().iter().map(|e| to.join(&e.rel)).collect(),
         accepted_issues: if options.accept_issues_before { issues } else { Vec::new() },
+        import_folder: None,
     })
 }
 
@@ -335,7 +339,7 @@ fn old_copy_record(prepared: &Prepared, switched: bool) -> old_copies::OldCopy {
         moved_at: crate::fork::store::backup_stamp(),
         link_only: prepared.link_only,
         switched,
-        import_folder: None,
+        import_folder: prepared.import_folder.clone(),
     }
 }
 
@@ -459,6 +463,7 @@ impl Prepared {
             link_only: record.link_only,
             rewritten_links: Vec::new(),
             accepted_issues: Vec::new(),
+            import_folder: record.import_folder.clone(),
         }
     }
 }
