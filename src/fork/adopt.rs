@@ -392,9 +392,10 @@ fn is_executable(entry: &fs::DirEntry) -> bool {
     entry.metadata().is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
 }
 
+/// No executable bit elsewhere: a file without an extension counts, as a program may be named so.
 #[cfg(not(unix))]
 fn is_executable(_entry: &fs::DirEntry) -> bool {
-    false
+    true
 }
 
 /// The program files in a folder, two levels deep, capped (`MAX_EXE_SCAN_ENTRIES` entries looked at).
@@ -418,7 +419,7 @@ pub(crate) fn programs_within(dir: &Path, max_depth: usize) -> Vec<Program> {
                 if depth < max_depth {
                     walk(&path, depth + 1, max_depth, budget, out);
                 }
-            } else if kind.is_file() && is_program(&path, &entry) {
+            } else if kind.is_file() && !entry.file_name().to_string_lossy().starts_with('.') && is_program(&path, &entry) {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     let words = release_tokens(stem);
                     let file = entry.file_name().to_string_lossy().into_owned();
@@ -1030,7 +1031,8 @@ mod tests {
         touch(&dir.join("notes.md"));
         let mut stems: Vec<String> = programs(&dir).into_iter().map(|p| p.stem).collect();
         stems.sort();
-        assert_eq!(stems, ["a", "b", "c", "d", "e", "f", "g", "h"], "no extension and not executable is data");
+        stems.retain(|s| cfg!(unix) || s != "plain");
+        assert_eq!(stems, ["a", "b", "c", "d", "e", "f", "g", "h"], "no extension and not executable is data (on Linux)");
         #[cfg(unix)]
         {
             touch_exe(&dir.join("plain"));

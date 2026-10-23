@@ -266,7 +266,8 @@ steam links"). It is also step c of the setup wizard, which opens it through
   program names or a never-fetched list), or the start of a Deck-ready download (`SoH-Dewey-Bravo.appimage`;
   one shared word counts only when no other project's downloads start with it); (4) a program inside, two
   levels deep: only files with a program extension (`.AppImage`, `.x86_64`, `.x86`, `.sh`, `.run`, `.bin`,
-  `.elf`, `.exe`) or no extension and executable. ROMs, `.o2r`, JSON, images and saves never count, even
+  `.elf`, `.exe`) or no extension and executable (on Windows, which has no such bit, any file without an
+  extension); hidden files never. ROMs, `.o2r`, JSON, images and saves never count, even
   with the executable bit (Tim's ROMs have it). Folders never looked at: hidden ones, `steamapps`,
   `SteamLibrary`, `lost+found`, `Emulation`, `compatdata`, `shadercache`. A folder that fits more than 3
   ports, or holds `roms`, `bios` or `steamapps` or a `libraryfolder.vdf` (unless named like a port), is a
