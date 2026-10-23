@@ -1,19 +1,18 @@
-//! The setup wizard's state machine. No UI here: [`press`] takes the row the user chose, decides what
-//! happens next and calls the [`Adapters`] for everything outside the wizard (the folder choice, the
+//! The setup wizard's state machine. No UI here: [`press`] takes the item the user chose, decides what
+//! happens next and calls the [`Adapters`] for everything outside the wizard (the ports folder, the
 //! import screen, the game files folder, Add to Steam, saving `setup_done`). The screen in
 //! `src/app/setup_wizard_screen.rs` implements `Adapters` with the real dialogs; the tests below use a
 //! recording fake.
 //!
-//! Views: a step, or a small question (skip the whole setup? create this folder?) or a notice. All of
-//! them are drawn as one list, with B (or Escape) mapped by [`back_action`], so the controller always
-//! has a way back.
+//! Views: a step, or a small question (skip the whole setup?) or a notice. All of them are one page,
+//! with B (or Escape) mapped by [`back_action`], so the controller always has a way back.
 //!
-//! Hand-offs: the import, game files, Steam and artwork screens are the app's existing screens and do
-//! not know about the wizard. [`press`] records a [`HandOff`], the screen opens the other list, and
-//! once that list is closed the screen calls [`resume`], which reads what changed and shows the same
-//! step again.
+//! Hand-offs: the ports folder, import, game files, Steam and artwork screens are the app's own screens
+//! and do not know about the wizard. [`press`] records a [`HandOff`], the screen opens the other
+//! screen, and once it is closed the screen calls [`resume`], which reads what changed and shows the
+//! same step again.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
@@ -57,18 +56,20 @@ pub enum Mode {
 pub enum View {
     Step,
     ConfirmSkipSetup,
-    ConfirmCreate(PathBuf),
     Notice(String),
 }
 
-/// What a row does. Rows with no action are plain text.
+/// What an option or button does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Next,
     Back,
     Skip,
     SkipSetup,
+    /// Use this folder as the ports folder (the real flow checks it, creates it after a confirm, offers
+    /// to move installed ports and asks about the old copies).
     UseFolder(PathBuf),
+    /// Pick the ports folder with the folder picker.
     ChooseFolder,
     FindPorts,
     ChooseRomFolder,
@@ -83,6 +84,7 @@ pub enum Action {
 /// An existing screen the wizard sent the user to; [`resume`] runs when it has been closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandOff {
+    PortsFolder,
     Import { installed_before: usize },
     RomFolder,
     Steam,
@@ -93,8 +95,6 @@ pub enum HandOff {
 /// game files folder) are read again by the screen when it draws; this holds what only the wizard knows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Summary {
-    /// The ports folder chosen in this run.
-    pub ports_folder: Option<PathBuf>,
     /// How many ports the import screen added, summed over the times it was opened; `None` = not opened.
     pub imported: Option<usize>,
     pub rom_folder_opened: bool,
@@ -118,25 +118,14 @@ impl Wizard {
     }
 }
 
-/// What [`Adapters::plan_ports_folder`] found out about a folder.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FolderPlan {
-    Ready,
-    NeedsCreate,
-    Refused(String),
-}
-
 /// Everything the wizard needs from the rest of the app. Each method is one integration point.
 pub trait Adapters {
     /// Draw the wizard's current view.
     fn show(&mut self, wizard: &Wizard);
-    /// Say whether a folder can be the ports folder (exists and is writable, or can be created).
-    fn plan_ports_folder(&mut self, path: &Path) -> FolderPlan;
-    fn create_ports_folder(&mut self, path: &Path) -> Result<(), String>;
-    /// Record the choice. The ports-folder feature owns what happens next (moving ports, restarts).
-    fn apply_ports_folder(&mut self, path: &Path) -> Result<(), String>;
-    /// Open the folder picker. The picked folder (or `None` for Back) comes back through [`browse_done`].
-    fn browse_ports_folder(&mut self);
+    /// The ports folder: `Some(folder)` for a quick choice, `None` to open the folder picker. The app's own
+    /// flow takes over (check, create after a confirm, offer to move installed ports, old-copy prompts);
+    /// the wizard comes back when it is closed.
+    fn ports_folder_step(&mut self, chosen: Option<PathBuf>);
     /// Open the import screen (finding ports installed elsewhere).
     fn import_step(&mut self);
     /// Open the game files folder choice and scan.
@@ -157,7 +146,7 @@ pub trait Adapters {
 pub fn back_action(wizard: &Wizard) -> Action {
     match &wizard.view {
         View::Notice(_) => Action::Ok,
-        View::ConfirmSkipSetup | View::ConfirmCreate(_) => Action::No,
+        View::ConfirmSkipSetup => Action::No,
         View::Step if wizard.step == Step::Welcome => Action::SkipSetup,
         View::Step => Action::Back,
     }
@@ -185,39 +174,14 @@ fn finish(w: &mut Wizard, a: &mut dyn Adapters) {
     }
 }
 
-fn use_folder(w: &mut Wizard, a: &mut dyn Adapters, path: PathBuf) {
-    match a.plan_ports_folder(&path) {
-        FolderPlan::Ready => apply_folder(w, a, path),
-        FolderPlan::NeedsCreate => {
-            w.view = View::ConfirmCreate(path);
-            a.show(w);
-        }
-        FolderPlan::Refused(why) => notice(w, a, why),
-    }
-}
-
-fn apply_folder(w: &mut Wizard, a: &mut dyn Adapters, path: PathBuf) {
-    match a.apply_ports_folder(&path) {
-        Ok(()) => {
-            w.summary.ports_folder = Some(path);
-            show_step(w, a);
-        }
-        Err(e) => notice(w, a, format!("The ports folder was not changed.\n\n{e}")),
-    }
-}
-
-/// The user chose a row (or pressed B, which the screen turns into [`back_action`]).
+/// The user chose an item (or pressed B, which the screen turns into [`back_action`]).
 pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     match (w.view.clone(), action) {
         (View::Notice(_), Action::Ok) => show_step(w, a),
         (View::ConfirmSkipSetup, Action::Yes) => finish(w, a),
-        (View::ConfirmSkipSetup | View::ConfirmCreate(_), Action::No) => show_step(w, a),
-        (View::ConfirmCreate(path), Action::Yes) => match a.create_ports_folder(&path) {
-            Ok(()) => apply_folder(w, a, path),
-            Err(e) => notice(w, a, format!("The folder was not created.\n\n{e}")),
-        },
+        (View::ConfirmSkipSetup, Action::No) => show_step(w, a),
         (View::Step, action) => press_in_step(w, action, a),
-        // A press that does not belong to this view (a stale row) changes nothing.
+        // A press that does not belong to this view (a stale item) changes nothing.
         _ => {}
     }
 }
@@ -251,8 +215,14 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
             Mode::Rerun => a.close(),
         },
         Action::Finish if w.step == Step::Done => finish(w, a),
-        Action::UseFolder(path) if w.step == Step::PortsFolder => use_folder(w, a, path),
-        Action::ChooseFolder if w.step == Step::PortsFolder => a.browse_ports_folder(),
+        Action::UseFolder(path) if w.step == Step::PortsFolder => {
+            w.handoff = Some(HandOff::PortsFolder);
+            a.ports_folder_step(Some(path));
+        }
+        Action::ChooseFolder if w.step == Step::PortsFolder => {
+            w.handoff = Some(HandOff::PortsFolder);
+            a.ports_folder_step(None);
+        }
         Action::FindPorts if w.step == Step::Import => {
             w.handoff = Some(HandOff::Import { installed_before: a.installed_count() });
             a.import_step();
@@ -273,15 +243,8 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     }
 }
 
-/// The folder picker finished: `Some(folder)` is used like a quick choice, `None` returns to the step.
-pub fn browse_done(w: &mut Wizard, picked: Option<PathBuf>, a: &mut dyn Adapters) {
-    match picked {
-        Some(path) => use_folder(w, a, path),
-        None => show_step(w, a),
-    }
-}
-
-/// The screen opened by a hand-off was closed: note what it did and show the step again.
+/// The screen opened by a hand-off was closed: note what it did and show the step again. The ports
+/// folder is read again by the screen when it draws, so it needs no note here.
 pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
     match w.handoff.take() {
         Some(HandOff::Import { installed_before }) => {
@@ -291,7 +254,7 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
         Some(HandOff::RomFolder) => w.summary.rom_folder_opened = true,
         Some(HandOff::Steam) => w.summary.steam_opened = true,
         Some(HandOff::Art) => w.summary.art_opened = true,
-        None => {}
+        Some(HandOff::PortsFolder) | None => {}
     }
     show_step(w, a);
 }
@@ -304,9 +267,6 @@ pub(crate) mod fake {
     #[derive(Default)]
     pub struct Fake {
         pub calls: Vec<String>,
-        pub plan: Option<FolderPlan>,
-        pub create_error: Option<String>,
-        pub apply_error: Option<String>,
         pub done_error: Option<String>,
         pub installed: usize,
     }
@@ -315,20 +275,11 @@ pub(crate) mod fake {
         fn show(&mut self, w: &Wizard) {
             self.calls.push(format!("show {:?} {:?}", w.step, w.view));
         }
-        fn plan_ports_folder(&mut self, path: &Path) -> FolderPlan {
-            self.calls.push(format!("plan {}", path.display()));
-            self.plan.clone().unwrap_or(FolderPlan::Ready)
-        }
-        fn create_ports_folder(&mut self, path: &Path) -> Result<(), String> {
-            self.calls.push(format!("create {}", path.display()));
-            self.create_error.clone().map_or(Ok(()), Err)
-        }
-        fn apply_ports_folder(&mut self, path: &Path) -> Result<(), String> {
-            self.calls.push(format!("apply {}", path.display()));
-            self.apply_error.clone().map_or(Ok(()), Err)
-        }
-        fn browse_ports_folder(&mut self) {
-            self.calls.push("browse".into());
+        fn ports_folder_step(&mut self, chosen: Option<PathBuf>) {
+            self.calls.push(match chosen {
+                Some(p) => format!("ports_folder {}", p.display()),
+                None => "ports_folder picker".into(),
+            });
         }
         fn import_step(&mut self) {
             self.calls.push("import".into());
@@ -449,15 +400,13 @@ mod tests {
         assert_eq!(back_action(&w), Action::Back);
         w.view = View::ConfirmSkipSetup;
         assert_eq!(back_action(&w), Action::No);
-        w.view = View::ConfirmCreate("/x".into());
-        assert_eq!(back_action(&w), Action::No);
         w.view = View::Notice("n".into());
         assert_eq!(back_action(&w), Action::Ok);
     }
 
     #[test]
     fn quitting_midway_never_marks_setup_done() {
-        // Closing the dialog (X, or B somewhere unwired) is the screen's doing, not an Action: walking
+        // Closing the page (X, or B somewhere unwired) is the screen's doing, not an Action: walking
         // through every step except the last never reaches mark_done.
         let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake::default());
         for _ in 0..4 {
@@ -477,72 +426,29 @@ mod tests {
     }
 
     #[test]
-    fn a_ready_folder_is_checked_then_applied_with_the_same_path() {
+    fn a_quick_choice_hands_its_folder_to_the_ports_folder_flow() {
         let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
         press(&mut w, Action::UseFolder("/run/media/deck/SD/Ports".into()), &mut a);
-        assert_eq!(a.calls[..2], ["plan /run/media/deck/SD/Ports", "apply /run/media/deck/SD/Ports"]);
-        assert_eq!(w.summary.ports_folder.as_deref(), Some(Path::new("/run/media/deck/SD/Ports")));
-        assert_eq!(w.view, View::Step);
+        assert_eq!(a.calls, ["ports_folder /run/media/deck/SD/Ports"]);
+        assert_eq!(w.handoff, Some(HandOff::PortsFolder));
     }
 
     #[test]
-    fn a_missing_folder_is_created_only_after_a_yes() {
-        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake { plan: Some(FolderPlan::NeedsCreate), ..Fake::default() });
-        press(&mut w, Action::UseFolder("/sd/Ports".into()), &mut a);
-        assert_eq!(w.view, View::ConfirmCreate("/sd/Ports".into()));
-        assert!(!a.calls.iter().any(|c| c.starts_with("create") || c.starts_with("apply")));
-        press(&mut w, Action::Yes, &mut a);
-        let tail: Vec<&str> = a.calls.iter().map(String::as_str).filter(|c| c.starts_with("create") || c.starts_with("apply")).collect();
-        assert_eq!(tail, ["create /sd/Ports", "apply /sd/Ports"]);
-        assert_eq!(w.summary.ports_folder.as_deref(), Some(Path::new("/sd/Ports")));
-    }
-
-    #[test]
-    fn declining_the_create_question_changes_nothing() {
-        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake { plan: Some(FolderPlan::NeedsCreate), ..Fake::default() });
-        press(&mut w, Action::UseFolder("/sd/Ports".into()), &mut a);
-        press(&mut w, Action::No, &mut a);
-        assert_eq!(w.view, View::Step);
-        assert!(w.summary.ports_folder.is_none());
-        assert!(!a.calls.iter().any(|c| c.starts_with("create") || c.starts_with("apply")));
-    }
-
-    #[test]
-    fn a_refused_folder_shows_the_reason_and_applies_nothing() {
-        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake { plan: Some(FolderPlan::Refused("not writable".into())), ..Fake::default() });
-        press(&mut w, Action::UseFolder("/ro".into()), &mut a);
-        assert_eq!(w.view, View::Notice("not writable".into()));
-        assert!(!a.calls.iter().any(|c| c.starts_with("apply")));
-    }
-
-    #[test]
-    fn a_failed_create_or_apply_is_reported_and_the_choice_is_not_remembered() {
-        let mut a = Fake { plan: Some(FolderPlan::NeedsCreate), create_error: Some("read-only".into()), ..Fake::default() };
-        let mut w = at(Step::PortsFolder, Mode::FirstRun);
-        press(&mut w, Action::UseFolder("/sd/Ports".into()), &mut a);
-        press(&mut w, Action::Yes, &mut a);
-        assert!(matches!(&w.view, View::Notice(t) if t.contains("not created") && t.contains("read-only")));
-        assert!(w.summary.ports_folder.is_none());
-        assert!(!a.calls.iter().any(|c| c.starts_with("apply")));
-
-        let mut a = Fake { apply_error: Some("settings file damaged".into()), ..Fake::default() };
-        let mut w = at(Step::PortsFolder, Mode::FirstRun);
-        press(&mut w, Action::UseFolder("/x".into()), &mut a);
-        assert!(matches!(&w.view, View::Notice(t) if t.contains("not changed") && t.contains("damaged")));
-        assert!(w.summary.ports_folder.is_none());
-    }
-
-    #[test]
-    fn choose_another_folder_opens_the_picker_and_its_result_is_used_like_a_quick_choice() {
+    fn choose_another_folder_opens_the_picker_flow() {
         let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
         press(&mut w, Action::ChooseFolder, &mut a);
-        assert_eq!(a.calls, ["browse"]);
-        browse_done(&mut w, Some("/home/deck/MyPorts".into()), &mut a);
-        assert_eq!(a.calls[1..3], ["plan /home/deck/MyPorts", "apply /home/deck/MyPorts"]);
-        // Backing out of the picker returns to the step and applies nothing.
+        assert_eq!(a.calls, ["ports_folder picker"]);
+        assert_eq!(w.handoff, Some(HandOff::PortsFolder));
+    }
+
+    #[test]
+    fn coming_back_from_the_ports_folder_flow_shows_the_same_step_and_changes_nothing_else() {
         let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
-        browse_done(&mut w, None, &mut a);
-        assert_eq!(a.calls, ["show PortsFolder Step"]);
+        press(&mut w, Action::ChooseFolder, &mut a);
+        resume(&mut w, &mut a);
+        assert_eq!((w.step, w.handoff), (Step::PortsFolder, None));
+        assert_eq!(a.calls.last().unwrap(), "show PortsFolder Step");
+        assert_eq!(w.summary, Summary::default());
     }
 
     #[test]

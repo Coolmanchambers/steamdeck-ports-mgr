@@ -163,7 +163,7 @@ Files added by this fork:
 | 2026-10-22 | `src/app/rom_screens/find_flow.rs` | The screens around `find`: after an install or adopt, from Info and Settings; entry points for other screens |
 | 2026-10-22 | `src/fork/save_restore/` | Restore saves: list a port's backups (before update, Backup Saves, before restore), resolve its save folders for this system without guessing, and restore one (safety zip first, zip-slip check, swap by rename); `zip_index.rs` reads a zip's table of contents; `view.rs` holds the screen text; tested without UI |
 | 2026-10-22 | `src/app/save_restore_screen.rs` | The Restore saves screens (Info button and Settings entry): list dialogs, confirm, a progress dialog polling the worker thread |
-| 2026-10-22 | `src/fork/setup_wizard/` | The first-run setup wizard (see "Setup wizard" below): state machine and its adapters (`flow.rs`), the text of each view (`text.rs`), the ports-folder quick choices and checks (`ports_folder.rs`), `setup_done` in `fork-settings.json` (`mod.rs`); tested without UI |
+| 2026-10-22 | `src/fork/setup_wizard/` | The first-run setup wizard (see "Setup wizard" below): state machine and its adapters (`flow.rs`), the text of each view (`text.rs`), the ports-folder quick choices (`places.rs`), `setup_done` in `fork-settings.json` (`mod.rs`); tested without UI |
 | 2026-10-22 | `src/app/setup_wizard_screen.rs` | The wizard page dialog (filled and wired here), the hand-offs to the existing screens and the timer that brings the wizard back when one of them is closed |
 | 2026-10-22 | `ui/fork/setup-wizard.slint` | The wizard page (`SetupWizardDialog`): header with the app name, "Step N of 6" and a progress bar, a title, wrapped body text, a summary card, real options (radio choices or actions) and a footer of buttons (Back left, Skip, primary Next or Finish right); theme colors and fonts |
 | 2026-10-22 | `ui/app-window.slint`, `src/ui/slint_layout_lint.rs` | Import and export `SetupWizardDialog` and `WizardOption`; the new Slint file is linted |
@@ -398,8 +398,7 @@ Welcome and showing the current values. English only, plain wording.
   primary button has the initial focus (on the "Skip setup?" question it is "Keep going with setup"); B or Escape
   goes back; the title bar's X leaves the wizard. If the text is long the body scrolls, never the buttons. The
   window is sized from the work area (about 62% wide windowed, 80% fullscreen, 88% high), not from the small
-  windowed main window, and uses the app's theme colors and font sizes. The ports-folder choosers that the
-  "Choose another folder..." option opens are still plain list dialogs.
+  windowed main window, and uses the app's theme colors and font sizes.
 - **Steps:** Welcome, Ports folder, Ports you already have (import), Game files folder, Steam, All done. Each page has
   Next and Back; the import, game files and Steam steps also have Skip this step; the ports folder always has an
   answer (the current folder). B goes back one step; on Welcome B asks "Skip setup?". In a rerun, Welcome's exit
@@ -409,23 +408,28 @@ Welcome and showing the current values. English only, plain wording.
   itself (it could never be saved as done and would return at every start); Settings still opens it.
 - **`setup_done` is written only** by Finish on the last page, or by Skip setup after its question. Quitting
   half-way (closing the window, quitting the app) leaves it unset, so the wizard returns at the next start.
-- **Ports folder step:** shows the folder in use and quick choices, SD cards or drives first (`<mount>/Ports`, marked
-  "new folder" when missing, free space shown), then internal storage, then the current folder if it is neither, and
-  "Choose another folder..." (the folder browser of the Game files screens). A folder that does not exist is created
-  only after "Create it and use it". A choice is checked first: a full path, not the drive root, a folder that can be
-  written (a small test file of ours is written and removed) or can be created.
-- **Hand-offs:** the import, game files, Add to Steam and Artwork sources steps open the app's existing screens.
+- **Ports folder step:** shows the folder in use ("Right now") and quick choices as radio options: removable drives
+  first (`<mount>/Ports` from `fork::folder_picker::mounts::removable_drives`, SD cards before USB drives, marked
+  "new folder" when missing, free space shown, "exFAT cannot hold ports" on a drive the app cannot use), then
+  internal storage, then the current folder if it is neither, then a folder an earlier build of the wizard recorded
+  as `setup_ports_folder` (offered once in the first run after this build, then the key is removed), and
+  "Choose another folder...". Choosing any of them hands over to the app's own ports-folder flow
+  (`ports_folder_screen::consider` for a quick choice, `choose_folder` for the shared folder picker): the folder is
+  checked (exFAT, permissions, system folders and the rest of `ports_folder::check`), created only after a confirm,
+  installed ports can be moved there, and the old copies are kept until the user removes them. The page says so.
+  The wizard comes back on the same step when those screens are closed, and "Right now" shows the folder in use.
+- **Hand-offs:** the ports folder, import, game files, Add to Steam and Artwork sources steps open the app's own screens.
   Those do not know about the wizard, so while one is open the wizard waits, and once no dialog has been open for
   half a second it comes back at the same step. Their Back rows that lead to the Settings list come back to the
   wizard (`open_settings_dialog` asks `resume_instead_of_settings` first). "Ports you already had: N added" is the
   change in the number of installed ports across the import screen, so that screen needs no callback.
 - **Adapters (the integration points):** `flow::Adapters` is everything the wizard needs from the rest of the app and
-  the only thing the tests fake. In `setup_wizard_screen.rs`: `ports_folder_step` (folder choice; today the Game files
-  folder browser) with `record_ports_folder` and `current_ports_folder` (today the choice is recorded in
-  `fork-settings.json` as `setup_ports_folder`, nothing is moved and the app keeps its library folder), and
-  `import_step` (today Settings > Adopt installed ports). These are meant to be switched to the reusable folder
-  picker, the ports-folder setting and the new import screen.
-- **Not done by the wizard:** it never moves, deletes or overwrites anything itself. What the screens it opens do is
+  the only thing the tests fake. In `setup_wizard_screen.rs`: `ports_folder_step` (calls
+  `ports_folder_screen::{consider, choose_folder}`; the wizard keeps no ports-folder checks of its own) and
+  `import_step` (today Settings > Adopt installed ports; it will be pointed at the new import screen).
+  `start_if_first_run` waits while `ports_folder_screen::startup_dialog_pending()` is true (the missing ports
+  folder message is due or showing) or any dialog is open.
+- **Not done by the wizard:** it never moves, deletes or overwrites anything itself. What the screens it opens do (including moving ports) is
   governed by their own rules.
 - **Known limits:** if something else replaces the wizard's list (a Steam queue offer, say) the wizard is over for
   this run and returns at the next start; closing a step with the window's close button does the same. The

@@ -98,6 +98,21 @@ if [ -n "$wiz" ]; then
     import -window root "$OUT/fresh-ports-folder.png" 2>/dev/null
     check "Return on the primary button moves to the next step" '[ -n "$next" ]'
     if [ -n "$next" ]; then
+        # "Choose another folder..." (the last option; a mouse resting over the page can move the cursor) opens the app's shared folder picker; leaving its
+        # screens (Escape twice) brings the wizard back on the same step.
+        press_keys "$next" Down Down Down Up Return   # to the buttons and back up one: the last option, wherever the cursor was
+        picker=$(find_window '^Choose the ports folder') || picker=""
+        import -window root "$OUT/fresh-ports-picker.png" 2>/dev/null
+        check "the ports folder step opens the shared folder picker" '[ -n "$picker" ]'
+        if [ -n "$picker" ]; then
+            press_keys "$picker" Escape
+            menu=$(find_window '^Ports folder$') || menu=""
+            if [ -n "$menu" ]; then press_keys "$menu" Escape; fi
+            next=$(find_window '^Setup wizard: Ports folder') || next=""
+            check "closing the ports folder screens brings the wizard back on the same step" '[ -n "$next" ]'
+        fi
+    fi
+    if [ -n "$next" ]; then
         press_keys "$next" Escape  # B is Back
         wiz=$(find_window '^Setup wizard: welcome') || wiz=""
         check "B goes back one step" '[ -n "$wiz" ]'

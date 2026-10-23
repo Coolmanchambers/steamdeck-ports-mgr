@@ -6,7 +6,7 @@
 //! upstream's translation tables.
 
 use super::flow::{Action, Mode, Step, View, Wizard};
-use super::ports_folder::QuickChoice;
+use super::places::QuickChoice;
 use crate::fork::rom_screens::util::ellipsize;
 use std::path::{Path, PathBuf};
 
@@ -92,7 +92,6 @@ fn page(w: &Wizard, title: &str) -> Page {
 pub fn title(w: &Wizard) -> String {
     match &w.view {
         View::ConfirmSkipSetup => "Setup wizard: skip setup?".into(),
-        View::ConfirmCreate(_) => "Setup wizard: create this folder?".into(),
         View::Notice(_) => "Setup wizard".into(),
         View::Step => match w.step {
             Step::Welcome => "Setup wizard: welcome".into(),
@@ -126,14 +125,6 @@ pub fn page_for(w: &Wizard, ctx: &Context) -> Page {
             p.buttons = [btn("Keep going with setup", Action::No), None, btn("Skip setup", Action::Yes)];
             // A stray A must not skip setup.
             p.initial = Focus::Button(0);
-            p
-        }
-        View::ConfirmCreate(path) => {
-            let mut p = page(w, "Create this folder?");
-            p.paragraphs = paras(&["This folder does not exist yet:"]);
-            p.facts = vec![shown(path)];
-            p.buttons = [btn("Choose a different folder", Action::No), None, btn("Create it and use it", Action::Yes)];
-            p.primary = Some(2);
             p
         }
         View::Notice(message) => {
@@ -175,7 +166,10 @@ fn step_page(w: &Wizard, ctx: &Context) -> Page {
         }
         Step::PortsFolder => {
             let mut p = page(w, "Where should ports be kept?");
-            p.paragraphs = paras(&["Ports you install are kept together in one folder. An SD card usually has the most room."]);
+            p.paragraphs = paras(&[
+                "Ports you install are kept together in one folder. An SD card usually has the most room.",
+                "If you pick a different folder, ports you already installed can be moved there. The old copies are kept until you choose to remove them.",
+            ]);
             p.facts = vec![format!("Right now: {}", shown(&ctx.ports_folder))];
             for choice in &ctx.quick {
                 p.options.push(PageOption {
@@ -405,6 +399,8 @@ mod tests {
     fn the_ports_folder_step_shows_the_current_folder_real_options_and_the_picker() {
         let p = pg(Step::PortsFolder);
         assert_eq!(p.facts, ["Right now: /home/deck/Apps/dpm/Library"]);
+        let t = all_text(&p);
+        assert!(t.contains("ports you already installed can be moved there") && t.contains("old copies are kept until you choose to remove them"), "{t}");
         let uses: Vec<_> = p.options.iter().filter_map(|o| match &o.action { Action::UseFolder(path) => Some(path.clone()), _ => None }).collect();
         assert_eq!(uses, [PathBuf::from("/run/media/deck/SD512/Ports"), PathBuf::from("/home/deck/Apps/dpm/Library")], "SD card first");
         assert_eq!(p.options[0].choice, Some(false));
@@ -520,12 +516,6 @@ mod tests {
         assert_eq!(button_actions(&p), [Action::No, Action::Yes]);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(Action::No), "a stray A must not skip setup");
         assert_eq!(p.primary, None);
-
-        w.view = View::ConfirmCreate("/sd/Ports".into());
-        let p = page_for(&w, &ctx());
-        assert!(all_text(&p).contains("/sd/Ports") && all_text(&p).contains("does not exist yet"));
-        assert_eq!(button_actions(&p), [Action::No, Action::Yes]);
-        assert_eq!(action_at(&p, initial_focus(&p)), Some(Action::Yes));
 
         w.view = View::Notice("Something went wrong.\n\nMore detail.".into());
         let p = page_for(&w, &ctx());

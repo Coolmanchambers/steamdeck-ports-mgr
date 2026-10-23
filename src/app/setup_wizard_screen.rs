@@ -7,27 +7,25 @@
 //! buttons (D-pad or arrows), A activates, B goes back one step (on the welcome page it asks whether
 //! to skip setup), and the primary button has the initial focus.
 //!
-//! The wizard hands over to existing screens (import, game files, Add to Steam, Artwork sources).
-//! Those do not know about the wizard, so while one is open the wizard waits (`tick`) and, once no
-//! dialog is open for a moment, comes back at the same step and reads what changed. Their Back rows
-//! that lead to the Settings list come back to the wizard instead (`resume_instead_of_settings`).
+//! The wizard hands over to the app's own screens (ports folder, import, game files, Add to Steam,
+//! Artwork sources). Those do not know about the wizard, so while one is open the wizard waits (`tick`)
+//! and, once no dialog is open for a moment, comes back at the same step and reads what changed. Their
+//! Back rows that lead to the Settings list come back to the wizard instead (`resume_instead_of_settings`).
 //!
-//! Integration points are `ports_folder_step` and `import_step` below. Today the first records the
-//! choice and uses the existing folder browser; the second opens Settings > Adopt installed ports. Both
-//! are meant to be switched to the reusable folder picker and the new import screen.
+//! Integration points: `ports_folder_step` (the ports-folder screens: shared picker, checks, moving
+//! installed ports) and `import_step` (today Settings > Adopt installed ports; it will point at the new
+//! import screen).
 
-use super::dialogs::{build_picker_dialog, build_setup_wizard_dialog, close_current_dialog, dialog_is_open, finish_dialog_open};
+use super::dialogs::{build_setup_wizard_dialog, close_current_dialog, dialog_is_open, finish_dialog_open};
 use super::state::AppState;
+use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts};
 use crate::fork::rom_library::RomLibraryStore;
-use crate::fork::rom_screens::browse::{self, FolderBrowser, Line as BrowseLine};
-use crate::fork::rom_screens::util::{ellipsize, file_name};
 use crate::fork::settings::{ForkSettings, FILE_NAME};
-use crate::fork::setup_wizard::flow::{self, Action, Adapters, FolderPlan, Mode, Wizard};
+use crate::fork::setup_wizard::flow::{self, Action, Adapters, Mode, Wizard};
 use crate::fork::setup_wizard::text::{self, Context, Page};
-use crate::fork::setup_wizard::{ports_folder, setup_state, SetupState};
-use crate::ui::{chrome, dialog_geometry};
+use crate::fork::setup_wizard::{places, setup_state, SetupState};
 use crate::ui::gamepad_router::GamepadRouter;
-use crate::{ListPickerDialog, SetupWizardDialog, WizardOption};
+use crate::{SetupWizardDialog, WizardOption};
 use serde_json::Value;
 use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
@@ -38,12 +36,16 @@ use std::time::Duration;
 type Router = Rc<RefCell<GamepadRouter>>;
 type Session = Rc<RefCell<Wizard>>;
 
-/// Until the ports-folder feature owns the setting, the choice is recorded here.
-const KEY_PORTS_FOLDER_CHOICE: &str = "setup_ports_folder";
+/// A build before the real ports folder setting recorded the wizard's choice under this key. Offered
+/// once as a quick choice, then forgotten.
+const KEY_EARLIER_CHOICE: &str = "setup_ports_folder";
 /// How long (in ticks of `TICK`) no dialog must be open before the wizard comes back.
 const QUIET_TICKS: u32 = 2;
 const TICK: Duration = Duration::from_millis(250);
 const START_DELAY: Duration = Duration::from_millis(500);
+/// How long the wizard waits at start for another startup dialog (the missing ports folder message) to
+/// be dealt with: about an hour, then it is offered again at the next start.
+const MAX_START_WAITS: u32 = 7200;
 
 thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
@@ -51,30 +53,36 @@ thread_local! {
     static QUIET: Cell<u32> = const { Cell::new(0) };
     /// The focused item of the page on screen (an index into `text::focusables`).
     static FOCUS: Cell<usize> = const { Cell::new(0) };
+    /// The folder an earlier build recorded, offered in this run only.
+    static EARLIER: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
 fn settings_path(app: &AppState) -> PathBuf {
     app.paths.config_dir.join(FILE_NAME)
 }
 
-fn home_dir() -> Option<PathBuf> {
-    ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v)).map(PathBuf::from).filter(|p| p.is_absolute())
-}
-
 // -- Starting and ending ---------------------------------------------------------------------------
 
 /// Called once at start: opens the wizard when setup was never finished (new installs and installs
-/// from before the wizard existed).
+/// from before the wizard existed). It waits while another startup dialog (the missing ports folder
+/// message, which the Steam queue offer waits for too) is due or open.
 pub(crate) fn start_if_first_run(app: &Rc<AppState>, router: &Router) {
     if !crate::fork::setup_wizard::opens_at_start(&settings_path(app)) {
         return;
     }
-    let (app, router) = (app.clone(), router.clone());
+    start_when_quiet(app.clone(), router.clone(), 0);
+}
+
+fn start_when_quiet(app: Rc<AppState>, router: Router, waited: u32) {
     // After the first frame, so the dialog finds the main window already placed.
     slint::Timer::single_shot(START_DELAY, move || {
-        if !dialog_is_open(&app) {
-            begin(&app, &router, Mode::FirstRun);
+        if super::ports_folder_screen::startup_dialog_pending() || dialog_is_open(&app) {
+            if waited < MAX_START_WAITS {
+                start_when_quiet(app, router, waited + 1);
+            }
+            return;
         }
+        begin(&app, &router, Mode::FirstRun);
     });
 }
 
@@ -86,6 +94,7 @@ pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
 
 fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
     let session: Session = Rc::new(RefCell::new(Wizard::new(mode)));
+    EARLIER.with(|e| *e.borrow_mut() = take_earlier_choice(app));
     SESSION.with(|s| *s.borrow_mut() = Some(session.clone()));
     QUIET.with(|q| q.set(0));
     start_watch(app, router);
@@ -151,73 +160,12 @@ fn tick(app: &Rc<AppState>, router: &Router) {
 
 // -- Drawing ---------------------------------------------------------------------------------------
 
-fn context(app: &AppState, w: &Wizard) -> Context {
-    let current = w.summary.ports_folder.clone().unwrap_or_else(|| current_ports_folder(app));
-    let internal_default = app.paths.config_dir.join("Library");
-    Context {
-        quick: ports_folder::quick_choices(&current, &internal_default, &browse::system_mounts()),
-        ports_folder: current,
-        rom_folder: rom_folder(app),
-    }
-}
-
-fn show_list(
-    app: &Rc<AppState>,
-    router: &Router,
-    title: &str,
-    labels: Vec<String>,
-    selected: usize,
-    on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static,
-    on_back: impl Fn(&Rc<AppState>, &Router) + 'static,
-) {
-    let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
-    fit_height(app, &dialog, labels.len());
-    dialog.set_selected_index(selected as i32);
-    app.dialog_nav.picker_index.set(selected as i32);
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| on_select(&app, &router, index as usize));
-    }
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_close_requested(move || on_back(&app, &router));
-    }
-    let _ = dialog.show();
-    let weak = dialog.as_weak();
-    finish_dialog_open(app, router, super::dialogs::DialogSlot::Picker(dialog));
-    // Scroll the cursor row into view (a step can have more rows than fit).
-    slint::Timer::single_shot(Duration::from_millis(80), move || {
-        if let Some(d) = weak.upgrade() {
-            d.set_scroll_trigger(!d.get_scroll_trigger());
-        }
-    });
-}
-
-/// The picker caps its height at 65% of the screen; a wizard step reads better with all its rows in
-/// view, so allow up to 92% and re-centre over the main window.
-fn fit_height(app: &AppState, dialog: &ListPickerDialog, rows: usize) {
-    const GUTTER: i32 = 12; // the picker's own gutter
-    let window = app.window();
-    let big = window.get_big_mode();
-    let fonts = if big { app.window_geometry.fullscreen_mode.borrow().fonts } else { app.window_geometry.normal_mode.borrow().fonts };
-    let (wx, wy, ww, wh) = chrome::work_area_under_cursor();
-    let scale = app.window_geometry.scale.get();
-    let item_h = dialog_geometry::list_picker_item_height(wh, big);
-    let border = app.window_geometry.border_width.get();
-    let n = rows.max(1) as i32;
-    let wanted = fonts.title_bar_height_px + GUTTER * 2 + n * item_h + (n - 1) * (GUTTER / 2) + border * 2;
-    let height = wanted.min((wh as f64 * 0.92) as i32);
-    if height as f32 / scale <= dialog.get_initial_height() {
-        return;
-    }
-    dialog.set_initial_height(height as f32 / scale);
-    let width = (dialog.get_initial_width() * scale) as i32;
-    let (pos, size) = (window.window().position(), window.window().size());
-    let (px, py, pw, ph) = if size.width > 0 { (pos.x, pos.y, size.width as i32, size.height as i32) } else { (wx, wy, ww, wh) };
-    let (x, y) = dialog_geometry::center_over_parent(px, py, pw, ph, width, height);
-    // A main window smaller than the dialog must not push it off the screen.
-    let (x, y) = (x.clamp(wx, (wx + ww - width).max(wx)), y.clamp(wy, (wy + wh - height).max(wy)));
-    dialog.window().set_position(slint::WindowPosition::Physical(slint::PhysicalPosition { x, y }));
+fn context(app: &AppState) -> Context {
+    let current = app.paths.library_dir();
+    let internal_default = crate::fork::ports_folder::default_dir(&app.paths.config_dir);
+    let drives = removable_drives(&system_mounts(), &default_media_roots());
+    let earlier = EARLIER.with(|e| e.borrow().clone());
+    Context { quick: places::quick_choices(&current, &internal_default, &drives, earlier.as_deref()), ports_folder: current, rom_folder: rom_folder(app) }
 }
 
 fn model<T: Clone + 'static>(items: Vec<T>) -> slint::ModelRc<T> {
@@ -251,7 +199,7 @@ fn fill(d: &SetupWizardDialog, w: &Wizard, page: &Page) {
 }
 
 fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
-    let ctx = context(app, w);
+    let ctx = context(app);
     let page = Rc::new(text::page_for(w, &ctx));
     let Some(dialog) = build_setup_wizard_dialog(app, router) else { return };
     fill(&dialog, w, &page);
@@ -334,20 +282,8 @@ impl Adapters for Ui {
         draw(&self.app, &self.router, wizard);
     }
 
-    fn plan_ports_folder(&mut self, path: &Path) -> FolderPlan {
-        ports_folder::plan(path)
-    }
-
-    fn create_ports_folder(&mut self, path: &Path) -> Result<(), String> {
-        ports_folder::create(path)
-    }
-
-    fn apply_ports_folder(&mut self, path: &Path) -> Result<(), String> {
-        record_ports_folder(&self.app, path)
-    }
-
-    fn browse_ports_folder(&mut self) {
-        ports_folder_step(&self.app, &self.router);
+    fn ports_folder_step(&mut self, chosen: Option<PathBuf>) {
+        ports_folder_step(&self.app, &self.router, chosen);
     }
 
     fn import_step(&mut self) {
@@ -390,24 +326,6 @@ fn rom_folder(app: &AppState) -> Option<PathBuf> {
     RomLibraryStore::load(&app.paths.config_dir.join("rom_library.json")).ok().and_then(|s| s.rom_dir().map(Path::to_path_buf))
 }
 
-/// Integration point: the ports folder in use. Interim: the choice recorded by this wizard, else the
-/// library folder the app runs with.
-fn current_ports_folder(app: &AppState) -> PathBuf {
-    ForkSettings::load(&settings_path(app))
-        .get(KEY_PORTS_FOLDER_CHOICE)
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| app.paths.library_dir.clone())
-}
-
-/// Integration point: remember the chosen ports folder. Interim: written to `fork-settings.json` only;
-/// nothing is moved and the app keeps using its current library folder until the ports-folder feature
-/// takes this over.
-fn record_ports_folder(app: &AppState, path: &Path) -> Result<(), String> {
-    ForkSettings::load(&settings_path(app)).set(KEY_PORTS_FOLDER_CHOICE, Value::from(path.to_string_lossy().into_owned())).map_err(|e| format!("{FILE_NAME}: {e}"))
-}
-
 // -- Integration point: the import step ------------------------------------------------------------
 
 /// Opens the screen that finds ports installed elsewhere. Today that is Settings > Adopt installed
@@ -418,68 +336,25 @@ fn import_step(app: &Rc<AppState>, router: &Router) {
     super::steam_screens::open_adopt_screen(app, router);
 }
 
-// -- Integration point: the ports folder step ------------------------------------------------------
+// -- The ports folder step -------------------------------------------------------------------------
 
-fn finish_browse(app: &Rc<AppState>, router: &Router, picked: Option<PathBuf>) {
-    with_wizard(app, router, |w, ui| flow::browse_done(w, picked, ui));
+/// The ports folder step hands over to the app's own ports-folder flow (`ports_folder_screen`): with a
+/// quick choice the folder is checked, created after a confirm, and installed ports can be moved there
+/// (old copies kept until the user removes them); with `None` the shared folder picker opens first.
+/// The flow ends in its own dialogs, and the wizard comes back when they are closed.
+fn ports_folder_step(app: &Rc<AppState>, router: &Router, chosen: Option<PathBuf>) {
+    close_current_dialog(app, router);
+    match chosen {
+        Some(dir) => super::ports_folder_screen::consider(app, router, dir),
+        None => super::ports_folder_screen::choose_folder(app, router),
+    }
 }
 
-/// Opens the folder chooser for the ports folder; the answer goes back through `flow::browse_done`
-/// (`Some(folder)`, or `None` when the user backed out). Today it uses the game files folder browser;
-/// it will be switched to the reusable folder picker.
-fn ports_folder_step(app: &Rc<AppState>, router: &Router) {
-    let mut places: Vec<(String, PathBuf)> =
-        browse::system_mounts().into_iter().map(|m| (format!("SD card or drive: {}", ellipsize(&file_name(&m), 30)), m)).collect();
-    if let Some(home) = home_dir() {
-        places.push(("Home folder".into(), home));
-    }
-    places.push(("Top of the drive".into(), PathBuf::from("/")));
-    let mut labels: Vec<String> = places.iter().map(|(label, _)| label.clone()).collect();
-    labels.push("Back".into());
-    let back_row = labels.len() - 1;
-    show_list(
-        app,
-        router,
-        "Choose the ports folder: start in...",
-        labels,
-        0,
-        move |app, router, index| match places.get(index) {
-            Some((_, dir)) => show_browser(app, router, Rc::new(RefCell::new(FolderBrowser::open(dir)))),
-            None if index == back_row => finish_browse(app, router, None),
-            None => {}
-        },
-        |app, router| finish_browse(app, router, None),
-    );
-}
-
-fn show_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FolderBrowser>>) {
-    let lines = browser.borrow().lines();
-    let mut labels = browser.borrow().labels();
-    for (i, line) in lines.iter().enumerate() {
-        if *line == BrowseLine::Cancel {
-            labels[i] = "Back (do not choose a folder)".into();
-        }
-    }
-    let title = format!("Ports folder: {}", ellipsize(&browser.borrow().current.to_string_lossy(), 44));
-    show_list(
-        app,
-        router,
-        &title,
-        labels,
-        0,
-        move |app, router, index| match lines.get(index) {
-            Some(BrowseLine::UseThis) => finish_browse(app, router, Some(browser.borrow().current.clone())),
-            Some(BrowseLine::Cancel) => finish_browse(app, router, None),
-            Some(BrowseLine::Up) => {
-                browser.borrow_mut().up();
-                show_browser(app, router, browser.clone());
-            }
-            Some(BrowseLine::Folder(i)) => {
-                browser.borrow_mut().enter(*i);
-                show_browser(app, router, browser.clone());
-            }
-            Some(BrowseLine::More) | None => {}
-        },
-        |app, router| finish_browse(app, router, None),
-    );
+/// A folder an earlier build of the wizard recorded: read once and forgotten, and ignored when it is
+/// already the ports folder.
+fn take_earlier_choice(app: &AppState) -> Option<PathBuf> {
+    let mut settings = ForkSettings::load(&settings_path(app));
+    let earlier = settings.get(KEY_EARLIER_CHOICE).and_then(Value::as_str).map(PathBuf::from).filter(|p| p.is_absolute())?;
+    let _ = settings.remove(KEY_EARLIER_CHOICE);
+    (earlier != app.paths.library_dir()).then_some(earlier)
 }

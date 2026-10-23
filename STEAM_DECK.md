@@ -101,8 +101,10 @@ to skip setup; the cursor starts on "Keep going with setup").
 
 1. **Welcome:** what the app does and the four steps. "Start setup" or "Skip setup...".
 2. **Ports folder:** where installed ports are kept. Your SD card is offered first (a `Ports` folder on it),
-   then internal storage, then "Choose another folder...". A folder that does not exist yet is created only
-   after you say so. Nothing is moved by this step in this build.
+   then internal storage, then "Choose another folder..." (the same folder picker as Settings > Ports folder).
+   The folder is checked (a card formatted exFAT is refused with how to fix it), a folder that does not exist
+   yet is created only after you say so, and ports you already installed can be moved there. The old copies are
+   kept until you choose to remove them. When you close those screens you are back in the wizard.
 3. **Ports you already have:** opens Adopt installed ports, which finds ports installed outside the app. When
    you close it you are back in the wizard, which says how many ports were added.
 4. **Game files:** choose the folder that holds your ROMs and disc images (they are only read), then the app
