@@ -32,7 +32,7 @@ use crate::fork::import::{ports_folder, Once};
 use crate::fork::import::real_engine::engine_for_import;
 use crate::fork::import::cards::{Cards};
 use crate::fork::import::scan::{read_shortcuts, run_scan, Choices, ScanInput};
-use crate::fork::import::screen::{blocked_text, plan_labels, plan_text, space_blocked, FolderLine, FoldersScreen, ImportScreen};
+use crate::fork::import::screen::{blocked_text, space_blocked, FolderLine, FoldersScreen, ImportScreen};
 use crate::fork::import::targets;
 use crate::fork::port_mover::game_files::Issue;
 use crate::fork::port_mover::old_copies;
@@ -709,41 +709,6 @@ pub(super) fn build_plans(app: &AppState, screen: &ImportScreen) -> (Vec<PortPla
 pub(super) fn back_to_confirm(ctx: &Ctx, screen: &Rc<RefCell<ImportScreen>>) -> Step {
     let (ctx, screen) = (ctx.clone(), screen.clone());
     Rc::new(move |app, router| super::import_cards_screen::show_confirm(app, router, &ctx, screen.clone()))
-}
-
-pub(super) fn show_plans(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
-    let (plans, _) = build_plans(app, &screen.borrow());
-    let mut labels = plan_labels(&plans);
-    let back = labels.len();
-    labels.push("Back".to_string());
-    let Some(dialog) = build_picker_dialog(app, router, "What importing will do", &labels) else { return ctx.finish_quiet(app, router) };
-    {
-        let (app, router, ctx, screen) = (app.clone(), router.clone(), ctx.clone(), screen.clone());
-        dialog.on_close_requested(move || {
-            close_current_dialog(&app, &router);
-            super::import_cards_screen::show_confirm(&app, &router, &ctx, screen.clone());
-        });
-    }
-    {
-        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
-        dialog.on_item_selected(move |index| {
-            let index = index as usize;
-            if index == back {
-                return super::import_cards_screen::show_confirm(&app, &router, &ctx, screen.clone());
-            }
-            let Some(plan) = plans.get(index) else { return };
-            let home = screen.borrow().home.clone();
-            let text = plan_text(plan, &home);
-            let again: Step = {
-                let (screen, ctx) = (screen.clone(), ctx.clone());
-                Rc::new(move |app, router| show_plans(app, router, &ctx, screen.clone()))
-            };
-            let on_ok = again.clone();
-            confirm_back(&app, &router, &plan.request.port_name, &text, "Back to the list", false, move |app, router| on_ok(app, router), again);
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
 /// "Move 4 ports" was chosen on the move page: refuses while the ports folder is missing, offers to link in

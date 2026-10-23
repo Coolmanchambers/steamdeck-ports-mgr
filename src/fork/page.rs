@@ -49,16 +49,23 @@ pub struct Card {
 pub struct Tile<A> {
     pub art: Option<ArtRef>,
     pub label: String,
+    /// A small line under the label ("already found", "installed"); empty for none.
+    pub note: String,
     pub action: Option<A>,
 }
 
 impl<A> Tile<A> {
     pub fn shown(art: Option<ArtRef>, label: impl Into<String>) -> Tile<A> {
-        Tile { art, label: label.into(), action: None }
+        Tile { art, label: label.into(), note: String::new(), action: None }
     }
 
     pub fn choice(art: Option<ArtRef>, label: impl Into<String>, action: A) -> Tile<A> {
-        Tile { art, label: label.into(), action: Some(action) }
+        Tile { art, label: label.into(), note: String::new(), action: Some(action) }
+    }
+
+    pub fn with_note(mut self, note: impl Into<String>) -> Tile<A> {
+        self.note = note.into();
+        self
     }
 }
 

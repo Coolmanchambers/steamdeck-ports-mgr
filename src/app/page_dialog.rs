@@ -87,7 +87,7 @@ fn apply_art<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, images: &HashMap<S
         });
     }
     d.set_tiles(model(
-        page.tiles.iter().enumerate().map(|(i, t)| WizardTile { image: image_of(images, &t.art), label: t.label.clone().into(), focus: page::tile_number(page, i) }).collect::<Vec<_>>(),
+        page.tiles.iter().enumerate().map(|(i, t)| WizardTile { image: image_of(images, &t.art), label: t.label.clone().into(), note: t.note.clone().into(), focus: page::tile_number(page, i) }).collect::<Vec<_>>(),
     ));
 }
 

@@ -216,6 +216,16 @@ impl Choices {
     pub fn get(&self, path: &Path) -> Option<&Choice> {
         self.0.iter().find(|(p, _)| p == path).map(|(_, c)| c)
     }
+
+    /// Forgets what was said about one folder.
+    pub fn remove(&mut self, path: &Path) {
+        self.0.retain(|(p, _)| p != path);
+    }
+
+    /// Forgets every "not a port" (the user asked to be asked again); picks of a port stay.
+    pub fn clear_not_a_port(&mut self) {
+        self.0.retain(|(_, c)| *c != Choice::NotAPort);
+    }
 }
 
 /// A folder the user chose a port for, measured like any find: size and the Steam shortcuts pointing in.

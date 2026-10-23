@@ -88,7 +88,7 @@ impl Match {
         }
         lines.push(self.why.clone());
         if self.new_to_list {
-            lines.push("New to your port list. It is added first.".to_string());
+            lines.push("Not in the app's list yet. It's added when you move it.".to_string());
         }
         lines.push(format!("Size: {}", size_text(self.size)));
         match self.steam_shortcuts {
@@ -161,7 +161,25 @@ impl Maybe {
         }
     }
 
-    /// The tile's label: the port's name, and when it is already taken, where.
+    /// The tile label: the project, short enough not to be cut off (the part of the name in brackets, which is
+    /// what tells two ports for one game apart, else the whole name).
+    pub fn short(&self) -> String {
+        match self.name.strip_suffix(')').and_then(|n| n.rfind(" (").map(|open| n[open + 2..].to_string())) {
+            Some(note) if !note.is_empty() => note,
+            _ => self.name.clone(),
+        }
+    }
+
+    /// The small line under the tile: why it may not be the right pick.
+    pub fn badge(&self) -> String {
+        match (&self.found_in, self.installed) {
+            (_, true) => "installed".to_string(),
+            (Some(_), false) => "already found".to_string(),
+            (None, false) => String::new(),
+        }
+    }
+
+    /// The label for a list row: the port name, and when it is already taken, where.
     pub fn label(&self) -> String {
         match (&self.found_in, self.installed) {
             (_, true) => format!("{} (already in your ports folder)", self.name),
@@ -215,6 +233,25 @@ pub fn ignore_path(settings: &mut ForkSettings, path: &Path) -> io::Result<()> {
     }
     list.push(path.to_path_buf());
     settings.set(KEY_IGNORED, Value::Array(list.iter().map(|p| Value::from(p.to_string_lossy().into_owned())).collect()))
+}
+
+/// Takes `path` off the not-a-port list (the user said yes after all).
+pub fn unignore_path(settings: &mut ForkSettings, path: &Path) -> io::Result<()> {
+    let list = ignored_paths(settings);
+    if !list.iter().any(|p| old_copies::same(p, path)) {
+        return Ok(());
+    }
+    let kept: Vec<Value> = list.iter().filter(|p| !old_copies::same(p, path)).map(|p| Value::from(p.to_string_lossy().into_owned())).collect();
+    settings.set(KEY_IGNORED, Value::Array(kept))
+}
+
+/// "Ask again": forgets every folder the user said is not a port. Returns how many there were.
+pub fn clear_ignored(settings: &mut ForkSettings) -> io::Result<usize> {
+    let n = ignored_paths(settings).len();
+    if n > 0 {
+        settings.set(KEY_IGNORED, Value::Array(Vec::new()))?;
+    }
+    Ok(n)
 }
 
 // -- The answers ----------------------------------------------------------------------------------
@@ -289,16 +326,35 @@ impl Cards {
 
     /// The matches among the items, in order.
     pub fn matches(&self) -> Vec<&Match> {
-        self.items.iter().filter_map(|i| if let Item::Match(m) = i { Some(m) } else { None }).collect()
+        self.items.iter().zip(&self.verdicts).filter(|(_, v)| **v != Verdict::NotAPort).filter_map(|(i, _)| if let Item::Match(m) = i { Some(m) } else { None }).collect()
     }
 
     pub fn unsure_count(&self) -> usize {
-        self.items.iter().filter(|i| matches!(i, Item::Unsure(_))).count()
+        self.items.iter().zip(&self.verdicts).filter(|(i, v)| matches!(i, Item::Unsure(_)) && **v != Verdict::NotAPort).count()
     }
 
     /// The positions the walk asks about: everything the user has not settled already.
     pub fn walk(&self) -> Vec<usize> {
         (0..self.items.len()).filter(|i| !self.settled[*i]).collect()
+    }
+
+    /// The next page forward from `after` (`None`: from the start): the next item that still needs an answer. One
+    /// the user already said is not a port is not asked again going forward.
+    pub fn next_open(&self, after: Option<usize>) -> Option<usize> {
+        let from = after.map_or(0, |a| a + 1);
+        (from..self.items.len()).find(|i| !self.settled[*i] && self.verdicts[*i] != Verdict::NotAPort)
+    }
+
+    /// The page back from `before`: the item before it that has a page. Going back shows a not-a-port one too, so
+    /// the answer can be taken back.
+    pub fn prev_item(&self, before: usize) -> Option<usize> {
+        (0..before.min(self.items.len())).rev().find(|i| !self.settled[*i])
+    }
+
+    /// Where the item is in the walk and how long the walk is, for "Port 2 of 5".
+    pub fn position(&self, index: usize) -> (usize, usize) {
+        let walk = self.walk();
+        (walk.iter().position(|i| *i == index).unwrap_or(0), walk.len())
     }
 
     pub fn verdict(&self, i: usize) -> Verdict {
@@ -337,7 +393,13 @@ impl Cards {
     /// Starts the walk again: what the user settled stays, everything else is asked again.
     pub fn reset(&mut self) {
         for (i, v) in self.verdicts.iter_mut().enumerate() {
-            *v = if self.settled[i] { Verdict::Yes } else { Verdict::Undecided };
+            *v = if self.settled[i] {
+                Verdict::Yes
+            } else if *v == Verdict::NotAPort {
+                Verdict::NotAPort
+            } else {
+                Verdict::Undecided
+            };
         }
     }
 }
@@ -370,6 +432,10 @@ pub enum CardAction {
     Back,
     /// Look in one more folder.
     AddFolder,
+    /// Forget the folders the user said are not ports, and look again.
+    AskAgain,
+    /// Open the list of scan folders.
+    ScanFolders,
 }
 
 fn base(window: &str, step_text: &str, title: &str) -> Page<CardAction> {
@@ -410,14 +476,20 @@ fn tile_of(m: &Match) -> Tile<CardAction> {
 /// "Found 4 ports": the covers of everything the scan matched, then Check them / the leave choice
 /// (`leave_label`: "Skip" in the wizard, "Not now" in Settings). With nothing found: where to go from here.
 /// `deck_ready_note` says when the Deck-ready list could not be loaded, which matters when nothing was found.
-pub fn found_page(cards: &Cards, leave_label: &str, deck_ready_note: Option<&str>) -> Page<CardAction> {
+/// `left_alone` is how many folders the user said are not ports: they are not offered, and the page that found
+/// nothing says so and offers to ask again.
+pub fn found_page(cards: &Cards, leave_label: &str, deck_ready_note: Option<&str>, left_alone: usize) -> Page<CardAction> {
     let matches = cards.matches();
-    if cards.is_empty() {
+    if matches.is_empty() && cards.unsure_count() == 0 {
         let mut p = base("nothing found", "", "No ports found");
         p.paragraphs = vec![
             "Nothing that looks like a port turned up outside your ports folder.".to_string(),
             "If a port lives in a folder that was not looked in, add that folder and look again.".to_string(),
         ];
+        if left_alone > 0 {
+            p.paragraphs.push(format!("{} you said {} not {} left out.", folders_cap(left_alone), if left_alone == 1 { "is" } else { "are" }, if left_alone == 1 { "a port and is" } else { "ports and are" }));
+            p.buttons[MIDDLE] = footer(&ask_again_label(left_alone), CardAction::AskAgain);
+        }
         if let Some(note) = deck_ready_note {
             p.paragraphs.push(note.to_string());
         }
@@ -453,58 +525,90 @@ pub fn found_page(cards: &Cards, leave_label: &str, deck_ready_note: Option<&str
     p
 }
 
+fn folders_cap(n: usize) -> String {
+    if n == 1 { "1 folder".to_string() } else { format!("{n} folders") }
+}
+
+/// The button that forgets the not-a-port answers.
+pub fn ask_again_label(n: usize) -> String {
+    format!("Ask again about {}", folders(n))
+}
+
 /// With nothing to check, leaving is the plain way out.
 fn leave_label_for_empty(label: &str) -> &str {
     if label == "Skip" { "Next" } else { "Done" }
 }
 
-fn step_of(position: usize, total: usize) -> String {
-    format!("Port {} of {}", position + 1, total)
+/// What kind of page a walk step is, for its heading ("Port 2 of 5", "Folder 5 of 6").
+fn step_of(kind: &str, position: usize, total: usize) -> String {
+    format!("{kind} {} of {}", position + 1, total)
 }
 
 /// One port: "Is this the right port?" with its card and the three choices. A weak match is not highlighted
 /// and the cursor starts on "Pick another port", so a stray A does not accept it. `position` and `total`
-/// count the pages of the walk.
-pub fn card_page(m: &Match, position: usize, total: usize) -> Page<CardAction> {
-    let step = step_of(position, total);
+/// count the pages of the walk. `said_not` is set when the user already said this folder is not a port (a
+/// page back brings it up again): Yes or a pick takes that back.
+pub fn card_page(m: &Match, position: usize, total: usize, said_not: bool) -> Page<CardAction> {
+    let step = step_of("Port", position, total);
     let mut p = base(&step.to_lowercase(), &step, "Is this the right port?");
     p.card = Some(Card { art: m.art.clone(), title: m.port_name.clone(), lines: m.lines() });
-    if !m.strong {
+    if said_not {
+        p.paragraphs = vec!["You said this is not a port. Yes or Pick another port takes that back.".to_string()];
+    } else if !m.strong {
         p.paragraphs = vec!["This one is a guess. Check the picture before you say yes.".to_string()];
     }
     p.options = vec![
-        option("Yes, this is it", "It is copied and checked before anything changes", CardAction::Yes, m.strong),
+        option("Yes, this is it", "It is copied and checked before anything changes", CardAction::Yes, m.strong && !said_not),
         option("Pick another port", "Choose the right port from the list", CardAction::PickAnother, false),
-        option("Not a port", "Leave this folder alone and do not ask again", CardAction::NotAPort, false),
+        if said_not { option("Still not a port", "Leave this folder alone", CardAction::NotAPort, false) } else { option("Not a port", "Leave this folder alone and do not ask again", CardAction::NotAPort, false) },
     ];
     p.buttons[LEFT] = details_button();
-    p.initial = Focus::Option(if m.strong { 0 } else { 1 });
+    p.initial = Focus::Option(if said_not { 2 } else if m.strong { 0 } else { 1 });
     p
 }
 
 /// "Which port is this?" for a folder the scan could not settle: the ports it could be as tiles (up to three),
-/// then Another port... and Use a GitHub link..., with Not a port in the footer.
-pub fn which_page(u: &Unsure, position: usize, total: usize) -> Page<CardAction> {
-    let step = step_of(position, total);
+/// then Another port..., Use a GitHub link... and Not a port (the last, so it is never what focus lands on).
+pub fn which_page(u: &Unsure, position: usize, total: usize, said_not: bool) -> Page<CardAction> {
+    let step = step_of("Folder", position, total);
     let mut p = base(&step.to_lowercase(), &step, "Which port is this?");
     p.paragraphs = if u.could_be.is_empty() {
         vec![format!("I found a folder called {} but could not tell which port it is.", u.dir_name)]
     } else {
-        vec![format!("The folder {} fits more than one port. Pick the one it is.", u.dir_name)]
+        vec![format!("The folder {} fits more than one port. Pick the one it is.", u.dir_name), "Left and right pick a cover, A chooses.".to_string()]
     };
+    if said_not {
+        p.paragraphs.insert(0, "You said this is not a port. Picking a port takes that back.".to_string());
+    }
     p.tiles = u
         .could_be
         .iter()
         .enumerate()
-        .map(|(i, m)| Tile::choice(m.art.clone(), m.label(), CardAction::Pick(i)))
+        .map(|(i, m)| Tile::choice(m.art.clone(), m.short(), CardAction::Pick(i)).with_note(m.badge()))
         .collect();
     p.options = vec![
         option("Another port...", "Choose from the whole list", CardAction::PickAnother, u.could_be.is_empty()),
         option("Use a GitHub link...", "For a port that is not on the list", CardAction::GithubLink, false),
+        if said_not { option("Still not a port", "Leave this folder alone", CardAction::NotAPort, false) } else { option("Not a port", "Leave this folder alone and do not ask again", CardAction::NotAPort, false) },
     ];
-    p.buttons[LEFT] = footer("Not a port", CardAction::NotAPort);
-    p.buttons[MIDDLE] = details_button();
+    p.buttons[LEFT] = details_button();
     p.initial = if u.could_be.is_empty() { Focus::Option(0) } else { Focus::Tile(0) };
+    p
+}
+
+/// Details of the found page: where it looked and what it left out, with a way to ask again about the folders
+/// the user said are not ports and to change the scan folders.
+pub fn details_page(notes: &str, left_alone: usize) -> Page<CardAction> {
+    let mut p = base("details", "", "Details");
+    p.paragraphs = notes.split("\n").filter(|l| !l.is_empty()).map(str::to_string).collect();
+    p.options = Vec::new();
+    if left_alone > 0 {
+        p.options.push(option(&ask_again_label(left_alone), "They are offered again the next time", CardAction::AskAgain, false));
+    }
+    p.options.push(option("Change scan folders...", "Add or remove folders to look in", CardAction::ScanFolders, false));
+    p.options.push(option("Back", "", CardAction::Back, true));
+    let last = p.options.len() - 1;
+    p.initial = Focus::Option(last);
     p
 }
 
@@ -534,8 +638,19 @@ pub fn confirm_page(cards: &Cards, free: Option<u64>, blocked: &[(String, String
     p
 }
 
+/// What will happen to each port, step by step, as plain text behind Details of the move page. `texts` is one
+/// block per port (its name, then numbered steps).
+pub fn steps_page(texts: &[String]) -> Page<CardAction> {
+    let mut p = base("steps", "", "What will happen");
+    p.paragraphs = texts.to_vec();
+    p.options = vec![option("Back", "", CardAction::Back, true)];
+    p.initial = Focus::Option(0);
+    p
+}
+
 /// Where the scan looked and what it left out, for Details on the found page.
-pub fn scan_notes(scan: &ImportScan, home: &Path) -> String {
+/// `ignored` is the not-a-port list kept in the settings; folders said so in this session are named too.
+pub fn scan_notes(scan: &ImportScan, ignored: &[PathBuf], home: &Path) -> String {
     let mut lines: Vec<String> = Vec::new();
     let roots: Vec<String> = scan.roots_scanned.iter().map(|r| short_path(r, home)).collect();
     lines.push(if roots.is_empty() { "None of your scan folders exist yet.".to_string() } else { format!("Looked in: {}", roots.join(", ")) });
@@ -543,9 +658,15 @@ pub fn scan_notes(scan: &ImportScan, home: &Path) -> String {
         let names: Vec<String> = scan.collections.iter().map(|p| short_path(p, home)).collect();
         lines.push(format!("Skipped, it looks like a collection of many games: {}", names.join(", ")));
     }
-    if !scan.left_alone.is_empty() {
-        let names: Vec<String> = scan.left_alone.iter().map(|p| short_path(p, home)).collect();
-        lines.push(format!("Left alone (you said not a port): {}", names.join(", ")));
+    let mut left: Vec<&PathBuf> = ignored.iter().collect();
+    for p in &scan.left_alone {
+        if !left.iter().any(|l| old_copies::same(l, p)) {
+            left.push(p);
+        }
+    }
+    if !left.is_empty() {
+        let names: Vec<String> = left.iter().map(|p| short_path(p, home)).collect();
+        lines.push(format!("Left alone, you said not a port: {}", names.join(", ")));
     }
     lines.extend(scan.duplicates.iter().map(|(name, path)| format!("Also found {name} in {}: left out.", short_path(path, home))));
     if !scan.already_in_library.is_empty() {
@@ -627,7 +748,7 @@ mod tests {
     }
 
     fn found(cards: &Cards) -> Page<CardAction> {
-        found_page(cards, "Skip", None)
+        found_page(cards, "Skip", None, 0)
     }
 
     #[test]
@@ -675,7 +796,7 @@ mod tests {
         let (sd, _, mut cards) = tims(&dir, |_| {});
         let sc = named(&cards, "The Legend of Dragoon (Severed-Chains)").clone();
         assert!(sc.new_to_list);
-        assert!(sc.lines().contains(&"New to your port list. It is added first.".to_string()), "{:?}", sc.lines());
+        assert!(sc.lines().contains(&"Not in the app's list yet. It's added when you move it.".to_string()), "{:?}", sc.lines());
         assert!(sc.details(&sd, &sd.join("Ports")).contains("not in the catalog"), "details explain it");
         assert!(cards.matches().iter().filter(|m| m.port_key != sc.port_key).all(|m| !m.new_to_list), "only the Deck-ready only port is new");
         for i in 0..cards.len() {
@@ -737,7 +858,7 @@ mod tests {
     fn the_found_page_says_how_many_and_shows_a_cover_tile_for_each() {
         let h = fake_home("cards_found");
         let (_, cards) = cards_of(&h);
-        let p = found_page(&cards, "Not now", None);
+        let p = found_page(&cards, "Not now", None, 0);
         assert_eq!(p.title, "Found 2 ports");
         assert_eq!(p.window_title, "Import ports: found");
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "Ship of Harkinian"]);
@@ -759,10 +880,10 @@ mod tests {
         assert_eq!(p.options[1].action, CardAction::GithubLink, "nothing matched: the GitHub link is the way to say what the folder is");
         assert!(p.options[0].recommended);
         assert_eq!(p.options[2].title, "Next", "in the wizard leaving goes to the next step");
-        assert_eq!(found_page(&Cards::new(vec![]), "Not now", None).options[2].title, "Done");
+        assert_eq!(found_page(&Cards::new(vec![]), "Not now", None, 0).options[2].title, "Done");
         assert_eq!(p.paragraphs.len(), 2);
         let note = "The Deck-ready list couldn't be loaded, so ports only on that list aren't recognised.";
-        assert_eq!(found_page(&Cards::new(vec![]), "Skip", Some(note)).paragraphs.last().unwrap(), note);
+        assert_eq!(found_page(&Cards::new(vec![]), "Skip", Some(note), 0).paragraphs.last().unwrap(), note);
     }
 
     #[test]
@@ -771,7 +892,7 @@ mod tests {
         let (_, cards) = cards_of(&h);
         let soh = position(&cards, "Ship of Harkinian");
         let Some(Item::Match(m)) = cards.item(soh) else { panic!() };
-        let p = card_page(m, soh, cards.len());
+        let p = card_page(m, soh, cards.len(), false);
         assert_eq!(p.step_text, format!("Port {} of 2", soh + 1));
         assert_eq!(p.window_title, format!("Import ports: port {} of 2", soh + 1));
         let card = p.card.as_ref().unwrap();
@@ -791,7 +912,7 @@ mod tests {
         let (_, cards) = cards_of(&h);
         let weak = (0..cards.len()).find(|i| matches!(cards.item(*i), Some(Item::Match(m)) if !m.strong)).unwrap();
         let Some(Item::Match(m)) = cards.item(weak) else { panic!() };
-        let p = card_page(m, weak, cards.len());
+        let p = card_page(m, weak, cards.len(), false);
         assert!(p.paragraphs[0].contains("Check the picture"));
         assert!(p.options.iter().all(|o| !o.recommended), "nothing is highlighted");
         assert_eq!(p.initial, Focus::Option(1), "a stray A opens the list, it does not accept the guess");
@@ -835,22 +956,24 @@ mod tests {
         let Some(Item::Unsure(u)) = cards.item(ambiguous) else { panic!() };
         assert_eq!(u.path, sd.join("The Legend of Zelda Majoras Mask"));
         assert_eq!(u.could_be.len(), 2);
-        let p = which_page(u, ambiguous, cards.len());
+        let p = which_page(u, ambiguous, cards.len(), false);
         assert_eq!(p.title, "Which port is this?");
-        assert!(p.window_title.starts_with("Import ports: port "), "{}", p.window_title);
+        assert!(p.window_title.starts_with("Import ports: folder "), "{}", p.window_title);
         assert!(p.paragraphs[0].contains("fits more than one port"));
         assert_eq!(p.tiles.len(), 2);
-        assert_eq!(p.tiles[0].label, "The Legend of Zelda: Majora's Mask (2ship2harkinian) (already found in 2Ship-Keiichi-Charlie-Linux)");
-        assert_eq!(p.tiles[1].label, "The Legend of Zelda: Majora's Mask (Zelda64Recomp)");
+        assert_eq!((p.tiles[0].label.as_str(), p.tiles[0].note.as_str()), ("2ship2harkinian", "already found"), "a short name, and a small line instead of the long parenthesis");
+        assert_eq!((p.tiles[1].label.as_str(), p.tiles[1].note.as_str()), ("Zelda64Recomp", ""));
+        assert!(p.paragraphs.iter().any(|t| t == "Left and right pick a cover, A chooses."));
         assert_eq!(p.tiles[0].action, Some(CardAction::Pick(0)));
-        assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["Another port...", "Use a GitHub link..."]);
-        assert_eq!(p.buttons[LEFT].as_ref().unwrap().label, "Not a port");
+        assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["Another port...", "Use a GitHub link...", "Not a port"]);
+        assert_eq!(p.buttons[LEFT].as_ref().unwrap().label, "Details");
+        assert!(p.buttons[MIDDLE].is_none(), "Not a port is a choice, not the first thing in the footer");
         assert_eq!(p.initial, Focus::Tile(0), "the cursor starts on the first likely port");
         assert!(p.options.iter().all(|o| !o.recommended));
         let _ = scan;
         let none = (0..cards.len()).find(|i| matches!(cards.item(*i), Some(Item::Unsure(u)) if u.could_be.is_empty())).unwrap();
         let Some(Item::Unsure(u)) = cards.item(none) else { panic!() };
-        let p = which_page(u, none, cards.len());
+        let p = which_page(u, none, cards.len(), false);
         assert!(p.tiles.is_empty());
         assert!(p.paragraphs[0].contains("Mystery Game") && p.paragraphs[0].contains("could not tell"), "{:?}", p.paragraphs);
         assert!(p.options[0].recommended && p.initial == Focus::Option(0), "with no likely port, Another port is the way on");
@@ -908,7 +1031,7 @@ mod tests {
         let mut pages = vec![found(&cards), found(&Cards::new(vec![]))];
         for i in 0..total {
             let Some(Item::Match(m)) = cards.item(i) else { panic!() };
-            pages.push(card_page(m, i, total));
+            pages.push(card_page(m, i, total, false));
         }
         for p in &pages {
             let t = all_text(p);
@@ -941,7 +1064,7 @@ mod tests {
         cards.set(0, Verdict::Yes);
         let Some(Item::Match(m)) = cards.item(0) else { panic!() };
         let unsure = Unsure { path: "/a/b".into(), dir_name: "b".into(), could_be: vec![] };
-        for p in [found(&cards), card_page(m, 0, 2), confirm_page(&cards, None, &[]), found(&Cards::new(vec![])), which_page(&unsure, 0, 1)] {
+        for p in [found(&cards), card_page(m, 0, 2, false), confirm_page(&cards, None, &[]), found(&Cards::new(vec![])), which_page(&unsure, 0, 1, false)] {
             let has_details = p.buttons.iter().flatten().any(|b| b.action == CardAction::Details);
             assert!(has_details, "{}", p.title);
             assert!(p.options.len() <= 3, "{}", p.title);
@@ -1009,11 +1132,122 @@ mod tests {
         let mut scan = scan_of(&h);
         scan.deck_ready_note = Some("The Deck-ready list couldn't be loaded.".into());
         scan.left_alone.push(h.home.join("Games/other"));
-        let text = scan_notes(&scan, &h.home);
+        let text = scan_notes(&scan, &[h.home.join("Games/gone")], &h.home);
         assert!(text.starts_with("Looked in: ~/Applications, ~/Games"), "{text}");
         assert!(text.contains("Also found Ship of Harkinian in ~/Games/soh-copy: left out."), "{text}");
         assert!(text.contains("Already in your ports folder: Severed Chains"), "{text}");
         assert!(text.contains("The Deck-ready list couldn't be loaded."), "{text}");
-        assert!(text.contains("Left alone (you said not a port): ~/Games/other"), "{text}");
+        assert!(text.contains("Left alone, you said not a port: ~/Games/gone, ~/Games/other"), "{text}");
+    }
+
+    #[test]
+    fn not_a_port_is_kept_when_the_walk_starts_again_and_the_folder_leaves_the_found_tiles() {
+        let h = fake_home("cards_sticky");
+        let (_, mut cards) = cards_of(&h);
+        assert_eq!(cards.matches().len(), 2);
+        cards.set(0, Verdict::NotAPort);
+        cards.reset();
+        assert_eq!(cards.verdict(0), Verdict::NotAPort, "pressing Check them again does not lose the answer");
+        assert_eq!(cards.matches().len(), 1, "and the folder is not among the found tiles");
+        assert_eq!(found(&cards).tiles.len(), 1);
+        assert_eq!(found(&cards).title, "Found 1 port");
+        assert_eq!(cards.next_open(None), Some(1), "going forward skips it");
+        assert_eq!(cards.next_open(Some(1)), None);
+        assert_eq!(cards.prev_item(1), Some(0), "going back shows it again, so the answer can be taken back");
+        assert_eq!(cards.position(0), (0, 2), "it still counts as a page of the walk");
+        assert!(cards.accepted().is_empty());
+    }
+
+    #[test]
+    fn a_card_shown_again_after_not_a_port_says_so_and_does_not_start_on_yes() {
+        let h = fake_home("cards_said_not");
+        let (_, cards) = cards_of(&h);
+        let Some(Item::Match(m)) = cards.item(0) else { panic!() };
+        let p = card_page(m, 0, 2, true);
+        assert_eq!(p.paragraphs, ["You said this is not a port. Yes or Pick another port takes that back."]);
+        assert_eq!(p.options[2].title, "Still not a port");
+        assert!(p.options.iter().all(|o| !o.recommended), "Yes is not highlighted for a folder the user said no to");
+        assert_eq!(p.initial, Focus::Option(2));
+        let fresh = card_page(m, 0, 2, false);
+        assert_eq!(fresh.options[2].title, "Not a port");
+        assert!(fresh.paragraphs.is_empty());
+    }
+
+    #[test]
+    fn which_port_is_this_puts_not_a_port_last_and_never_focuses_it() {
+        let u = Unsure { path: "/a/b".into(), dir_name: "b".into(), could_be: vec![] };
+        let p = which_page(&u, 0, 1, false);
+        assert_eq!(p.options.last().unwrap().title, "Not a port");
+        assert_eq!(p.initial, Focus::Option(0));
+        assert!(p.buttons.iter().flatten().all(|b| b.action != CardAction::NotAPort));
+        let again = which_page(&u, 0, 1, true);
+        assert_eq!(again.options.last().unwrap().title, "Still not a port");
+        assert!(again.paragraphs[0].starts_with("You said this is not a port."));
+        assert_eq!(p.window_title, "Import ports: folder 1 of 1");
+        assert_eq!(p.step_text, "Folder 1 of 1");
+    }
+
+    #[test]
+    fn the_not_a_port_list_can_be_taken_back_one_folder_at_a_time_or_all_at_once() {
+        let h = fake_home("cards_unignore");
+        let path = h.home.join("fork-settings.json");
+        fs::write(&path, r#"{"setup_done": true}"#).unwrap();
+        let mut settings = ForkSettings::load(&path);
+        let (a, b) = (h.home.join("Games/dusk-old"), h.home.join("Applications/SoH"));
+        ignore_path(&mut settings, &a).unwrap();
+        ignore_path(&mut settings, &b).unwrap();
+        unignore_path(&mut settings, &a).unwrap();
+        assert_eq!(ignored_paths(&ForkSettings::load(&path)), [b.clone()]);
+        unignore_path(&mut settings, &a).unwrap();
+        assert_eq!(clear_ignored(&mut settings).unwrap(), 1);
+        assert_eq!(clear_ignored(&mut settings).unwrap(), 0);
+        let after = ForkSettings::load(&path);
+        assert!(ignored_paths(&after).is_empty());
+        assert_eq!(after.get("setup_done"), Some(&Value::Bool(true)), "other settings survive");
+        assert!(a.is_dir() && b.is_dir(), "no folder was touched");
+    }
+
+    #[test]
+    fn the_page_that_found_nothing_says_how_many_folders_are_left_out_and_offers_to_ask_again() {
+        let p = found_page(&Cards::new(vec![]), "Skip", None, 2);
+        assert!(p.paragraphs.iter().any(|t| t == "2 folders you said are not ports and are left out."), "{:?}", p.paragraphs);
+        assert_eq!(p.buttons[MIDDLE].as_ref().unwrap().label, "Ask again about 2 folders");
+        assert_eq!(p.buttons[MIDDLE].as_ref().unwrap().action, CardAction::AskAgain);
+        let one = found_page(&Cards::new(vec![]), "Skip", None, 1);
+        assert!(one.paragraphs.iter().any(|t| t == "1 folder you said is not a port and is left out."), "{:?}", one.paragraphs);
+        assert_eq!(one.buttons[MIDDLE].as_ref().unwrap().label, "Ask again about 1 folder");
+        assert!(found_page(&Cards::new(vec![]), "Skip", None, 0).buttons[MIDDLE].is_none());
+        assert!(p.options.len() <= 3);
+    }
+
+    #[test]
+    fn details_list_the_notes_and_offer_ask_again_only_when_there_is_something_to_ask() {
+        let with = details_page("Looked in: ~/Games\nLeft alone, you said not a port: ~/Games/a", 1);
+        assert_eq!(with.paragraphs, ["Looked in: ~/Games", "Left alone, you said not a port: ~/Games/a"]);
+        assert_eq!(with.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::AskAgain, CardAction::ScanFolders, CardAction::Back]);
+        assert_eq!(with.initial, Focus::Option(2), "Back has the focus");
+        let without = details_page("Looked in: ~/Games", 0);
+        assert_eq!(without.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::ScanFolders, CardAction::Back]);
+    }
+
+    #[test]
+    fn the_steps_page_lists_each_port_and_has_one_way_back() {
+        let p = steps_page(&["A:\n\n1. one".to_string(), "B:\n\n1. two".to_string()]);
+        assert_eq!(p.title, "What will happen");
+        assert_eq!(p.paragraphs.len(), 2);
+        assert_eq!(p.options.len(), 1);
+        assert_eq!(p.options[0].action, CardAction::Back);
+    }
+
+    #[test]
+    fn a_tile_names_its_project_short_and_says_what_is_taken_in_a_small_line() {
+        let maybe = |name: &str, found_in: Option<&str>, installed: bool| Maybe { key: "k".into(), name: name.into(), art: None, found_in: found_in.map(str::to_string), installed };
+        let mm = maybe("The Legend of Zelda: Majora's Mask (Zelda64Recomp)", None, false);
+        assert_eq!((mm.short().as_str(), mm.badge().as_str()), ("Zelda64Recomp", ""));
+        let taken = maybe("Fan Remake", Some("old-folder"), false);
+        assert_eq!((taken.short().as_str(), taken.badge().as_str()), ("Fan Remake", "already found"));
+        assert_eq!(maybe("X (y)", None, true).badge(), "installed");
+        assert_eq!(maybe("Plain", None, false).short(), "Plain");
+        assert!(taken.label().contains("already found in old-folder"), "list rows keep the full label");
     }
 }

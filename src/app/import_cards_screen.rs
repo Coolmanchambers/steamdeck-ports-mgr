@@ -4,32 +4,36 @@
 //!
 //! Pages: found (covers of everything matched, or "No ports found"), one card per port ("Port 2 of 5": Yes /
 //! Pick another port / Not a port), "Which port is this?" for a folder that fits several ports or none (the
-//! likely ports as tiles, Another port, a GitHub link, Not a port), a filterable list of the other ports, and
-//! "Move 4 ports into your ports folder?". The move itself, its progress, the summary and the old-copy page are
-//! in `import_screen`; this file only walks the user to the point where they say Move.
+//! likely ports as tiles, Another port, a GitHub link, Not a port), a filterable list of the other ports, the
+//! GitHub link pages, and "Move 4 ports into your ports folder?". The move itself, its progress, the summary
+//! and the old-copy page are in `import_screen`; this file only walks the user to the point where they say Move.
 //!
 //! B goes back one page (from the first card to the found page; from the found page it leaves Import ports,
-//! telling the setup wizard when it waits on this screen). The title bar's X leaves. "Not a port" is saved so
-//! the scan stops offering that folder; the folder is never touched. A port picked for a folder is kept for
-//! the rest of the screen's life, so a new scan does not ask again.
+//! telling the setup wizard when it waits on this screen). The title bar's X leaves. A page is shown by the
+//! index of its item in the cards; going forward skips the folders the user said are not ports, going back
+//! shows them again (so the answer can be taken back). "Not a port" is saved so the scan stops offering that
+//! folder, and it is not forgotten silently: Details of the found page lists the folders and "Ask again"
+//! brings them back. The folder itself is never touched. A port picked for a folder is kept for the rest of
+//! the screen's life, so a new scan does not ask again.
 
 use super::dialogs::{build_text_entry_dialog, close_current_dialog, finish_dialog_open, DialogSlot};
 use super::folder_picker_screen::open_folder_picker;
 use super::import_screen::{
-    build_plans, confirm_back, end_notice, home_dir, notice_back, run_job, save_folders, settings_path, show_folders, show_plans, start_move, start_scan, Ctx, FoldersState, JobSpec, Step, TITLE,
+    build_plans, confirm_back, end_notice, home_dir, notice_back, run_job, save_folders, settings_path, show_folders, start_move, start_scan, Ctx, FoldersState, JobSpec, Step, TITLE,
 };
 use super::page_dialog::{show_page, Handlers};
 use super::state::AppState;
-use crate::fork::folder_picker::{PickerRequest, Purpose};
-use crate::fork::import::cards::{self, card_page, confirm_page, found_page, scan_notes, which_page, CardAction, Item, Match, Verdict};
-use crate::fork::import::folders::AddOutcome;
 use crate::fork::art::net::{Fetch, Net};
 use crate::fork::custom_repo::check::{check, CheckError, Checked, ReplayFetch};
 use crate::fork::custom_repo::entry as repo_entry;
 use crate::fork::custom_repo::parse::parse_link;
+use crate::fork::folder_picker::{PickerRequest, Purpose};
+use crate::fork::import::cards::{self, card_page, confirm_page, details_page, found_page, scan_notes, steps_page, which_page, CardAction, Item, Match, Verdict};
+use crate::fork::import::folders::AddOutcome;
 use crate::fork::import::link::{self, LinkRow};
+use crate::fork::import::plan::PortPlan;
 use crate::fork::import::scan::{measure_choice, Choice};
-use crate::fork::import::screen::{ChoiceTarget, ImportScreen, PortListScreen};
+use crate::fork::import::screen::{plan_text, ChoiceTarget, ImportScreen, PortListScreen};
 use crate::fork::page::Page;
 use crate::fork::rom_screens::util::ellipsize;
 use crate::fork::screens::short_path;
@@ -69,12 +73,17 @@ fn details_text(app: &Rc<AppState>, router: &Router, title: &str, text: &str, ag
     confirm_back(app, router, title, text, "OK", false, move |app, router| on_ok(app, router), again);
 }
 
+fn ignored_now(app: &AppState) -> Vec<std::path::PathBuf> {
+    cards::ignored_paths(&ForkSettings::load(&settings_path(app)))
+}
+
 // -- Found -----------------------------------------------------------------------------------------
 
 /// The first page after the scan: how many ports were found, with their covers.
 pub(super) fn show_found(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen) {
     let leave_label = if ctx.from_wizard { "Skip" } else { "Not now" };
-    let page = found_page(&screen.borrow().cards, leave_label, screen.borrow().scan.deck_ready_note.as_deref());
+    let left_alone = ignored_now(app).len();
+    let page = found_page(&screen.borrow().cards, leave_label, screen.borrow().scan.deck_ready_note.as_deref(), left_alone);
     let again: Again = {
         let (ctx, screen) = (ctx.clone(), screen.clone());
         Rc::new(move |app, router| show_found(app, router, &ctx, screen.clone()))
@@ -84,19 +93,17 @@ pub(super) fn show_found(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
         move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
             CardAction::Start => {
                 screen.borrow_mut().cards.reset();
-                show_step(app, router, &ctx, screen.clone(), 0);
+                let first = screen.borrow().cards.next_open(None);
+                match first {
+                    Some(index) => show_item(app, router, &ctx, screen.clone(), index),
+                    None => after_walk(app, router, &ctx, screen.clone()),
+                }
             }
             CardAction::Leave => leave(app, router, &ctx),
             CardAction::AddFolder => add_folder_and_rescan(app, router, &ctx, screen.clone()),
             CardAction::GithubLink => show_github(app, router, &ctx, screen.clone(), Target::NewFolder, again.clone(), String::new()),
-            CardAction::Details => {
-                let text = {
-                    let s = screen.borrow();
-                    format!("{}\n\nScan folders can be changed.", scan_notes(&s.scan, &s.home))
-                };
-                let (ctx2, screen2) = (ctx.clone(), screen.clone());
-                confirm_back(app, router, TITLE, &text, "Change scan folders...", false, move |app, router| show_folders(app, router, &ctx2, FoldersState::new(screen2.clone())), again.clone());
-            }
+            CardAction::AskAgain => ask_again(app, router, &ctx, screen.clone(), again.clone()),
+            CardAction::Details => show_details(app, router, &ctx, screen.clone()),
             _ => {}
         }
     };
@@ -105,6 +112,46 @@ pub(super) fn show_found(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
         move |app: &Rc<AppState>, router: &Router| leave(app, router, &ctx)
     };
     show_or_end(app, router, ctx, page, handlers(ctx, act, back));
+}
+
+/// Details of the found page: where it looked, what it left out, the folders said not to be ports (with a way to
+/// ask again) and the scan folders.
+fn show_details(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen) {
+    let ignored = ignored_now(app);
+    let notes = {
+        let s = screen.borrow();
+        scan_notes(&s.scan, &ignored, &s.home)
+    };
+    let page = details_page(&notes, ignored.len());
+    let again: Again = {
+        let (ctx, screen) = (ctx.clone(), screen.clone());
+        Rc::new(move |app, router| show_details(app, router, &ctx, screen.clone()))
+    };
+    let act = {
+        let (ctx, screen) = (ctx.clone(), screen.clone());
+        move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
+            CardAction::AskAgain => ask_again(app, router, &ctx, screen.clone(), again.clone()),
+            CardAction::ScanFolders => show_folders(app, router, &ctx, FoldersState::new(screen.clone())),
+            CardAction::Back => show_found(app, router, &ctx, screen.clone()),
+            _ => {}
+        }
+    };
+    let back = {
+        let (ctx, screen) = (ctx.clone(), screen.clone());
+        move |app: &Rc<AppState>, router: &Router| show_found(app, router, &ctx, screen.clone())
+    };
+    show_or_end(app, router, ctx, page, handlers(ctx, act, back));
+}
+
+/// "Ask again": forgets the not-a-port answers (the settings list and this screen's memory) and looks again.
+fn ask_again(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, again: Again) {
+    let mut settings = ForkSettings::load(&settings_path(app));
+    if let Err(e) = cards::clear_ignored(&mut settings) {
+        return notice_back(app, router, &format!("Could not forget those answers: {e}\nNothing was changed."), again);
+    }
+    ctx.choices.borrow_mut().clear_not_a_port();
+    let folders = screen.borrow().folders.clone();
+    start_scan(app, router, ctx, folders);
 }
 
 /// "Look in another folder...": the folder picker, then a new scan with the folder added.
@@ -140,29 +187,59 @@ fn add_folder_and_rescan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
 
 // -- The walk: one page per folder ------------------------------------------------------------------
 
-/// Page number `pos` of the walk (the folders the user has not settled already), or the move page when the
-/// walk is over.
-fn show_step(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos: usize) {
-    let walk = screen.borrow().cards.walk();
-    let Some(&index) = walk.get(pos) else { return after_walk(app, router, ctx, screen) };
-    let item = screen.borrow().cards.item(index).cloned();
+/// The page of item `index`: a port to confirm, or a folder to choose the port for.
+fn show_item(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize) {
+    let (item, (pos, total), said_not) = {
+        let s = screen.borrow();
+        (s.cards.item(index).cloned(), s.cards.position(index), s.cards.verdict(index) == Verdict::NotAPort)
+    };
     match item {
-        Some(Item::Match(m)) => show_card(app, router, ctx, screen, pos, walk.len(), index, m),
-        Some(Item::Unsure(u)) => show_which(app, router, ctx, screen, pos, walk.len(), index, u),
+        Some(Item::Match(m)) => show_card(app, router, ctx, screen, index, pos, total, said_not, m),
+        Some(Item::Unsure(u)) => show_which(app, router, ctx, screen, index, pos, total, said_not, u),
         None => after_walk(app, router, ctx, screen),
     }
 }
 
-/// B on page `pos`: the page before it, or the found page from the first.
-fn step_back(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos: usize) {
-    match pos.checked_sub(1) {
-        Some(previous) => show_step(app, router, ctx, screen, previous),
+/// On from item `index`: the next one that needs an answer, or the move page.
+fn go_next(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize) {
+    let next = screen.borrow().cards.next_open(Some(index));
+    match next {
+        Some(i) => show_item(app, router, ctx, screen, i),
+        None => after_walk(app, router, ctx, screen),
+    }
+}
+
+/// B on item `index`: the page before it, or the found page from the first.
+fn go_back(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize) {
+    let previous = screen.borrow().cards.prev_item(index);
+    match previous {
+        Some(i) => show_item(app, router, ctx, screen, i),
         None => show_found(app, router, ctx, screen),
     }
 }
 
+/// Takes back "not a port" for item `index` when that was the answer (Yes or a pick): off the saved list, and
+/// out of this screen's memory. A failure to save is said; the answer stays as it was then.
+fn take_back_not_a_port(app: &Rc<AppState>, screen: &Screen, ctx: &Ctx, index: usize) -> Result<(), String> {
+    let path = {
+        let s = screen.borrow();
+        if s.cards.verdict(index) != Verdict::NotAPort {
+            return Ok(());
+        }
+        match s.cards.item(index) {
+            Some(item) => item.path().to_path_buf(),
+            None => return Ok(()),
+        }
+    };
+    let mut settings = ForkSettings::load(&settings_path(app));
+    cards::unignore_path(&mut settings, &path).map_err(|e| format!("Could not take back \"not a port\": {e}\nNothing was changed."))?;
+    ctx.choices.borrow_mut().remove(&path);
+    screen.borrow_mut().scan.left_alone.retain(|p| *p != path);
+    Ok(())
+}
+
 /// Saves that the folder is not a port (the file is only the app's own settings), then goes on.
-fn not_a_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos: usize, index: usize, again: Again) {
+fn not_a_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, again: Again) {
     let path = match screen.borrow().cards.item(index) {
         Some(item) => item.path().to_path_buf(),
         None => return,
@@ -176,7 +253,7 @@ fn not_a_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, po
                 s.cards.set(index, Verdict::NotAPort);
                 s.leave_alone(&path);
             }
-            show_step(app, router, ctx, screen, pos + 1);
+            go_next(app, router, ctx, screen, index);
         }
         // Not saved, so it would be offered again next time; the folder itself is untouched either way.
         Err(e) => notice_back(app, router, &format!("Could not save that this is not a port: {e}\nNothing was changed."), again),
@@ -184,21 +261,30 @@ fn not_a_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, po
 }
 
 #[allow(clippy::too_many_arguments)]
-fn show_card(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos: usize, total: usize, index: usize, m: Match) {
-    let page = card_page(&m, pos, total);
+fn show_card(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, pos: usize, total: usize, said_not: bool, m: Match) {
+    let page = card_page(&m, pos, total, said_not);
     let again: Again = {
         let (ctx, screen, m) = (ctx.clone(), screen.clone(), m.clone());
-        Rc::new(move |app, router| show_card(app, router, &ctx, screen.clone(), pos, total, index, m.clone()))
+        Rc::new(move |app, router| show_item_again(app, router, &ctx, screen.clone(), index, m.clone()))
     };
     let act = {
         let (ctx, screen, again) = (ctx.clone(), screen.clone(), again.clone());
         move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
-            CardAction::Yes => {
-                screen.borrow_mut().cards.set(index, Verdict::Yes);
-                show_step(app, router, &ctx, screen.clone(), pos + 1);
+            CardAction::Yes => match take_back_not_a_port(app, &screen, &ctx, index) {
+                Ok(()) => {
+                    screen.borrow_mut().cards.set(index, Verdict::Yes);
+                    go_next(app, router, &ctx, screen.clone(), index);
+                }
+                Err(why) => notice_back(app, router, &why, again.clone()),
+            },
+            CardAction::NotAPort if m.strong && !said_not => {
+                // A real match: one question before the answer is saved.
+                let (ctx2, screen2, again2) = (ctx.clone(), screen.clone(), again.clone());
+                let text = format!("{} looks like a real match. Leave this folder alone and do not ask again?\n\nYou can ask again later from Details on the first page.", m.port_name);
+                confirm_back(app, router, TITLE, &text, "Leave it alone", true, move |app, router| not_a_port(app, router, &ctx2, screen2.clone(), index, again2.clone()), again.clone());
             }
-            CardAction::NotAPort => not_a_port(app, router, &ctx, screen.clone(), pos, index, again.clone()),
-            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), pos, index, again.clone()),
+            CardAction::NotAPort => not_a_port(app, router, &ctx, screen.clone(), index, again.clone()),
+            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), index, again.clone()),
             CardAction::Details => {
                 let text = {
                     let s = screen.borrow();
@@ -211,29 +297,34 @@ fn show_card(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos
     };
     let back = {
         let (ctx, screen) = (ctx.clone(), screen.clone());
-        move |app: &Rc<AppState>, router: &Router| step_back(app, router, &ctx, screen.clone(), pos)
+        move |app: &Rc<AppState>, router: &Router| go_back(app, router, &ctx, screen.clone(), index)
     };
     show_or_end(app, router, ctx, page, handlers(ctx, act, back));
 }
 
+/// Shows item `index` again as it is now (after a notice or Details).
+fn show_item_again(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, _was: Match) {
+    show_item(app, router, ctx, screen, index);
+}
+
 #[allow(clippy::too_many_arguments)]
-fn show_which(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos: usize, total: usize, index: usize, u: cards::Unsure) {
-    let page = which_page(&u, pos, total);
+fn show_which(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, pos: usize, total: usize, said_not: bool, u: cards::Unsure) {
+    let page = which_page(&u, pos, total, said_not);
     let again: Again = {
-        let (ctx, screen, u) = (ctx.clone(), screen.clone(), u.clone());
-        Rc::new(move |app, router| show_which(app, router, &ctx, screen.clone(), pos, total, index, u.clone()))
+        let (ctx, screen) = (ctx.clone(), screen.clone());
+        Rc::new(move |app, router| show_item(app, router, &ctx, screen.clone(), index))
     };
     let act = {
         let (ctx, screen, again) = (ctx.clone(), screen.clone(), again.clone());
         move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
             CardAction::Pick(i) => {
                 if let Some(maybe) = u.could_be.get(i) {
-                    choose_port(app, router, &ctx, screen.clone(), pos, index, maybe.key.clone(), again.clone());
+                    choose_port(app, router, &ctx, screen.clone(), index, maybe.key.clone(), again.clone());
                 }
             }
-            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), pos, index, again.clone()),
-            CardAction::GithubLink => show_github(app, router, &ctx, screen.clone(), Target::Folder { pos, index }, again.clone(), String::new()),
-            CardAction::NotAPort => not_a_port(app, router, &ctx, screen.clone(), pos, index, again.clone()),
+            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), index, again.clone()),
+            CardAction::GithubLink => show_github(app, router, &ctx, screen.clone(), Target::Folder { index }, again.clone(), String::new()),
+            CardAction::NotAPort => not_a_port(app, router, &ctx, screen.clone(), index, again.clone()),
             CardAction::Details => {
                 let text = {
                     let s = screen.borrow();
@@ -246,30 +337,52 @@ fn show_which(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, po
     };
     let back = {
         let (ctx, screen) = (ctx.clone(), screen.clone());
-        move |app: &Rc<AppState>, router: &Router| step_back(app, router, &ctx, screen.clone(), pos)
+        move |app: &Rc<AppState>, router: &Router| go_back(app, router, &ctx, screen.clone(), index)
     };
     show_or_end(app, router, ctx, page, handlers(ctx, act, back));
 }
 
 // -- Another port ---------------------------------------------------------------------------------------
 
+/// What the last rows of the port list are: the keyboard (Game Mode only), then the GitHub link.
+fn extra_rows(game_mode: bool) -> usize {
+    if game_mode { 2 } else { 1 }
+}
+
+/// The rows of the port list: the ports that match the filter, Show keyboard (Game Mode), the GitHub link row.
+fn port_rows(list: &PortListScreen, shown: &[usize], game_mode: bool) -> Vec<String> {
+    let mut rows: Vec<String> = shown.iter().map(|i| ellipsize(&list.ports[*i].label(), 90)).collect();
+    if game_mode {
+        rows.push("Show keyboard".to_string());
+    }
+    rows.push("Use a GitHub link...".to_string());
+    rows
+}
+
+/// Asks Steam for its on-screen keyboard. Unverified on a Deck, so the pages also say how to bring it up by hand.
+fn show_keyboard() -> bool {
+    std::process::Command::new("xdg-open").arg("steam://open/keyboard").spawn().is_ok()
+}
+
 /// "Pick another port": the ports not in the ports folder yet, the ones named like the folder first, with a
 /// text box to filter and "Use a GitHub link..." as the last row. B goes back to the page it came from.
-fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos: usize, index: usize, back: Again) {
+fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, back: Again) {
     let path = match screen.borrow().cards.item(index) {
         Some(item) => item.path().to_path_buf(),
         None => return,
     };
+    let game_mode = crate::fork::steam_queue::game_mode_from_env();
     let target = ChoiceTarget { path, could_be: Vec::new() };
     let list = Rc::new(PortListScreen::new(&screen.borrow(), &target));
     let shown = Rc::new(RefCell::new(list.matching("")));
-    let Some(dialog) = build_text_entry_dialog(app, router, "Pick another port", "Type to filter the list", "", &port_rows(&list, &shown.borrow()), false) else { return back(app, router) };
+    let placeholder = if game_mode { "Type to filter. Steam + X brings up the keyboard" } else { "Type to filter the list" };
+    let Some(dialog) = build_text_entry_dialog(app, router, "Pick another port", placeholder, "", &port_rows(&list, &shown.borrow(), game_mode), false) else { return back(app, router) };
     {
         let (app, weak, list, shown) = (app.clone(), dialog.as_weak(), list.clone(), shown.clone());
         dialog.on_search_changed(move |query| {
             let Some(d) = weak.upgrade() else { return };
             *shown.borrow_mut() = list.matching(query.as_str());
-            let items: Vec<PickerItem> = port_rows(&list, &shown.borrow()).into_iter().map(|label| PickerItem { label: label.into() }).collect();
+            let items: Vec<PickerItem> = port_rows(&list, &shown.borrow(), game_mode).into_iter().map(|label| PickerItem { label: label.into() }).collect();
             d.set_items(slint::ModelRc::new(slint::VecModel::from(items)));
             d.set_selected_index(0);
             app.dialog_nav.picker_index.set(0);
@@ -278,10 +391,21 @@ fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen
     {
         let (app, router, ctx, screen, list, shown, back) = (app.clone(), router.clone(), ctx.clone(), screen.clone(), list.clone(), shown.clone(), back.clone());
         dialog.on_item_selected(move |row| {
-            let picked = shown.borrow().get(row as usize).copied();
+            let row = row.max(0) as usize;
+            let (count, picked) = {
+                let shown = shown.borrow();
+                (shown.len() + extra_rows(game_mode), shown.get(row).copied())
+            };
+            // A row from before the list was filtered shorter is not a row any more.
+            if row >= count {
+                return;
+            }
             match picked {
-                Some(i) => choose_port(&app, &router, &ctx, screen.clone(), pos, index, list.ports[i].key.clone(), back.clone()),
-                None => show_github(&app, &router, &ctx, screen.clone(), Target::Folder { pos, index }, back.clone(), String::new()),
+                Some(i) => choose_port(&app, &router, &ctx, screen.clone(), index, list.ports[i].key.clone(), back.clone()),
+                None if game_mode && row == count - 2 => {
+                    show_keyboard();
+                }
+                None => show_github(&app, &router, &ctx, screen.clone(), Target::Folder { index }, back.clone(), String::new()),
             }
         });
     }
@@ -291,7 +415,7 @@ fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen
             close_current_dialog(&b_app, &b_router);
             b_back(&b_app, &b_router);
         });
-        // The title bar's X only hides the window; it goes where B goes.
+        // The title bar X only hides the window; it goes where B goes.
         let (app, router) = (app.clone(), router.clone());
         dialog.window().on_close_requested(move || {
             close_current_dialog(&app, &router);
@@ -305,9 +429,8 @@ fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen
 
 /// The user picked port `key` for the folder at `index`: it is measured on the worker (size, Steam shortcuts),
 /// then the folder counts as that port, said yes to, and goes through the same plan and checks as any other.
-/// B on the measuring list goes back with nothing changed.
-#[allow(clippy::too_many_arguments)]
-fn choose_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, pos: usize, index: usize, key: String, back: Again) {
+/// B on the measuring list goes back with nothing changed; a folder that cannot be measured says why.
+fn choose_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, key: String, back: Again) {
     let (port, shortcuts, new_entry, path) = {
         let s = screen.borrow();
         let Some(port) = s.port(&key).cloned() else { return };
@@ -332,6 +455,9 @@ fn choose_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, p
         },
         move |app, router, result| match result {
             Ok(found) if found.size.complete => {
+                if let Err(why) = take_back_not_a_port(app, &screen2, &ctx2, index) {
+                    return notice_back(app, router, &why, back.clone());
+                }
                 ctx2.choices.borrow_mut().set(&found.path, Choice::Port(found.port_key.clone()));
                 {
                     let mut s = screen2.borrow_mut();
@@ -339,9 +465,10 @@ fn choose_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, p
                     let at = s.add_found(found.clone());
                     s.cards.choose(index, Match::of_found(&found, at, port.as_ref()));
                 }
-                show_step(app, router, &ctx2, screen2.clone(), pos + 1);
+                go_next(app, router, &ctx2, screen2.clone(), index);
             }
-            _ => back(app, router),
+            Ok(_) => notice_back(app, router, "That folder is too big to look through here, so it was not used. Nothing was changed.", back.clone()),
+            Err(e) => notice_back(app, router, &format!("Could not look at that folder ({e}). Nothing was changed."), back.clone()),
         },
     );
 }
@@ -365,9 +492,9 @@ pub(super) fn show_confirm(app: &Rc<AppState>, router: &Router, ctx: &Ctx, scree
     let back_to_walk = {
         let (ctx, screen) = (ctx.clone(), screen.clone());
         move |app: &Rc<AppState>, router: &Router| {
-            let last = screen.borrow().cards.walk().len();
-            match last.checked_sub(1) {
-                Some(last) => show_step(app, router, &ctx, screen.clone(), last),
+            let last = screen.borrow().cards.prev_item(usize::MAX);
+            match last {
+                Some(last) => show_item(app, router, &ctx, screen.clone(), last),
                 None => show_found(app, router, &ctx, screen.clone()),
             }
         }
@@ -378,19 +505,31 @@ pub(super) fn show_confirm(app: &Rc<AppState>, router: &Router, ctx: &Ctx, scree
         move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
             CardAction::Move => start_move(app, router, &ctx, screen.clone()),
             CardAction::Back => back(app, router),
-            // The step-by-step plan of each port (paths and all) is a list behind Details; B comes back here.
-            CardAction::Details => show_plans(app, router, &ctx, screen.clone()),
+            // What will happen to each port, step by step (paths and all), on a plain page; B comes back here.
+            CardAction::Details => show_steps(app, router, &ctx, screen.clone(), &plans),
             _ => {}
         }
     };
     show_or_end(app, router, ctx, page, handlers(ctx, act, back_to_walk));
 }
 
-/// The rows of the port list: the ports that match the filter, then the GitHub link row.
-fn port_rows(list: &PortListScreen, shown: &[usize]) -> Vec<String> {
-    let mut rows: Vec<String> = shown.iter().map(|i| ellipsize(&list.ports[*i].label(), 90)).collect();
-    rows.push("Use a GitHub link...".to_string());
-    rows
+/// The steps of each port's move as text, behind Details of the move page.
+fn show_steps(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, plans: &[PortPlan]) {
+    let home = screen.borrow().home.clone();
+    let texts: Vec<String> = plans.iter().map(|p| plan_text(p, &home)).collect();
+    let back = {
+        let (ctx, screen) = (ctx.clone(), screen.clone());
+        move |app: &Rc<AppState>, router: &Router| show_confirm(app, router, &ctx, screen.clone())
+    };
+    let act = {
+        let back = back.clone();
+        move |app: &Rc<AppState>, router: &Router, action: CardAction| {
+            if action == CardAction::Back {
+                back(app, router);
+            }
+        }
+    };
+    show_or_end(app, router, ctx, steps_page(&texts), handlers(ctx, act, back));
 }
 
 // -- Use a GitHub link ----------------------------------------------------------------------------------
@@ -398,8 +537,8 @@ fn port_rows(list: &PortListScreen, shown: &[usize]) -> Vec<String> {
 /// What the project from the link is for.
 #[derive(Clone, Copy)]
 enum Target {
-    /// The folder at `index` of the walk (page `pos`): it becomes this project.
-    Folder { pos: usize, index: usize },
+    /// The folder at `index` of the cards: it becomes this project.
+    Folder { index: usize },
     /// Nothing was found, so the user picks the folder after the project is confirmed.
     NewFolder,
 }
@@ -553,7 +692,7 @@ fn show_github_card(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Scre
 #[allow(clippy::too_many_arguments)]
 fn use_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, key: String, back: Again, again: Again) {
     match target {
-        Target::Folder { pos, index } => choose_port(app, router, ctx, screen, pos, index, key, again),
+        Target::Folder { index } => choose_port(app, router, ctx, screen, index, key, again),
         Target::NewFolder => {
             let start = home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
             let (ctx2, screen2, back2, again2) = (ctx.clone(), screen.clone(), back.clone(), again.clone());
@@ -565,12 +704,8 @@ fn use_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, targ
                     if !path.is_dir() {
                         return notice_back(app, router, "That is not a folder.", again2.clone());
                     }
-                    let (pos, index) = {
-                        let mut s = screen2.borrow_mut();
-                        let index = s.cards.add_folder(path);
-                        (s.cards.walk().len().saturating_sub(1), index)
-                    };
-                    choose_port(app, router, &ctx2, screen2.clone(), pos, index, key.clone(), again2.clone());
+                    let index = screen2.borrow_mut().cards.add_folder(path);
+                    choose_port(app, router, &ctx2, screen2.clone(), index, key.clone(), again2.clone());
                 },
                 move |app, router| back2(app, router),
             );
