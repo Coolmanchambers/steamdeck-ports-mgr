@@ -729,7 +729,10 @@ pub(super) fn start_move(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
             return notice_back(app, router, &text, back);
         }
         let ctx2 = ctx.clone();
-        let then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)> = Rc::new(move |app, router, text, keys| finish_after(app, router, &ctx2, text, VecDeque::new(), keys, false));
+        let then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)> = Rc::new(move |app, router, text, keys| {
+            let outcome = Outcome { moved: 0, lines: vec![linked_line(keys.len())] };
+            finish_after(app, router, &ctx2, text, VecDeque::new(), keys, false, outcome)
+        });
         return offer_link(app, router, linkable, text, then, back);
     }
     run_import(app, router, ctx, &screen, plans, home);
@@ -850,6 +853,14 @@ fn take_off_unmoved(app: &Rc<AppState>, added: &[Added], moved: &[String]) -> Op
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
+/// What the closing page says besides the ports: how many were copied, and one short line each for anything
+/// that went wrong or changed on the way (the long text, with paths, is behind its Details).
+#[derive(Clone, Default)]
+pub(super) struct Outcome {
+    pub moved: usize,
+    pub lines: Vec<String>,
+}
+
 /// Marks what moved as installed, redraws, then continues: the link offer for ports that did not fit,
 /// then "Remove the old copy now?" for each port that moved, then the game file search.
 fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<ImportSummary>, home: &std::path::Path, note: Option<String>) {
@@ -873,28 +884,34 @@ fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<Impor
     let moved_from: Vec<PathBuf> = summary.moved().map(|i| i.plan.request.from.clone()).collect();
     let copies: VecDeque<old_copies::OldCopy> = old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().filter(|o| moved_from.contains(&o.old_path)).collect();
     let mut text = summary.text(home);
-    if let Some(note) = note {
+    if let Some(note) = &note {
         text.push_str(&format!("\n\n{note}"));
     }
     let candidates = summary.link_candidates();
     let moved_keys: Vec<String> = summary.moved().map(|i| i.plan.request.port_key.clone()).collect();
     let wants_game_files = summary.wants_game_files();
+    let mut lines = summary.short_problems();
+    lines.extend(summary.short_steam());
+    lines.extend(note);
+    let outcome = Outcome { moved: summary.moved_count(), lines };
     if candidates.is_empty() {
-        return finish_after(app, router, ctx, text, copies, moved_keys, wants_game_files);
+        return finish_after(app, router, ctx, text, copies, moved_keys, wants_game_files, outcome);
     }
     let requests: Vec<MoveRequest> = candidates.iter().map(|&i| summary.items[i].plan.request.clone()).collect();
     let ctx2 = ctx.clone();
     // Linking is offered after the summary; saying no goes on with the rest of the flow just the same.
-    let (carry_text, carry_copies, carry_keys) = (text.clone(), copies.clone(), moved_keys.clone());
+    let (carry_text, carry_copies, carry_keys, carry_outcome) = (text.clone(), copies.clone(), moved_keys.clone(), outcome.clone());
     let skip: Step = {
         let ctx = ctx.clone();
-        Rc::new(move |app, router| finish_after(app, router, &ctx, carry_text.clone(), carry_copies.clone(), carry_keys.clone(), wants_game_files))
+        Rc::new(move |app, router| finish_after(app, router, &ctx, carry_text.clone(), carry_copies.clone(), carry_keys.clone(), wants_game_files, carry_outcome.clone()))
     };
     let base = text.clone();
     let then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)> = Rc::new(move |app, router, link_text, linked_keys| {
         let mut keys = moved_keys.clone();
+        let mut outcome = outcome.clone();
+        outcome.lines.push(linked_line(linked_keys.len()));
         keys.extend(linked_keys);
-        finish_after(app, router, &ctx2, format!("{base}\n\n{link_text}"), copies.clone(), keys, wants_game_files);
+        finish_after(app, router, &ctx2, format!("{base}\n\n{link_text}"), copies.clone(), keys, wants_game_files, outcome);
     });
     offer_link(app, router, requests, text, then, skip);
 }
@@ -929,23 +946,32 @@ fn offer_link(app: &Rc<AppState>, router: &Router, requests: Vec<MoveRequest>, p
 /// The last steps of an import: the old-copy questions, then the game file search for the ports that came
 /// in (`rom_screens::after_ports_added_then`, which shows the summary at the top of its list when it has
 /// something to look for), else the summary alone, or Continue in the wizard.
-fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, keys: Vec<String>, wants_game_files: bool) {
+fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, keys: Vec<String>, wants_game_files: bool, outcome: Outcome) {
     let ctx = ctx.clone();
     prompt_old_copies_batch_then(app, router, copies, text, move |app, router, text| match text {
-        Some(text) => conclude(app, router, &ctx, text, &keys, wants_game_files),
+        Some(text) => conclude(app, router, &ctx, text, &keys, wants_game_files, outcome.clone()),
         // The questions were abandoned because another dialog took the screen: nothing more is shown here.
         None => ctx.finish_quiet(app, router),
     });
 }
 
-fn conclude(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, keys: &[String], wants_game_files: bool) {
+/// "2 linked where they stand." for the link-instead outcome (or its absence).
+fn linked_line(n: usize) -> String {
+    match n {
+        0 => "Nothing was linked.".to_string(),
+        1 => "1 port was linked where it stands.".to_string(),
+        n => format!("{n} ports were linked where they stand."),
+    }
+}
+
+fn conclude(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, keys: &[String], wants_game_files: bool, outcome: Outcome) {
     let next: Step = {
         let (ctx, text, keys) = (ctx.clone(), text.clone(), keys.to_vec());
         Rc::new(move |app, router| {
             if !keys.is_empty() && super::rom_screens::after_ports_added_then(app, router, &keys, &text, Some(ctx.finisher())) {
                 return;
             }
-            end_notice(app, router, &ctx, "Import finished", &text);
+            super::import_cards_screen::show_finished(app, router, &ctx, &text, &keys, &outcome);
         })
     };
     // Ports stopped for their game files: offer Game files first (the wizard just continues, its own step

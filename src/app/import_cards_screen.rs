@@ -18,7 +18,7 @@
 
 use super::dialogs::{build_text_entry_dialog, close_current_dialog, finish_dialog_open, DialogSlot};
 use super::folder_picker_screen::open_folder_picker;
-use super::import_screen::{
+use super::import_screen::{Outcome,
     build_plans, confirm_back, end_notice, home_dir, notice_back, run_job, save_folders, settings_path, show_folders, start_move, start_scan, Ctx, FoldersState, JobSpec, Step, TITLE,
 };
 use super::page_dialog::{show_page, Handlers};
@@ -28,7 +28,8 @@ use crate::fork::custom_repo::check::{check, CheckError, Checked, ReplayFetch};
 use crate::fork::custom_repo::entry as repo_entry;
 use crate::fork::custom_repo::parse::parse_link;
 use crate::fork::folder_picker::{PickerRequest, Purpose};
-use crate::fork::import::cards::{self, card_page, confirm_page, details_page, found_page, scan_notes, steps_page, which_page, CardAction, Item, Match, Verdict};
+use crate::fork::art::thumbs::ArtRef;
+use crate::fork::import::cards::{self, card_page, confirm_page, details_page, finished_page, found_page, scan_notes, steps_page, which_page, CardAction, Item, Match, Verdict};
 use crate::fork::import::folders::AddOutcome;
 use crate::fork::import::link::{self, LinkRow};
 use crate::fork::import::plan::PortPlan;
@@ -711,4 +712,35 @@ fn use_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, targ
             );
         }
     }
+}
+
+// -- The end -------------------------------------------------------------------------------------------
+
+/// The end of an import: "4 ports moved" with the covers, a short line for anything that went wrong, and one
+/// button. The long text (with paths) is behind Details. Replaces the old dense "Import finished" dialog.
+pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: &str, keys: &[String], outcome: &Outcome) {
+    let ports_now: Vec<(String, Option<ArtRef>)> = {
+        let catalog = app.catalog.borrow();
+        keys.iter().filter_map(|k| catalog.iter().find(|p| p.key() == k)).map(|p| (p.display_name().to_string(), Some(ArtRef::of_port(p)))).collect()
+    };
+    let page = finished_page(outcome.moved, &ports_now, &outcome.lines, ctx.from_wizard);
+    let full = text.to_string();
+    let this: Again = {
+        let (ctx, keys, outcome, full) = (ctx.clone(), keys.to_vec(), outcome.clone(), full.clone());
+        Rc::new(move |app, router| show_finished(app, router, &ctx, &full, &keys, &outcome))
+    };
+    let act = {
+        let ctx = ctx.clone();
+        move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
+            CardAction::Leave => leave(app, router, &ctx),
+            CardAction::Details => details_text(app, router, "Import ports", &format!("{full}\n"), this.clone()),
+            _ => {}
+        }
+    };
+    // B is the one button, and so is the X: nothing here asks anything, so leaving is the only way on.
+    let back = {
+        let ctx = ctx.clone();
+        move |app: &Rc<AppState>, router: &Router| leave(app, router, &ctx)
+    };
+    show_or_end(app, router, ctx, page, handlers(ctx, act, back));
 }

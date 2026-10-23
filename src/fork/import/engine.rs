@@ -267,6 +267,40 @@ impl ImportSummary {
         }
     }
 
+    /// One short line for each port that did not move, without paths (the long text, with them, is behind Details).
+    pub fn short_problems(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|item| {
+                let name = &item.plan.request.port_name;
+                match &item.outcome {
+                    PortOutcome::Refused { space: true, .. } => Some(format!("{name} was not moved: not enough room.")),
+                    PortOutcome::Refused { .. } => Some(format!("{name} was not moved. Details say why.")),
+                    PortOutcome::Stopped { .. } => Some(format!("{name} was stopped: a game file needs a look.")),
+                    PortOutcome::Failed(_) => Some(format!("{name} had a problem and was not moved. Details say why.")),
+                    PortOutcome::NotStarted => Some(format!("{name} was not started (you cancelled).")),
+                    PortOutcome::Planned | PortOutcome::Moved { .. } => None,
+                }
+            })
+            .collect()
+    }
+
+    /// One short line about Steam shortcuts that followed the moved ports, when any did.
+    pub fn short_steam(&self) -> Option<String> {
+        let (repointed, queued, failed) = self.steam_counts();
+        let mut parts = Vec::new();
+        if repointed > 0 {
+            parts.push(format!("{repointed} followed the move"));
+        }
+        if queued > 0 {
+            parts.push(format!("{queued} will follow in Desktop Mode"));
+        }
+        if failed > 0 {
+            parts.push(format!("{failed} could not be changed"));
+        }
+        (!parts.is_empty()).then(|| format!("Steam shortcuts: {}.", parts.join(", ")))
+    }
+
     /// The totals under the title: what moved, what stayed behind, Steam, problems.
     pub fn totals(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -507,5 +541,26 @@ mod tests {
         assert!(summary.wants_game_files());
         assert_eq!(summary.problem_count(), 1);
         assert!(summary.item_label(0, &h.home).starts_with("Dusklight: stopped, fix its game files"));
+    }
+
+    #[test]
+    fn the_short_problem_lines_have_no_paths_and_the_steam_line_counts_what_followed() {
+        let h = fake_home("engine_short");
+        let summary = move_selected(&DryRunEngine, plans(&h, Some(100)), &NO_CANCEL, &|_| {}, &NoPrompts);
+        let lines = summary.short_problems();
+        assert_eq!(lines, ["Dusklight was not moved: not enough room.", "Ship of Harkinian was not moved: not enough room."]);
+        assert!(lines.iter().all(|l| !l.contains('/') && !l.contains("~")));
+        let mut blocked = plans(&h, None);
+        std::fs::create_dir_all(&blocked[0].request.to).unwrap();
+        blocked[0] = super::super::plan::plan_port(&blocked[0].request, None, SteamWrite::Now);
+        let other = move_selected(&DryRunEngine, blocked, &NO_CANCEL, &|_| {}, &NoPrompts);
+        assert_eq!(other.short_problems(), ["Dusklight was not moved. Details say why."]);
+        assert_eq!(other.short_steam(), None, "a dry run moved nothing, so no shortcut followed");
+        let cancelled = {
+            let flag = AtomicBool::new(false);
+            let engine = Recorder { seen: Mutex::new(Vec::new()), cancel_after_first: true };
+            move_selected(&engine, plans(&fake_home("engine_short_cancel"), None), &flag, &|_| {}, &NoPrompts)
+        };
+        assert_eq!(cancelled.short_problems(), ["Ship of Harkinian was not started (you cancelled)."]);
     }
 }

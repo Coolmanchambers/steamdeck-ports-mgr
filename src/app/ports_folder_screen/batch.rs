@@ -97,9 +97,11 @@ fn with_summary(summary: &str, text: &str) -> String {
 
 /// The page itself. Keep, OK, B and the X all keep the old copies; only Remove them removes.
 fn ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: String, then: Then) {
-    let summary = Rc::new(summary);
     // Whichever way the page is left, the closing step runs once.
-    let done = Rc::new(Cell::new(false));
+    show_ask(app, router, batch, Rc::new(summary), then, Rc::new(Cell::new(false)));
+}
+
+fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<String>, then: Then, done: Rc<Cell<bool>>) {
     let keep: Rc<dyn Fn(&Rc<AppState>, &Router)> = {
         let (batch, summary, then, done) = (batch.clone(), summary.clone(), then.clone(), done.clone());
         Rc::new(move |app, router| {
@@ -115,6 +117,15 @@ fn ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: String, t
             let (batch, summary, then, done, keep) = (batch.clone(), summary.clone(), then.clone(), done.clone(), keep.clone());
             Rc::new(move |app: &Rc<AppState>, router: &Router, action: BatchAction| match action {
                 BatchAction::Keep | BatchAction::Ok => keep(app, router),
+                BatchAction::Details => {
+                    let text = format!("{}\n", batch.details_text(&super::home_dir().unwrap_or_default(), &app.paths.saves_backup_dir));
+                    let again: crate::app::import_screen::Step = {
+                        let (batch, summary, then, done) = (batch.clone(), summary.clone(), then.clone(), done.clone());
+                        Rc::new(move |app, router| show_ask(app, router, batch.clone(), summary.clone(), then.clone(), done.clone()))
+                    };
+                    let on_ok = again.clone();
+                    crate::app::import_screen::confirm_back(app, router, "Old copies", &text, "OK", false, move |app, router| on_ok(app, router), again);
+                }
                 BatchAction::Remove => {
                     if done.replace(true) {
                         return;

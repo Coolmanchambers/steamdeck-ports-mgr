@@ -638,6 +638,27 @@ pub fn confirm_page(cards: &Cards, free: Option<u64>, blocked: &[(String, String
     p
 }
 
+/// The end of an import: "4 ports moved" with their covers, anything that went wrong in one short line each,
+/// and one button (Continue setup in the wizard, Done in Settings). The paths and the long text are behind
+/// Details. `ports` are the ports now in the ports folder (name and cover); `moved` how many of them were copied
+/// (the rest were linked where they stand).
+pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool) -> Page<CardAction> {
+    let title = if moved > 0 {
+        format!("{} moved", ports(moved))
+    } else if !ports_now.is_empty() {
+        format!("{} linked", ports(ports_now.len()))
+    } else {
+        "Nothing was moved".to_string()
+    };
+    let mut p = base("finished", "", &title);
+    p.paragraphs = lines.to_vec();
+    p.tiles = ports_now.iter().map(|(name, art)| Tile::shown(art.clone(), name.clone())).collect();
+    p.options = vec![option(if wizard { "Continue setup" } else { "Done" }, "", CardAction::Leave, true)];
+    p.buttons[LEFT] = details_button();
+    p.initial = Focus::Option(0);
+    p
+}
+
 /// What will happen to each port, step by step, as plain text behind Details of the move page. `texts` is one
 /// block per port (its name, then numbered steps).
 pub fn steps_page(texts: &[String]) -> Page<CardAction> {
@@ -1249,5 +1270,27 @@ mod tests {
         assert_eq!(maybe("X (y)", None, true).badge(), "installed");
         assert_eq!(maybe("Plain", None, false).short(), "Plain");
         assert!(taken.label().contains("already found in old-folder"), "list rows keep the full label");
+    }
+
+    #[test]
+    fn the_closing_page_says_how_many_moved_shows_their_covers_and_has_one_button() {
+        let art = |f: &str| Some(ArtRef { folder: f.into(), url: None });
+        let ports = vec![("Dusklight".to_string(), art("dusklight")), ("SoH".to_string(), art("soh"))];
+        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false);
+        assert_eq!(p.title, "2 ports moved");
+        assert_eq!(p.window_title, "Import ports: finished");
+        assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH"]);
+        assert_eq!(p.paragraphs, ["Steam shortcuts: 1 followed the move."]);
+        assert_eq!(p.options.len(), 1, "no Cancel");
+        assert_eq!((p.options[0].title.as_str(), p.options[0].action.clone(), p.options[0].recommended), ("Done", CardAction::Leave, true));
+        assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Details);
+        assert_eq!(finished_page(1, &ports[..1], &[], true).options[0].title, "Continue setup");
+        assert_eq!(finished_page(1, &ports[..1], &[], true).title, "1 port moved");
+        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false).title, "2 ports linked");
+        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false).title, "Nothing was moved");
+        for page in [&p, &finished_page(0, &[], &[], true)] {
+            let t = all_text(page);
+            assert!(!t.contains('/') && !t.contains("~/") && !t.to_lowercase().contains("json"), "{t}");
+        }
     }
 }

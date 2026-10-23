@@ -8,9 +8,11 @@
 //! checks and the same saves backup as removing a single old copy.
 
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::page::{Focus, Page, PageOption, Tile};
+use crate::fork::page::{Focus, Page, PageButton, PageOption, Tile};
 use crate::fork::port_mover::old_copies::OldCopy;
 use crate::fork::rom_screens::util::{ellipsize, human_bytes};
+use crate::fork::screens::short_path;
+use std::path::Path;
 
 /// An old copy with what its check said: `Ok` with the bytes it would free, or why it must stay.
 #[derive(Debug, Clone)]
@@ -30,6 +32,8 @@ impl Checked {
 pub enum BatchAction {
     Keep,
     Remove,
+    /// Show the old folders (paths and sizes) and where the save backups go.
+    Details,
     /// Nothing can be removed: just carry on.
     Ok,
 }
@@ -74,6 +78,25 @@ impl Batch {
         parts.join("\n")
     }
 
+    /// The old folders and their sizes, and where the saves of a removed copy are zipped first: the paths are
+    /// behind Details, not on the page. `home` shortens the paths; `saves` is where the backups go.
+    pub fn details_text(&self, home: &Path, saves: &Path) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        for c in &self.items {
+            let size = match &c.check {
+                Ok(_) if c.copy.link_only => "a link, the folder it points to stays".to_string(),
+                Ok(bytes) => human_bytes(*bytes),
+                Err(_) => human_bytes(c.copy.bytes),
+            };
+            lines.push(format!("{}: {} ({size})", c.copy.name, short_path(&c.copy.old_path, home)));
+        }
+        lines.push(String::new());
+        lines.push(format!("Before an old copy is removed, its saves are zipped into {}.", short_path(saves, home)));
+        lines.push("Whatever is kept stays listed under Settings, Ports folder, Old copies.".to_string());
+        lines.join("
+")
+    }
+
     /// The page. Keep is first, recommended and focused; Remove is never the default.
     pub fn page(&self) -> Page<BatchAction> {
         let removable = self.removable();
@@ -85,6 +108,7 @@ impl Batch {
             p.paragraphs = vec!["None of the old copies can be removed right now. They are kept, and nothing is lost.".to_string()];
             p.options = vec![PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: BatchAction::Ok }];
             p.initial = Focus::Option(0);
+            p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
             return p;
         }
         p.title = if n == 1 { "Remove the old copy?".to_string() } else { format!("Remove the {n} old copies?") };
@@ -98,6 +122,7 @@ impl Batch {
             PageOption { title: remove.to_string(), detail: "Saves are zipped to a backup first".to_string(), choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
         ];
         p.initial = Focus::Option(0);
+        p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
         p
     }
 }
@@ -227,6 +252,20 @@ mod tests {
         for p in [b.page(), Batch::new(vec![stays("SoH", "x")]).page()] {
             let t = all_text(&p);
             assert!(!t.contains("/home") && !t.contains("/run/") && !t.to_lowercase().contains("json"), "{t}");
+        }
+    }
+
+    #[test]
+    fn details_list_each_old_folder_with_its_size_and_say_where_the_save_backups_go() {
+        let b = Batch::new(vec![ok("Dusklight", 3_000_000_000), stays("SoH", "Steam shortcuts still point into it")]);
+        let text = b.details_text(Path::new("/home/deck"), Path::new("/home/deck/Apps/dpm/Saves Backup"));
+        assert!(text.contains("Dusklight: /home/deck/Games/Dusklight (3.0 GB)") || text.contains("Dusklight: ~/Games/Dusklight (3.0 GB)"), "{text}");
+        assert!(text.contains("SoH: ") && text.contains("(5 B)"), "a copy that must stay still lists its recorded size: {text}");
+        assert!(text.contains("saves are zipped into ~/Apps/dpm/Saves Backup"), "{text}");
+        assert!(text.contains("Settings, Ports folder, Old copies"), "{text}");
+        for page in [b.page(), Batch::new(vec![stays("SoH", "x")]).page()] {
+            let details = page.buttons[crate::fork::page::LEFT].as_ref().expect("Details is in the footer");
+            assert_eq!(details.action, BatchAction::Details);
         }
     }
 }
