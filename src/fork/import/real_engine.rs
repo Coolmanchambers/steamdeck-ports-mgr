@@ -195,6 +195,7 @@ mod tests {
             home: h.home.clone(),
             deeper: false,
             shortcuts: read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
+            ..Default::default()
         };
         let scan = run_scan(&input, &|| false, &|_| {});
         let refs: Vec<&Found> = names.iter().map(|n| scan.found.iter().find(|f| f.port_name == *n).unwrap()).collect();
@@ -406,6 +407,7 @@ mod tests {
                 home: h.home.clone(),
                 deeper: false,
                 shortcuts: read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
+                ..Default::default()
             };
             let scan = run_scan(&input, &|| false, &|_| {});
             let refs: Vec<&Found> = names.iter().map(|n| scan.found.iter().find(|f| f.port_name == *n).unwrap()).collect();
@@ -461,6 +463,7 @@ mod tests {
                 to: h.library.join("SoH"),
                 size: crate::fork::import::scan::Size::default(),
                 steam: vec![],
+                new_entry: None,
             };
             let plan = crate::fork::import::plan::plan_port(&request, None, SteamWrite::Now);
             let Some(crate::fork::import::plan::Block::Link(target)) = &plan.block else { panic!("{:?}", plan.block) };
@@ -489,6 +492,7 @@ mod tests {
             to: h.library.join("x"),
             size: crate::fork::import::scan::Size::default(),
             steam: vec![],
+            new_entry: None,
         };
         let outer = h.home.parent().unwrap().to_path_buf();
         for (from, what) in [(outer, "the home folder"), (h.home.join("DeckPorts"), "the ports folder"), (h.home.join("Applications"), "a scan folder")] {

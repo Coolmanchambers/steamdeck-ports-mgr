@@ -30,8 +30,12 @@ use crate::fork::import::folders::{AddOutcome, ScanFolders};
 use crate::fork::import::plan::{build_requests, plan_all_with, steam_write_mode, MoveRequest, PlanGuards, PortPlan};
 use crate::fork::import::{ports_folder, Once};
 use crate::fork::import::real_engine::engine_for_import;
-use crate::fork::import::scan::{read_shortcuts, run_scan, ScanInput};
-use crate::fork::import::screen::{blocked_text, confirm_text, plan_labels, plan_text, space_blocked, FolderLine, FoldersScreen, ImportLine, ImportScreen};
+use crate::fork::import::scan::{measure_choice, read_shortcuts, run_scan, Choice, Choices, ScanInput};
+use crate::fork::import::screen::{
+    blocked_text, confirm_text, plan_labels, plan_text, space_blocked, ChoiceTarget, ChooseLine, ChooserScreen, FolderLine, FoldersScreen, ImportLine, ImportScreen,
+    PortListLine, PortListScreen,
+};
+use crate::fork::import::targets;
 use crate::fork::port_mover::game_files::Issue;
 use crate::fork::port_mover::old_copies;
 use crate::fork::ports_folder_view::{game_file_issues, Act};
@@ -65,11 +69,13 @@ struct Ctx {
     finish: Option<Finish>,
     /// Makes `finish` run once, whichever exit is taken.
     finished: Once,
+    /// What the user said about folders (which port, or not a port), kept while the screen is open.
+    choices: Rc<RefCell<Choices>>,
 }
 
 impl Ctx {
     fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
-        Ctx { from_wizard, finish, finished: Once::default() }
+        Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default() }
     }
 
     /// Whether the wizard is waiting for this screen.
@@ -492,6 +498,9 @@ fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, le
     let ports = ports_folder(&app.paths.library_dir());
     let roots = folders.roots(&home, &ports);
     let catalog = app.catalog.borrow().clone();
+    let saved_index = super::deck_ready_screen::index_for_import(app);
+    let cache_dir = app.paths.cache_dir.clone();
+    let choices = ctx.choices.borrow().clone();
     let (work_home, work_ports, deeper) = (home.clone(), ports.clone(), folders.look_deeper);
     let ctx2 = ctx.clone();
     run_job(
@@ -507,7 +516,24 @@ fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, le
             is_import: false,
             work: Box::new(move |ctl| {
                 let shortcuts = read_shortcuts(&work_home, &settings);
-                let input = ScanInput { roots, catalog, library_dir: work_ports, home: work_home.clone(), deeper, shortcuts };
+                // The Deck-ready list adds download names and projects the catalog lacks; fetched once if
+                // it was never saved (a failure only means matching by the catalog alone).
+                let index = saved_index.or_else(|| {
+                    ctl.set_progress("Getting the Deck-ready list...".into());
+                    crate::fork::deck_ready::sync::refresh(&cache_dir, chrono::Utc::now(), crate::fork::deck_ready::sync::fetch_from_github).index
+                });
+                let t = targets::build(&catalog, index.as_ref(), &work_ports);
+                let input = ScanInput {
+                    roots,
+                    catalog: t.catalog,
+                    library_dir: work_ports,
+                    home: work_home.clone(),
+                    deeper,
+                    shortcuts,
+                    hints: t.hints,
+                    new_entries: t.new_entries,
+                    choices,
+                };
                 run_scan(&input, &|| ctl.cancelled(), &|t| ctl.set_progress(t))
             }),
         },
@@ -532,6 +558,12 @@ fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<
             let line = screen.borrow().lines().get(index as usize).copied();
             match line {
                 Some(ImportLine::Found(i)) => screen.borrow_mut().toggle(i),
+                Some(line @ (ImportLine::Choose(_) | ImportLine::Unrecognised(_))) => {
+                    let target = screen.borrow().choice_target(line);
+                    if let Some(target) = target {
+                        return show_chooser(&app, &router, &ctx, screen.clone(), Rc::new(target));
+                    }
+                }
                 Some(ImportLine::Folders) => {
                     let state = Rc::new(FoldersState { main: screen.clone(), screen: RefCell::new(FoldersScreen::new(&screen.borrow().home, screen.borrow().folders.clone())), changed: Cell::new(false) });
                     return show_folders(&app, &router, &ctx, state);
@@ -573,6 +605,105 @@ fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<
     }
     let _ = dialog.show();
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+}
+
+// -- Choosing the port for a folder -----------------------------------------------------------------------
+
+/// "Which port is in <folder>?": the ports it could be, Another port..., Not a port (leave it), Back. B goes
+/// back to the main list.
+fn show_chooser(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>, target: Rc<ChoiceTarget>) {
+    let model = Rc::new(ChooserScreen::new(&screen.borrow(), (*target).clone()));
+    let Some(dialog) = build_picker_dialog(app, router, "Which port is this?", &model.labels()) else { return ctx.finish_quiet(app, router) };
+    let first = model.first_row() as i32;
+    dialog.set_selected_index(first);
+    app.dialog_nav.picker_index.set(first);
+    {
+        let (app, router, ctx, screen) = (app.clone(), router.clone(), ctx.clone(), screen.clone());
+        dialog.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            show_main(&app, &router, &ctx, screen.clone());
+        });
+    }
+    {
+        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
+        dialog.on_item_selected(move |index| match model.lines().get(index as usize).copied() {
+            Some(ChooseLine::Match(i)) => choose_port(&app, &router, &ctx, screen.clone(), target.clone(), model.matches[i].key.clone()),
+            Some(ChooseLine::Another) => show_port_list(&app, &router, &ctx, screen.clone(), target.clone()),
+            Some(ChooseLine::NotAPort) => {
+                ctx.choices.borrow_mut().set(&target.path, Choice::NotAPort);
+                screen.borrow_mut().leave_alone(&target.path);
+                show_main(&app, &router, &ctx, screen.clone());
+            }
+            Some(ChooseLine::Back) => show_main(&app, &router, &ctx, screen.clone()),
+            Some(ChooseLine::Header) | None => {}
+        });
+    }
+    let _ = dialog.show();
+    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+}
+
+/// "Another port...": every port, those named like the folder first. B goes back to the chooser.
+fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>, target: Rc<ChoiceTarget>) {
+    let model = Rc::new(PortListScreen::new(&screen.borrow(), &target));
+    let Some(dialog) = build_picker_dialog(app, router, "Choose the port", &model.labels()) else { return ctx.finish_quiet(app, router) };
+    let first = model.first_row() as i32;
+    dialog.set_selected_index(first);
+    app.dialog_nav.picker_index.set(first);
+    {
+        let (app, router, ctx, screen, target) = (app.clone(), router.clone(), ctx.clone(), screen.clone(), target.clone());
+        dialog.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            show_chooser(&app, &router, &ctx, screen.clone(), target.clone());
+        });
+    }
+    {
+        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
+        dialog.on_item_selected(move |index| match model.lines().get(index as usize).copied() {
+            Some(PortListLine::Port(i)) => choose_port(&app, &router, &ctx, screen.clone(), target.clone(), model.ports[i].key.clone()),
+            Some(PortListLine::Back) => show_chooser(&app, &router, &ctx, screen.clone(), target.clone()),
+            Some(PortListLine::Header) | None => {}
+        });
+    }
+    let _ = dialog.show();
+    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+}
+
+/// The user chose `key` for the folder: it is measured on the worker (size, Steam shortcuts), then shows as a
+/// ticked find ("you chose") and goes through the same plan and checks as any other. B on the measuring list
+/// goes back to the main list with nothing chosen.
+fn choose_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>, target: Rc<ChoiceTarget>, key: String) {
+    let (port, shortcuts, new_entry) = {
+        let s = screen.borrow();
+        let Some(port) = s.port(&key).cloned() else { return };
+        let new_entry = s.scan.new_entries.iter().find(|(k, _)| *k == key).map(|(_, e)| e.clone());
+        (port, s.scan.shortcuts.clone(), new_entry)
+    };
+    let path = target.path.clone();
+    let back = back_to_main(ctx, &screen);
+    let (ctx2, screen2) = (ctx.clone(), screen.clone());
+    run_job(
+        app,
+        router,
+        JobSpec {
+            title: "Looking at the folder",
+            initial: format!("Measuring {}...", ellipsize(&path.to_string_lossy(), 70)),
+            cancel_label: "Cancel",
+            deliver_after_close: false,
+            leave: Some(back),
+            prompts: None,
+            is_import: false,
+            work: Box::new(move |ctl| measure_choice(&path, &port, &shortcuts, new_entry, &|| ctl.cancelled())),
+        },
+        move |app, router, result| {
+            if let Ok(found) = result {
+                if found.size.complete {
+                    ctx2.choices.borrow_mut().set(&found.path, Choice::Port(found.port_key.clone()));
+                    screen2.borrow_mut().apply_choice(found);
+                }
+            }
+            show_main(app, router, &ctx2, screen2.clone());
+        },
+    );
 }
 
 // -- Scan folders ----------------------------------------------------------------------------------------
@@ -772,6 +903,11 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCel
     if !app.install_runtime.installing.borrow().is_empty() {
         return notice_back(app, router, "An install, update or save restore is running. Wait for it to finish, then try again.", back);
     }
+    // Deck-ready projects the catalog lacks are added to the user's port list first (built and checked before
+    // anything is written, the file backed up), as the Deck-ready screen's "Add and install" does.
+    if let Err(why) = add_new_entries(app, &plans) {
+        return notice_back(app, router, &format!("Nothing was imported: {why}"), back);
+    }
     // While it runs these ports count as busy, so nothing installs or updates them underneath it.
     let keys: Vec<String> = plans.iter().map(|p| p.request.port_key.clone()).collect();
     for k in &keys {
@@ -805,6 +941,25 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCel
             }
         },
     );
+}
+
+/// Adds the port list entries the runnable plans need (Deck-ready projects the catalog lacks) and puts them in
+/// the app's catalog. Stops at the first failure; entries added before it stay (they are only list entries).
+fn add_new_entries(app: &Rc<AppState>, plans: &[PortPlan]) -> Result<(), String> {
+    let local_json = app.paths.config_dir.join("ports.local.json");
+    for plan in plans.iter().filter(|p| p.can_run()) {
+        let Some(new) = &plan.request.new_entry else { continue };
+        if app.catalog.borrow().iter().any(|p| p.key() == plan.request.port_key) {
+            continue;
+        }
+        let mut port = crate::core::models::port_from_value(&new.value).map_err(|_| format!("the entry for {} could not be built", plan.request.port_name))?;
+        crate::fork::deck_ready::entry::add_to_local_file(&local_json, new.value.clone(), &crate::fork::store::backup_stamp()).map_err(|e| format!("{}: {e}", plan.request.port_name))?;
+        port.user_managed = true;
+        let mut catalog = app.catalog.borrow_mut();
+        let old = std::mem::take(&mut *catalog);
+        *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
+    }
+    Ok(())
 }
 
 /// Marks what moved as installed, redraws, then continues: the link offer for ports that did not fit,

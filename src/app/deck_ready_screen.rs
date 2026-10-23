@@ -101,6 +101,12 @@ pub(crate) fn toggle(app: &Rc<AppState>, _router: &Router) {
     app.refresh_current_view();
 }
 
+/// The Deck-ready list for Import ports: the one this screen holds, else the saved copy (`None` when the
+/// list was never fetched).
+pub(crate) fn index_for_import(app: &AppState) -> Option<Index> {
+    app.deck_ready.index.borrow().clone().or_else(|| sync::load_cached(&app.paths.cache_dir))
+}
+
 /// Fetches in the background when the saved copy is missing or older than 12 hours (or always with
 /// `force`). The saved copy stays on screen meanwhile.
 fn start_fetch(app: &AppState, force: bool) {

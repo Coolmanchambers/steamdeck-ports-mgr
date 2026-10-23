@@ -5,7 +5,8 @@
 //! one is reported as a note, not an error.
 
 use crate::core::models::Port;
-use crate::fork::adopt::{self, Ambiguous, MatchKind};
+use super::targets::NewEntry;
+use crate::fork::adopt::{self, Ambiguous, Hints, MatchKind};
 use crate::fork::artwork;
 use crate::fork::settings::ForkSettings;
 use crate::fork::shortcuts::{self, Shortcut};
@@ -25,6 +26,8 @@ pub enum Confidence {
     Likely,
     /// Only a program inside is named like the port; the user should look before importing.
     CheckThis,
+    /// The user said which port the folder is.
+    Chosen,
 }
 
 impl Confidence {
@@ -33,6 +36,7 @@ impl Confidence {
             Confidence::Exact => "exact match",
             Confidence::Likely => "likely match",
             Confidence::CheckThis => "check this",
+            Confidence::Chosen => "you chose",
         }
     }
 
@@ -68,15 +72,32 @@ pub struct Found {
     pub port_name: String,
     pub catalog_folder: String,
     pub how: MatchKind,
+    /// Why it matched, in plain words ("folder name", "program soh.appimage", "you chose").
+    pub why: String,
     pub confidence: Confidence,
     pub size: Size,
     pub steam: Vec<SteamRef>,
+    /// Set when the port is a Deck-ready project the catalog does not have: importing adds it first.
+    pub new_entry: Option<NewEntry>,
 }
 
 #[derive(Debug, Default)]
 pub struct ImportScan {
     pub found: Vec<Found>,
+    /// Folders that fit two or three ports: the user chooses.
     pub ambiguous: Vec<Ambiguous>,
+    /// Top-level folders with a program that fit no port: the user may choose one.
+    pub unrecognised: Vec<PathBuf>,
+    /// Folders that look like a collection of many games; never offered.
+    pub collections: Vec<PathBuf>,
+    /// Folders the user said are not ports (this screen session).
+    pub left_alone: Vec<PathBuf>,
+    /// Everything a folder can be matched or chosen as (the catalog plus Deck-ready projects it lacks).
+    pub ports: Vec<Port>,
+    /// What importing writes first for a Deck-ready project, by port key.
+    pub new_entries: Vec<(String, NewEntry)>,
+    /// The Steam shortcuts read for this scan, to measure a folder the user chooses later.
+    pub shortcuts: Vec<Shortcut>,
     pub duplicates: Vec<(String, PathBuf)>,
     pub already_in_library: Vec<String>,
     pub roots_scanned: Vec<PathBuf>,
@@ -149,17 +170,59 @@ pub fn dir_size(dir: &Path, cancelled: &dyn Fn() -> bool) -> Size {
 fn confidence(candidate: &adopt::Candidate, port: &Port) -> Confidence {
     match candidate.how {
         MatchKind::FolderName if adopt::norm(&candidate.dir_name) == adopt::norm(&port.folder) => Confidence::Exact,
-        MatchKind::FolderName => Confidence::Likely,
-        MatchKind::ExecutableName => {
-            let stems = adopt::program_stems(&candidate.path);
-            match adopt::declared_exe_stem(port) {
-                Some(declared) if declared.len() >= 4 && stems.contains(&declared) => Confidence::Likely,
-                _ => Confidence::CheckThis,
-            }
-        }
+        MatchKind::FolderName | MatchKind::ReleaseName => Confidence::Likely,
+        // Only the first word of the folder: trusted when a program is inside, as in every download.
+        MatchKind::ReleaseWord if !adopt::programs(&candidate.path).is_empty() => Confidence::Likely,
+        MatchKind::ReleaseWord => Confidence::CheckThis,
+        MatchKind::ExecutableName if adopt::declared_program_inside(port, &adopt::programs(&candidate.path)) => Confidence::Likely,
+        MatchKind::ExecutableName => Confidence::CheckThis,
+        MatchKind::Chosen => Confidence::Chosen,
     }
 }
 
+/// What the user said a folder is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Choice {
+    /// This port (`Port::key()`).
+    Port(String),
+    NotAPort,
+}
+
+/// The user's choices for folders, remembered while the Import ports screen is open (a new scan keeps them).
+#[derive(Debug, Clone, Default)]
+pub struct Choices(Vec<(PathBuf, Choice)>);
+
+impl Choices {
+    pub fn set(&mut self, path: &Path, choice: Choice) {
+        self.0.retain(|(p, _)| p != path);
+        self.0.push((path.to_path_buf(), choice));
+    }
+
+    pub fn get(&self, path: &Path) -> Option<&Choice> {
+        self.0.iter().find(|(p, _)| p == path).map(|(_, c)| c)
+    }
+}
+
+/// A folder the user chose a port for, measured like any find: size and the Steam shortcuts pointing in.
+/// It then goes through the same plan and checks as every other find.
+pub fn measure_choice(path: &Path, port: &Port, shortcuts: &[Shortcut], new_entry: Option<NewEntry>, cancelled: &dyn Fn() -> bool) -> Found {
+    let new_name = new_entry.as_ref().map(|n| n.list_name.clone());
+    Found {
+        path: path.to_path_buf(),
+        dir_name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        port_key: port.key().to_string(),
+        port_name: new_name.unwrap_or_else(|| port.display_name().to_string()),
+        catalog_folder: port.folder.clone(),
+        how: MatchKind::Chosen,
+        why: "you chose".to_string(),
+        confidence: Confidence::Chosen,
+        size: dir_size(path, cancelled),
+        steam: steam_refs(shortcuts, path),
+        new_entry,
+    }
+}
+
+#[derive(Default)]
 pub struct ScanInput {
     pub roots: Vec<PathBuf>,
     pub catalog: Vec<Port>,
@@ -168,6 +231,12 @@ pub struct ScanInput {
     pub home: PathBuf,
     pub deeper: bool,
     pub shortcuts: ShortcutsRead,
+    /// Release file names to match by (from the Deck-ready list).
+    pub hints: Hints,
+    /// Deck-ready projects in `catalog` that the real catalog lacks, by port key.
+    pub new_entries: Vec<(String, NewEntry)>,
+    /// What the user already said about folders in this screen session.
+    pub choices: Choices,
 }
 
 /// Matches the folders, then measures each find and looks for Steam shortcuts pointing into it.
@@ -175,8 +244,35 @@ pub struct ScanInput {
 /// it has (`cancelled` is set on the result).
 pub fn run_scan(input: &ScanInput, cancelled: &dyn Fn() -> bool, progress: &dyn Fn(String)) -> ImportScan {
     progress(format!("Looking in {} folder{}...", input.roots.len(), if input.roots.len() == 1 { "" } else { "s" }));
-    let raw = adopt::scan_with(&input.roots, &input.catalog, &input.library_dir, input.deeper, cancelled);
-    let total = raw.candidates.len();
+    let raw = adopt::scan_with_hints(&input.roots, &input.catalog, &input.hints, &input.library_dir, input.deeper, cancelled);
+    let new_entry = |key: &str| input.new_entries.iter().find(|(k, _)| k == key).map(|(_, e)| e.clone());
+    // The user's earlier choices for folders that need one.
+    let mut ambiguous = Vec::new();
+    let mut unrecognised = Vec::new();
+    let mut left_alone = Vec::new();
+    let mut chosen: Vec<(PathBuf, &Port)> = Vec::new();
+    let mut decide = |path: &Path| -> bool {
+        match input.choices.get(path) {
+            Some(Choice::NotAPort) => left_alone.push(path.to_path_buf()),
+            Some(Choice::Port(key)) => match input.catalog.iter().find(|p| p.key() == key) {
+                Some(port) => chosen.push((path.to_path_buf(), port)),
+                None => return false,
+            },
+            None => return false,
+        }
+        true
+    };
+    for a in raw.ambiguous {
+        if !decide(&a.path) {
+            ambiguous.push(a);
+        }
+    }
+    for u in raw.unrecognised {
+        if !decide(&u) {
+            unrecognised.push(u);
+        }
+    }
+    let total = raw.candidates.len() + chosen.len();
     let mut found = Vec::with_capacity(total);
     for (i, c) in raw.candidates.iter().enumerate() {
         if cancelled() {
@@ -194,22 +290,38 @@ pub fn run_scan(input: &ScanInput, cancelled: &dyn Fn() -> bool, progress: &dyn 
         if c.how == MatchKind::ExecutableName && (!under_root || under_home) {
             sure = Confidence::CheckThis;
         }
+        let new = new_entry(&c.port_key);
         found.push(Found {
             path: c.path.clone(),
             dir_name: c.dir_name.clone(),
             port_key: c.port_key.clone(),
-            port_name: c.port_name.clone(),
+            port_name: new.as_ref().map_or_else(|| c.port_name.clone(), |n| n.list_name.clone()),
             catalog_folder: c.catalog_folder.clone(),
             how: c.how,
+            why: c.why.clone(),
             confidence: sure,
             size: dir_size(&c.path, cancelled),
             steam: steam_refs(&input.shortcuts.shortcuts, &c.path),
+            new_entry: new,
         });
+    }
+    for (i, (path, port)) in chosen.iter().enumerate() {
+        if cancelled() {
+            break;
+        }
+        progress(format!("Measuring {} ({} of {total})...", port.display_name(), raw.candidates.len() + i + 1));
+        found.push(measure_choice(path, port, &input.shortcuts.shortcuts, new_entry(port.key()), cancelled));
     }
     found.sort_by_key(|f| f.port_name.to_lowercase());
     ImportScan {
         found,
-        ambiguous: raw.ambiguous,
+        ambiguous,
+        unrecognised,
+        collections: raw.collections,
+        left_alone,
+        ports: input.catalog.clone(),
+        new_entries: input.new_entries.clone(),
+        shortcuts: input.shortcuts.shortcuts.clone(),
         duplicates: raw.duplicates,
         already_in_library: raw.already_in_library,
         roots_scanned: raw.roots_scanned,
@@ -239,7 +351,7 @@ pub(crate) mod fixtures {
     pub fn catalog() -> Vec<Port> {
         [
             json!({"name": "Ship of Harkinian", "folder": "SoH", "source": "https://github.com/a/soh", "executable": {"linux": "soh.appimage", "windows": "soh.exe"}}),
-            json!({"name": "Dusklight", "folder": "dusklight", "source": "https://github.com/a/dusk", "executable": "dusk"}),
+            json!({"name": "Dusklight", "folder": "dusklight", "source": "https://github.com/a/dusklight", "executable": "dusk"}),
             json!({"name": "Severed Chains", "folder": "severed-chains", "source": "https://github.com/a/sc"}),
             json!({"name": "Fan Remake", "folder": "fanremake", "source": "https://github.com/x/fanremake"}),
             json!({"name": "Fan Remake Deluxe", "folder": "Fan-Remake", "source": "https://github.com/x/fanremake2"}),
@@ -299,7 +411,7 @@ pub(crate) mod fixtures {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::fixtures::*;
     use super::*;
     use std::cell::RefCell;
@@ -317,6 +429,7 @@ mod tests {
             home: h.home.clone(),
             deeper,
             shortcuts: read_shortcuts(&h.home, &settings),
+            ..Default::default()
         }
     }
 
@@ -378,7 +491,7 @@ mod tests {
         assert!(read.shortcuts.is_empty());
         assert!(read.note.as_deref().unwrap().contains("No Steam account folder"));
         let scan = run_scan(
-            &ScanInput { roots: vec![bare.join("Applications")], catalog: catalog(), library_dir: h.library.clone(), home: bare.clone(), deeper: false, shortcuts: read },
+            &ScanInput { roots: vec![bare.join("Applications")], catalog: catalog(), library_dir: h.library.clone(), home: bare.clone(), deeper: false, shortcuts: read, ..Default::default() },
             &no_cancel,
             &|_| {},
         );
@@ -508,5 +621,168 @@ mod tests {
         let scan = run_scan(&input(&h, true), &no_cancel, &|_| {});
         let sc = scan.found.iter().find(|f| f.port_name == "Severed Chains").unwrap();
         assert_eq!((sc.how, sc.confidence), (MatchKind::FolderName, Confidence::Exact));
+    }
+
+    /// The import scan over Tim's SD card with his catalog (no Severed Chains) and the Deck-ready list.
+    pub(crate) fn tims_input(sd: &Path, choices: Choices) -> ScanInput {
+        use crate::fork::import::targets::{self, tests::{tims_catalog, tims_index}};
+        let library = sd.join("Ports");
+        let t = targets::build(&tims_catalog(), Some(&tims_index()), &library);
+        ScanInput {
+            roots: vec![sd.to_path_buf()],
+            catalog: t.catalog,
+            library_dir: library,
+            home: sd.parent().unwrap().join("home"),
+            hints: t.hints,
+            new_entries: t.new_entries,
+            choices,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tims_sd_card_gives_his_four_ports_ticked_and_nothing_else() {
+        let dir = temp_dir("tims_sd_scan");
+        let sd = crate::fork::adopt::test_fixtures::tims_sd_card(&dir);
+        let scan = run_scan(&tims_input(&sd, Choices::default()), &no_cancel, &|_| {});
+        let rows: Vec<(&str, &str, Confidence)> = scan.found.iter().map(|f| (f.port_name.as_str(), f.dir_name.as_str(), f.confidence)).collect();
+        assert_eq!(
+            rows,
+            [
+                ("The Legend of Dragoon (Severed-Chains)", "Severed_Chains_Steam_Deck", Confidence::Likely),
+                ("The Legend of Zelda: Majora's Mask", "2Ship-Keiichi-Charlie-Linux", Confidence::Likely),
+                ("The Legend of Zelda: Ocarina of Time", "SoH-Ackbar-Delta-Linux", Confidence::Likely),
+                ("The Legend of Zelda: Twilight Princess", "Dusklight-twilight-princess", Confidence::Likely),
+            ]
+        );
+        assert!(scan.found.iter().all(|f| f.confidence.preselected() && !f.why.is_empty()));
+        let keys: Vec<&str> = scan.found.iter().map(|f| f.catalog_folder.as_str()).collect();
+        assert_eq!(keys, ["Severed-Chains", "2ship2harkinian", "Shipwright", "dusklight"]);
+        let severed = &scan.found[0];
+        let new = severed.new_entry.as_ref().expect("Severed Chains is added to the port list first");
+        assert_eq!(new.value["folder"], "Severed-Chains");
+        assert!(scan.found[1..].iter().all(|f| f.new_entry.is_none()));
+        assert!(scan.ambiguous.is_empty() && scan.unrecognised.is_empty() && scan.collections.is_empty(), "{:?} {:?} {:?}", scan.ambiguous, scan.unrecognised, scan.collections);
+        assert!(scan.duplicates.is_empty() && scan.already_in_library.is_empty());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn without_the_deck_ready_list_tims_three_catalog_ports_still_match() {
+        let dir = temp_dir("tims_sd_offline");
+        let sd = crate::fork::adopt::test_fixtures::tims_sd_card(&dir);
+        let input = ScanInput {
+            roots: vec![sd.clone()],
+            catalog: crate::fork::import::targets::tests::tims_catalog(),
+            library_dir: sd.join("Ports"),
+            home: dir.join("home"),
+            ..Default::default()
+        };
+        let scan = run_scan(&input, &no_cancel, &|_| {});
+        let folders: Vec<&str> = scan.found.iter().map(|f| f.catalog_folder.as_str()).collect();
+        assert_eq!(folders, ["2ship2harkinian", "Shipwright", "dusklight"]);
+        assert!(scan.found.iter().all(|f| f.confidence.preselected()));
+        // Severed Chains is unknown without the list, but its folder holds a program, so it can be chosen.
+        assert_eq!(scan.unrecognised, [sd.join("Severed_Chains_Steam_Deck")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_choice_made_earlier_in_the_screen_survives_a_new_scan() {
+        let dir = temp_dir("choices_rescan");
+        let sd = crate::fork::adopt::test_fixtures::tims_sd_card(&dir);
+        let mystery = sd.join("Mystery Game");
+        let other = sd.join("Other Thing");
+        crate::fork::adopt::test_fixtures::touch_exe(&mystery.join("game.x86_64"));
+        crate::fork::adopt::test_fixtures::touch_exe(&other.join("tool.sh"));
+        let before = run_scan(&tims_input(&sd, Choices::default()), &no_cancel, &|_| {});
+        assert_eq!(before.unrecognised, [mystery.clone(), other.clone()]);
+        let mut choices = Choices::default();
+        choices.set(&mystery, Choice::Port("Zelda64Recomp/Zelda64Recomp".into()));
+        choices.set(&other, Choice::NotAPort);
+        let after = run_scan(&tims_input(&sd, choices), &no_cancel, &|_| {});
+        assert!(after.unrecognised.is_empty());
+        assert_eq!(after.left_alone, [other]);
+        let chosen = after.found.iter().find(|f| f.path == mystery).unwrap();
+        assert_eq!((chosen.how, chosen.confidence, chosen.why.as_str()), (MatchKind::Chosen, Confidence::Chosen, "you chose"));
+        assert_eq!(chosen.catalog_folder, "Zelda64Recomp");
+        assert!(chosen.confidence.preselected());
+        assert_eq!(Confidence::Chosen.label(), "you chose");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn choices_replace_each_other_per_folder() {
+        let mut c = Choices::default();
+        c.set(Path::new("/a"), Choice::NotAPort);
+        c.set(Path::new("/a"), Choice::Port("k".into()));
+        assert_eq!(c.get(Path::new("/a")), Some(&Choice::Port("k".into())));
+        assert_eq!(c.get(Path::new("/b")), None);
+    }
+
+    /// The same card against the real catalog (`ports.json`) and Deck-ready list (`index/deck-ready.json`) in
+    /// this repository: a catalog or list change that would stop Tim's four ports from matching fails here.
+    #[test]
+    fn tims_sd_card_matches_with_the_real_catalog_and_deck_ready_list() {
+        use crate::fork::import::targets;
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let catalog = crate::core::config::load_config(&root.join("ports.json")).unwrap();
+        let index = crate::fork::deck_ready::index::parse(&fs::read_to_string(root.join("index/deck-ready.json")).unwrap()).unwrap();
+        assert!(!catalog.iter().any(|p| p.folder == "Severed-Chains"), "upstream disables Severed Chains; if it comes back, update this test");
+        let dir = temp_dir("tims_sd_real");
+        let sd = crate::fork::adopt::test_fixtures::tims_sd_card(&dir);
+        let library = sd.join("Ports");
+        let t = targets::build(&catalog, Some(&index), &library);
+        let input = ScanInput {
+            roots: vec![sd.clone()],
+            catalog: t.catalog,
+            library_dir: library,
+            home: dir.join("home"),
+            hints: t.hints,
+            new_entries: t.new_entries,
+            ..Default::default()
+        };
+        let scan = run_scan(&input, &no_cancel, &|_| {});
+        let mut rows: Vec<(&str, &str)> = scan.found.iter().map(|f| (f.dir_name.as_str(), f.catalog_folder.as_str())).collect();
+        rows.sort();
+        assert_eq!(
+            rows,
+            [
+                ("2Ship-Keiichi-Charlie-Linux", "2ship2harkinian"),
+                ("Dusklight-twilight-princess", "dusklight"),
+                ("Severed_Chains_Steam_Deck", "Severed-Chains"),
+                ("SoH-Ackbar-Delta-Linux", "Shipwright"),
+            ],
+            "{:?}",
+            scan.found.iter().map(|f| (&f.dir_name, &f.port_name, f.how, &f.why)).collect::<Vec<_>>()
+        );
+        assert!(scan.found.iter().all(|f| f.confidence.preselected()), "{:?}", scan.found.iter().map(|f| (&f.dir_name, f.confidence)).collect::<Vec<_>>());
+        assert!(scan.found.iter().find(|f| f.catalog_folder == "Severed-Chains").unwrap().new_entry.is_some());
+        assert!(scan.ambiguous.is_empty() && scan.unrecognised.is_empty() && scan.collections.is_empty(), "{:?} {:?} {:?}", scan.ambiguous, scan.unrecognised, scan.collections);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Everyday folders next to ports never match a real catalog or Deck-ready entry by their name.
+    #[test]
+    fn everyday_folder_names_do_not_match_the_real_catalog() {
+        use crate::fork::import::targets;
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let catalog = crate::core::config::load_config(&root.join("ports.json")).unwrap();
+        let index = crate::fork::deck_ready::index::parse(&fs::read_to_string(root.join("index/deck-ready.json")).unwrap()).unwrap();
+        let dir = temp_dir("everyday_real");
+        let names = [
+            "Downloads", "Documents", "Music", "Pictures", "Videos", "Desktop", "Games", "roms", "ROMs", "bios", "Saves", "backups", "AppImages",
+            "Heroic", "Lutris", "PortMaster", "retrodeck", "Steam-Screenshots", "Mods", "Tools", "Install", "New Folder", "Old-Stuff-2024",
+            "Super-Backup", "The-Files", "Game-Saves", "Linux-ISOs", "Ports-old",
+        ];
+        for name in names {
+            put_file(&dir.join("sd").join(name).join("notes.txt"), b"x");
+        }
+        let t = targets::build(&catalog, Some(&index), &dir.join("sd/Ports"));
+        let input = ScanInput { roots: vec![dir.join("sd")], catalog: t.catalog, library_dir: dir.join("sd/Ports"), home: dir.join("home"), hints: t.hints, new_entries: t.new_entries, ..Default::default() };
+        let scan = run_scan(&input, &no_cancel, &|_| {});
+        assert!(scan.found.is_empty(), "{:?}", scan.found.iter().map(|f| (&f.dir_name, &f.port_name, &f.why)).collect::<Vec<_>>());
+        assert!(scan.ambiguous.is_empty(), "{:?}", scan.ambiguous);
+        let _ = fs::remove_dir_all(dir);
     }
 }

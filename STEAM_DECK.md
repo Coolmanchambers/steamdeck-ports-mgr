@@ -334,8 +334,23 @@ itself is never touched), and **Also look one folder deeper** looks inside folde
 match** = the folder is named like the port; **likely match**; **check this** = only a program inside
 is named like the port, so it starts unticked), its size, where it is, and **Steam shortcut** when a
 shortcut you made points into it. Tick the ones you want. **Show what importing will do...** lists the
-steps for each port in order. Folders that fit two ports, a second copy of a port, and ports already in
-your ports folder are listed but not offered.
+steps for each port in order. A second copy of a port and ports already in your ports folder are listed
+but not offered.
+
+**Folders named like the download.** A port unpacked into a folder named after its download file
+(`SoH-Ackbar-Delta-Linux`, `2Ship-Keiichi-Charlie-Linux`, `Severed_Chains_Steam_Deck`) is recognised; the
+app also uses the download names from the Deck-ready list. A port the catalog does not have but the
+Deck-ready list does (Severed Chains) says **not in the catalog yet; importing adds it to your port list
+first**. Only real programs inside a folder count (an `.AppImage`, `.sh`, `.x86_64` and so on), never
+ROMs, settings files or pictures.
+
+**Folders you choose for.** A folder that could be two or three ports shows **Choose which port this
+is...**; a folder with a program the app does not recognise shows **Not recognised... Choose the
+port...**. Choosing either lists the ports it could be, **Another port...** (every port, the ones named
+like the folder first) and **Not a port (leave it)**. A port you choose is ticked ("you chose") and goes
+through the same checks as any other. Hidden folders, Steam's library folders, `lost+found` and EmuDeck's
+`Emulation` are never listed; a folder full of games is shown as one line, **Skipped, looks like a
+collection of many games**.
 
 **What importing does.** For each ticked port, one at a time: the game files it needs are checked in the
 old folder (it stops and asks if one is missing or broken); the folder is copied into the ports folder (a hidden staging folder first, so a failure or Cancel leaves only the old folder);

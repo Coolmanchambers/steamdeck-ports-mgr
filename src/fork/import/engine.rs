@@ -350,6 +350,7 @@ mod tests {
             home: h.home.clone(),
             deeper: false,
             shortcuts: read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
+            ..Default::default()
         };
         let scan = run_scan(&input, &|| false, &|_| {});
         let mut refs: Vec<&Found> = scan.found.iter().collect();

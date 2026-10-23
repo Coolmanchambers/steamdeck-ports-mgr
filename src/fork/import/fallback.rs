@@ -77,9 +77,11 @@ mod tests {
             port_name: name.into(),
             catalog_folder: folder.into(),
             how: MatchKind::FolderName,
+            why: "folder name".into(),
             confidence: Confidence::Exact,
             size: Size::default(),
             steam: vec![],
+            new_entry: None,
         }
     }
 

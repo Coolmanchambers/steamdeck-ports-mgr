@@ -12,6 +12,8 @@
 //! - `real_engine`: the engine the screen uses, over the port mover (copy, verify, game files, switch over,
 //!   Steam repoint or queue, old copy kept);
 //! - `fallback`: link a port in place when the move was refused for lack of space (the old adopt);
+//! - `targets`: what folders are matched against: the catalog plus the Deck-ready list (download names,
+//!   and projects the catalog lacks, which importing adds to the user's port list first);
 //! - `screen`: what the lists say, without UI code. The screens are in `src/app/import_screen.rs`.
 //!
 //! The old adopt code stays in `fork::adopt` (scan matching and the link fallback use it).
@@ -23,6 +25,7 @@ pub mod plan;
 pub mod real_engine;
 pub mod scan;
 pub mod screen;
+pub mod targets;
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};

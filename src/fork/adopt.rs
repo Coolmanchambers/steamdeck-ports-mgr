@@ -1,7 +1,12 @@
 //! Adopting ports that are already installed somewhere outside `Library/`.
 //!
 //! Finding: look one level into each scan folder (well-known ones plus the user's own) for a folder
-//! that matches a catalog entry, by folder name first and by the program's file name second.
+//! that matches a catalog entry: by folder name first, then by a release name (the folder named like
+//! the project's download, `SoH-Ackbar-Delta-Linux`), then by the name of a program inside it. A folder
+//! that fits two or three entries is offered for the user to choose; one that fits more, or holds a
+//! `roms`/`bios` folder or a Steam library, is a collection of games and is skipped. A top-level folder
+//! that fits nothing but holds a program is listed as "not recognised" so the user can say which port
+//! it is. Hidden folders are never looked at.
 //!
 //! Registering changes two things, both ours, and nothing inside the install:
 //! 1. `Library/<catalog folder>` becomes a symlink to the install, because the app finds, launches and
@@ -33,12 +38,84 @@ const MIN_EXE_NAME_LEN: usize = 4;
 const MAX_EXE_SCAN_DEPTH: usize = 2;
 const MAX_EXE_SCAN_ENTRIES: usize = 2000;
 
+/// A folder that fits more ports than this is a collection of games, not one port.
+pub const MAX_FITS: usize = 3;
+/// Files that count as programs: a port's launcher, never its data (configs, images, saves, ROMs).
+const PROGRAM_EXTENSIONS: [&str; 8] = ["appimage", "x86_64", "x86", "sh", "run", "bin", "elf", "exe"];
+/// Words in release file and folder names that say nothing about which port it is ("steam" counts only
+/// right before "deck", see `release_tokens`).
+const NOISE_TOKENS: [&str; 17] = [
+    "linux", "linux64", "x64", "x86", "x8664", "amd64", "arm64", "aarch64", "appimage", "release", "portable", "steamdeck", "deck", "flatpak",
+    "nightly", "latest", "build",
+];
+/// Short or common first words that never name a port on their own.
+const WEAK_FIRST_WORDS: [&str; 14] = ["the", "and", "die", "new", "pro", "men", "wet", "neo", "all", "big", "ger", "bak", "ico", "yml"];
+/// Archive and package endings stripped from a release file name before reading its words.
+const ARCHIVE_ENDINGS: [&str; 12] = [".gz", ".xz", ".zst", ".bz2", ".tar", ".tgz", ".zip", ".7z", ".rar", ".appimage", ".deb", ".flatpak"];
+/// Top-level folders that are never a port and are never listed (Steam's library and its caches, EmuDeck's
+/// folder, the file system's own folder). Hidden folders are skipped as well.
+const NEVER_PORTS: [&str; 6] = ["steamapps", "steamlibrary", "lost+found", "emulation", "compatdata", "shadercache"];
+/// Release names the Deck-ready list cannot cover: the list only knows each project's latest download
+/// names and may not be saved yet (first start offline), and the program inside a download is not listed
+/// at all. First word of the folder or program -> catalog folder (checked against the projects' release
+/// files on 2026-10-23).
+const RELEASE_ALIASES: [(&str, &str); 3] = [
+    // HarbourMasters/Shipwright: SoH-<name>-<letter>-Linux.zip / SoH-<name>-<letter>.appimage, soh.appimage.
+    ("soh", "Shipwright"),
+    // HarbourMasters/2ship2harkinian: 2Ship-<name>-<letter>-Linux.zip holding 2ship.appimage (2s2h.appimage before).
+    ("2ship", "2ship2harkinian"),
+    ("2s2h", "2ship2harkinian"),
+];
+
+/// What else a folder can be matched by: the release file names of each port's latest download, from the
+/// Deck-ready list (`Port::key()` and the file's words).
+#[derive(Debug, Clone, Default)]
+pub struct Hints {
+    assets: Vec<(String, Vec<String>)>,
+}
+
+impl Hints {
+    /// Adds one release file name (`SoH-Dewey-Bravo.appimage`) for the port with `key`.
+    pub fn add_asset(&mut self, key: &str, file_name: &str) {
+        let words = asset_tokens(file_name);
+        if !words.is_empty() && !self.assets.iter().any(|(k, w)| k == key && *w == words) {
+            self.assets.push((key.to_string(), words));
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.assets.is_empty()
+    }
+}
+
+/// The words of a release file name, archive endings removed: `Severed_Chains_Steam_Deck.tar.gz` gives
+/// `severed chains`.
+pub(crate) fn asset_tokens(file_name: &str) -> Vec<String> {
+    let mut stem = file_name.trim();
+    loop {
+        let lower = stem.to_lowercase();
+        match ARCHIVE_ENDINGS.iter().find(|e| lower.ends_with(*e)) {
+            Some(end) => stem = &stem[..stem.len() - end.len()],
+            None => break,
+        }
+    }
+    release_tokens(stem)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchKind {
-    /// The install folder is named like the catalog entry's folder or name.
+    /// The install folder is named like the catalog entry's folder, name or project.
     FolderName,
+    /// The install folder is named like the project's download (`Severed_Chains_Steam_Deck`,
+    /// `Dusklight-Linux`): its words, or the first few of them, are the port's name or download name.
+    ReleaseName,
+    /// Only the first word of the folder names the port (`SoH-Ackbar-Delta-Linux`,
+    /// `Dusklight-twilight-princess`): trusted when a program is inside.
+    ReleaseWord,
     /// A program inside it is named like the catalog entry.
     ExecutableName,
+    /// The user said which port it is.
+    Chosen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,20 +128,30 @@ pub struct Candidate {
     pub port_name: String,
     pub catalog_folder: String,
     pub how: MatchKind,
+    /// Why it matched, in plain words ("folder name", "program soh.appimage").
+    pub why: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ambiguous {
     pub path: PathBuf,
     pub dir_name: String,
+    /// The catalog names (with their note, so two entries for one game can be told apart).
     pub matches: Vec<String>,
+    /// `Port::key()` of each match, in the same order.
+    pub keys: Vec<String>,
 }
 
 #[derive(Debug, Default)]
 pub struct ScanResult {
     pub candidates: Vec<Candidate>,
-    /// Folders that matched more than one catalog entry equally well; never adopted automatically.
+    /// Folders that matched two or three catalog entries equally well; never adopted without the user choosing.
     pub ambiguous: Vec<Ambiguous>,
+    /// Top-level folders that match nothing but hold a program: the user may say which port it is.
+    pub unrecognised: Vec<PathBuf>,
+    /// Folders that look like a collection of many games (they fit more than `MAX_FITS` ports, or hold a
+    /// `roms`/`bios` folder or a Steam library); never offered.
+    pub collections: Vec<PathBuf>,
     /// Matches whose catalog entry is already installed in `Library/`.
     pub already_in_library: Vec<String>,
     /// A second folder that fits a port another folder was already offered for: port name and folder.
@@ -115,12 +202,146 @@ pub fn scan_roots_with(home: &Path, defaults_off: &[String], user_folders: &[Str
     roots
 }
 
-/// Names a catalog entry answers to: its folder, its name and its name without a trailing "(note)".
+/// Names a catalog entry answers to: its folder, its name, its name without a trailing "(note)", and the
+/// project's name (the last part of its GitHub/GitLab source).
 pub(crate) fn port_names(port: &Port) -> Vec<String> {
-    let mut names = vec![norm(&port.folder), norm(&port.name), norm(port.display_name())];
-    names.retain(|n| !n.is_empty());
-    names.dedup();
+    let project = port.repo.as_deref().and_then(|r| r.rsplit('/').find(|s| !s.is_empty())).map(norm);
+    let mut names: Vec<String> = Vec::new();
+    for n in [norm(&port.folder), norm(&port.name), norm(port.display_name())].into_iter().chain(project) {
+        if !n.is_empty() && !names.contains(&n) {
+            names.push(n);
+        }
+    }
     names
+}
+
+/// Whether a (normalised) word is a version: `v2`, `1`, `2026`, `r3`.
+fn version_like(token: &str) -> bool {
+    let digits = token.strip_prefix('v').or_else(|| token.strip_prefix('r')).unwrap_or(token);
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// The words of a release-style name that can say which port it is: split on `-`, `_`, space and `.`,
+/// normalised, without platform words (`linux`, `x86_64`, `appimage`...) and versions (`v1.2.3`).
+/// `SoH-Ackbar-Delta-Linux` gives `soh ackbar delta`; `dusklight_v1.0_linux` gives `dusklight`.
+pub(crate) fn release_tokens(name: &str) -> Vec<String> {
+    let raw: Vec<String> = name.split(['-', '_', ' ', '.']).map(norm).filter(|t| !t.is_empty()).collect();
+    raw.iter()
+        .enumerate()
+        .filter(|(i, t)| {
+            let steam_deck = t.as_str() == "steam" && raw.get(i + 1).is_some_and(|n| n == "deck");
+            !steam_deck && !version_like(t) && !NOISE_TOKENS.contains(&t.as_str())
+        })
+        .map(|(_, t)| t.clone())
+        .collect()
+}
+
+/// The catalog folder a release word stands for (`soh` -> `Shipwright`), from `RELEASE_ALIASES`.
+fn alias_folder(token: &str) -> Option<&'static str> {
+    RELEASE_ALIASES.iter().find(|(alias, _)| *alias == token).map(|(_, folder)| *folder)
+}
+
+/// Whether a release word is a built-in alias for this catalog entry.
+fn is_alias_of(token: &str, port: &Port) -> bool {
+    alias_folder(token).is_some_and(|folder| norm(folder) == norm(&port.folder))
+}
+
+/// The entries (by index) that answer to `name` (normalised), Android-only ones left out.
+fn entries_named(catalog: &[Port], name: &str) -> Vec<usize> {
+    if name.is_empty() {
+        return Vec::new();
+    }
+    catalog.iter().enumerate().filter(|(_, p)| !p.is_android_only() && port_names(p).iter().any(|n| n == name)).map(|(i, _)| i).collect()
+}
+
+/// How many words (three letters or more) a port shares with a folder name; a built-in alias at the start of
+/// the folder counts as many. Ports sharing more are listed first when the user picks the port for a folder.
+pub(crate) fn shared_words(dir_name: &str, port: &Port) -> usize {
+    let words: Vec<String> = release_tokens(dir_name).into_iter().filter(|w| w.len() >= 3 && !WEAK_FIRST_WORDS.contains(&w.as_str())).collect();
+    if words.first().is_some_and(|first| is_alias_of(first, port)) {
+        return words.len().max(1) * 10;
+    }
+    let project = port.repo.as_deref().and_then(|r| r.rsplit('/').find(|s| !s.is_empty())).unwrap_or("");
+    let port_words: Vec<String> = [port.name.as_str(), port.folder.as_str(), project].iter().flat_map(|s| release_tokens(s)).collect();
+    let names = port_names(port);
+    words.iter().filter(|w| port_words.contains(w) || names.contains(w)).count()
+}
+
+/// The entry (by index) a hint's key belongs to.
+fn entry_with_key(catalog: &[Port], key: &str) -> Option<usize> {
+    catalog.iter().position(|p| !p.is_android_only() && p.key() == key)
+}
+
+fn common_prefix(a: &[String], b: &[String]) -> usize {
+    a.iter().zip(b).take_while(|(x, y)| x == y).count()
+}
+
+/// Matches by the release file names of the Deck-ready list. Strong: the folder's words are exactly a
+/// download's words (`Severed_Chains_Steam_Deck`). Weak: the folder starts with the same words as a
+/// download, the most of any port (`SoH-Ackbar-Delta-Linux` and `SoH-Dewey-Bravo.appimage` share `soh`);
+/// one shared word counts only when no other port's downloads start with it.
+fn asset_hits(words: &[String], catalog: &[Port], hints: &Hints) -> (Vec<usize>, Vec<usize>) {
+    let mut strong: Vec<usize> = Vec::new();
+    let mut best = 0usize;
+    let mut tied: Vec<usize> = Vec::new();
+    for (key, asset) in &hints.assets {
+        let Some(i) = entry_with_key(catalog, key) else { continue };
+        if asset.as_slice() == words && asset.concat().len() >= MIN_EXE_NAME_LEN && !strong.contains(&i) {
+            strong.push(i);
+        }
+        let common = common_prefix(words, asset);
+        if common == 0 || common < best {
+            continue;
+        }
+        if common > best {
+            best = common;
+            tied.clear();
+        }
+        if !tied.contains(&i) {
+            tied.push(i);
+        }
+    }
+    if strong.len() > MAX_FITS {
+        strong.clear();
+    }
+    let weak_ok = match best {
+        0 => false,
+        1 => tied.len() == 1 && words[0].len() >= 3 && !WEAK_FIRST_WORDS.contains(&words[0].as_str()),
+        _ => tied.len() <= MAX_FITS,
+    };
+    (strong, if weak_ok { tied } else { Vec::new() })
+}
+
+/// Matches a folder named like a project's download, in this order:
+/// 1. strong (`ReleaseName`): its words are a download's words, or the first k words joined (longest
+///    first, k >= 2) are a port's name (`Severed_Chains_Steam_Deck` -> `severedchains`);
+/// 2. weak (`ReleaseWord`): its first word is a port name of at least `MIN_EXE_NAME_LEN` letters
+///    (`Dusklight-twilight-princess`), a built-in alias (`SoH-Ackbar-Delta-Linux`), or it starts like a
+///    download of the Deck-ready list.
+fn release_hits(dir_name: &str, catalog: &[Port], hints: &Hints) -> (MatchKind, Vec<usize>) {
+    let words = release_tokens(dir_name);
+    let Some(first) = words.first() else { return (MatchKind::ReleaseName, Vec::new()) };
+    let (strong, weak) = asset_hits(&words, catalog, hints);
+    if !strong.is_empty() {
+        return (MatchKind::ReleaseName, strong);
+    }
+    // All the words joined (`Dusklight-Linux` -> `dusklight`), then fewer, down to two.
+    let shortest = if words.len() == 1 { 1 } else { 2 };
+    for k in (shortest..=words.len()).rev() {
+        let hits = entries_named(catalog, &words[..k].concat());
+        if !hits.is_empty() {
+            return (MatchKind::ReleaseName, hits);
+        }
+    }
+    let mut hits: Vec<usize> = if words.len() > 1 && first.len() >= MIN_EXE_NAME_LEN { entries_named(catalog, first) } else { Vec::new() };
+    let aliases = catalog.iter().enumerate().filter(|(_, p)| !p.is_android_only() && is_alias_of(first, p)).map(|(i, _)| i);
+    for i in aliases.chain(weak) {
+        if !hits.contains(&i) {
+            hits.push(i);
+        }
+    }
+    hits.sort_unstable();
+    (MatchKind::ReleaseWord, hits)
 }
 
 /// The program file name a catalog entry names for this platform, without extension, normalised.
@@ -131,9 +352,60 @@ pub(crate) fn declared_exe_stem(port: &Port) -> Option<String> {
     Some(norm(&name))
 }
 
-/// Normalised file stems of regular files in a folder, two levels deep, capped.
-pub(crate) fn program_stems(dir: &Path) -> Vec<String> {
-    fn walk(dir: &Path, depth: usize, budget: &mut usize, out: &mut Vec<String>) {
+/// A program file found in a folder: its whole name and its release-style words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Program {
+    /// The file name without extension, normalised (`soh`, `dusklightv203linuxx8664`).
+    pub stem: String,
+    /// The release words joined (`dusklight` for `Dusklight-v2.0.3-linux-x86_64.AppImage`).
+    pub joined: String,
+    /// The first release word (`soh` for `SoH-Dewey-Bravo.appimage`), for the alias table.
+    pub first: String,
+    /// The file name as found (`soh.appimage`), for "why it matched".
+    pub file: String,
+}
+
+impl Program {
+    /// Named like `name` (normalised, at least `MIN_EXE_NAME_LEN` letters), whole or by its release words.
+    fn named(&self, name: &str) -> bool {
+        name.len() >= MIN_EXE_NAME_LEN && (self.stem == name || self.joined == name)
+    }
+
+    /// The built-in alias of this entry (`2s2h.appimage` for 2 Ship 2 Harkinian).
+    fn alias_of(&self, port: &Port) -> bool {
+        is_alias_of(&self.stem, port) || is_alias_of(&self.first, port)
+    }
+}
+
+/// Whether a file is a program: a known program extension (`.AppImage`, `.x86_64`, `.sh`, `.exe`...), or
+/// no extension and executable. Config files, images, saves and ROMs never are.
+fn is_program(path: &Path, entry: &fs::DirEntry) -> bool {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => PROGRAM_EXTENSIONS.iter().any(|p| ext.eq_ignore_ascii_case(p)),
+        None => is_executable(entry),
+    }
+}
+
+#[cfg(unix)]
+fn is_executable(entry: &fs::DirEntry) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    entry.metadata().is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_entry: &fs::DirEntry) -> bool {
+    false
+}
+
+/// The program files in a folder, two levels deep, capped (`MAX_EXE_SCAN_ENTRIES` entries looked at).
+pub(crate) fn programs(dir: &Path) -> Vec<Program> {
+    programs_within(dir, MAX_EXE_SCAN_DEPTH)
+}
+
+/// The program files in a folder and its sub-folders down to `max_depth` (0: the folder only), capped
+/// (`MAX_EXE_SCAN_ENTRIES` entries looked at).
+pub(crate) fn programs_within(dir: &Path, max_depth: usize) -> Vec<Program> {
+    fn walk(dir: &Path, depth: usize, max_depth: usize, budget: &mut usize, out: &mut Vec<Program>) {
         let Ok(entries) = fs::read_dir(dir) else { return };
         for entry in entries.flatten() {
             if *budget == 0 {
@@ -143,34 +415,65 @@ pub(crate) fn program_stems(dir: &Path) -> Vec<String> {
             let Ok(kind) = entry.file_type() else { continue };
             let path = entry.path();
             if kind.is_dir() {
-                if depth < MAX_EXE_SCAN_DEPTH {
-                    walk(&path, depth + 1, budget, out);
+                if depth < max_depth {
+                    walk(&path, depth + 1, max_depth, budget, out);
                 }
-            } else if kind.is_file() {
+            } else if kind.is_file() && is_program(&path, &entry) {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    out.push(norm(stem));
+                    let words = release_tokens(stem);
+                    let file = entry.file_name().to_string_lossy().into_owned();
+                    out.push(Program { stem: norm(stem), joined: words.concat(), first: words.first().cloned().unwrap_or_default(), file });
                 }
             }
         }
     }
     let mut out = Vec::new();
     let mut budget = MAX_EXE_SCAN_ENTRIES;
-    walk(dir, 0, &mut budget, &mut out);
+    walk(dir, 0, max_depth, &mut budget, &mut out);
     out
 }
 
-fn match_dir(dir: &Path, dir_name: &str, catalog: &[Port]) -> (MatchKind, Vec<usize>) {
-    let n = norm(dir_name);
-    let by_folder: Vec<usize> = catalog
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| !p.is_android_only() && !n.is_empty() && port_names(p).contains(&n))
-        .map(|(i, _)| i)
-        .collect();
-    if !by_folder.is_empty() {
-        return (MatchKind::FolderName, by_folder);
+/// Whether one of `programs` is the one the catalog entry declares, or its built-in alias: the program
+/// match that is trusted enough to be preselected.
+pub(crate) fn declared_program_inside(port: &Port, programs: &[Program]) -> bool {
+    let declared = declared_exe_stem(port);
+    programs.iter().any(|p| declared.as_deref().is_some_and(|d| p.named(d)) || p.alias_of(port))
+}
+
+/// Holds a `roms` or `bios` folder (EmuDeck's `Emulation`, a ROM library) or is or holds a Steam library.
+fn looks_like_game_library(dir: &Path, dir_name: &str) -> bool {
+    if dir_name.eq_ignore_ascii_case("steamapps") || dir.join("libraryfolder.vdf").is_file() {
+        return true;
     }
-    let stems = program_stems(dir);
+    let Ok(entries) = fs::read_dir(dir) else { return false };
+    entries.flatten().take(MAX_EXE_SCAN_ENTRIES).any(|e| {
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        ["roms", "bios", "steamapps"].contains(&name.as_str()) && e.path().is_dir()
+    })
+}
+
+/// How a folder matched: the kind, the entries (by index) and why, in plain words for the user.
+struct DirMatch {
+    how: MatchKind,
+    hits: Vec<usize>,
+    why: String,
+}
+
+fn match_dir(dir: &Path, dir_name: &str, catalog: &[Port], hints: &Hints) -> DirMatch {
+    let by_folder = entries_named(catalog, &norm(dir_name));
+    if !by_folder.is_empty() {
+        return DirMatch { how: MatchKind::FolderName, hits: by_folder, why: "folder name".to_string() };
+    }
+    let (how, by_release) = release_hits(dir_name, catalog, hints);
+    if !by_release.is_empty() {
+        let why = match how {
+            MatchKind::ReleaseName => "folder named like its download".to_string(),
+            _ => format!("folder name starts with \"{}\"", dir_name.split(['-', '_', ' ', '.']).find(|w| !w.is_empty()).unwrap_or(dir_name)),
+        };
+        return DirMatch { how, hits: by_release, why };
+    }
+    let found = programs(dir);
+    let mut why = String::new();
     let by_exe = catalog
         .iter()
         .enumerate()
@@ -178,12 +481,18 @@ fn match_dir(dir: &Path, dir_name: &str, catalog: &[Port]) -> (MatchKind, Vec<us
             if p.is_android_only() {
                 return false;
             }
-            let wanted = declared_exe_stem(p).into_iter().chain(port_names(p));
-            wanted.filter(|w| w.len() >= MIN_EXE_NAME_LEN).any(|w| stems.contains(&w))
+            let wanted: Vec<String> = declared_exe_stem(p).into_iter().chain(port_names(p)).collect();
+            match found.iter().find(|prog| prog.alias_of(p) || wanted.iter().any(|w| prog.named(w))) {
+                Some(prog) => {
+                    why = format!("program {}", prog.file);
+                    true
+                }
+                None => false,
+            }
         })
         .map(|(i, _)| i)
         .collect();
-    (MatchKind::ExecutableName, by_exe)
+    DirMatch { how: MatchKind::ExecutableName, hits: by_exe, why }
 }
 
 /// Looks one level into each root. Reads only; nothing is created or changed.
@@ -203,27 +512,62 @@ fn child_dirs(dir: &Path) -> Option<Vec<PathBuf>> {
 /// too (hidden ones skipped, at most `MAX_DEEP_FOLDERS` per scan; `deep_limit_hit` says when that cut it
 /// short). `cancelled` is polled between folders; a cancelled scan returns what it found so far.
 pub fn scan_with(roots: &[PathBuf], catalog: &[Port], library_dir: &Path, deeper: bool, cancelled: &dyn Fn() -> bool) -> ScanResult {
+    scan_with_hints(roots, catalog, &Hints::default(), library_dir, deeper, cancelled)
+}
+
+/// `scan_with`, also matching by the release file names in `hints` (from the Deck-ready list).
+pub fn scan_with_hints(roots: &[PathBuf], catalog: &[Port], hints: &Hints, library_dir: &Path, deeper: bool, cancelled: &dyn Fn() -> bool) -> ScanResult {
+    let mut result = scan_roots_inner(roots, catalog, hints, library_dir, deeper, cancelled);
+    // A top-level folder that holds a port found deeper is not itself an unrecognised port.
+    let offered: Vec<PathBuf> = result
+        .candidates
+        .iter()
+        .map(|c| c.path.clone())
+        .chain(result.ambiguous.iter().map(|a| a.path.clone()))
+        .chain(result.duplicates.iter().map(|(_, p)| p.clone()))
+        .collect();
+    result.unrecognised.retain(|u| !offered.iter().any(|p| p != u && p.starts_with(u)));
+    result
+}
+
+fn scan_roots_inner(roots: &[PathBuf], catalog: &[Port], hints: &Hints, library_dir: &Path, deeper: bool, cancelled: &dyn Fn() -> bool) -> ScanResult {
     let mut result = ScanResult::default();
     let library = fs::canonicalize(library_dir).unwrap_or_else(|_| library_dir.to_path_buf());
     let mut deep_budget = MAX_DEEP_FOLDERS;
     for root in roots {
         let Some(top) = child_dirs(root) else { continue };
         result.roots_scanned.push(root.clone());
-        // (folder, may we look inside it when it matches nothing)
-        let mut queue: std::collections::VecDeque<(PathBuf, bool)> = top.into_iter().map(|d| (d, deeper)).collect();
-        while let Some((dir, may_descend)) = queue.pop_front() {
+        // (folder, may we look inside it when it matches nothing, is it directly in the scan folder)
+        let mut queue: std::collections::VecDeque<(PathBuf, bool, bool)> = top.into_iter().map(|d| (d, deeper, true)).collect();
+        while let Some((dir, may_descend, top_level)) = queue.pop_front() {
             if cancelled() {
                 return result;
             }
             let Some(dir_name) = dir.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+            // Hidden folders (`.Trash-1000`, `.cache`) and Steam's, EmuDeck's and the file system's own
+            // folders are never ports and are not listed at all.
+            if dir_name.starts_with('.') || NEVER_PORTS.contains(&dir_name.to_lowercase().as_str()) {
+                continue;
+            }
             // Never the library itself, anything in it, or a folder that contains it (the app's own
             // folder, usually): its `Library/<port>` folders would all look like installs to adopt.
             if fs::canonicalize(&dir).is_ok_and(|real| real.starts_with(&library) || library.starts_with(&real)) {
                 continue;
             }
-            let (how, hits) = match_dir(&dir, &dir_name, catalog);
+            let DirMatch { how, hits, why } = match_dir(&dir, &dir_name, catalog, hints);
+            // Named like a port, it is that port even with a `roms` folder inside; otherwise a folder of
+            // ROMs, emulators or Steam games is a collection, and so is one that fits many ports.
+            let named = matches!(how, MatchKind::FolderName | MatchKind::ReleaseName | MatchKind::ReleaseWord) && !hits.is_empty();
+            if hits.len() > MAX_FITS || (!named && looks_like_game_library(&dir, &dir_name)) {
+                result.collections.push(dir);
+                continue;
+            }
             match hits.as_slice() {
                 [] => {
+                    // "Not recognised" needs a program in the folder or one level in, as a download unpacks.
+                    if top_level && !programs_within(&dir, 1).is_empty() {
+                        result.unrecognised.push(dir.clone());
+                    }
                     if may_descend {
                         for child in child_dirs(&dir).unwrap_or_default() {
                             let hidden = child.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
@@ -235,7 +579,7 @@ pub fn scan_with(roots: &[PathBuf], catalog: &[Port], library_dir: &Path, deeper
                                 break;
                             }
                             deep_budget -= 1;
-                            queue.push_back((child, false));
+                            queue.push_back((child, false, false));
                         }
                     }
                 }
@@ -253,13 +597,15 @@ pub fn scan_with(roots: &[PathBuf], catalog: &[Port], library_dir: &Path, deeper
                             port_name: port.display_name().to_string(),
                             catalog_folder: port.folder.clone(),
                             how,
+                            why,
                         });
                     }
                 }
                 many => result.ambiguous.push(Ambiguous {
                     path: dir,
                     dir_name,
-                    matches: many.iter().map(|&i| catalog[i].display_name().to_string()).collect(),
+                    matches: many.iter().map(|&i| catalog[i].name.clone()).collect(),
+                    keys: many.iter().map(|&i| catalog[i].key().to_string()).collect(),
                 }),
             }
         }
@@ -478,6 +824,334 @@ mod tests {
         fs::write(path, b"x").unwrap();
     }
 
+    use super::test_fixtures::{tims_sd_card, touch_exe};
+
+    /// Entries shaped like the real catalog's (public catalog data: names, folders, sources).
+    fn real_catalog() -> Vec<Port> {
+        [
+            json!({"name": "The Legend of Zelda: Ocarina of Time (Shipwright)", "folder": "Shipwright", "source": "https://github.com/HarbourMasters/Shipwright"}),
+            json!({"name": "The Legend of Zelda: Majora's Mask (2ship2harkinian)", "folder": "2ship2harkinian", "source": "https://github.com/HarbourMasters/2ship2harkinian"}),
+            json!({"name": "The Legend of Zelda: Majora's Mask (Zelda64Recomp)", "folder": "Zelda64Recomp", "source": "https://github.com/Zelda64Recomp/Zelda64Recomp"}),
+            json!({"name": "The Legend of Zelda: Twilight Princess (dusklight)", "folder": "dusklight", "source": "https://github.com/TwilitRealm/dusklight"}),
+            json!({"name": "The Legend of Dragoon (Severed-Chains)", "folder": "Severed-Chains", "source": "https://github.com/Legend-of-Dragoon-Modding/Severed-Chains"}),
+            json!({"name": "SkyRecomp", "folder": "SkyRecomp", "source": "https://github.com/Apolinario-coder/SkyRecomp"}),
+            json!({"name": "Star Fox 64 (starship)", "folder": "starship", "source": "https://github.com/harbourmasters/starship"}),
+            json!({"name": "Mario Kart 64 (SpaghettiKart)", "folder": "SpaghettiKart", "source": "https://github.com/HarbourMasters/SpaghettiKart"}),
+            json!({"name": "Doom (uzdoom)", "folder": "uzdoom", "source": "https://github.com/UZDoom/uzdoom"}),
+            json!({"name": "Driver 2 (REDRIVER2)", "folder": "REDRIVER2", "source": "https://github.com/OpenDriver2/REDRIVER2"}),
+        ]
+        .iter()
+        .map(|v| port_from_value(v).unwrap())
+        .collect()
+    }
+
+    /// Release file names as the Deck-ready list has them (latest release of each project, 2026-10-23).
+    fn real_hints() -> Hints {
+        let mut hints = Hints::default();
+        for (key, file) in [
+            ("HarbourMasters/Shipwright", "SoH-Dewey-Bravo.appimage"),
+            ("HarbourMasters/2ship2harkinian", "2Ship-Battler-Bravo-Linux.zip"),
+            ("TwilitRealm/dusklight", "Dusklight-v2.0.3-linux-x86_64.AppImage"),
+            ("Legend-of-Dragoon-Modding/Severed-Chains", "Severed_Chains_Steam_Deck.tar.gz"),
+            ("Legend-of-Dragoon-Modding/Severed-Chains", "Severed_Chains_Linux.tar.gz"),
+            ("Zelda64Recomp/Zelda64Recomp", "Zelda64Recompiled-v1.2.2-Linux-X64.zip"),
+            ("HarbourMasters/SpaghettiKart", "spaghetti-linux.zip"),
+            ("harbourmasters/starship", "Starship-Barnard-Alfa-Linux.zip"),
+        ] {
+            hints.add_asset(key, file);
+        }
+        hints
+    }
+
+    fn found_folders(result: &ScanResult) -> Vec<(String, String, MatchKind)> {
+        let mut found: Vec<_> = result.candidates.iter().map(|c| (c.dir_name.clone(), c.catalog_folder.clone(), c.how)).collect();
+        found.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        found
+    }
+
+    fn row(dir: &str, folder: &str, how: MatchKind) -> (String, String, MatchKind) {
+        (dir.to_string(), folder.to_string(), how)
+    }
+
+    #[test]
+    fn release_words_drop_platforms_and_versions() {
+        assert_eq!(release_tokens("SoH-Ackbar-Delta-Linux"), ["soh", "ackbar", "delta"]);
+        assert_eq!(release_tokens("2Ship-Keiichi-Charlie-Linux"), ["2ship", "keiichi", "charlie"]);
+        assert_eq!(release_tokens("dusklight_v1.0_linux"), ["dusklight"]);
+        assert_eq!(release_tokens("Dusklight-v2.0.3-linux-x86_64"), ["dusklight"]);
+        assert_eq!(release_tokens("Severed_Chains_Steam_Deck"), ["severed", "chains"]);
+        assert_eq!(release_tokens("Steam-Workshop-Tools"), ["steam", "workshop", "tools"], "steam is noise only before deck");
+        assert_eq!(release_tokens("Sky.Recomp-v1.0.6-linux-x86_64"), ["sky", "recomp"]);
+        assert_eq!(release_tokens("Game 1.2.3 portable (nightly)"), ["game"]);
+        assert!(release_tokens("Linux-x64-AppImage").is_empty());
+        assert_eq!(asset_tokens("Severed_Chains_Steam_Deck.tar.gz"), ["severed", "chains"]);
+        assert_eq!(asset_tokens("SoH-Dewey-Bravo.appimage"), ["soh", "dewey", "bravo"]);
+    }
+
+    #[test]
+    fn folders_named_like_the_release_download_match_their_port() {
+        let dir = temp_dir("release_names");
+        let sd = dir.join("sd");
+        for name in [
+            "SoH-Ackbar-Delta-Linux",
+            "2Ship-Keiichi-Charlie-Linux",
+            "Dusklight-Linux",
+            "Dusklight-twilight-princess",
+            "Starship-Barnard-Alfa-Linux",
+            "Severed_Chains_Steam_Deck",
+            "Sky.Recomp-v1.0.6-linux-x86_64",
+        ] {
+            touch(&sd.join(name).join("readme.txt"));
+        }
+        let result = scan(&[sd], &real_catalog(), &dir.join("Ports"));
+        assert_eq!(
+            found_folders(&result),
+            [
+                row("2Ship-Keiichi-Charlie-Linux", "2ship2harkinian", MatchKind::ReleaseWord),
+                row("Dusklight-Linux", "dusklight", MatchKind::ReleaseName),
+                row("Severed_Chains_Steam_Deck", "Severed-Chains", MatchKind::ReleaseName),
+                row("Sky.Recomp-v1.0.6-linux-x86_64", "SkyRecomp", MatchKind::ReleaseName),
+                row("SoH-Ackbar-Delta-Linux", "Shipwright", MatchKind::ReleaseWord),
+                row("Starship-Barnard-Alfa-Linux", "starship", MatchKind::ReleaseWord),
+            ]
+        );
+        assert_eq!(result.duplicates.len(), 1, "the second Dusklight folder is reported: {:?}", result.duplicates);
+        assert!(result.ambiguous.is_empty() && result.unrecognised.is_empty() && result.collections.is_empty());
+        let why: Vec<&str> = result.candidates.iter().map(|c| c.why.as_str()).collect();
+        assert!(why.contains(&"folder named like its download") && why.contains(&"folder name starts with \"SoH\""), "{why:?}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_lowercase_versioned_release_folder_matches_too() {
+        let dir = temp_dir("release_lower");
+        let sd = dir.join("sd");
+        touch(&sd.join("dusklight_v1.0_linux").join("x.txt"));
+        let result = scan(&[sd], &real_catalog(), &dir.join("Ports"));
+        assert_eq!(found_folders(&result), [row("dusklight_v1.0_linux", "dusklight", MatchKind::ReleaseName)]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn deck_ready_download_names_match_folders_the_catalog_names_differently() {
+        let dir = temp_dir("release_hints");
+        let sd = dir.join("sd");
+        for name in ["Zelda64Recompiled-v1.2.2-Linux-X64", "spaghetti-linux", "Severed_Chains_Linux", "SoH-Ackbar-Delta-Linux"] {
+            touch(&sd.join(name).join("readme.txt"));
+        }
+        assert!(scan(&[sd.clone()], &real_catalog(), &dir.join("Ports")).candidates.iter().all(|c| c.dir_name.starts_with("S")), "without the list only the built-in names match");
+        let result = scan_with_hints(&[sd], &real_catalog(), &real_hints(), &dir.join("Ports"), false, &|| false);
+        assert_eq!(
+            found_folders(&result),
+            [
+                row("Severed_Chains_Linux", "Severed-Chains", MatchKind::ReleaseName),
+                row("SoH-Ackbar-Delta-Linux", "Shipwright", MatchKind::ReleaseWord),
+                row("Zelda64Recompiled-v1.2.2-Linux-X64", "Zelda64Recomp", MatchKind::ReleaseName),
+                row("spaghetti-linux", "SpaghettiKart", MatchKind::ReleaseName),
+            ]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn one_shared_first_word_is_not_enough_when_several_downloads_start_with_it() {
+        let ports: Vec<Port> = [
+            json!({"name": "Tony Hawk's Pro Skater", "folder": "thps-a", "source": "https://github.com/a/thps-a"}),
+            json!({"name": "Tony Hawk's Underground", "folder": "thug-b", "source": "https://github.com/b/thug-b"}),
+        ]
+        .iter()
+        .map(|v| port_from_value(v).unwrap())
+        .collect();
+        let mut hints = Hints::default();
+        hints.add_asset("a/thps-a", "Tony-Hawks-Pro-Skater-linux.zip");
+        hints.add_asset("b/thug-b", "Tony-Hawks-Underground-linux.zip");
+        let words = |s: &str| release_tokens(s);
+        assert_eq!(asset_hits(&words("Tony-Photos"), &ports, &hints), (vec![], vec![]));
+        assert_eq!(asset_hits(&words("Tony-Hawks-Pro-Skater-Remix-v2"), &ports, &hints), (vec![], vec![0]), "three words in common pick one");
+        assert_eq!(asset_hits(&words("Tony-Hawks-Pro-Skater"), &ports, &hints), (vec![0], vec![0]), "every word in common is strong");
+        assert_eq!(asset_hits(&words("Tony-Hawks"), &ports, &hints).1, vec![0, 1], "two words shared by both: choose");
+        let mut the = Hints::default();
+        the.add_asset("a/thps-a", "The-Game-linux.zip");
+        assert_eq!(asset_hits(&words("The-Photos"), &ports, &the), (vec![], vec![]), "a weak first word never matches alone");
+    }
+
+    #[test]
+    fn folders_that_only_look_a_bit_like_a_release_do_not_match() {
+        let dir = temp_dir("release_negative");
+        let sd = dir.join("sd");
+        for name in ["Photos-2024", "SoHo-Trip", "Linux", "x86_64", "My-Saves", "Driver-Updates", "Sky-Photos", "Steam-Screenshots"] {
+            touch(&sd.join(name).join("a.txt"));
+        }
+        let result = scan_with_hints(&[sd], &real_catalog(), &real_hints(), &dir.join("Ports"), false, &|| false);
+        assert!(result.candidates.is_empty(), "{:?}", found_folders(&result));
+        assert!(result.ambiguous.is_empty() && result.unrecognised.is_empty());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_project_name_from_the_source_is_a_port_name() {
+        let ports = real_catalog();
+        assert!(port_names(&ports[0]).contains(&"shipwright".to_string()));
+        let mut renamed = ports[0].clone();
+        renamed.folder = "soh-pc".into();
+        assert!(port_names(&renamed).contains(&"shipwright".to_string()), "{:?}", port_names(&renamed));
+        let no_repo = port_from_value(&json!({"name": "Xonotic", "folder": "xonotic", "source": "https://dl.example.org/xonotic-0.8.6.zip"})).unwrap();
+        assert_eq!(port_names(&no_repo), ["xonotic"]);
+    }
+
+    #[test]
+    fn data_files_and_roms_named_like_a_port_are_not_programs_even_when_executable() {
+        let dir = temp_dir("not_programs");
+        let games = dir.join("Games");
+        for file in ["starship.json", "dusklight.png", "Shipwright.txt", "uzdoom.sav", "SkyRecomp.o2r", "spaghettikart.otr", "severedchains.ini"] {
+            touch(&games.join("stuff").join(file));
+        }
+        // ROMs on the Deck often carry the executable bit; the extension decides.
+        touch_exe(&games.join("stuff").join("The Legend of Zelda - Majora's Mask.z64"));
+        touch_exe(&games.join("stuff").join("2ship2harkinian.json"));
+        let result = scan(&[games.clone()], &real_catalog(), &dir.join("Ports"));
+        assert!(result.candidates.is_empty() && result.ambiguous.is_empty(), "{:?} {:?}", found_folders(&result), result.ambiguous);
+        assert!(result.unrecognised.is_empty(), "no program inside, so nothing to choose");
+        // The same name as a program does match, and says which program.
+        touch(&games.join("launch").join("dusklight.sh"));
+        let result = scan(&[games], &real_catalog(), &dir.join("Ports"));
+        assert_eq!(found_folders(&result), [row("launch", "dusklight", MatchKind::ExecutableName)]);
+        assert_eq!(result.candidates[0].why, "program dusklight.sh");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn program_files_are_known_extensions_or_executable_files_without_one() {
+        let dir = temp_dir("program_kinds");
+        for name in ["a.AppImage", "b.x86_64", "c.x86", "d.sh", "e.run", "f.bin", "g.elf", "h.EXE"] {
+            touch(&dir.join(name));
+        }
+        touch(&dir.join("plain"));
+        touch(&dir.join("notes.md"));
+        let mut stems: Vec<String> = programs(&dir).into_iter().map(|p| p.stem).collect();
+        stems.sort();
+        assert_eq!(stems, ["a", "b", "c", "d", "e", "f", "g", "h"], "no extension and not executable is data");
+        #[cfg(unix)]
+        {
+            touch_exe(&dir.join("plain"));
+            touch_exe(&dir.join("rom.z64"));
+            let stems: Vec<String> = programs(&dir).into_iter().map(|p| p.stem).collect();
+            assert!(stems.contains(&"plain".to_string()) && !stems.contains(&"rom".to_string()), "{stems:?}");
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_release_named_program_matches_by_its_words_and_aliases_count_for_programs() {
+        let dir = temp_dir("program_release");
+        let games = dir.join("Games");
+        touch(&games.join("zelda tp").join("Dusklight-v2.0.3-linux-x86_64.AppImage"));
+        touch(&games.join("mm").join("2s2h.appimage"));
+        let result = scan(&[games], &real_catalog(), &dir.join("Ports"));
+        assert_eq!(found_folders(&result), [row("mm", "2ship2harkinian", MatchKind::ExecutableName), row("zelda tp", "dusklight", MatchKind::ExecutableName)]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tims_sd_card_offers_his_four_ports_and_nothing_else() {
+        let dir = temp_dir("tims_sd");
+        let sd = tims_sd_card(&dir);
+        for hints in [Hints::default(), real_hints()] {
+            let result = scan_with_hints(&[sd.clone()], &real_catalog(), &hints, &sd.join("Ports"), false, &|| false);
+            assert_eq!(
+                found_folders(&result),
+                [
+                    row("2Ship-Keiichi-Charlie-Linux", "2ship2harkinian", MatchKind::ReleaseWord),
+                    row("Dusklight-twilight-princess", "dusklight", MatchKind::ReleaseWord),
+                    row("Severed_Chains_Steam_Deck", "Severed-Chains", MatchKind::ReleaseName),
+                    row("SoH-Ackbar-Delta-Linux", "Shipwright", MatchKind::ReleaseWord),
+                ],
+                "with hints: {}",
+                !hints.is_empty()
+            );
+            assert!(result.ambiguous.is_empty(), "{:?}", result.ambiguous);
+            assert!(result.unrecognised.is_empty(), "{:?}", result.unrecognised);
+            assert!(result.collections.is_empty(), "Emulation, steamapps and lost+found are skipped silently: {:?}", result.collections);
+            assert!(result.duplicates.is_empty() && result.already_in_library.is_empty());
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_folder_with_a_program_the_app_does_not_know_can_be_chosen_but_data_folders_stay_silent() {
+        let dir = temp_dir("unrecognised");
+        let sd = tims_sd_card(&dir);
+        touch_exe(&sd.join("Mystery Game").join("bin").join("game.x86_64"));
+        touch_exe(&sd.join("Too Deep").join("a").join("b").join("game.x86_64"));
+        touch(&sd.join("Photos").join("beach.jpg"));
+        let result = scan(&[sd.clone()], &real_catalog(), &sd.join("Ports"));
+        assert_eq!(result.unrecognised, [sd.join("Mystery Game")], "a program at most one folder in");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_folder_that_fits_more_than_three_ports_is_a_collection() {
+        let dir = temp_dir("collection");
+        let games = dir.join("Games");
+        for exe in ["uzdoom.sh", "starship.sh", "dusklight.sh", "spaghettikart.sh"] {
+            touch(&games.join("bundle").join(exe));
+        }
+        for exe in ["uzdoom.sh", "starship.sh", "dusklight.sh"] {
+            touch(&games.join("three").join(exe));
+        }
+        let result = scan(&[games.clone()], &real_catalog(), &dir.join("Ports"));
+        assert_eq!(result.collections, [games.join("bundle")]);
+        assert_eq!(result.ambiguous.len(), 1, "three fits can still be chosen from");
+        assert_eq!(result.ambiguous[0].keys.len(), 3);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_roms_folder_or_a_steam_library_makes_a_collection_unless_the_folder_is_named_like_a_port() {
+        let dir = temp_dir("library_signs");
+        let sd = dir.join("sd");
+        touch_exe(&sd.join("RetroStuff").join("roms").join("x.z64"));
+        touch(&sd.join("RetroStuff").join("retroarch.sh"));
+        touch(&sd.join("Games2").join("steamapps").join("common").join("Game").join("game.exe"));
+        touch(&sd.join("Shipwright").join("roms").join("readme.txt"));
+        for skipped in ["steamapps/common/Game/game.exe", "SteamLibrary/x.sh", "lost+found/x.sh", "Emulation/tools/doom.sh", "compatdata/1/x.exe", "shadercache/1/x.sh"] {
+            touch(&sd.join(skipped));
+        }
+        let result = scan(&[sd.clone()], &real_catalog(), &dir.join("Ports"));
+        let mut collections = result.collections.clone();
+        collections.sort();
+        assert_eq!(collections, [sd.join("Games2"), sd.join("RetroStuff")]);
+        assert_eq!(found_folders(&result), [row("Shipwright", "Shipwright", MatchKind::FolderName)]);
+        assert!(result.unrecognised.is_empty(), "{:?}", result.unrecognised);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn two_entries_for_one_game_make_a_choosable_folder_with_both_keys() {
+        let dir = temp_dir("choosable");
+        let sd = dir.join("sd");
+        touch(&sd.join("The Legend of Zelda Majora's Mask").join("mm.appimage"));
+        let result = scan(&[sd], &real_catalog(), &dir.join("Ports"));
+        assert_eq!(result.ambiguous.len(), 1);
+        let a = &result.ambiguous[0];
+        assert_eq!(a.keys, ["HarbourMasters/2ship2harkinian", "Zelda64Recomp/Zelda64Recomp"]);
+        assert_eq!(a.matches, ["The Legend of Zelda: Majora's Mask (2ship2harkinian)", "The Legend of Zelda: Majora's Mask (Zelda64Recomp)"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_folder_holding_ports_found_deeper_is_not_listed_as_unrecognised() {
+        let dir = temp_dir("unrecognised_parent");
+        let sd = dir.join("sd");
+        touch(&sd.join("Games").join("Dusklight-Linux").join("launch.sh"));
+        let shallow = scan_with(&[sd.clone()], &real_catalog(), &dir.join("Ports"), false, &|| false);
+        assert_eq!(shallow.unrecognised, [sd.join("Games")], "without looking deeper the user may still choose it");
+        let deep = scan_with(&[sd.clone()], &real_catalog(), &dir.join("Ports"), true, &|| false);
+        assert!(deep.unrecognised.is_empty(), "{:?}", deep.unrecognised);
+        assert_eq!(deep.candidates.len(), 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn folders_match_by_catalog_folder_or_name_ignoring_case_and_punctuation() {
         let dir = temp_dir("by_folder");
@@ -503,7 +1177,7 @@ mod tests {
         let dir = temp_dir("by_exe");
         let games = dir.join("Games");
         touch(&games.join("zelda64").join("dusklight.AppImage"));
-        touch(&games.join("misc").join("bin").join("othergame-launcher"));
+        touch_exe(&games.join("misc").join("bin").join("othergame-launcher"));
         touch(&games.join("junk").join("run.sh"));
         let result = scan(&[games], &catalog(), &dir.join("Library"));
         let found: Vec<(&str, &str, MatchKind)> =
@@ -824,4 +1498,89 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+}
+
+#[cfg(test)]
+pub(crate) mod test_fixtures {
+    //! Shared by the matching and import tests.
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    pub fn touch(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"x").unwrap();
+    }
+
+    /// A file with the executable bit (on Linux; elsewhere a plain file).
+    pub fn touch_exe(path: &Path) {
+        touch(path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// Tim's SD card as reported from his Deck (2026-10-23), the card's id replaced by `sd`: four ports in
+    /// folders named after their downloads, the ports folder `Ports`, EmuDeck's `Emulation`, a Steam library
+    /// (`steamapps`, `libraryfolder.vdf`), `lost+found` and the trash. The ROMs carry the executable bit, as
+    /// on his card. Returns the card's top folder.
+    pub fn tims_sd_card(dir: &Path) -> PathBuf {
+        let sd = dir.join("sd");
+        fs::create_dir_all(sd.join("Ports")).unwrap();
+        fs::create_dir_all(sd.join("lost+found")).unwrap();
+        touch(&sd.join("libraryfolder.vdf"));
+        touch(&sd.join("steamapps").join("common").join("Some Game").join("game.exe"));
+        touch(&sd.join("steamapps").join("appmanifest_1.acf"));
+        for name in ["starship.appimage", "dusklight.sh", "uzdoom.sh"] {
+            touch(&sd.join(".Trash-1000").join("files").join(name));
+        }
+        let emu = sd.join("Emulation");
+        for f in ["roms/n64/Zelda64Recomp.z64", "roms/psx/Severed-Chains.bin", "bios/scph1001.bin", "saves/x.sav", "tools/launchers/retroarch.sh", "tools/launchers/uzdoom.sh"] {
+            touch(&emu.join(f));
+        }
+        for i in 0..60 {
+            touch(&emu.join("roms").join(format!("game{i}.zip")));
+        }
+
+        let two = sd.join("2Ship-Keiichi-Charlie-Linux");
+        touch_exe(&two.join("2ship.appimage"));
+        for f in [
+            "2S2HTimeSplitData.json",
+            "2ship2harkinian.json",
+            "7f3e2a10-cover.png",
+            "images.steamusercontent.jpg",
+            "imgui.ini",
+            "legend_of_zelda__majora_s_mask_wallpaper_by_chasecubed_d9k1c5r-fullview.jpg",
+            "logs/2ship.log",
+            "mm.o2r",
+            "mods/.keep",
+            "presets/.keep",
+            "randomizer/.keep",
+            "readme.txt",
+            "saves/file1.sav",
+        ] {
+            touch(&two.join(f));
+        }
+        touch_exe(&two.join("The Legend of Zelda - Majora's Mask.z64"));
+
+        let soh = sd.join("SoH-Ackbar-Delta-Linux");
+        touch_exe(&soh.join("soh.appimage"));
+        for f in ["imgui.ini", "logs/soh.log", "mods/.keep", "oot.o2r", "readme.txt", "Save/file1.sav", "shipofharkinian.json"] {
+            touch(&soh.join(f));
+        }
+        for rom in ["The Legend of Zelda - Majora's Mask.z64", "The Legend of Zelda Ocarina of Time Master Quest.v64", "The Legend of Zelda-Ocarina of Time.z64"] {
+            touch_exe(&soh.join(rom));
+        }
+
+        let dusk = sd.join("Dusklight-twilight-princess");
+        touch_exe(&dusk.join("Dusklight-v2.0.3-linux-x86_64.AppImage"));
+        touch(&dusk.join("config.toml"));
+
+        let sev = sd.join("Severed_Chains_Steam_Deck");
+        touch_exe(&sev.join("launch"));
+        touch(&sev.join("lod-game.jar"));
+        touch(&sev.join("isos").join(".keep"));
+        sd
+    }
 }

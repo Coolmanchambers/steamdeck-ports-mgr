@@ -3,6 +3,7 @@
 //! the real engine does exactly this.
 
 use super::scan::{Found, Size, SteamRef};
+use super::targets::NewEntry;
 use crate::fork::rom_screens::util::human_bytes;
 use crate::fork::screens::short_path;
 use crate::fork::store::SteamProcessCheck;
@@ -42,6 +43,8 @@ pub struct MoveRequest {
     pub to: PathBuf,
     pub size: Size,
     pub steam: Vec<SteamRef>,
+    /// A Deck-ready project the catalog lacks: added to the user's port list just before the import.
+    pub new_entry: Option<NewEntry>,
 }
 
 /// One request per found port, each going to `<ports folder>/<catalog folder>`.
@@ -56,6 +59,7 @@ pub fn build_requests(found: &[&Found], ports_folder: &Path) -> Vec<MoveRequest>
             to: ports_folder.join(&f.catalog_folder),
             size: f.size,
             steam: f.steam.clone(),
+            new_entry: f.new_entry.clone(),
         })
         .collect()
 }
@@ -72,6 +76,8 @@ pub enum Block {
     /// The old folder holds the home folder, the app's folder, the ports folder or a scan folder.
     Protected(PathBuf, &'static str),
     NotEnoughSpace { need: u64, free: u64 },
+    /// Another folder in the same import already goes to this destination (two folders for one port).
+    SameDestination(PathBuf),
 }
 
 impl Block {
@@ -83,6 +89,7 @@ impl Block {
             Block::Nested => "the old folder and the ports folder contain each other".to_string(),
             Block::Link(target) => format!("this is a link to {}; import the real folder instead", short_path(target, home)),
             Block::Protected(path, what) => format!("{} holds {what}, so it is not imported", short_path(path, home)),
+            Block::SameDestination(p) => format!("another folder in this import already goes to {}", short_path(p, home)),
             Block::NotEnoughSpace { need, free } => {
                 format!("not enough free space: needs {} plus {} spare, {} free", human_bytes(*need), human_bytes(SPACE_MARGIN), human_bytes(*free))
             }
@@ -196,12 +203,17 @@ pub fn plan_all(requests: &[MoveRequest], free: Option<u64>, steam_write: SteamW
 
 pub fn plan_all_with(requests: &[MoveRequest], free: Option<u64>, steam_write: SteamWrite, guards: &PlanGuards) -> Vec<PortPlan> {
     let mut left = free;
+    let mut taken: Vec<PathBuf> = Vec::new();
     requests
         .iter()
         .map(|r| {
-            let plan = plan_port_with(r, left, steam_write, guards);
+            let mut plan = plan_port_with(r, left, steam_write, guards);
+            if plan.block.is_none() && taken.contains(&r.to) {
+                plan.block = Some(Block::SameDestination(r.to.clone()));
+            }
             if plan.block.is_none() {
                 left = left.map(|l| l.saturating_sub(r.size.bytes));
+                taken.push(r.to.clone());
             }
             plan
         })
@@ -266,6 +278,7 @@ mod tests {
             home: h.home.clone(),
             deeper: false,
             shortcuts: super::super::scan::read_shortcuts(&h.home, &ForkSettings::load(&h.home.join("s.json"))),
+            ..Default::default()
         };
         let scan = run_scan(&input, &|| false, &|_| {});
         let refs: Vec<&Found> = scan.found.iter().collect();
@@ -357,6 +370,7 @@ mod tests {
             to: h.library.join("SoH"),
             size: Size::default(),
             steam: vec![],
+            new_entry: None,
         };
         let plan = plan_port(&by_hand, None, SteamWrite::Now);
         assert_eq!(plan.block, Some(Block::DestinationExists(h.library.join("SoH"))));
@@ -404,6 +418,7 @@ mod tests {
             to: h.library.join("x"),
             size: Size::default(),
             steam: vec![],
+            new_entry: None,
         };
         let missing = MoveRequest { from: h.home.join("gone"), ..base.clone() };
         assert!(matches!(plan_port(&missing, None, SteamWrite::Now).block, Some(Block::SourceMissing(_))));
@@ -418,6 +433,18 @@ mod tests {
         fs::create_dir_all(h.library.join("inner")).unwrap();
         let inner = MoveRequest { from: h.library.join("inner"), ..base.clone() };
         assert_eq!(plan_port(&inner, None, SteamWrite::Now).block, Some(Block::Nested));
+    }
+
+    #[test]
+    fn two_folders_for_one_port_in_one_import_block_the_second() {
+        let h = fake_home("plan_same_dest");
+        let reqs = requests(&h);
+        let soh = reqs.iter().find(|r| r.port_name == "Ship of Harkinian").unwrap().clone();
+        let other = MoveRequest { from: h.home.join("Games/dusk-old"), ..soh.clone() };
+        let plans = plan_all(&[soh.clone(), other], None, SteamWrite::Now);
+        assert!(plans[0].block.is_none());
+        assert_eq!(plans[1].block, Some(Block::SameDestination(soh.to.clone())));
+        assert!(plans[1].block.as_ref().unwrap().text(&h.home).starts_with("another folder in this import already goes to ~/DeckPorts/Library/SoH"));
     }
 
     #[test]

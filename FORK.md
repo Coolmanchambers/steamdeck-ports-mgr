@@ -148,7 +148,7 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/settings.rs` | `fork-settings.json` (next to `state.json`): chosen Steam account, extra adopt scan folders, backups to keep, the self-update offer (`get`/`set`). Other keys survive a save |
 | 2026-10-21 | `src/fork/save_notes.rs` | Text for ports with no known Linux save folder (Info line, Save Backup summary) |
 | 2026-10-21 | `src/fork/self_update.rs` | Self-update by commit: reads `BUILD_INFO` and the release notes' source commit, decides, and keeps what raised the flag |
-| 2026-10-21 | `src/fork/adopt.rs` | Finds ports installed outside `Library/` and links them in (see "Linking an install in place"); 2026-10-22: scan folders with switchable defaults (`scan_roots_with`), optional one-level-deeper look (`scan_with`, cancel flag), helpers shared with `fork::import` |
+| 2026-10-21 | `src/fork/adopt.rs` | Finds ports installed outside `Library/` and links them in (see "Linking an install in place"); 2026-10-22: scan folders with switchable defaults (`scan_roots_with`), optional one-level-deeper look (`scan_with`, cancel flag), helpers shared with `fork::import`; 2026-10-23: release-name and Deck-ready download matching (`scan_with_hints`, `Hints`), programs by extension only, skip list, collections, folders to choose, `why` per find (see "Importing ports") |
 | 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
 | 2026-10-21 | `src/fork/screens.rs` | View model for the Add to Steam screen: labels, toggling, review text, apply. All the decisions, tested without UI (2026-10-22: the adopt screen model moved to `fork::import`) |
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" list dialogs (thin: draws `screens.rs` text); the adopt screen left it for `import_screen.rs` on 2026-10-22 |
@@ -256,9 +256,39 @@ steam links"). It is also step c of the setup wizard, which opens it through
   one more level into folders that matched nothing (hidden folders skipped, 400 folders at most). Saved in
   `fork-settings.json`: `adopt_folders` (the old key, now written by the picker), `import_defaults_off`,
   `import_look_deeper`.
-- **Finds** (`scan.rs`, on a worker thread with a Cancel row): the matcher of `adopt.rs` (folder name
-  first, then a program name; never the library or a folder that holds it), plus a confidence (exact
-  match = folder named like the catalog folder; likely; check this = program name only, starts unticked),
+- **Matching** (`adopt.rs`, 2026-10-23 after Tim's SD card showed only dead "fits N ports" rows): in order
+  (1) folder name = a port's folder, name, name without its note, or project (last part of the GitHub/GitLab
+  source); (2) release name: the folder's words (split on `-`, `_`, space, `.`; platform words like `linux`,
+  `x86_64`, `appimage`, `steam` before `deck`, and versions dropped) are a Deck-ready download's words, or
+  the first k words joined (longest first) are a port name (`Severed_Chains_Steam_Deck`, `Dusklight-Linux`)
+  = `ReleaseName`; (3) first word only (`ReleaseWord`, ticked only when a program is inside): a port name of
+  4+ letters (`Dusklight-twilight-princess`), a built-in alias (`soh`, `2ship`, `2s2h`: the list cannot cover
+  program names or a never-fetched list), or the start of a Deck-ready download (`SoH-Dewey-Bravo.appimage`;
+  one shared word counts only when no other project's downloads start with it); (4) a program inside, two
+  levels deep: only files with a program extension (`.AppImage`, `.x86_64`, `.x86`, `.sh`, `.run`, `.bin`,
+  `.elf`, `.exe`) or no extension and executable. ROMs, `.o2r`, JSON, images and saves never count, even
+  with the executable bit (Tim's ROMs have it). Folders never looked at: hidden ones, `steamapps`,
+  `SteamLibrary`, `lost+found`, `Emulation`, `compatdata`, `shadercache`. A folder that fits more than 3
+  ports, or holds `roms`, `bios` or `steamapps` or a `libraryfolder.vdf` (unless named like a port), is a
+  collection: one info row. Each find carries `why` in plain words ("folder name", "folder named like its
+  download", "program soh.appimage", "you chose") for the card UI planned next.
+- **Deck-ready list** (`targets.rs`): the saved list (or one fetch when it was never saved) adds download
+  names as hints, and projects the catalog lacks (Severed Chains: upstream's catalog disables it) as extra
+  entries built with `deck_ready::entry::local_entry`, the Deck-ready screen's "Add and install" entry
+  (Deck build: `preferred_asset` = the Deck marker of the main release's file). Such a find says "not in the
+  catalog yet; importing adds it to your port list first"; Import writes the entry (`add_to_local_file`,
+  `ports.local.json` backed up) just before the move, then moves the folder in like any other.
+- **Choosing** (`screen.rs` `ChooserScreen`, `PortListScreen`; `scan.rs` `Choices`): a folder that fits 2 or 3
+  ports is a row "Choose which port this is: <folder> (could be A or B)...", and a top-level folder that
+  fits nothing but holds a program (in it or one folder in) is "Not recognised: <folder>. Choose the
+  port...". The chooser lists the matches, "Another port..." (every port, those sharing a word with the
+  folder first) and "Not a port (leave it)". A chosen folder is measured on the worker and becomes a ticked
+  find ("you chose") that goes through the same plan and checks as any other; choices last while the screen
+  is open (a new scan keeps them). Two folders for one port in one import: the second is refused
+  (`Block::SameDestination`).
+- **Finds** (`scan.rs`, on a worker thread with a Cancel row): the matcher of `adopt.rs` (never the library
+  or a folder that holds it), plus a confidence (exact match = folder named like the catalog folder;
+  likely; check this = program name only or a first-word match without a program, starts unticked; you chose),
   the folder's size (links not followed, capped at 400,000 entries, "at least" when cut) and the Steam
   shortcuts of the active account whose program or start folder lies inside it (the shortcuts file is only
   read; a missing or broken one is a note).
