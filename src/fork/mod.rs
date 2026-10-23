@@ -17,6 +17,7 @@ pub mod artwork;
 pub mod backups;
 pub mod deck_ready;
 pub mod folder_picker;
+pub mod import;
 pub mod rom_library;
 pub mod rom_screens;
 pub mod port_mover;

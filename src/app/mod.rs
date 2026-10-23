@@ -6,6 +6,7 @@ pub mod dialogs;
 pub mod events;
 pub mod folder_picker_screen;
 pub mod gamepad_target;
+pub mod import_screen;
 pub mod install_launch;
 pub mod cheats;
 pub mod playtime;

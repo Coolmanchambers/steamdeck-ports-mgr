@@ -1,6 +1,6 @@
-//! The "Add to Steam" and "Adopt installed ports" screens (Settings menu).
+//! The "Add to Steam" screen (Settings menu); "Import ports" is in `import_screen.rs`.
 //!
-//! Both are lists built from the picker dialog upstream already has, so they work with the
+//! It is a list built from the picker dialog upstream already has, so it works with the
 //! controller, keyboard and mouse like every other dialog: choosing a row toggles it, and the last
 //! rows review and apply. The decisions are made in `crate::fork::screens` (tested without any UI);
 //! this file only draws their text. The text is English only; it is not part of upstream's
@@ -12,8 +12,7 @@
 
 use super::dialogs::{build_picker_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, set_picker_items, DialogSlot};
 use super::state::AppState;
-use crate::core::launch::open_file;
-use crate::fork::screens::{self, AdoptLine, AdoptScreen, SteamLine, SteamScreen};
+use crate::fork::screens::{self, SteamLine, SteamScreen};
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::fork::steam_queue::{self, ApplyInputs, ManageLine, WatchAction};
 use crate::fork::steam_user::SteamAccount;
@@ -28,7 +27,6 @@ use std::time::{Duration, SystemTime};
 type Router = Rc<RefCell<GamepadRouter>>;
 
 const STEAM_TITLE: &str = "Add to Steam";
-const ADOPT_TITLE: &str = "Adopt installed ports";
 const QUEUE_TITLE: &str = "Queued Steam changes";
 
 fn home_dir() -> Option<PathBuf> {
@@ -365,79 +363,4 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
         prefetch_art(app);
         open_apply_offer(app, router, &loaded.queue, true);
     }
-}
-
-// -- Adopt installed ports ------------------------------------------------------------------
-
-pub(crate) fn open_adopt_screen(app: &Rc<AppState>, router: &Router) {
-    if dialog_is_open(app) {
-        return;
-    }
-    // Fork (ports folder): adopting creates links in the ports folder, never while it is missing or moving.
-    if super::ports_folder_screen::refuse_when_blocked(app) {
-        return;
-    }
-    let Some(home) = home_dir() else { return no_home(app, router, ADOPT_TITLE) };
-    let settings = ForkSettings::load(&settings_path(app));
-    let screen = AdoptScreen::load(&home, &app.paths.library_dir(), &app.catalog.borrow(), &settings);
-    show_adopt_screen(app, router, Rc::new(RefCell::new(screen)));
-}
-
-fn show_adopt_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<AdoptScreen>>) {
-    let labels = screen.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, ADOPT_TITLE, &labels) else { return };
-    {
-        let (app, router, weak) = (app.clone(), router.clone(), dialog.as_weak());
-        dialog.on_item_selected(move |index| {
-            let line = screen.borrow().lines().get(index as usize).copied();
-            match line {
-                Some(AdoptLine::Candidate(i)) => screen.borrow_mut().toggle(i),
-                Some(AdoptLine::Info(_)) | None => {}
-                Some(AdoptLine::Adopt) => {
-                    if screen.borrow().selected_count() > 0 {
-                        confirm_adopt(&app, &router, screen.clone());
-                        return;
-                    }
-                }
-                Some(AdoptLine::EditFolders) => {
-                    let mut settings = ForkSettings::load(&settings_path(&app));
-                    super::dialogs::close_current_dialog(&app, &router);
-                    match settings.ensure_file() {
-                        Ok(()) => open_file(settings.path()),
-                        Err(e) => open_message_dialog(&app, &router, ADOPT_TITLE, &format!("Could not create {FILE_NAME}: {e}")),
-                    }
-                    return;
-                }
-            }
-            if let Some(d) = weak.upgrade() {
-                set_picker_items(&d, &screen.borrow().labels());
-            }
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
-}
-
-fn confirm_adopt(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<AdoptScreen>>) {
-    let text = padded(&screen.borrow().confirm_text());
-    open_confirm_dialog(app, router, ADOPT_TITLE.into(), text.into(), "Adopt".into(), move |app, router| {
-        if super::ports_folder_screen::refuse_when_blocked(app) {
-            return;
-        }
-        let local_json = app.paths.config_dir.join("ports.local.json");
-        let catalog = app.catalog.borrow().clone();
-        let done = screens::adopt_selected(&screen.borrow(), &catalog, &app.paths.library_dir(), &local_json);
-        let adopted_keys: Vec<String> = done.adopted.iter().map(|p| p.key().to_string()).collect();
-        for port in done.adopted {
-            app.state.borrow_mut().mark_installed(port.key(), None);
-            let mut catalog = app.catalog.borrow_mut();
-            let old = std::mem::take(&mut *catalog);
-            *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
-        }
-        app.refresh_current_view();
-        // Fork (ROM search): adopted ports that need game files get looked for; the result text leads that list.
-        if !super::rom_screens::after_ports_added(app, router, &adopted_keys, &done.text) {
-            open_message_dialog(app, router, ADOPT_TITLE, &padded(&done.text));
-        }
-    });
 }

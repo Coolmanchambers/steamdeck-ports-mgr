@@ -25,7 +25,9 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 /// Folders under the home folder that people commonly keep ports in.
-const WELL_KNOWN: [&str; 3] = ["Applications", "Games", "Ports"];
+pub const WELL_KNOWN: [&str; 3] = ["Applications", "Games", "Ports"];
+/// "Look deeper" visits at most this many second-level folders per scan, so a big drive stays quick.
+pub const MAX_DEEP_FOLDERS: usize = 400;
 /// A program name this short ("run", "game") says nothing about which port it is.
 const MIN_EXE_NAME_LEN: usize = 4;
 const MAX_EXE_SCAN_DEPTH: usize = 2;
@@ -68,10 +70,12 @@ pub struct ScanResult {
     /// A second folder that fits a port another folder was already offered for: port name and folder.
     pub duplicates: Vec<(String, PathBuf)>,
     pub roots_scanned: Vec<PathBuf>,
+    /// "Look deeper" stopped at `MAX_DEEP_FOLDERS` sub-folders.
+    pub deep_limit_hit: bool,
 }
 
 /// Lowercase letters and digits only, so `Ship-of_Harkinian`, `ship of harkinian` and `shipofharkinian` agree.
-fn norm(s: &str) -> String {
+pub(crate) fn norm(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
@@ -87,10 +91,19 @@ pub fn expand_home(path: &str, home: &Path) -> PathBuf {
 /// The folders to scan: the well-known ones, then the user's own, existing ones only, each once.
 /// The library itself is never scanned.
 pub fn scan_roots(home: &Path, user_folders: &[String], library_dir: &Path) -> Vec<PathBuf> {
+    scan_roots_with(home, &[], user_folders, library_dir)
+}
+
+/// Like `scan_roots`, with some of the well-known folders (by name, like `Games`) switched off.
+pub fn scan_roots_with(home: &Path, defaults_off: &[String], user_folders: &[String], library_dir: &Path) -> Vec<PathBuf> {
     let library = fs::canonicalize(library_dir).unwrap_or_else(|_| library_dir.to_path_buf());
     let mut seen: Vec<PathBuf> = Vec::new();
     let mut roots = Vec::new();
-    let wanted = WELL_KNOWN.iter().map(|n| home.join(n)).chain(user_folders.iter().map(|f| expand_home(f, home)));
+    let wanted = WELL_KNOWN
+        .iter()
+        .filter(|n| !defaults_off.iter().any(|off| off == *n))
+        .map(|n| home.join(n))
+        .chain(user_folders.iter().map(|f| expand_home(f, home)));
     for root in wanted {
         let Ok(real) = fs::canonicalize(&root) else { continue };
         if !real.is_dir() || real == library || real.starts_with(&library) || seen.contains(&real) {
@@ -103,7 +116,7 @@ pub fn scan_roots(home: &Path, user_folders: &[String], library_dir: &Path) -> V
 }
 
 /// Names a catalog entry answers to: its folder, its name and its name without a trailing "(note)".
-fn port_names(port: &Port) -> Vec<String> {
+pub(crate) fn port_names(port: &Port) -> Vec<String> {
     let mut names = vec![norm(&port.folder), norm(&port.name), norm(port.display_name())];
     names.retain(|n| !n.is_empty());
     names.dedup();
@@ -111,7 +124,7 @@ fn port_names(port: &Port) -> Vec<String> {
 }
 
 /// The program file name a catalog entry names for this platform, without extension, normalised.
-fn declared_exe_stem(port: &Port) -> Option<String> {
+pub(crate) fn declared_exe_stem(port: &Port) -> Option<String> {
     let exe = port.executable.as_ref().filter(|v| is_truthy(v))?;
     let value = resolve_per_platform(exe)?;
     let name = Path::new(value.as_str()?).file_stem()?.to_str()?.to_string();
@@ -119,7 +132,7 @@ fn declared_exe_stem(port: &Port) -> Option<String> {
 }
 
 /// Normalised file stems of regular files in a folder, two levels deep, capped.
-fn program_stems(dir: &Path) -> Vec<String> {
+pub(crate) fn program_stems(dir: &Path) -> Vec<String> {
     fn walk(dir: &Path, depth: usize, budget: &mut usize, out: &mut Vec<String>) {
         let Ok(entries) = fs::read_dir(dir) else { return };
         for entry in entries.flatten() {
@@ -175,14 +188,33 @@ fn match_dir(dir: &Path, dir_name: &str, catalog: &[Port]) -> (MatchKind, Vec<us
 
 /// Looks one level into each root. Reads only; nothing is created or changed.
 pub fn scan(roots: &[PathBuf], catalog: &[Port], library_dir: &Path) -> ScanResult {
+    scan_with(roots, catalog, library_dir, false, &|| false)
+}
+
+/// Sorted sub-folders of `dir` (links to folders count).
+fn child_dirs(dir: &Path) -> Option<Vec<PathBuf>> {
+    let entries = fs::read_dir(dir).ok()?;
+    let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    Some(dirs)
+}
+
+/// `scan`, optionally one level deeper: a folder that matched nothing has its own sub-folders looked at
+/// too (hidden ones skipped, at most `MAX_DEEP_FOLDERS` per scan; `deep_limit_hit` says when that cut it
+/// short). `cancelled` is polled between folders; a cancelled scan returns what it found so far.
+pub fn scan_with(roots: &[PathBuf], catalog: &[Port], library_dir: &Path, deeper: bool, cancelled: &dyn Fn() -> bool) -> ScanResult {
     let mut result = ScanResult::default();
     let library = fs::canonicalize(library_dir).unwrap_or_else(|_| library_dir.to_path_buf());
+    let mut deep_budget = MAX_DEEP_FOLDERS;
     for root in roots {
-        let Ok(entries) = fs::read_dir(root) else { continue };
+        let Some(top) = child_dirs(root) else { continue };
         result.roots_scanned.push(root.clone());
-        let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-        dirs.sort();
-        for dir in dirs {
+        // (folder, may we look inside it when it matches nothing)
+        let mut queue: std::collections::VecDeque<(PathBuf, bool)> = top.into_iter().map(|d| (d, deeper)).collect();
+        while let Some((dir, may_descend)) = queue.pop_front() {
+            if cancelled() {
+                return result;
+            }
             let Some(dir_name) = dir.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
             // Never the library itself, anything in it, or a folder that contains it (the app's own
             // folder, usually): its `Library/<port>` folders would all look like installs to adopt.
@@ -191,7 +223,22 @@ pub fn scan(roots: &[PathBuf], catalog: &[Port], library_dir: &Path) -> ScanResu
             }
             let (how, hits) = match_dir(&dir, &dir_name, catalog);
             match hits.as_slice() {
-                [] => {}
+                [] => {
+                    if may_descend {
+                        for child in child_dirs(&dir).unwrap_or_default() {
+                            let hidden = child.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
+                            if hidden {
+                                continue;
+                            }
+                            if deep_budget == 0 {
+                                result.deep_limit_hit = true;
+                                break;
+                            }
+                            deep_budget -= 1;
+                            queue.push_back((child, false));
+                        }
+                    }
+                }
                 [one] => {
                     let port = &catalog[*one];
                     if crate::core::installer::is_installed(port, library_dir) {

@@ -34,8 +34,11 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `src/app/events.rs` | After an install finishes, a favorite executable that was an AppImage follows the new file (8 lines); a failed install no longer leaves the Play-launch pending and launches the installed game (6 lines) |
 | 2026-10-21 | `src/app/dialogs.rs` | `finish_dialog_open`, `open_confirm_dialog`, `set_picker_items` and `build_picker_dialog` made `pub(crate)` for the new screens; two Settings entries ("Add to Steam...", "Adopt installed ports...") added to the list and its menu match (English text, not in the translation tables) |
 | 2026-10-21 | `src/app/mod.rs` | One line registering `steam_screens` |
+| 2026-10-22 | `src/app/dialogs.rs`, `src/app/mod.rs` | Import ports: the Settings entry "Adopt installed ports..." renamed "Import ports..." (`SettingsEntry::ImportPorts`, opens `import_screen::open`); one module line |
+| 2026-10-22 | `tools/smoke-test.sh` | Opens Settings > Import ports... and closes it again |
 | 2026-10-21 | `src/core/installer.rs` | `refuse_adopted`: `install_port` and `install_extra` stop with a message when `Library/<folder>` is a symlink (an adopted port), whatever the catalog says, so a bad edit of `ports.local.json` cannot make the installer write into the user's own folder; 1 test |
 | 2026-10-21 | `README.md` | Item 4 (adopt) set to "Testing", item 5 (Steam shortcuts) to "In progress" |
+| 2026-10-22 | `README.md` | Item 4 reads "Import ports already on the Deck into your ports folder" (still Testing) |
 | 2026-10-21 | `ui/app-window.slint` | The Deck-ready list: imports `ui/fork/deck-ready.slint`, `deck-ready-*` properties and callbacks, the list shown instead of the port list or card grid while `deck-ready-mode` is on, a "Deck-ready" / "All ports" footer button, the title and search placeholder for that list, an "L1 / R1  Deck-ready list" hint in the fullscreen title, Tab switches lists and Escape leaves it |
 | 2026-10-21 | `src/app/state.rs` | `deck_ready` field; `refresh_current_view`, `move_selection` and `current_selected_port` hand over to the Deck-ready list while it is shown (3 guards) |
 | 2026-10-21 | `src/app/install_launch.rs` | `activate_port` made `pub(crate)`; `activate_selection` and `show_info_for_current_selection` hand over to the Deck-ready list while it is shown |
@@ -139,11 +142,13 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/settings.rs` | `fork-settings.json` (next to `state.json`): chosen Steam account, extra adopt scan folders, backups to keep, the self-update offer (`get`/`set`). Other keys survive a save |
 | 2026-10-21 | `src/fork/save_notes.rs` | Text for ports with no known Linux save folder (Info line, Save Backup summary) |
 | 2026-10-21 | `src/fork/self_update.rs` | Self-update by commit: reads `BUILD_INFO` and the release notes' source commit, decides, and keeps what raised the flag |
-| 2026-10-21 | `src/fork/adopt.rs` | Finds ports installed outside `Library/` and registers them (see "Adopting installed ports") |
+| 2026-10-21 | `src/fork/adopt.rs` | Finds ports installed outside `Library/` and links them in (see "Linking an install in place"); 2026-10-22: scan folders with switchable defaults (`scan_roots_with`), optional one-level-deeper look (`scan_with`, cancel flag), helpers shared with `fork::import` |
 | 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
-| 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
-| 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
-| 2026-10-22 | `src/fork/steam_queue.rs` | Steam changes queued from Game Mode: `steam-queue.json` (versioned, atomic), applying it through the screen's safe write, the startup/30-second offer decision, the mode wording; since 2026-10-22 also `repoint` entries for moved ports (applied first); tested without UI |
+| 2026-10-21 | `src/fork/screens.rs` | View model for the Add to Steam screen: labels, toggling, review text, apply. All the decisions, tested without UI (2026-10-22: the adopt screen model moved to `fork::import`) |
+| 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" list dialogs (thin: draws `screens.rs` text); the adopt screen left it for `import_screen.rs` on 2026-10-22 |
+| 2026-10-22 | `src/fork/import/` | Import ports: scan folders, finds with confidence, size and Steam shortcuts, per-port plan, the move adapter with a dry-run stub engine, the summary, the link fallback, the list models, the folder picker adapter; tested without UI (see "Importing ports") |
+| 2026-10-22 | `src/app/import_screen.rs` | The Import ports lists, the worker-thread job with a Cancel row, and the entry point the setup wizard calls |
+| 2026-10-22 | `src/fork/steam_queue.rs` | Steam changes queued from Game Mode: `steam-queue.json` (versioned, atomic), applying it through the screen's safe write, the startup/30-second offer decision, the mode wording; tested without UI |
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
 | 2026-10-22 | `src/fork/rom_screens/` | The logic of the game-files screens (R2): folder browser, background job runner, scan and report, results by system, Connect step, connected ports, the after-install search decision (`offer.rs`); tested without UI |
 | 2026-10-22 | `src/app/rom_screens.rs` | The screens themselves: list dialogs, a timer that polls the worker thread |
@@ -165,7 +170,7 @@ Files added by this fork:
 | 2026-10-22 | `src/app/ports_folder_screen.rs` | Settings > Ports folder, the "not available" message at startup, the move with progress and Cancel, and the "Remove the old copy now?" prompts |
 | 2026-10-22 | `src/fork/ports_folder_view.rs` | The lists of the ports folder screens (labels, row actions, preselected row), tested without UI |
 
-## Add to Steam and adopting (Settings menu)
+## Add to Steam (Settings menu)
 
 - **Add to Steam** writes one shortcut per selected installed port to the chosen account's
   `shortcuts.vdf`, from Desktop Mode with Steam closed. It goes through the library's safe save
@@ -221,8 +226,50 @@ Files added by this fork:
   Windows (no `/proc` check: it refuses).
 - **Screen text is English only**, built from the upstream picker dialog.
 
-## Adopting installed ports
+## Importing ports (`src/fork/import/`, `src/app/import_screen.rs`)
 
+Settings > Import ports... replaces "Adopt installed ports" (2026-10-22: Tim, "it should just open to a
+file select menu ... it needs to move them into the folder that was created during setup and update the
+steam links"). It is also step c of the setup wizard, which opens it through
+`import_screen::open(app, router, from_wizard)` (or `open_with(.., finish)` to be told when to go on).
+
+- **Scan folders** (`folders.rs`): `~/Applications`, `~/Games`, `~/Ports` (each switchable) plus folders the
+  user adds with the folder picker (`picker.rs`; no JSON is shown or opened), one level deep, optionally
+  one more level into folders that matched nothing (hidden folders skipped, 400 folders at most). Saved in
+  `fork-settings.json`: `adopt_folders` (the old key, now written by the picker), `import_defaults_off`,
+  `import_look_deeper`.
+- **Finds** (`scan.rs`, on a worker thread with a Cancel row): the matcher of `adopt.rs` (folder name
+  first, then a program name; never the library or a folder that holds it), plus a confidence (exact
+  match = folder named like the catalog folder; likely; check this = program name only, starts unticked),
+  the folder's size (links not followed, capped at 400,000 entries, "at least" when cut) and the Steam
+  shortcuts of the active account whose program or start folder lies inside it (the shortcuts file is only
+  read; a missing or broken one is a note).
+- **Plan** (`plan.rs`): for each port, in words: check the game files, copy, verify, switch over, repoint
+  the Steam shortcut (app ID kept, program and start folder re-rooted under the new folder) or queue it
+  (Steam running, always in Game Mode, or not provably closed), keep the old folder. Refused before
+  anything happens when the destination exists, the source is gone, the folder name is not one plain name,
+  the two folders contain each other, or free space is under the port's size plus 1 GB (a batch counts the
+  space earlier ports use).
+- **Adapter** (`engine.rs`): `move_selected(engine, plans, cancelled, publish, prompts)` runs the plans
+  one at a time, publishes a status line per port, checks the cancel flag only between ports and returns an
+  `ImportSummary` (moved, old copies kept with sizes, Steam repointed/queued/failed, problems). `MoveEngine`
+  is what actually moves a port; `Prompter` is how it asks (game file problem, remove the old copy).
+  **STUB:** until the move engine of the ports-folder work is on `main`, `engine_for_import()` returns
+  `DryRunEngine`, which reports the plan and writes nothing; `ports_folder()` in `import/mod.rs` returns
+  the library folder until the ports-folder setting exists; `picker.rs` adapts the game-files browser until
+  the shared folder picker exists. Each is one place to change.
+- **Fallback** (`fallback.rs`): a port refused for lack of space can be linked where it stands instead
+  (`Library/<folder>` symlink plus a sourceless `ports.local.json` entry, backed up first; `adopt.rs` does
+  the work and its rules stand: nothing in the install is touched, no updates through the link). It is
+  offered only after the summary shows why, and asks first.
+- Nothing is ever deleted by Import. The old folder stays after a verified move.
+- Not done / not verified: the real engine (above); `Prompter` through the UI thread; the after-import game
+  file search of the ROM work (`after_ports_added`); Steam shortcuts matched by name only (the plan only
+  repoints shortcuts that already point inside the old folder); a Deck (SD card paths, exFAT, Game Mode).
+
+## Linking an install in place (`src/fork/adopt.rs`)
+
+The old "Adopt" code, kept for matching and for the link fallback of Import ports.
 Registering an install found outside `Library/` changes two things of ours and nothing in the install:
 `Library/<catalog folder>` becomes a symlink to it (the app finds, launches and opens every port as
 `Library/<folder>`), and a `user_managed` entry is added to `ports.local.json` (existing file backed

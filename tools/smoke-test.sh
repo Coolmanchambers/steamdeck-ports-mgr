@@ -6,6 +6,7 @@
 #   - its window is mapped and the screenshot is not blank;
 #   - Tab opens the Deck-ready list without a crash (whether it downloads is only reported), Tab returns;
 #   - Settings > Artwork sources... opens and its Back row returns to Settings;
+#   - Settings > Import ports... opens and closes without a crash;
 #   - Settings > Game files... opens without a crash;
 #   - Settings > Ports folder... opens, its "Choose another folder..." opens the folder picker, and
 #     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
@@ -85,6 +86,21 @@ if [ "$alive" = yes ]; then
         # focus without a window manager, so this clicks, relative to the main window.
         eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
         if [ -n "${X:-}" ] && [ -n "${Y:-}" ]; then
+            # Settings > Import ports... opens (its scan runs on a worker thread), shows the screen and closes again.
+            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
+            xdotool mousemove $((X + 71)) $((Y + 267)) click 1; sleep 4
+            import -window root "$OUT/import-ports.png" 2>/dev/null
+            imp=$(xdotool search --name "^Import ports$" 2>/dev/null | head -1)
+            imp_alive=no; kill -0 "$APP" 2>/dev/null && imp_alive=yes
+            check "Import ports screen opens and the app keeps running" '[ "$imp_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$imp" ]'
+            if [ -n "$imp" ]; then
+                xdotool windowfocus "$imp" 2>/dev/null; sleep 0.3; xdotool key Escape
+                for _wait in $(seq 1 15); do [ -z "$(xdotool search --name "^Import ports$" 2>/dev/null)" ] && break; sleep 0.2; done
+                xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
+                eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
+                # The gear only reacts to a click once the pointer has been seen over it (no window manager here).
+                xdotool mousemove $((X + 250)) $((Y + 150)); sleep 0.3; xdotool mousemove $((X + 312)) $((Y + 16)); sleep 0.5
+            fi
             # Settings > Artwork sources... opens and shows its rows, and its Back row returns to Settings.
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
             xdotool mousemove $((X + 71)) $((Y + 395)) click 1; sleep 2
