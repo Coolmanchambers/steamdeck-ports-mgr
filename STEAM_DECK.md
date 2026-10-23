@@ -216,47 +216,67 @@ and `steam queue: offering N` whenever it asks.
 
 By default ports go into `Library/` next to the app (`~/Applications/steamdeck-ports-mgr/Library`).
 To put them on the SD card or anywhere else: Settings > **Ports folder...**. The first rows show the
-folder in use, its free space and file system. Then:
+folder in use, its free space and file system. (In Desktop Mode there is also **Open the ports folder
+(Desktop Mode)**.) Then:
 
 1. **Choose another folder...** opens the folder picker: your SD card and USB drives (by label, with
    free space), Home, `~/Games` and `~/Applications` at the top; below, the folders inside the current
    one. D-pad up and down, A to open or pick, B to cancel; mouse and touch work too. **New folder
-   here...** asks for a name (the on-screen keyboard: Steam + X). For the SD card, pick the card, then
-   New folder here... `Ports`, then **Use this folder**.
-2. The app checks the folder. It refuses system folders, the home folder itself, the top of a drive, the
-   app's own folder and drives formatted as exFAT, FAT or NTFS: ports need a Linux file system (ext4) for
-   program permissions and links. An SD card formatted by SteamOS (Settings > Storage, Format) is ext4.
-   A card formatted on a PC or bought pre-formatted is usually exFAT: the app says so and nothing changes.
-   A folder that does not exist yet is created after you confirm.
+   here...** asks for a name (the on-screen keyboard: Steam + X) and creates the folder at once (it stays
+   even if you cancel afterwards). For the SD card, pick the card, then New folder here... `Ports`, then
+   **Use this folder**. The header says: "Ports need the internal drive or a card formatted by SteamOS.
+   exFAT cards can't store Linux programs."
+2. The app checks the folder. It refuses system folders, the home folder itself, the top of a drive and
+   the app's own folder. A drive formatted as exFAT, FAT or NTFS is marked "can't hold ports" in the
+   picker and refused with: "This drive is formatted as exFAT, which can't store Linux programs (it drops
+   the 'may run' permission and links). Ports need a card formatted by SteamOS: Steam > Settings > Storage >
+   Format. Formatting ERASES everything on the card, so copy your game files off it first." A card bought
+   pre-formatted or formatted on a PC is usually exFAT. A folder that can't keep program permissions for
+   another reason gets: "This folder can't keep program permissions, so ports could not start here. Pick a
+   folder on the internal drive or on a card formatted by SteamOS." A folder typed or chosen that does not
+   exist yet is created only after you confirm. Cancel goes back to the Ports folder list.
 3. **Switch the ports folder?** lists the new folder and offers:
    - **Move N ports here, then switch**: each installed port is copied, checked file by file and only
      then used from the new place. The old copies are kept (see below). Progress shows on screen;
-     Cancel stops between files, removes the copies made so far and changes nothing.
+     Cancel stops after the current file, removes the copies made so far and changes nothing. If the card
+     is pulled out during the move, it stops with one message and nothing changes.
    - **Switch without moving**: the ports in the old folder stay there and show as not installed here.
      Useful when the new folder already holds your ports (another card).
+   - If the new folder holds an **old copy you kept** after an earlier move (moving back), the screen says
+     so ("the copy at ... is newer and is the one in use") and only offers **Replace the old copy with the
+     current one, then move** (its saves are zipped to `Saves Backup/Update Backups/` first) or Cancel.
+     The old copy is never used in place of the current one.
+   Moving and switching wait while a game runs from a port that would move.
 4. Before copying, the app checks each port's game files: the ROM links and copies made in Game files,
    and links inside the port folder that point at game files. If something is missing it lists which
-   file and where it was expected, with **Fix in Game files**, **Move anyway** or **Cancel**. A file the
-   catalog lists under "Required files" that is neither connected nor in the folder does not stop the
-   move (many are only needed once, when installing); the final message mentions it for information.
-   After copying it checks again at the new place; if a game file did not come through intact, that port
-   is not moved (its copy is removed, the original is untouched) and you choose to switch without it, fix
-   it or cancel. A ROM link with a relative path that would break on the other drive is rewritten to a
-   full path in the copy.
+   file and where it was expected, with **Fix in Game files (then start the move again)**, **Move
+   anyway** or **Cancel**. For a ROM that Game files copied into the port folder only that copy counts;
+   its original may be gone. A file the catalog lists under "Required files" that is neither connected nor
+   in the folder does not stop the move (many are only needed once, when installing); the final message
+   mentions it for information. After copying it checks again at the new place; if a game file did not
+   come through intact, that port is not moved (its copy is removed, the original is untouched) and you
+   choose to switch without it, fix it or cancel. Links that would break at the new place are adjusted in
+   the copy (a relative link to a ROM folder gets a full path, a full path into the port folder becomes
+   relative).
 5. Steam shortcuts follow: each shortcut that pointed into the old folder now points at the same file in
    the new one, with its app ID kept, so artwork and play time stay. With Steam closed (Desktop Mode, Steam
    menu > Exit) this happens at once, after a backup of `shortcuts.vdf`. With Steam running (always in
    Game Mode) the change is queued and the app asks to apply it next time Steam is closed in Desktop Mode.
-6. **Remove the old copy now?** The app asks right away, per port, showing the old path and its size:
-   **Remove old copy** (its saves are zipped to `Saves Backup/Update Backups/` first) or **Keep for now**.
-   It asks each time; nothing is ever removed without that choice. Kept copies are listed later under
-   Settings > Ports folder > **Old copies kept after moves**. Removal waits while a Steam shortcut still
-   points into the old copy (a queued change not applied yet) or a game runs from it.
+   Until then, starting the port from Steam still runs the OLD copy, and anything you save there stays in
+   the old copy; the final message says so. Launch options are not changed.
+6. **Remove the old copy now?** The app asks right away, per port, showing the old path and its size.
+   **Keep for now** is selected when it opens; **Remove old copy** zips its saves to `Saves
+   Backup/Update Backups/` first. It asks each time; nothing is ever removed without that choice. Kept
+   copies are listed later under Settings > Ports folder > **Old copies kept after moves**. Removal waits
+   while a Steam shortcut still points into the old copy (including a queued change not applied yet, or a
+   launch option naming it), while a game runs from it, or when the old copy has newer saves than the new
+   one ("Restore them to the new copy first (Info > Restore saves) or keep the old copy"). A port that left
+   the catalog keeps its old copy (its saves can't be found).
 
 If the ports folder is on the SD card and the card is out when the app starts, it says "Your ports folder
-... is not available. Is the SD card in?" with Try again, Choose another folder, Continue without it and
-Quit. Nothing is created where the card would be, and no port is forgotten: put the card back and choose
-Try again. Until then installs and updates wait.
+... is not available. Is the SD card in?" with **Try again (the card is in now)**, Choose another folder,
+Continue without it and Quit. Nothing is created where the card would be, and no port is forgotten: put the
+card back and choose Try again. Until then installs, updates, adopting and save restores wait.
 
 ## Adopt ports you installed elsewhere (Desktop Mode)
 
@@ -300,8 +320,9 @@ saves there.
 Settings > **Game files...** is where the app finds your ROMs and connects them to the ports that need them. It only reads
 your game folder: nothing in it is ever moved, renamed, changed or deleted.
 
-1. **Game files folder** > choose your ROM folder. The list offers the usual places (SD card, `~/Emulation/roms`...); "Browse"
-   walks down folder by folder and **Use this folder** saves it and scans. The scan shows its progress and has Cancel (or B).
+1. **Game files folder** > choose your ROM folder in the folder picker (the same one as Settings > Ports folder): the usual
+   places (SD card, `~/Emulation/roms`...) are at the top, then you walk down folder by folder and **Use this folder** saves it
+   and scans. The scan shows its progress and has Cancel (or B).
    A big folder takes a while the first time; later scans only read new or changed files.
 2. **Results by system** lists, per console, which ports have their files (Found, Several matches, Wrong version, Missing...).
    "(check this)" means a file was matched by name only. Open a port to see exactly what was found and what it wants.

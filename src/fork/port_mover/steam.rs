@@ -117,7 +117,9 @@ pub fn shortcuts_pointing_into(home: &Path, dir: &Path) -> Result<Vec<String>, S
         let file = ShortcutsFile::load(&account.shortcuts).map_err(|e| format!("Could not read Steam shortcuts of {}: {e}", account.label))?;
         for s in shortcuts::list(&file.doc) {
             let inside = |p: &str| moved_path(p, dir, dir).is_some();
-            if inside(s.exe_path()) || inside(s.start_dir_path()) || inside(&s.icon) {
+            // Launch options are not rewritten by a move; a path in them still needs the old copy.
+            let in_options = dir.to_str().is_some_and(|d| !d.is_empty() && s.launch_options.contains(d));
+            if inside(s.exe_path()) || inside(s.start_dir_path()) || inside(&s.icon) || in_options {
                 names.push(s.app_name.clone());
             }
         }
@@ -174,14 +176,17 @@ impl SteamReport {
         self.written.iter().map(|(_, c)| c.len()).sum()
     }
 
-    pub fn text(&self) -> String {
+    /// The lines for the move summary of `port_name`.
+    pub fn text_for(&self, port_name: &str) -> String {
         let mut lines = Vec::new();
         let n = self.changed_count();
         if n > 0 {
             lines.push(format!("Steam: {n} shortcut{} now point{} at the new folder (artwork and play time kept).", if n == 1 { "" } else { "s" }, if n == 1 { "s" } else { "" }));
         }
         if !self.queued.is_empty() {
-            lines.push("Steam: the shortcut change is queued because Steam is running; it is applied once Steam is closed in Desktop Mode (the app asks).".to_string());
+            lines.push(format!(
+                "Steam: the shortcut change is queued because Steam is running. Until it is applied (next time this app runs in Desktop Mode with Steam closed), starting {port_name} from Steam still runs the OLD copy, and anything you save there stays in the old copy."
+            ));
         }
         for (name, why) in &self.skipped {
             lines.push(format!("Steam: {name} was left alone: {why}."));

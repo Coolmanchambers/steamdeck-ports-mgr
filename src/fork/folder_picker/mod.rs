@@ -38,7 +38,7 @@ pub enum Purpose {
 impl Purpose {
     pub fn hint(self) -> &'static str {
         match self {
-            Purpose::PortsFolder => "Ports need a Linux drive (ext4). SD cards formatted by SteamOS are ext4.",
+            Purpose::PortsFolder => "Ports need the internal drive or a card formatted by SteamOS. exFAT cards can't store Linux programs.",
             Purpose::ScanFolder => "This folder is only read. Nothing in it is changed.",
             Purpose::Any => "",
         }

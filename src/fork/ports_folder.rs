@@ -260,12 +260,28 @@ impl Check {
     }
 }
 
+/// The kernel's name for a file system, as people know it.
+pub fn fs_display_name(fs_type: &str) -> &str {
+    match fs_type {
+        "exfat" => "exFAT",
+        "vfat" | "msdos" => "FAT",
+        "ntfs" | "ntfs3" | "fuseblk" => "NTFS",
+        other => other,
+    }
+}
+
 pub fn non_linux_text(fs_type: &str) -> String {
     format!(
-        "This drive is formatted as {fs_type}. Ports need a Linux file system (ext4): they rely on program permissions and links, \
-         which {fs_type} cannot keep. SD cards formatted by SteamOS (Settings > Storage > Format) are ext4."
+        "This drive is formatted as {}, which can't store Linux programs (it drops the 'may run' permission and links). \
+         Ports need a card formatted by SteamOS: Steam > Settings > Storage > Format. Formatting ERASES everything on the card, \
+         so copy your game files off it first.",
+        fs_display_name(fs_type)
     )
 }
+
+/// When the probe finds that program permissions do not stick on a file system not known as non-Linux.
+pub const NO_EXEC_TEXT: &str =
+    "This folder can't keep program permissions, so ports could not start here. Pick a folder on the internal drive or on a card formatted by SteamOS.";
 
 /// Whether `dir` can become the ports folder. Never changes anything on disk except the probe's own
 /// temporary folder inside `dir` (or its nearest existing parent, when `dir` does not exist yet).
@@ -341,7 +357,7 @@ pub fn check(dir: &Path, ctx: &CheckCtx, probe: &dyn FolderProbe) -> Check {
         c.problems.push(format!("You can't write to {target} ({e})."));
     } else {
         if !result.exec_bits {
-            c.problems.push(format!("Program permissions don't stick here, so ports could not start. {}", non_linux_text(c.fs_type.as_deref().unwrap_or("not ext4"))));
+            c.problems.push(NO_EXEC_TEXT.to_string());
         }
         if !result.symlinks {
             c.problems.push("Links can't be created here; ports and connected game files need them. Use an ext4 folder.".into());
@@ -380,13 +396,17 @@ pub struct MovePlan {
     /// Ports that already have a folder of their name in the new place: not moved; after the switch the
     /// app uses the one in the new place.
     pub already_there: Vec<String>,
+    /// Ports whose folder in the new place is an old copy the user kept after an earlier move: it is
+    /// older than the one in use (`from`), so it must be replaced first, never used silently.
+    pub stale: Vec<PortToMove>,
     /// Folders in the old ports folder that are no port the catalog knows: never moved.
     pub other_folders: Vec<String>,
     pub bytes: u64,
 }
 
 /// What switching from `old` to `new` would move: every catalog port whose folder is in `old`.
-pub fn plan_move(old: &Path, new: &Path, catalog: &[crate::core::models::Port]) -> MovePlan {
+/// `kept_old_copies` are the old copies recorded in `port-moves.json` (their paths).
+pub fn plan_move(old: &Path, new: &Path, catalog: &[crate::core::models::Port], kept_old_copies: &[PathBuf]) -> MovePlan {
     let mut plan = MovePlan::default();
     let mut known: Vec<String> = Vec::new();
     for port in catalog {
@@ -397,12 +417,17 @@ pub fn plan_move(old: &Path, new: &Path, catalog: &[crate::core::models::Port]) 
         }
         let Ok(meta) = fs::symlink_metadata(&from) else { continue };
         known.push(port.folder.clone());
-        if fs::symlink_metadata(&to).is_ok() {
-            plan.already_there.push(port.display_name().to_string());
-            continue;
-        }
         let link_only = meta.file_type().is_symlink();
         let bytes = if link_only { 0 } else { super::port_mover::copy::tree_size(&from) };
+        if fs::symlink_metadata(&to).is_ok() {
+            if kept_old_copies.contains(&to) {
+                plan.bytes += bytes;
+                plan.stale.push(PortToMove { key: port.key().to_string(), name: port.display_name().to_string(), from, to, link_only, bytes });
+            } else {
+                plan.already_there.push(port.display_name().to_string());
+            }
+            continue;
+        }
         plan.bytes += bytes;
         plan.ports.push(PortToMove { key: port.key().to_string(), name: port.display_name().to_string(), from, to, link_only, bytes });
     }
@@ -440,13 +465,19 @@ mod tests {
         .iter()
         .map(|v| port_from_value(v).unwrap())
         .collect();
-        let plan = plan_move(&old, &new, &catalog);
+        let plan = plan_move(&old, &new, &catalog, &[]);
         assert_eq!(plan.ports.len(), 1);
         assert_eq!((plan.ports[0].name.as_str(), plan.ports[0].bytes), ("Ship of Harkinian", 1234));
         assert_eq!(plan.ports[0].to, new.join("SoH"));
         assert_eq!(plan.already_there, ["Dusklight"]);
         assert_eq!(plan.other_folders, ["my-stuff"]);
         assert_eq!(plan.bytes, 1234);
+
+        // Moving back onto a folder that is an old copy the user kept: flagged, never used silently.
+        let plan = plan_move(&old, &new, &catalog, &[new.join("Dusk")]);
+        assert!(plan.already_there.is_empty());
+        assert_eq!(plan.stale.len(), 1);
+        assert_eq!((plan.stale[0].name.as_str(), plan.stale[0].from.clone(), plan.stale[0].to.clone()), ("Dusklight", old.join("Dusk"), new.join("Dusk")));
     }
 
     fn temp(name: &str) -> PathBuf {
@@ -595,13 +626,13 @@ mod tests {
         fs::create_dir_all(&stick).unwrap();
         let c = w.check(&stick, &good);
         assert!(!c.ok());
-        assert!(c.problems[0].contains("exfat") && c.problems[0].contains("ext4"), "{:?}", c.problems);
+        assert!(c.problems[0].starts_with("This drive is formatted as exFAT, which can't store Linux programs") && c.problems[0].contains("ERASES"), "{:?}", c.problems);
         // Not known as exFAT from the mounts list, but the probe finds the same thing.
         let dir = w.home.join("Ports");
         fs::create_dir_all(&dir).unwrap();
         let c = w.check(&dir, &exfat_like);
         assert_eq!(c.problems.len(), 2, "{:?}", c.problems);
-        assert!(c.problems[0].contains("Program permissions") && c.problems[1].contains("Links"));
+        assert!(c.problems[0] == NO_EXEC_TEXT && c.problems[1].contains("Links"));
         let c = w.check(&dir, &read_only);
         assert!(c.problems[0].contains("can't write"), "{:?}", c.problems);
     }

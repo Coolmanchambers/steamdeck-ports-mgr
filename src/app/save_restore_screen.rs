@@ -71,6 +71,9 @@ fn targets_for(app: &AppState, port: &Port) -> Option<Vec<SaveTarget>> {
 
 /// Info dialog > "Restore saves...". Back returns to the Info dialog.
 pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
+    if super::ports_folder_screen::refuse_when_blocked(app) {
+        return;
+    }
     let back: Back = {
         let port = port.clone();
         Rc::new(move |app, router| open_info_dialog(app, router, &port))
@@ -80,6 +83,9 @@ pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
 
 /// Settings > "Restore saves...": every port that has at least one backup.
 pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
+    if super::ports_folder_screen::refuse_when_blocked(app) {
+        return;
+    }
     let all = save_restore::list_all_backups(&app.paths.saves_backup_dir);
     let rows: Vec<(String, Option<Port>, usize)> = {
         let catalog = app.catalog.borrow();
@@ -161,6 +167,10 @@ fn show_port(app: &Rc<AppState>, router: &Router, port: &Port, back: Back) {
 }
 
 fn busy_reason(app: &AppState, port: &Port) -> Option<String> {
+    // Fork (ports folder): a restore writes into the port folder, never while the ports folder is missing or moving.
+    if let Some(why) = super::ports_folder_screen::blocked_reason(app) {
+        return Some(why);
+    }
     if is_port_running(app, port.key()) {
         return Some(RestoreError::GameRunning("The game (started from this app)".into()).to_string());
     }

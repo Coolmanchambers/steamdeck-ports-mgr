@@ -185,6 +185,7 @@ pub fn prepare(
         return Err(MoveError::GameFiles { stage: Stage::BeforeCopy, issues });
     }
     let staging = staging_path(to);
+    sweep_staging(to.parent().unwrap_or(to));
     if fs::symlink_metadata(&staging).is_ok() {
         // Left by a run of this same process id that was killed; it is ours by name.
         copy::remove_copy(&staging).map_err(|e| MoveError::Copy(format!("could not clear the old staging folder {}: {e}", staging.display())))?;
@@ -293,6 +294,7 @@ pub fn discard(prepared: &Prepared) -> std::io::Result<()> {
 
 #[derive(Debug, Clone, Default)]
 pub struct SwitchReport {
+    pub port_name: String,
     pub steam: steam::SteamReport,
     pub rom_records: usize,
     pub notes: Vec<String>,
@@ -301,7 +303,7 @@ pub struct SwitchReport {
 impl SwitchReport {
     pub fn text(&self) -> String {
         let mut lines = Vec::new();
-        let steam = self.steam.text();
+        let steam = self.steam.text_for(&self.port_name);
         if !steam.is_empty() {
             lines.push(steam);
         }
@@ -313,9 +315,35 @@ impl SwitchReport {
     }
 }
 
+fn old_copy_record(prepared: &Prepared, switched: bool) -> old_copies::OldCopy {
+    old_copies::OldCopy {
+        port_key: prepared.port.key.clone(),
+        name: prepared.port.name.clone(),
+        old_path: prepared.from.clone(),
+        new_path: prepared.to.clone(),
+        bytes: prepared.bytes,
+        moved_at: crate::fork::store::backup_stamp(),
+        link_only: prepared.link_only,
+        switched,
+    }
+}
+
+/// Writes the old-copy records of a batch before the ports folder setting changes, marked "switch not
+/// finished", so a crash between the setting and the Steam repoint still leaves the old copies listed
+/// (and not removable). `switch_over` marks each one finished.
+pub fn record_pending(config_dir: &Path, prepared: &[Prepared]) -> std::io::Result<()> {
+    for p in prepared {
+        old_copies::record(config_dir, old_copy_record(p, false))?;
+    }
+    Ok(())
+}
+
 /// Step 2: point Steam, the ROM library records and the old-copy list at the new copy. Never deletes.
 pub fn switch_over(prepared: &Prepared, env: &MoveEnv) -> SwitchReport {
-    let mut report = SwitchReport::default();
+    let mut report = SwitchReport { port_name: prepared.port.name.clone(), ..Default::default() };
+    if let Err(e) = old_copies::record(env.config_dir, old_copy_record(prepared, false)) {
+        report.notes.push(format!("The old copy at {} could not be added to the list of old copies ({e}); it is still there.", prepared.from.display()));
+    }
     let ctx = steam::SteamCtx { home: env.home, config_dir: env.config_dir, settings: env.settings, steam: env.steam, game_mode: env.game_mode, now: SystemTime::now() };
     report.steam = steam::repoint_everywhere(&prepared.port.key, &prepared.port.name, &prepared.from, &prepared.to, &ctx);
     match RomLibraryStore::load(&env.config_dir.join("rom_library.json")) {
@@ -325,17 +353,84 @@ pub fn switch_over(prepared: &Prepared, env: &MoveEnv) -> SwitchReport {
         },
         Err(e) => report.notes.push(format!("Game files: {e}")),
     }
-    let entry = old_copies::OldCopy {
-        port_key: prepared.port.key.clone(),
-        name: prepared.port.name.clone(),
-        old_path: prepared.from.clone(),
-        new_path: prepared.to.clone(),
-        bytes: prepared.bytes,
-        moved_at: crate::fork::store::backup_stamp(),
-        link_only: prepared.link_only,
-    };
-    if let Err(e) = old_copies::record(env.config_dir, entry) {
-        report.notes.push(format!("The old copy at {} could not be added to the list of old copies ({e}); it is still there.", prepared.from.display()));
-    }
+    let _ = old_copies::record(env.config_dir, old_copy_record(prepared, true));
     report
+}
+
+/// Removes staging folders (`.<name>.dpm-moving-<pid>`) left in `dir` by runs that are gone: this
+/// process's own, or one whose process no longer exists. A running process's staging is left alone.
+pub fn sweep_staging(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(pid) = name.strip_prefix('.').and_then(|n| n.rsplit_once(".dpm-moving-")).and_then(|(_, pid)| pid.parse::<u32>().ok()) else { continue };
+        let alive = pid != std::process::id() && (cfg!(not(target_os = "linux")) || Path::new(&format!("/proc/{pid}")).exists());
+        if !alive {
+            let _ = copy::remove_copy(&e.path());
+        }
+    }
+}
+
+/// One port of a batch move.
+#[derive(Debug, Clone)]
+pub struct BatchItem {
+    pub port: PortRef,
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+#[derive(Debug)]
+pub enum BatchOutcome {
+    Moved(Prepared),
+    Failed { port: PortRef, error: MoveError },
+}
+
+#[derive(Debug, Default)]
+pub struct BatchResult {
+    pub outcomes: Vec<BatchOutcome>,
+    pub cancelled: bool,
+    /// The target or source drive went away during the batch (an SD card pulled out): it stopped there.
+    pub drive_gone: Option<String>,
+}
+
+/// Prepares each port in turn (cancel is checked between ports and inside each copy). A failure moves
+/// on to the next port, except when a drive went away: then the batch stops with one message.
+/// `options(i)` gives each port its game files and choices; `progress(i, done, total)`.
+pub fn run_batch(
+    items: &[BatchItem],
+    env: &MoveEnv,
+    options: &dyn Fn(usize) -> MoveOptions<'static>,
+    progress: &mut dyn FnMut(usize, u64, u64),
+    cancel: &AtomicBool,
+) -> BatchResult {
+    let mut result = BatchResult::default();
+    for (i, item) in items.iter().enumerate() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            result.cancelled = true;
+            break;
+        }
+        let opts = options(i);
+        let mut report = |done: u64, total: u64, _: &Path| progress(i, done, total);
+        match prepare(&item.port, &item.from, &item.to, env, &opts, &mut report, cancel) {
+            Ok(p) => result.outcomes.push(BatchOutcome::Moved(p)),
+            Err(MoveError::Cancelled) => {
+                result.cancelled = true;
+                break;
+            }
+            Err(error) => {
+                let target_gone = !item.to.parent().is_some_and(Path::is_dir);
+                let source_gone = fs::symlink_metadata(&item.from).is_err();
+                result.outcomes.push(BatchOutcome::Failed { port: item.port.clone(), error });
+                if target_gone || source_gone {
+                    let place = if target_gone { item.to.parent().unwrap_or(&item.to) } else { &item.from };
+                    result.drive_gone = Some(format!(
+                        "{} went away during the move (SD card or drive taken out?). The move stopped there; the ports folder did not change and the copies made so far are removed.",
+                        place.display()
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    result
 }

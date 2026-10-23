@@ -1,11 +1,15 @@
 //! Fork: Settings > Ports folder..., the "ports folder is not available" message at startup, the move
 //! of installed ports to a new ports folder, and the old-copy prompts. The rules live in
-//! `crate::fork::ports_folder` and the engine in `crate::fork::port_mover` (both tested without UI);
-//! this file draws lists and runs the copies on a worker thread.
+//! `crate::fork::ports_folder`, the engine in `crate::fork::port_mover` and the lists in
+//! `crate::fork::ports_folder_view` (all tested without UI); this file draws them and runs the copies
+//! on a worker thread.
 //!
 //! For other screens:
 //! - `refuse_when_blocked(app)`: true (and tells the user) while the ports folder is missing or a
-//!   move is running; install paths call it.
+//!   move is running; installs, adopting and restores call it. `blocked_reason(app)` without the message.
+//! - `startup_dialog_pending()`: true while the "not available" message is due or showing; other
+//!   startup dialogs (the setup wizard) wait for it.
+//! - `quit_waits_for_move(app, router)`: Close and Quit ask it; a running move is stopped first.
 //! - `prompt_old_copies(app, router, copies, summary)`: the "Remove the old copy now?" prompts that
 //!   follow a move (stage 2's import calls it after its own moves).
 //! - `open_old_copies(app, router)`: the list of old copies kept after moves.
@@ -16,12 +20,14 @@ use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_op
 use super::folder_picker_screen::open_folder_picker;
 use super::state::AppState;
 use crate::core::models::Port;
+use crate::core::path_safety::is_within;
 use crate::fork::folder_picker::mounts::{default_media_roots, system_mounts};
 use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::port_mover::game_files::{check_before, GameFiles, Issue};
 use crate::fork::port_mover::old_copies::{self, OldCopy, RemovalCtx};
-use crate::fork::port_mover::{self, MoveEnv, MoveError, MoveOptions, PortRef, Prepared, Stage};
+use crate::fork::port_mover::{self, BatchItem, BatchOutcome, MoveEnv, MoveError, MoveOptions, PortRef, Prepared, Stage};
 use crate::fork::ports_folder::{self, CheckCtx, MovePlan, PortToMove, Startup, SystemProbe};
+use crate::fork::ports_folder_view::{self as view, Act, ListModel};
 use crate::fork::rom_screens::job::Background;
 use crate::fork::rom_screens::util::{ellipsize, free_bytes, human_bytes};
 use crate::fork::settings::{ForkSettings, FILE_NAME};
@@ -42,6 +48,11 @@ thread_local! {
     // Set at startup, so install paths (which only have the app state) can show a message.
     static ROUTER: RefCell<Option<(std::rc::Weak<AppState>, Router)>> = const { RefCell::new(None) };
     static MOVING: Cell<bool> = const { Cell::new(false) };
+    /// A move or an old-copy removal runs on the worker thread.
+    static JOB_BUSY: Cell<bool> = const { Cell::new(false) };
+    static QUIT_AFTER_JOB: Cell<bool> = const { Cell::new(false) };
+    static CANCEL_JOB: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
+    static STARTUP_PENDING: Cell<bool> = const { Cell::new(false) };
     static JOB_TIMER: slint::Timer = slint::Timer::default();
 }
 
@@ -57,16 +68,31 @@ fn message(app: &Rc<AppState>, router: &Router, text: &str) {
     open_message_dialog(app, router, TITLE, &format!("{text}\n"));
 }
 
-/// A list whose rows act through `on_select`; information rows do nothing.
-fn open_list(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) -> Option<crate::ListPickerDialog> {
-    let dialog = build_picker_dialog(app, router, title, &labels)?;
+/// A list drawn from a `ListModel`; `on_act` gets the chosen row's action and index.
+fn open_model(app: &Rc<AppState>, router: &Router, title: &str, model: ListModel, on_act: impl Fn(&Rc<AppState>, &Router, Act) + 'static) -> Option<crate::ListPickerDialog> {
+    let dialog = build_picker_dialog(app, router, title, &model.labels)?;
+    let select = model.select as i32;
     {
         let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| on_select(&app, &router, index as usize));
+        dialog.on_item_selected(move |index| on_act(&app, &router, model.act(index as usize)));
     }
+    dialog.set_selected_index(select);
+    app.dialog_nav.picker_index.set(select);
     let _ = dialog.show();
     finish_dialog_open(app, router, DialogSlot::Picker(dialog.clone_strong()));
     Some(dialog)
+}
+
+/// A confirm dialog whose Cancel (and B) runs `on_cancel` instead of only closing.
+fn confirm_or(app: &Rc<AppState>, router: &Router, title: &str, text: String, confirm: &str, on_confirm: impl Fn(&Rc<AppState>, &Router) + 'static, on_cancel: fn(&Rc<AppState>, &Router)) {
+    open_confirm_dialog(app, router, title.into(), format!("{text}\n").into(), confirm.into(), on_confirm);
+    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
+        let (app, router) = (app.clone(), router.clone());
+        d.on_close_requested(move || {
+            close_current_dialog(&app, &router);
+            on_cancel(&app, &router);
+        });
+    }
 }
 
 fn is_default(app: &AppState, dir: &Path) -> bool {
@@ -84,14 +110,15 @@ fn unavailable(app: &AppState) -> Option<String> {
     ports_folder::availability(&dir, &system_mounts(), &default_media_roots()).map(|why| ports_folder::missing_text(&dir, &why))
 }
 
-/// Install paths call this: true (with a message) while the ports folder is missing or being moved.
+/// Why writing into the ports folder must wait now (missing, or a move running), if it must.
+pub(crate) fn blocked_reason(app: &AppState) -> Option<String> {
+    view::blocked_reason(MOVING.with(Cell::get), unavailable(app))
+}
+
+/// Installs, adopting and restores call this: true (with a message) while the ports folder is missing
+/// or being moved, so nothing is ever created at an unmounted ports folder.
 pub(crate) fn refuse_when_blocked(app: &AppState) -> bool {
-    let why = if MOVING.with(Cell::get) {
-        Some("Installed ports are being moved to a new ports folder. Wait for that to finish, then try again.".to_string())
-    } else {
-        unavailable(app).map(|text| format!("{text}\nInstalls wait until it is back. To use another folder: Settings > Ports folder."))
-    };
-    let Some(why) = why else { return false };
+    let Some(why) = blocked_reason(app) else { return false };
     if let Some((app, router)) = ROUTER.with(|r| r.borrow().clone()) {
         // After the current event: the caller may be inside a dialog callback.
         slint::Timer::single_shot(Duration::ZERO, move || {
@@ -101,6 +128,37 @@ pub(crate) fn refuse_when_blocked(app: &AppState) -> bool {
         });
     }
     true
+}
+
+/// Close and Quit ask this: a running move is cancelled (its copies removed) and an old-copy removal
+/// finishes, then the app quits.
+pub(crate) fn quit_waits_for_move(app: &Rc<AppState>, router: &Router) -> bool {
+    if !JOB_BUSY.with(Cell::get) {
+        return false;
+    }
+    QUIT_AFTER_JOB.with(|q| q.set(true));
+    if let Some(cancel) = CANCEL_JOB.with(|c| c.borrow().clone()) {
+        cancel();
+        message(app, router, "Stopping the move first (the copies made so far are removed). The app closes when that is done.");
+    } else {
+        message(app, router, "Finishing the removal of the old copy first. The app closes when that is done.");
+    }
+    true
+}
+
+fn job_finished() -> bool {
+    JOB_BUSY.with(|b| b.set(false));
+    CANCEL_JOB.with(|c| *c.borrow_mut() = None);
+    if QUIT_AFTER_JOB.with(Cell::get) {
+        let _ = slint::quit_event_loop();
+        return true;
+    }
+    false
+}
+
+/// The other startup dialogs (setup wizard) wait while this is true.
+pub(crate) fn startup_dialog_pending() -> bool {
+    STARTUP_PENDING.with(Cell::get)
 }
 
 /// Marks ports found in the ports folder as installed (as startup does) and redraws.
@@ -118,57 +176,63 @@ fn after_library_change(app: &AppState) {
     app.refresh_tray_recent_games();
 }
 
+fn game_mode() -> bool {
+    crate::fork::steam_queue::game_mode_from_env()
+}
+
 // -- Startup --------------------------------------------------------------------------------------
 
 pub(crate) fn startup_check(app: &Rc<AppState>, router: &Router, startup: Startup) {
     ROUTER.with(|r| *r.borrow_mut() = Some((Rc::downgrade(app), router.clone())));
-    eprintln!("ports folder: {} ({})", startup.dir.display(), if startup.available() { "available" } else { "NOT available" });
+    let roots: Vec<String> = default_media_roots().iter().map(|r| r.display().to_string()).collect();
+    eprintln!(
+        "ports folder: {} ({}); drive folders looked at: {}",
+        startup.dir.display(),
+        if startup.available() { "available" } else { "NOT available" },
+        roots.join(", ")
+    );
     if startup.available() {
         return;
     }
+    // First of the startup dialogs: the Steam queue offer skips while a dialog is open, the setup wizard
+    // waits for `startup_dialog_pending`.
+    STARTUP_PENDING.with(|p| p.set(true));
     let (app, router) = (app.clone(), router.clone());
-    slint::Timer::single_shot(Duration::from_millis(800), move || show_missing(&app, &router, false));
+    slint::Timer::single_shot(Duration::from_millis(300), move || show_missing(&app, &router, false));
 }
 
 fn show_missing(app: &Rc<AppState>, router: &Router, again: bool) {
     let dir = app.paths.library_dir();
     let Some(why) = ports_folder::availability(&dir, &system_mounts(), &default_media_roots()) else {
+        STARTUP_PENDING.with(|p| p.set(false));
         after_library_change(app);
         if again {
             message(app, router, &format!("Found it: {} is back.", dir.display()));
         }
         return;
     };
-    let question = match why {
-        ports_folder::Missing::DriveNotMounted(_) => "Is the SD card in?",
-        ports_folder::Missing::FolderGone => "Was it moved, renamed or deleted?",
-        ports_folder::Missing::NotAFolder => "Something that is not a folder has its name.",
+    let done = |app: &Rc<AppState>, router: &Router| {
+        STARTUP_PENDING.with(|p| p.set(false));
+        close_current_dialog(app, router);
     };
-    let mut labels = vec![
-        if again { "Still not there. Your ports folder:".to_string() } else { "Your ports folder is not available:".to_string() },
-        format!("  {}", ellipsize(&dir.to_string_lossy(), 70)),
-        question.to_string(),
-        "Try again".to_string(),
-        "Choose another folder...".to_string(),
-        "Continue without it (installs wait until it is back)".to_string(),
-    ];
-    labels.push("Quit".to_string());
-    let Some(dialog) = open_list(app, router, "Ports folder not available", labels, |app, router, index| match index {
-        3 => show_missing(app, router, true),
-        4 => choose_folder(app, router),
-        5 => close_current_dialog(app, router),
-        6 => {
-            close_current_dialog(app, router);
+    let Some(dialog) = open_model(app, router, "Ports folder not available", view::missing(&dir, &why, again), move |app, router, act| match act {
+        Act::TryAgain => show_missing(app, router, true),
+        Act::ChooseAnother => {
+            STARTUP_PENDING.with(|p| p.set(false));
+            choose_folder(app, router);
+        }
+        Act::ContinueWithout => done(app, router),
+        Act::Quit => {
+            done(app, router);
             let _ = slint::quit_event_loop();
         }
         _ => {}
     }) else {
+        STARTUP_PENDING.with(|p| p.set(false));
         return;
     };
-    dialog.set_selected_index(3);
-    app.dialog_nav.picker_index.set(3);
     let (app, router) = (app.clone(), router.clone());
-    dialog.on_close_requested(move || close_current_dialog(&app, &router));
+    dialog.on_close_requested(move || done(&app, &router));
 }
 
 // -- The menu -------------------------------------------------------------------------------------
@@ -194,38 +258,18 @@ pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
         }
     };
     let old = old_copies::load(&app.paths.config_dir).unwrap_or_default();
-    let mut labels = vec![
-        format!("Ports folder: {}", ellipsize(&dir.to_string_lossy(), 64)),
-        format!("  {state}{}", if is_default(app, &dir) { " (default, next to the app)" } else { "" }),
-        "Choose another folder...".to_string(),
-        "Open the ports folder".to_string(),
-    ];
-    let has_old = !old.is_empty();
-    if has_old {
-        let bytes: u64 = old.iter().map(|o| o.bytes).sum();
-        labels.push(format!("Old copies kept after moves ({}, {})...", old.len(), human_bytes(bytes)));
-    }
-    let not_default = !is_default(app, &dir);
-    if not_default {
-        labels.push(format!("Use the default folder ({})", ellipsize(&ports_folder::default_dir(&app.paths.config_dir).to_string_lossy(), 48)));
-    }
-    labels.push("Back".to_string());
-    let back = labels.len() - 1;
-    let old_row = has_old.then_some(4);
-    let default_row = not_default.then(|| if has_old { 5 } else { 4 });
-    open_list(app, router, TITLE, labels, move |app, router, index| {
-        if index == 2 {
-            choose_folder(app, router);
-        } else if index == 3 {
-            crate::core::launch::open_folder(&app.paths.library_dir());
-        } else if Some(index) == old_row {
-            open_old_copies(app, router);
-        } else if Some(index) == default_row {
-            consider(app, router, ports_folder::default_dir(&app.paths.config_dir));
-        } else if index == back {
+    let old_summary = (old.len(), old.iter().map(|o| o.bytes).sum());
+    let model = view::menu(&dir, &state, is_default(app, &dir), old_summary, &ports_folder::default_dir(&app.paths.config_dir), game_mode());
+    open_model(app, router, TITLE, model, |app, router, act| match act {
+        Act::ChooseAnother => choose_folder(app, router),
+        Act::OpenFolder => crate::core::launch::open_folder(&app.paths.library_dir()),
+        Act::OldCopies => open_old_copies(app, router),
+        Act::UseDefault => consider(app, router, ports_folder::default_dir(&app.paths.config_dir)),
+        Act::Back => {
             close_current_dialog(app, router);
             super::dialogs::open_settings_dialog(app, router);
         }
+        _ => {}
     });
 }
 
@@ -254,122 +298,101 @@ pub(crate) fn consider(app: &Rc<AppState>, router: &Router, dir: PathBuf) {
     }
     if !check.ok() {
         let text = format!("{}\n\n{}", dir.display(), check.problems.join("\n\n"));
-        return open_confirm_dialog(app, router, "Can't use this folder".into(), format!("{text}\n").into(), "Choose another folder".into(), |app, router| choose_folder(app, router));
+        return confirm_or(app, router, "Can't use this folder", text, "Choose another folder", |app, router| choose_folder(app, router), open_menu);
     }
     if !check.exists {
-        let text = format!("{} does not exist yet.\n\nCreate it and use it as the ports folder? ({})\n", dir.display(), check.summary());
-        return open_confirm_dialog(app, router, "Create the folder?".into(), text.into(), "Create it".into(), move |app, router| match ports_folder::create(&dir, &system_mounts(), &default_media_roots()) {
-            Ok(()) => consider(app, router, dir.clone()),
-            Err(e) => message(app, router, &e),
-        });
+        let text = format!("{} does not exist yet.\n\nCreate it and use it as the ports folder? ({})", dir.display(), check.summary());
+        return confirm_or(
+            app,
+            router,
+            "Create the folder?",
+            text,
+            "Create it",
+            move |app, router| match ports_folder::create(&dir, &system_mounts(), &default_media_roots()) {
+                Ok(()) => consider(app, router, dir.clone()),
+                Err(e) => message(app, router, &e),
+            },
+            open_menu,
+        );
     }
     plan_switch(app, router, dir, check.summary(), check.free);
 }
 
 // -- Switching ------------------------------------------------------------------------------------
 
+fn kept_old_copy_paths(app: &AppState) -> Vec<PathBuf> {
+    old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().map(|o| o.old_path).collect()
+}
+
+/// A game started from this app, or any program running from a port folder in the old ports folder.
+fn running_now(app: &AppState, plan: &MovePlan) -> Option<String> {
+    if super::playtime::any_process_running(app) {
+        return Some("A game started from this app is running. Close it first, then try again.".into());
+    }
+    for p in plan.ports.iter().chain(&plan.stale) {
+        let names = running_in(&p.from);
+        if !names.is_empty() {
+            return Some(format!("{} is running from {}. Close it first, then try again.", names.join(", "), p.name));
+        }
+    }
+    None
+}
+
 fn plan_switch(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, summary: String, free: Option<u64>) {
     let old_dir = app.paths.library_dir();
-    let plan = if old_dir.is_dir() { ports_folder::plan_move(&old_dir, &new_dir, &app.catalog.borrow()) } else { MovePlan::default() };
-    let n = plan.ports.len();
+    let plan = if old_dir.is_dir() { ports_folder::plan_move(&old_dir, &new_dir, &app.catalog.borrow(), &kept_old_copy_paths(app)) } else { MovePlan::default() };
     let needed = plan.bytes.saturating_add(port_mover::SPACE_MARGIN);
-    let fits = free.is_none_or(|f| f >= needed);
-    let mut labels = vec![format!("New ports folder: {}", ellipsize(&new_dir.to_string_lossy(), 60)), format!("  {summary}")];
-    if !plan.already_there.is_empty() {
-        labels.push(format!("Already in the new folder (used from there): {}", plan.already_there.join(", ")));
-    }
-    if !plan.other_folders.is_empty() {
-        labels.push(format!("Not ports, never moved: {}", ellipsize(&plan.other_folders.join(", "), 60)));
-    }
-    let first_action = labels.len();
-    if n == 0 {
-        labels.push("Switch to this folder".to_string());
-    } else if fits {
-        labels.push(format!("Move {n} port{} here ({}), then switch (the old copies are kept)", if n == 1 { "" } else { "s" }, human_bytes(plan.bytes)));
-    } else {
-        labels.push(format!("Not enough space to move the ports: needs {}, {} free", human_bytes(needed), human_bytes(free.unwrap_or(0))));
-    }
-    if n > 0 {
-        labels.push(format!("Switch without moving ({n} port{} stay in the old folder and show as not installed)", if n == 1 { "" } else { "s" }));
-    }
-    labels.push("Cancel".to_string());
-    let cancel = labels.len() - 1;
+    let model = view::switch_screen(&new_dir, &summary, &plan, free, needed);
     let plan = Rc::new(plan);
-    let Some(dialog) = open_list(app, router, "Switch the ports folder?", labels, move |app, router, index| {
-        if index == cancel {
-            open_menu(app, router);
-        } else if index == first_action && n == 0 {
-            switch_now(app, router, &new_dir, Vec::new(), String::new());
-        } else if index == first_action && fits {
-            check_game_files_then_move(app, router, new_dir.clone(), plan.clone());
-        } else if index == first_action + 1 && n > 0 {
-            switch_now(app, router, &new_dir, Vec::new(), format!("{n} port(s) stay in the old folder and show as not installed here."));
+    open_model(app, router, "Switch the ports folder?", model, move |app, router, act| match act {
+        Act::Cancel => open_menu(app, router),
+        Act::SwitchEmpty | Act::SwitchWithoutMoving => {
+            if let Some(why) = running_now(app, &plan) {
+                return message(app, router, &why);
+            }
+            let note = if act == Act::SwitchWithoutMoving { format!("{} port(s) stay in the old folder and show as not installed here.", plan.ports.len()) } else { String::new() };
+            switch_now(app, router, &new_dir, Vec::new(), note);
         }
-    }) else {
-        return;
-    };
-    dialog.set_selected_index(first_action as i32);
-    app.dialog_nav.picker_index.set(first_action as i32);
+        Act::Move | Act::ReplaceStaleAndMove => check_game_files_then_move(app, router, new_dir.clone(), plan.clone()),
+        Act::NotEnoughSpace => message(app, router, "There is not enough free space in the new folder for the ports. Free some space or pick another folder."),
+        _ => {}
+    });
 }
 
 fn find_port(app: &AppState, key: &str) -> Option<Port> {
     app.catalog.borrow().iter().find(|p| p.key() == key).cloned()
 }
 
-fn issue_lines(issues: &[(String, Issue)]) -> Vec<String> {
-    // Short rows; choosing one shows the whole text.
-    let mut lines: Vec<String> = issues.iter().take(8).map(|(name, i)| format!("{name}: {}: {}", i.file, i.problem.split(" (").next().unwrap_or(&i.problem))).collect();
-    if issues.len() > 8 {
-        lines.push(format!("... and {} more", issues.len() - 8));
-    }
-    lines
-}
-
 /// The game file check before anything is copied; problems are shown with Fix / Move anyway / Cancel.
 fn check_game_files_then_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<MovePlan>) {
     let mut issues: Vec<(String, Issue)> = Vec::new();
-    for p in &plan.ports {
+    for p in plan.ports.iter().chain(&plan.stale) {
         let files = find_port(app, &p.key).map(|port| GameFiles::for_port(&port, &app.paths.config_dir)).unwrap_or_default();
         issues.extend(check_before(&p.from, &files).into_iter().map(|i| (p.name.clone(), i)));
     }
     if issues.is_empty() {
         return start_move(app, router, new_dir, plan, false);
     }
-    let mut labels = vec![format!("{} problem(s) with game files, found before copying:", issues.len())];
-    labels.extend(issue_lines(&issues).into_iter().map(|l| format!("  {l}")));
-    let fix = labels.len();
     let details: Vec<String> = issues.iter().map(|(name, i)| format!("{name}\n\n{}", i.line())).collect();
-    labels.push("Fix in Game files (nothing is moved)".to_string());
-    labels.push("Move anyway".to_string());
-    labels.push("Cancel".to_string());
-    let Some(dialog) = open_list(app, router, "Check the game files", labels, move |app, router, index| {
-        if index > 0 && index < fix {
-            if let Some(text) = details.get(index - 1) {
+    open_model(app, router, "Check the game files", view::game_file_issues(&issues), move |app, router, act| match act {
+        Act::Detail(i) => {
+            if let Some(text) = details.get(i) {
                 message(app, router, text);
             }
-        } else if index == fix {
-            super::rom_screens::open_game_files(app, router);
-        } else if index == fix + 1 {
-            start_move(app, router, new_dir.clone(), plan.clone(), true);
-        } else if index == fix + 2 {
-            open_menu(app, router);
         }
-    }) else {
-        return;
-    };
-    dialog.set_selected_index(fix as i32);
-    app.dialog_nav.picker_index.set(fix as i32);
+        Act::FixInGameFiles => super::rom_screens::open_game_files(app, router),
+        Act::MoveAnyway => start_move(app, router, new_dir.clone(), plan.clone(), true),
+        Act::Cancel => open_menu(app, router),
+        _ => {}
+    });
 }
 
-/// What the worker brings back for one port.
-enum PortResult {
-    Moved(Prepared),
-    Failed { name: String, text: String, after_copy_game_files: bool },
-}
-
+/// What the worker brings back.
 struct MoveRun {
-    results: Vec<PortResult>,
+    moved: Vec<Prepared>,
+    failed: Vec<(String, String, bool)>,
     cancelled: bool,
+    drive_gone: Option<String>,
 }
 
 fn move_env_parts(app: &AppState) -> (PathBuf, PathBuf) {
@@ -384,68 +407,86 @@ fn free_space(dir: &Path) -> Option<u64> {
     free_bytes(dir)
 }
 
+/// Replaces an old copy the user kept that sits where a port is moving to: its saves are zipped, then
+/// it is removed and its record dropped. Runs on the worker thread.
+fn replace_stale(stale: &PortToMove, port: Option<&Port>, saves_dir: &Path, config_dir: &Path) -> Result<(), String> {
+    let Some(port) = port else { return Err("it is not in the catalog any more, so its saves cannot be found; remove that old copy by hand".into()) };
+    crate::core::save_backup::backup_before_update(port, saves_dir, &stale.to, &crate::fork::store::backup_stamp(), &mut |_| {})
+        .map_err(|e| format!("the saves in the old copy at {} could not be zipped, so it was left alone: {e}", stale.to.display()))?;
+    port_mover::copy::remove_copy(&stale.to).map_err(|e| format!("could not remove the old copy at {}: {e}", stale.to.display()))?;
+    let _ = old_copies::forget(config_dir, &stale.to);
+    Ok(())
+}
+
 fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<MovePlan>, accept_issues: bool) {
-    if MOVING.with(Cell::get) {
+    if JOB_BUSY.with(Cell::get) {
         return message(app, router, "A move is already running.");
     }
     if !app.install_runtime.installing.borrow().is_empty() {
         return message(app, router, "An install, update or save restore is running. Wait for it to finish, then try again.");
     }
-    if super::playtime::any_process_running(app) {
-        return message(app, router, "A game started from this app is running. Close it first, then try again.");
+    if let Some(why) = running_now(app, &plan) {
+        return message(app, router, &why);
     }
-    let keys: Vec<String> = plan.ports.iter().map(|p| p.key.clone()).collect();
+    let keys: Vec<String> = plan.ports.iter().chain(&plan.stale).map(|p| p.key.clone()).collect();
     MOVING.with(|m| m.set(true));
+    JOB_BUSY.with(|b| b.set(true));
     for k in &keys {
         app.install_runtime.installing.borrow_mut().insert(k.clone());
     }
-    let jobs: Vec<(PortToMove, GameFiles)> =
-        plan.ports.iter().map(|p| (p.clone(), find_port(app, &p.key).map(|port| GameFiles::for_port(&port, &app.paths.config_dir)).unwrap_or_default())).collect();
-    let (home, config_dir) = move_env_parts(app);
-    let total_ports = jobs.len();
+    let catalog = app.catalog.borrow().clone();
+    let port_of = move |key: &str| catalog.iter().find(|p| p.key() == key).cloned();
+    let config_dir = app.paths.config_dir.clone();
+    let files: Vec<GameFiles> = plan.ports.iter().chain(&plan.stale).map(|p| port_of(&p.key).map(|port| GameFiles::for_port(&port, &config_dir)).unwrap_or_default()).collect();
+    let stale: Vec<(PortToMove, Option<Port>)> = plan.stale.iter().map(|s| (s.clone(), port_of(&s.key))).collect();
+    let items: Vec<BatchItem> = plan.ports.iter().chain(&plan.stale).map(|p| BatchItem { port: PortRef { key: p.key.clone(), name: p.name.clone() }, from: p.from.clone(), to: p.to.clone() }).collect();
+    let (home, _) = move_env_parts(app);
+    let saves_dir = app.paths.saves_backup_dir.clone();
+    let total = items.len();
     let job = Rc::new(Background::spawn(move |ctl| {
         let settings = ForkSettings::load(&config_dir.join(FILE_NAME));
         let steam = SystemSteamCheck::new();
         let env = MoveEnv { home: &home, config_dir: &config_dir, settings: &settings, steam: &steam, game_mode: false, running: &running_in, free_space: &free_space };
-        let mut run = MoveRun { results: Vec::new(), cancelled: false };
-        for (i, (p, files)) in jobs.into_iter().enumerate() {
-            if ctl.cancelled() {
-                run.cancelled = true;
-                break;
+        let mut run = MoveRun { moved: Vec::new(), failed: Vec::new(), cancelled: false, drive_gone: None };
+        // Kept old copies in the way go first (saves zipped, then removed), so their ports can move.
+        let mut blocked: Vec<String> = Vec::new();
+        for (s, port) in &stale {
+            ctl.set_progress(format!("Replacing the old copy of {}\n{}", s.name, s.to.display()));
+            if let Err(e) = replace_stale(s, port.as_ref(), &saves_dir, &config_dir) {
+                run.failed.push((s.name.clone(), e, false));
+                blocked.push(s.key.clone());
             }
-            let port = PortRef { key: p.key.clone(), name: p.name.clone() };
-            let options = MoveOptions { game_files: files, accept_issues_before: accept_issues, ..Default::default() };
-            let mut progress = |done: u64, total: u64, _: &Path| ctl.set_progress(format!("Copying {} of {total_ports}: {}\n{} of {}", i + 1, p.name, human_bytes(done), human_bytes(total)));
-            ctl.set_progress(format!("Copying {} of {total_ports}: {}\nStarting...", i + 1, p.name));
-            match port_mover::prepare(&port, &p.from, &p.to, &env, &options, &mut progress, ctl.flag()) {
-                Ok(prepared) => run.results.push(PortResult::Moved(prepared)),
-                Err(MoveError::Cancelled) => {
-                    run.cancelled = true;
-                    break;
-                }
-                Err(e) => {
-                    let after = matches!(e, MoveError::GameFiles { stage: Stage::AfterCopy, .. });
-                    run.results.push(PortResult::Failed { name: p.name.clone(), text: e.to_string(), after_copy_game_files: after });
+        }
+        let todo: Vec<(BatchItem, GameFiles)> = items.into_iter().zip(files).filter(|(i, _)| !blocked.contains(&i.port.key)).collect();
+        let (batch_items, batch_files): (Vec<BatchItem>, Vec<GameFiles>) = todo.into_iter().unzip();
+        let names: Vec<String> = batch_items.iter().map(|i| i.port.name.clone()).collect();
+        let options = |i: usize| MoveOptions { game_files: batch_files[i].clone(), accept_issues_before: accept_issues, ..Default::default() };
+        let mut progress = |i: usize, done: u64, size: u64| ctl.set_progress(format!("Copying {} of {total}: {}\n{} of {}", i + 1, names[i], human_bytes(done), human_bytes(size)));
+        let result = port_mover::run_batch(&batch_items, &env, &options, &mut progress, ctl.flag());
+        for outcome in result.outcomes {
+            match outcome {
+                BatchOutcome::Moved(p) => run.moved.push(p),
+                BatchOutcome::Failed { port, error } => {
+                    let after = matches!(error, MoveError::GameFiles { stage: Stage::AfterCopy, .. });
+                    run.failed.push((port.name, error.to_string(), after));
                 }
             }
         }
+        run.cancelled = result.cancelled;
+        run.drive_gone = result.drive_gone;
         run
     }));
+    {
+        let job = job.clone();
+        CANCEL_JOB.with(|c| *c.borrow_mut() = Some(Rc::new(move || job.cancel())));
+    }
 
     // A list showing progress with a Cancel row; B cancels too.
-    let labels = |progress: &str, cancelling: bool| -> Vec<String> {
-        let (a, b) = progress.split_once('\n').unwrap_or((progress, ""));
-        vec![
-            if a.is_empty() { "Starting...".into() } else { a.to_string() },
-            if b.is_empty() { " ".into() } else { b.to_string() },
-            if cancelling { "Cancelling...".into() } else { "Cancel (the copies made so far are removed)".into() },
-        ]
-    };
     let cancelling = Rc::new(Cell::new(false));
-    let list = build_picker_dialog(app, router, "Moving ports", &labels("Copying 99 of 99: A port name that is quite long\n999.9 GB of 999.9 GB", false));
+    let list = build_picker_dialog(app, router, "Moving ports", &view::progress_labels("Copying 99 of 99: A port name that is quite long\n999.9 GB of 999.9 GB", false));
     let list_weak = list.as_ref().map(|d| d.as_weak());
     if let Some(dialog) = list {
-        set_picker_items(&dialog, &labels("", false));
+        set_picker_items(&dialog, &view::progress_labels("", false));
         dialog.set_selected_index(2);
         app.dialog_nav.picker_index.set(2);
         {
@@ -455,7 +496,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
                     job.cancel();
                     cancelling.set(true);
                     if let Some(d) = weak.upgrade() {
-                        set_picker_items(&d, &labels(&job.progress(), true));
+                        set_picker_items(&d, &view::progress_labels(&job.progress(), true));
                     }
                 }
             });
@@ -481,16 +522,24 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
                     app.install_runtime.installing.borrow_mut().remove(k);
                 }
                 close_current_dialog(&app, &router);
-                return match result {
-                    Ok(run) => after_move(&app, &router, &new_dir, run),
+                let quitting = QUIT_AFTER_JOB.with(Cell::get);
+                match result {
+                    Ok(mut run) => {
+                        if quitting {
+                            run.cancelled = true;
+                        }
+                        after_move(&app, &router, &new_dir, run);
+                    }
                     Err(e) => message(&app, &router, &e),
-                };
+                }
+                job_finished();
+                return;
             }
             let text = job.progress();
-            if text != *last.borrow() {
+            if text != *last.borrow() || cancelling.get() {
                 *last.borrow_mut() = text.clone();
                 if let Some(d) = list_weak.as_ref().and_then(slint::Weak::upgrade) {
-                    set_picker_items(&d, &labels(&text, cancelling.get()));
+                    set_picker_items(&d, &view::progress_labels(&text, cancelling.get()));
                 }
             }
         });
@@ -501,102 +550,72 @@ fn discard_all(prepared: &[Prepared]) -> Vec<String> {
     prepared.iter().filter_map(|p| port_mover::discard(p).err().map(|e| format!("Could not remove the new copy {}: {e}", p.to.display()))).collect()
 }
 
-fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun) {
-    let mut moved: Vec<Prepared> = Vec::new();
-    let mut failed: Vec<(String, String, bool)> = Vec::new();
-    for r in run.results {
-        match r {
-            PortResult::Moved(p) => moved.push(p),
-            PortResult::Failed { name, text, after_copy_game_files } => failed.push((name, text, after_copy_game_files)),
-        }
+fn with_problems(mut text: String, problems: Vec<String>) -> String {
+    for p in problems {
+        text.push_str(&format!("\n{p}"));
     }
-    if run.cancelled {
-        let problems = discard_all(&moved);
-        let mut text = format!("Move cancelled. Nothing changed: the ports folder is still {}, and the copies made so far were removed.", app.paths.library_dir().display());
-        for p in problems {
-            text.push_str(&format!("\n{p}"));
-        }
-        return message(app, router, &text);
+    text
+}
+
+fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun) {
+    let MoveRun { moved, failed, cancelled, drive_gone } = run;
+    if let Some(why) = drive_gone {
+        return message(app, router, &with_problems(why, discard_all(&moved)));
+    }
+    if cancelled {
+        let text = format!("Move cancelled. Nothing changed: the ports folder is still {}, and the copies made so far were removed.", app.paths.library_dir().display());
+        return message(app, router, &with_problems(text, discard_all(&moved)));
     }
     if failed.is_empty() {
         return switch_now(app, router, new_dir, moved, String::new());
     }
-    let mut labels = vec![format!("{} of {} ports could not be moved:", failed.len(), failed.len() + moved.len())];
-    for (name, text, _) in &failed {
-        labels.push(format!("  {name}: {}", ellipsize(&text.replace('\n', " "), 90)));
-    }
-    let game_files_problem = failed.iter().any(|(_, _, g)| *g);
-    let first = labels.len();
-    if game_files_problem {
-        labels.push("Fix in Game files (nothing changes; the new copies are removed)".to_string());
-    }
-    if !moved.is_empty() {
-        labels.push(format!("Switch anyway ({} moved; the others stay in the old folder and show as not installed)", moved.len()));
-    }
-    labels.push("Cancel (nothing changes; the new copies are removed)".to_string());
     let details: Vec<String> = failed.iter().map(|(n, t, _)| format!("{n}: {t}")).collect();
+    let model = view::after_move(&failed, moved.len());
     let moved = Rc::new(moved);
     let new_dir = new_dir.to_path_buf();
-    let n_rows = labels.len();
-    let Some(dialog) = open_list(app, router, "Some ports were not moved", labels, move |app, router, index| {
-        let fix_row = game_files_problem.then_some(first);
-        let switch_row = (!moved.is_empty()).then(|| first + usize::from(game_files_problem));
-        if index > 0 && index < first {
-            // A failure row: show its whole text.
-            if let Some(text) = details.get(index - 1) {
+    open_model(app, router, "Some ports were not moved", model, move |app, router, act| match act {
+        Act::Detail(i) => {
+            if let Some(text) = details.get(i) {
                 message(app, router, text);
             }
-        } else if Some(index) == fix_row {
+        }
+        Act::FixInGameFiles => {
             let problems = discard_all(&moved);
             super::rom_screens::open_game_files(app, router);
             if !problems.is_empty() {
                 eprintln!("ports folder: {}", problems.join("; "));
             }
-        } else if Some(index) == switch_row {
-            switch_now(app, router, &new_dir, moved.as_ref().clone(), "Some ports were not moved and stay in the old folder.".into());
-        } else if index == n_rows - 1 {
-            let problems = discard_all(&moved);
-            let mut text = "Nothing changed. The new copies were removed; the originals are untouched.".to_string();
-            for p in problems {
-                text.push_str(&format!("\n{p}"));
-            }
-            message(app, router, &text);
         }
-    }) else {
-        return;
-    };
-    dialog.set_selected_index(first as i32);
-    app.dialog_nav.picker_index.set(first as i32);
+        Act::SwitchAnyway => switch_now(app, router, &new_dir, moved.as_ref().clone(), "Some ports were not moved and stay in the old folder.".into()),
+        Act::Cancel => message(app, router, &with_problems("Nothing changed. The new copies were removed; the originals are untouched.".into(), discard_all(&moved))),
+        _ => {}
+    });
 }
 
 /// Makes `new_dir` the ports folder, then repoints Steam and records for the moved ports, then asks
 /// about each old copy.
 fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Prepared>, note: String) {
+    let (home, config_dir) = move_env_parts(app);
+    // The old copies are listed before the setting changes, so a crash in between still keeps them listed.
+    if let Err(e) = port_mover::record_pending(&config_dir, &moved) {
+        let text = format!("The list of old copies could not be written ({e}). Nothing changed; the new copies were removed.");
+        return message(app, router, &with_problems(text, discard_all(&moved)));
+    }
     let mut settings = ForkSettings::load(&settings_path(app));
     if let Err(e) = ports_folder::save_choice(&mut settings, &app.paths.config_dir, new_dir) {
-        let problems = discard_all(&moved);
-        let mut text = format!("The new ports folder could not be saved ({e}). Nothing changed; the new copies were removed.");
-        for p in problems {
-            text.push_str(&format!("\n{p}"));
+        for p in &moved {
+            let _ = old_copies::forget(&config_dir, &p.from);
         }
-        return message(app, router, &text);
+        let text = format!("The new ports folder could not be saved ({e}). Nothing changed; the new copies were removed.");
+        return message(app, router, &with_problems(text, discard_all(&moved)));
     }
     let old_dir = app.paths.library_dir();
     *app.paths.library.borrow_mut() = new_dir.to_path_buf();
     eprintln!("ports folder: switched from {} to {}", old_dir.display(), new_dir.display());
     after_library_change(app);
 
-    let (home, config_dir) = move_env_parts(app);
     let steam = SystemSteamCheck::new();
-    let env = MoveEnv {
-        home: &home,
-        config_dir: &config_dir,
-        settings: &settings,
-        steam: &steam,
-        game_mode: crate::fork::steam_queue::game_mode_from_env(),
-        running: &running_in,
-        free_space: &free_space,
-    };
+    let env = MoveEnv { home: &home, config_dir: &config_dir, settings: &settings, steam: &steam, game_mode: game_mode(), running: &running_in, free_space: &free_space };
     let mut summary = vec![format!("The ports folder is now {}.", new_dir.display())];
     if !moved.is_empty() {
         let bytes: u64 = moved.iter().map(|p| p.bytes).sum();
@@ -612,7 +631,7 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
         // Information only: named by the port's entry, but neither connected nor in its folder (often needed
         // only once, at install time).
         if let Some(port) = find_port(app, &p.port.key) {
-            let missing = crate::fork::port_mover::game_files::required_not_found(&p.to, &GameFiles::for_port(&port, &config_dir));
+            let missing = port_mover::game_files::required_not_found(&p.to, &GameFiles::for_port(&port, &config_dir));
             if !missing.is_empty() {
                 summary.push(format!(
                     "{}: for information, its entry names {} which is neither in its folder nor connected in Game files (fine if it was only needed when installing).",
@@ -625,7 +644,7 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
             summary.push(format!("{}: moved although the game file check found: {}.", p.port.name, p.accepted_issues.iter().map(|i| i.file.clone()).collect::<Vec<_>>().join(", ")));
         }
         for link in &p.rewritten_links {
-            summary.push(format!("{}: the game file link {} now holds a full path, so it keeps working.", p.port.name, link.display()));
+            summary.push(format!("{}: the link {} was adjusted so it keeps working at the new place.", p.port.name, link.display()));
         }
         if let Some(entry) = old_copies::load(&config_dir).unwrap_or_default().into_iter().find(|o| o.old_path == p.from) {
             copies.push_back(entry);
@@ -639,19 +658,47 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
 
 // -- Old copies -----------------------------------------------------------------------------------
 
-fn removal_ctx_parts(app: &AppState) -> (PathBuf, PathBuf, PathBuf, Vec<PathBuf>) {
-    let library = app.paths.library_dir();
-    let active = app.catalog.borrow().iter().filter_map(|p| crate::core::path_safety::safe_join(&library, &p.folder).ok()).collect();
-    (home_dir().unwrap_or_else(|| PathBuf::from("/")), app.paths.config_dir.clone(), library, active)
+/// Everything the removal check needs, owned, so it can also run on the worker thread.
+struct RemovalParts {
+    home: PathBuf,
+    config_dir: PathBuf,
+    library: PathBuf,
+    active: Vec<PathBuf>,
+    catalog: Vec<Port>,
 }
 
-fn check_removal(app: &AppState, entry: &OldCopy) -> Result<u64, String> {
-    let (home, config_dir, library, active) = removal_ctx_parts(app);
-    old_copies::removal_check(entry, &RemovalCtx { home: &home, config_dir: &config_dir, library_dir: &library, active_paths: &active, running: &running_in })
+impl RemovalParts {
+    fn of(app: &AppState) -> RemovalParts {
+        let library = app.paths.library_dir();
+        let catalog = app.catalog.borrow().clone();
+        let active = catalog.iter().filter_map(|p| crate::core::path_safety::safe_join(&library, &p.folder).ok()).collect();
+        RemovalParts { home: home_dir().unwrap_or_else(|| PathBuf::from("/")), config_dir: app.paths.config_dir.clone(), library, active, catalog }
+    }
+
+    /// The port's save folders that resolve inside `dir`; `None` when the port left the catalog.
+    fn save_folders(&self, entry: &OldCopy, dir: &Path) -> Option<Vec<PathBuf>> {
+        let port = self.catalog.iter().find(|p| p.key() == entry.port_key)?;
+        Some(
+            [port.save.as_ref(), port.save2.as_ref()]
+                .into_iter()
+                .flatten()
+                .filter_map(|value| crate::core::platform_resolve::resolve_save_folder(value, dir))
+                .filter(|folder| is_within(folder, dir))
+                .collect(),
+        )
+    }
+
+    fn check(&self, entry: &OldCopy) -> Result<u64, String> {
+        let saves = |e: &OldCopy, dir: &Path| self.save_folders(e, dir);
+        old_copies::removal_check(
+            entry,
+            &RemovalCtx { home: &self.home, config_dir: &self.config_dir, library_dir: &self.library, active_paths: &self.active, running: &running_in, save_folders: &saves },
+        )
+    }
 }
 
 /// "Remove the old copy now?" for each entry in turn, then `summary` (with what was removed or kept).
-/// Nothing is removed without the user choosing "Remove old copy" for that entry.
+/// Nothing is removed without the user choosing "Remove old copy" for that entry; Keep is preselected.
 pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies: VecDeque<OldCopy>, summary: String) {
     let Some(entry) = copies.pop_front() else {
         if !summary.is_empty() {
@@ -659,63 +706,44 @@ pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies:
         }
         return;
     };
-    let check = check_removal(app, &entry);
-    let size = match &check {
-        Ok(bytes) if entry.link_only => format!("A link to another folder ({} stays)", human_bytes(*bytes)),
-        Ok(bytes) => human_bytes(*bytes),
-        Err(_) => human_bytes(entry.bytes),
-    };
-    let mut labels = vec![
-        entry.name.clone(),
-        format!("Old copy: {}", ellipsize(&entry.old_path.to_string_lossy(), 70)),
-        format!("Size: {size}"),
-        format!("In use now: {}", ellipsize(&entry.new_path.to_string_lossy(), 66)),
-    ];
-    let can_remove = check.is_ok();
-    match &check {
-        Ok(_) => labels.push("Remove old copy (its saves are zipped first)".to_string()),
-        Err(why) => labels.push(format!("Can't remove it now: {}", ellipsize(why, 90))),
-    }
-    labels.push("Keep for now".to_string());
+    let check = RemovalParts::of(app).check(&entry);
+    let model = view::old_copy_prompt(&entry, &check);
     let why = check.err();
     let copies = Rc::new(RefCell::new(Some(copies)));
     let summary = Rc::new(summary);
-    let Some(dialog) = open_list(app, router, "Remove the old copy now?", labels, move |app, router, index| {
+    open_model(app, router, "Remove the old copy now?", model, move |app, router, act| {
         let rest = || copies.borrow_mut().take().unwrap_or_default();
-        match index {
-            4 if can_remove => remove_one(app, router, entry.clone(), rest(), summary.as_ref().clone()),
-            4 => {
+        match act {
+            Act::RemoveOldCopy => remove_one(app, router, entry.clone(), rest(), summary.as_ref().clone()),
+            Act::ExplainKept => {
                 if let Some(why) = &why {
                     message(app, router, why);
                 }
             }
-            5 => {
+            Act::KeepForNow => {
                 let note = format!("{}\n\nKept the old copy of {} at {} (remove it later: Settings > Ports folder > Old copies).", summary, entry.name, entry.old_path.display());
                 prompt_old_copies(app, router, rest(), note.trim_start().to_string());
             }
             _ => {}
         }
-    }) else {
-        return;
-    };
-    let select = if can_remove { 4 } else { 5 };
-    dialog.set_selected_index(select);
-    app.dialog_nav.picker_index.set(select);
+    });
 }
 
 fn remove_one(app: &Rc<AppState>, router: &Router, entry: OldCopy, rest: VecDeque<OldCopy>, summary: String) {
-    let (home, config_dir, library, active) = removal_ctx_parts(app);
+    let parts = RemovalParts::of(app);
     let port = find_port(app, &entry.port_key);
     let saves_dir = app.paths.saves_backup_dir.clone();
     open_progress_dialog(app, router, "Removing the old copy", &format!("Removing {}...", entry.old_path.display()));
+    JOB_BUSY.with(|b| b.set(true));
     let job = Rc::new(Background::spawn(move |_| {
         let backup = |e: &OldCopy| -> Result<Option<PathBuf>, String> {
             match &port {
                 Some(port) => crate::core::save_backup::backup_before_update(port, &saves_dir, &e.old_path, &crate::fork::store::backup_stamp(), &mut |_| {}),
-                None => Ok(None),
+                None => Err("the port is not in the catalog any more".into()),
             }
         };
-        let ctx = RemovalCtx { home: &home, config_dir: &config_dir, library_dir: &library, active_paths: &active, running: &running_in };
+        let saves = |e: &OldCopy, dir: &Path| parts.save_folders(e, dir);
+        let ctx = RemovalCtx { home: &parts.home, config_dir: &parts.config_dir, library_dir: &parts.library, active_paths: &parts.active, running: &running_in, save_folders: &saves };
         old_copies::remove(&entry, &ctx, &backup).map(|r| (entry, r))
     }));
     let (app, router) = (app.clone(), router.clone());
@@ -730,6 +758,9 @@ fn remove_one(app: &Rc<AppState>, router: &Router, entry: OldCopy, rest: VecDequ
             };
             JOB_TIMER.with(|t| t.stop());
             close_current_dialog(&app, &router);
+            if job_finished() {
+                return;
+            }
             let line = match result {
                 Ok(Ok((entry, removed))) => {
                     let zip = removed.saves_zip.map(|z| format!(" Its saves were zipped to {} first.", z.display())).unwrap_or_default();
@@ -751,26 +782,30 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
     };
     let mut labels: Vec<String> = list.iter().map(|o| format!("{}: {} ({})", o.name, ellipsize(&o.old_path.to_string_lossy(), 56), human_bytes(o.bytes))).collect();
     labels.push("Back".to_string());
+    let model = ListModel { acts: (0..list.len()).map(Act::Detail).chain([Act::Back]).collect(), labels, select: 0 };
     let list = Rc::new(list);
-    open_list(app, router, "Old copies kept after moves", labels, move |app, router, index| match list.get(index) {
-        Some(entry) => {
+    open_model(app, router, "Old copies kept after moves", model, move |app, router, act| match act {
+        Act::Detail(i) => {
+            let Some(entry) = list.get(i) else { return };
             // An old copy that is already gone: offer to forget the record.
             if std::fs::symlink_metadata(&entry.old_path).is_err() {
                 let path = entry.old_path.clone();
-                return open_confirm_dialog(
+                return confirm_or(
                     app,
                     router,
-                    "Old copy already gone".into(),
-                    format!("{} is not there any more.\n\nForget this record?\n", path.display()).into(),
-                    "Forget it".into(),
+                    "Old copy already gone",
+                    format!("{} is not there any more.\n\nForget this record?", path.display()),
+                    "Forget it",
                     move |app, router| {
                         let _ = old_copies::forget(&app.paths.config_dir, &path);
                         open_old_copies(app, router);
                     },
+                    open_old_copies,
                 );
             }
             prompt_old_copies(app, router, VecDeque::from([entry.clone()]), String::new());
         }
-        None => open_menu(app, router),
+        Act::Back => open_menu(app, router),
+        _ => {}
     });
 }

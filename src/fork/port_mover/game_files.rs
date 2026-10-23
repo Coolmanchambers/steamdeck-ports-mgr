@@ -147,7 +147,9 @@ pub fn check_before(port_dir: &Path, files: &GameFiles) -> Vec<Issue> {
         if !relevant {
             continue;
         }
-        if let Some(problem) = health_problem(check_mapping(m)) {
+        // A copy lives in the port folder: only that copy matters for the move, not its original.
+        let health = if m.method == Method::Copy { copy_health(m) } else { check_mapping(m) };
+        if let Some(problem) = health_problem(health) {
             issues.push(Issue { file: name_of(&m.source), expected_at: m.dest.clone().unwrap_or_else(|| m.source.clone()), problem: problem.into() });
         }
     }
@@ -208,6 +210,10 @@ pub fn check_after(old_dir: &Path, new_dir: &Path, manifest: &Manifest, files: &
         let old_link = old_dir.join(&entry.rel);
         let new_link = new_dir.join(&entry.rel);
         let old_abs = absolute_target(&old_link, original);
+        if target.is_absolute() && is_within(target, old_dir) {
+            issues.push(Issue { file: name_of(&new_link), expected_at: target.clone(), problem: "this link still points into the old folder".into() });
+            continue;
+        }
         if is_within(&old_abs, old_dir) {
             continue;
         }
@@ -266,5 +272,16 @@ fn crc32_of(path: &Path) -> Option<u32> {
             return Some(crc.finish());
         }
         crc.update(&buf[..n]);
+    }
+}
+
+/// Health of a game file copied into the port folder: only the copy counts (its original may be gone or
+/// changed since, which the move does not care about).
+fn copy_health(m: &Mapping) -> Health {
+    let Some(dest) = &m.dest else { return Health::Ok };
+    match fs::symlink_metadata(dest) {
+        Err(_) => Health::DestMissing,
+        Ok(meta) if !meta.is_file() || meta.len() != m.size => Health::DestChanged,
+        Ok(_) => Health::Ok,
     }
 }

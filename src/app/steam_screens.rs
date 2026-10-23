@@ -338,7 +338,8 @@ fn window_away(app: &AppState) -> bool {
 fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
     // Never on top of another dialog, while a game started from here runs, or while the window is away;
     // `offered` is left alone so a later look still offers.
-    if dialog_is_open(app) || !app.install_runtime.running_processes.borrow().is_empty() || window_away(app) {
+    // Fork (ports folder): the "ports folder not available" message comes first.
+    if super::ports_folder_screen::startup_dialog_pending() || dialog_is_open(app) || !app.install_runtime.running_processes.borrow().is_empty() || window_away(app) {
         return;
     }
     let path = queue_path(app);
@@ -370,6 +371,10 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
 
 pub(crate) fn open_adopt_screen(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
+        return;
+    }
+    // Fork (ports folder): adopting creates links in the ports folder, never while it is missing or moving.
+    if super::ports_folder_screen::refuse_when_blocked(app) {
         return;
     }
     let Some(home) = home_dir() else { return no_home(app, router, ADOPT_TITLE) };
@@ -416,6 +421,9 @@ fn show_adopt_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<Ado
 fn confirm_adopt(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<AdoptScreen>>) {
     let text = padded(&screen.borrow().confirm_text());
     open_confirm_dialog(app, router, ADOPT_TITLE.into(), text.into(), "Adopt".into(), move |app, router| {
+        if super::ports_folder_screen::refuse_when_blocked(app) {
+            return;
+        }
         let local_json = app.paths.config_dir.join("ports.local.json");
         let catalog = app.catalog.borrow().clone();
         let done = screens::adopt_selected(&screen.borrow(), &catalog, &app.paths.library_dir(), &local_json);

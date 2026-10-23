@@ -8,7 +8,9 @@
 #   - Settings > Artwork sources... opens and its Back row returns to Settings;
 #   - Settings > Game files... opens without a crash;
 #   - Settings > Ports folder... opens, its "Choose another folder..." opens the folder picker, and
-#     closing the picker returns to the Ports folder list;
+#     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
+#     ports into ~/Games/Ports (New folder here, Use this folder, Move, Keep for now twice) and checks the
+#     setting, the copy (program bits), the kept old copies and their records, and a relaunch;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
@@ -30,17 +32,24 @@ mkdir -p "$OUT" || setup_fail "can't create $OUT"
 APP_DIR="$(mktemp -d)" || setup_fail "mktemp"
 cp "$BIN_DIR/ports_launcher" "$BIN_DIR/7zzs" "$APP_DIR/" || setup_fail "ports_launcher or 7zzs missing in $BIN_DIR"
 for f in ports.json themes.json; do [ -f "$BIN_DIR/$f" ] && cp "$BIN_DIR/$f" "$APP_DIR/"; done
+# A home of its own (the end-to-end move creates ~/Games/Ports) and two installed catalog ports.
+# Outside the app folder: a ports folder inside the app folder is refused.
+HOME_DIR="$(mktemp -d)" || setup_fail "mktemp home"
+mkdir -p "$HOME_DIR/Games" "$APP_DIR/Library/SpaceCadetPinball" "$APP_DIR/Library/Abuse_2025" || setup_fail "mkdir $HOME_DIR"
+printf '#!/bin/sh\necho pinball\n' > "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball" && chmod 755 "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball"
+echo data > "$APP_DIR/Library/Abuse_2025/x"
+E2E=0
 
 Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
 XVFB=$!
 APP=""
-cleanup() { kill $APP "$XVFB" 2>/dev/null; rm -rf "$APP_DIR"; }
+cleanup() { kill $APP "$XVFB" 2>/dev/null; rm -rf "$APP_DIR" "$HOME_DIR"; }
 trap cleanup EXIT
 for _ in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
 kill -0 "$XVFB" 2>/dev/null && xdpyinfo >/dev/null 2>&1 || { cat "$OUT/xvfb.log"; setup_fail "Xvfb $DISPLAY did not come up"; }
 
 # A bare session: no D-Bus session bus (so no tray host), no Wayland, no desktop name.
-env -i HOME="$HOME" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$APP_DIR" RUST_BACKTRACE=1 \
+env -i HOME="$HOME_DIR" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$APP_DIR" RUST_BACKTRACE=1 \
     "$APP_DIR/ports_launcher" >"$OUT/app.log" 2>&1 &
 APP=$!
 
@@ -117,6 +126,45 @@ if [ "$alive" = yes ]; then
                     eval "$(xdotool getwindowgeometry --shell "$picker")"
                     xdotool mousemove $((X + WIDTH - 16)) $((Y + 16)) click 1; sleep 1.5
                     check "closing the picker returns to the Ports folder list" '[ -z "$(xdotool search --name "^Choose the ports folder$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Ports folder$" 2>/dev/null)" ]'
+                    # End to end: Choose another folder > Games > New folder here "Ports" > Use this folder >
+                    # Move 2 ports here > Keep for now twice. Keys go to the focused dialog (no window manager).
+                    wait_window() {
+                        local w
+                        for _ in $(seq 1 "${2:-50}"); do
+                            w=$(xdotool search --onlyvisible --name "$1" 2>/dev/null | head -1)
+                            if [ -n "$w" ]; then echo "$w"; return 0; fi
+                            sleep 0.2
+                        done
+                        return 1
+                    }
+                    key_to() {
+                        local name="$1" w; shift
+                        w=$(wait_window "$name" 150) || { echo "e2e: no window $name" >>"$OUT/e2e.log"; return 1; }
+                        xdotool windowfocus "$w" 2>/dev/null; sleep 0.4; xdotool key --delay 200 "$@"; sleep 1.5
+                        STEP=$((${STEP:-0} + 1)); import -window root "$OUT/e2e-$STEP.png" 2>/dev/null; echo "e2e: step $STEP keys $* to $name ($w), focus now $(xdotool getwindowfocus getwindowname 2>&1)" >>"$OUT/e2e.log"
+                    }
+                    pf=$(wait_window "^Ports folder$")
+                    if [ -n "$pf" ]; then
+                        eval "$(xdotool getwindowgeometry --shell "$pf")"
+                        xdotool mousemove $((X + 100)) $((Y + 63 + 42 * 2)) click 1; sleep 2
+                        E2E=1
+                        # From "Use this folder": Up skips the heading to the Games place (Places: Home, Games).
+                        key_to "^Choose the ports folder$" Up Return
+                        key_to "^Choose the ports folder$" Down Return
+                        nf=$(wait_window "^New folder in")
+                        if [ -n "$nf" ]; then xdotool windowfocus "$nf" 2>/dev/null; sleep 0.4; xdotool type --delay 80 "Ports"; sleep 0.3; xdotool key Return; sleep 1.5; fi
+                        key_to "^Choose the ports folder$" Return
+                        key_to "^Switch the ports folder" Return
+                        key_to "^Remove the old copy now" Return
+                        key_to "^Remove the old copy now" Return
+                        import -window root "$OUT/move-done.png" 2>/dev/null
+                        cp "$APP_DIR/fork-settings.json" "$APP_DIR/port-moves.json" "$OUT/" 2>/dev/null
+                        check "end to end: the new ports folder is saved" 'grep -q "\"ports_folder\": \"$HOME_DIR/Games/Ports\"" "$APP_DIR/fork-settings.json"'
+                        check "end to end: program bits kept in the copy (755)" '[ "$(stat -c %a "$HOME_DIR/Games/Ports/SpaceCadetPinball/SpaceCadetPinball" 2>/dev/null)" = 755 ]'
+                        check "end to end: the old copy is kept" '[ -f "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball" ]'
+                        check "end to end: both old copies recorded" '[ "$(grep -c "\"old_path\"" "$APP_DIR/port-moves.json" 2>/dev/null)" = 2 ]'
+                        check "end to end: no staging folder left" '[ -d "$HOME_DIR/Games/Ports" ] && [ -z "$(find "$HOME_DIR/Games/Ports" -maxdepth 1 -name ".*.dpm-moving-*" 2>/dev/null)" ]'
+                    fi
                 fi
             fi
             eval "$(xdotool getwindowgeometry --shell "$win")"
@@ -160,6 +208,15 @@ if [ "$alive" = yes ]; then
         check "Close quits when there is no tray (exit code $code)" '[ "$code" -eq 0 ]'
     fi
     APP=""
+    if [ "$E2E" = 1 ]; then
+        # Started again, the app finds the new ports folder.
+        env -i HOME="$HOME_DIR" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$APP_DIR" RUST_BACKTRACE=1 \
+            "$APP_DIR/ports_launcher" >"$OUT/app-relaunch.log" 2>&1 &
+        APP=$!
+        sleep 6
+        check "relaunch: the moved ports folder is available" 'grep -q "ports folder: $HOME_DIR/Games/Ports (available)" "$OUT/app-relaunch.log"'
+        kill "$APP" 2>/dev/null; wait "$APP" 2>/dev/null; APP=""
+    fi
 fi
 
 echo "--- app output (last 20 lines) ---"; tail -20 "$OUT/app.log"

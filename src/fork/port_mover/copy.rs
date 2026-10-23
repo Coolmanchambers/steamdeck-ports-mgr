@@ -157,10 +157,34 @@ pub fn absolute_target(link: &Path, target: &Path) -> PathBuf {
     }
 }
 
-/// The target the copy of a link gets: relative links that leave `root` become absolute.
+/// `target` as seen from the folder `from` (both absolute and normalized): `../x/y`.
+pub fn relative_path(from: &Path, target: &Path) -> PathBuf {
+    let from: Vec<Component> = from.components().collect();
+    let to: Vec<Component> = target.components().collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut out = PathBuf::new();
+    for _ in common..from.len() {
+        out.push("..");
+    }
+    for c in &to[common..] {
+        out.push(c.as_os_str());
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
+}
+
+/// The target the copy of a link gets. A relative link that leaves `root` would break at the new
+/// place, so it becomes absolute; an absolute link into `root` itself would keep pointing at the old
+/// folder, so it becomes relative (and moves with the copy). Everything else stays as written.
 pub fn copied_link_target(root: &Path, link: &Path, target: &Path) -> PathBuf {
-    if target.is_relative() && !is_within(&absolute_target(link, target), root) {
-        absolute_target(link, target)
+    let abs = absolute_target(link, target);
+    let inside = is_within(&abs, root);
+    if target.is_relative() && !inside {
+        abs
+    } else if target.is_absolute() && inside {
+        relative_path(&normalize(link.parent().unwrap_or(root)), &abs)
     } else {
         target.to_path_buf()
     }

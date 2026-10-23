@@ -21,6 +21,7 @@ pub mod rom_library;
 pub mod rom_screens;
 pub mod port_mover;
 pub mod ports_folder;
+pub mod ports_folder_view;
 pub mod save_notes;
 pub mod save_restore;
 pub mod screens;

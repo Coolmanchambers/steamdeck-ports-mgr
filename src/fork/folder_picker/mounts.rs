@@ -102,11 +102,22 @@ pub fn fs_type_of(path: &Path, mounts: &[MountEntry]) -> Option<String> {
 }
 
 /// Where removable drives appear: `/run/media/<user>` (SteamOS 3.5 and later, most desktops) and
-/// `/run/media` (older SteamOS mounted the SD card as `/run/media/mmcblk0p1`).
+/// `/run/media` (older SteamOS mounted the SD card as `/run/media/mmcblk0p1`). The user folder is
+/// named from `USER` and from the home folder's name, so a launch without `USER` (Steam can start apps
+/// with a trimmed environment) still finds it; [`removable_drives`] also takes any mount one folder
+/// deeper than a root.
 pub fn default_media_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(user) = std::env::var("USER").ok().filter(|u| !u.is_empty() && !u.contains('/')) {
-        roots.push(PathBuf::from("/run/media").join(user));
+    media_roots_for(std::env::var("USER").ok().as_deref(), std::env::var_os("HOME").map(PathBuf::from).as_deref())
+}
+
+pub fn media_roots_for(user: Option<&str>, home: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let home_name = home.and_then(|h| h.file_name()).map(|n| n.to_string_lossy().into_owned());
+    for name in [user.map(str::to_string), home_name].into_iter().flatten().filter(|u| !u.is_empty() && !u.contains('/')) {
+        let root = PathBuf::from("/run/media").join(name);
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
     }
     roots.push(PathBuf::from("/run/media"));
     roots.push(PathBuf::from("/media"));
@@ -140,13 +151,22 @@ fn drive_kind(device: &str) -> &'static str {
     }
 }
 
-/// Mounted removable drives: mounts sitting directly inside one of `media_roots`. A media root that is
+/// Mounted removable drives: mounts directly inside one of `media_roots`, or one folder deeper
+/// (`/run/media/<user>/<label>` when the user folder is not a root, say `USER` was unset) unless that
+/// middle folder is a mount itself (then the deeper mount sits inside a drive). A media root that is
 /// itself a mount (a user folder) is not a drive. Sorted SD cards first, then by label.
 pub fn removable_drives(mounts: &[MountEntry], media_roots: &[PathBuf]) -> Vec<Drive> {
     let mut drives: Vec<Drive> = Vec::new();
+    let is_mount = |p: &Path| mounts.iter().any(|m| m.mount_point == p);
+    let is_root = |p: &Path| media_roots.iter().any(|r| r == p);
     for m in mounts {
         let Some(parent) = m.mount_point.parent() else { continue };
-        if !media_roots.iter().any(|r| r == parent) || media_roots.contains(&m.mount_point) {
+        if is_root(&m.mount_point) {
+            continue;
+        }
+        let direct = is_root(parent);
+        let deeper = !direct && parent.parent().is_some_and(is_root) && !is_mount(parent);
+        if !direct && !deeper {
             continue;
         }
         if drives.iter().any(|d| d.mount_point == m.mount_point) {
@@ -174,13 +194,27 @@ pub fn unmounted_drive_for(path: &Path, mounts: &[MountEntry], media_roots: &[Pa
     roots.sort_by_key(|r| std::cmp::Reverse(r.components().count()));
     for root in roots {
         let Ok(rest) = path.strip_prefix(root) else { continue };
-        let first = rest.components().next()?;
+        let mut parts = rest.components();
+        let first = parts.next()?;
         let drive = root.join(first.as_os_str());
         if media_roots.contains(&drive) {
             continue;
         }
-        let mounted = mounts.iter().any(|m| m.mount_point == drive);
-        return (!mounted).then_some(drive);
+        let is_mount = |p: &Path| mounts.iter().any(|m| m.mount_point == p);
+        if is_mount(&drive) {
+            return None;
+        }
+        // `/run/media/<user>/<label>` when the user folder is not a root: the drive is one level deeper.
+        if let Some(second) = parts.next() {
+            let deeper = drive.join(second.as_os_str());
+            if is_mount(&deeper) {
+                return None;
+            }
+            if drive.is_dir() || mounts.iter().any(|m| m.mount_point.parent() == Some(drive.as_path())) {
+                return Some(deeper);
+            }
+        }
+        return Some(drive);
     }
     None
 }
@@ -243,5 +277,32 @@ tmpfs /run tmpfs rw 0 0
         assert_eq!(unmounted_drive_for(Path::new("/home/deck/Ports"), &m, &roots()), None);
         assert_eq!(drive_of(Path::new("/run/media/deck/SD512/Ports"), &m, &roots()).map(|d| d.label), Some("SD512".into()));
         assert_eq!(drive_of(Path::new("/home/deck/Ports"), &m, &roots()), None);
+    }
+
+    #[test]
+    fn without_user_the_home_name_and_the_deeper_rule_still_find_the_drives() {
+        // Steam can start the app without USER: the home folder's name gives the same root.
+        assert_eq!(media_roots_for(None, Some(Path::new("/home/deck")))[0], PathBuf::from("/run/media/deck"));
+        assert_eq!(media_roots_for(Some("deck"), Some(Path::new("/home/deck"))).len(), 3, "no duplicate root");
+        // With neither, only /run/media and /media: drives one level deeper still count.
+        let bare = media_roots_for(None, None);
+        assert_eq!(bare, [PathBuf::from("/run/media"), PathBuf::from("/media")]);
+        let m = parse_mounts(MOUNTS);
+        let titles: Vec<String> = removable_drives(&m, &bare).iter().map(Drive::title).collect();
+        assert_eq!(titles, ["SD card (SD512)", "USB drive (My Stick)", "USB drive (OLDCARD)"]);
+        // And a missing card is still told apart from a mounted one.
+        assert_eq!(unmounted_drive_for(Path::new("/run/media/deck/SD512/Ports"), &m, &bare), None);
+        assert_eq!(unmounted_drive_for(Path::new("/run/media/deck/OTHER/Ports"), &m, &bare), Some(PathBuf::from("/run/media/deck/OTHER")));
+        // A mount inside a drive is not a drive of its own.
+        let nested = format!("{MOUNTS}/dev/loop0 /run/media/deck/SD512/iso iso9660 ro 0 0\n");
+        assert_eq!(removable_drives(&parse_mounts(&nested), &bare).len(), 3);
+    }
+
+    #[test]
+    fn labels_with_accents_and_two_sd_cards_are_listed() {
+        let text = "/dev/mmcblk0p1 /run/media/deck/Carte\\303\\251 ext4 rw 0 0\n/dev/mmcblk1p1 /run/media/deck/Second ext4 rw 0 0\n";
+        let drives = removable_drives(&parse_mounts(text), &roots());
+        let titles: Vec<String> = drives.iter().map(Drive::title).collect();
+        assert_eq!(titles, ["SD card (Carte\u{e9})", "SD card (Second)"]);
     }
 }

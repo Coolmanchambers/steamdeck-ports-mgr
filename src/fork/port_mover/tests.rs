@@ -38,6 +38,11 @@ fn plenty(_: &Path) -> Option<u64> {
     Some(u64::MAX / 4)
 }
 
+/// The fixture port keeps its saves in `saves/`.
+fn saves_folder(_: &old_copies::OldCopy, dir: &Path) -> Option<Vec<PathBuf>> {
+    Some(vec![dir.join("saves")])
+}
+
 fn put(path: &Path, data: &[u8]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, data).unwrap();
@@ -149,7 +154,7 @@ impl World {
     }
 
     fn removal_ctx<'a>(&'a self, active: &'a [PathBuf]) -> RemovalCtx<'a> {
-        RemovalCtx { home: &self.home, config_dir: &self.app, library_dir: &self.new_lib, active_paths: active, running: &nothing_running }
+        RemovalCtx { home: &self.home, config_dir: &self.app, library_dir: &self.new_lib, active_paths: active, running: &nothing_running, save_folders: &saves_folder }
     }
 }
 
@@ -318,7 +323,7 @@ fn while_steam_runs_the_repoint_is_queued_and_applied_later() {
     let active = vec![p.to.clone()];
     let old = &old_copies::load(&w.app).unwrap()[0];
     let refused = old_copies::removal_check(old, &w.removal_ctx(&active)).unwrap_err();
-    assert!(refused.contains("Steam shortcuts still point into it"), "{refused}");
+    assert!(refused.contains("still queued"), "{refused}");
 
     // Steam closed (Desktop Mode): applying the queue writes the repoint.
     let settings = ForkSettings::load(&w.app.join("fork-settings.json"));
@@ -419,11 +424,12 @@ fn the_old_copy_is_removed_only_on_request_after_the_switch_with_saves_zipped_fi
 #[test]
 fn protected_folders_are_never_removed_as_old_copies() {
     let w = World::new("protected");
-    let new_copy = w.new_lib.join("SoH");
-    fs::create_dir_all(&new_copy).unwrap();
-    let active = vec![new_copy.clone()];
     for old in [w.app.clone(), w.home.clone(), w.root.join("sd")] {
-        let entry = old_copies::OldCopy { port_key: "k".into(), name: "n".into(), old_path: old.clone(), new_path: new_copy.clone(), bytes: 0, moved_at: String::new(), link_only: false };
+        // A new copy of the same name, so the name check does not answer first.
+        let new_copy = w.root.join("elsewhere").join(old.file_name().unwrap());
+        fs::create_dir_all(&new_copy).unwrap();
+        let active = vec![new_copy.clone()];
+        let entry = old_copies::OldCopy { port_key: "k".into(), name: "n".into(), old_path: old.clone(), new_path: new_copy.clone(), bytes: 0, moved_at: String::new(), link_only: false, switched: true };
         assert!(old_copies::removal_check(&entry, &w.removal_ctx(&active)).unwrap_err().contains("never removed"), "{}", old.display());
     }
 }
@@ -620,4 +626,207 @@ fn a_copied_game_file_with_another_checksum_after_the_copy_stops_the_move() {
     corrupt(&copy_dir);
     let issues = game_files::check_after(&port_dir, &copy_dir, &manifest, &files);
     assert!(issues.iter().any(|i| i.problem.contains("checksum")), "{issues:?}");
+}
+
+// -- review fixes ------------------------------------------------------------------------------------
+
+/// Moves the fixture port and switches over with Steam closed; returns the old-copy record.
+fn moved_and_switched(w: &World) -> (Prepared, old_copies::OldCopy) {
+    let p = w.prepare_with(&MoveOptions::default()).unwrap();
+    switch_over(&p, &w.env(&no_steam, &nothing_running, &plenty));
+    let entry = old_copies::load(&w.app).unwrap().into_iter().find(|o| o.old_path == p.from).unwrap();
+    (p, entry)
+}
+
+#[test]
+fn newer_saves_in_the_old_copy_keep_it() {
+    let w = World::new("newer_saves");
+    let (p, entry) = moved_and_switched(&w);
+    let active = vec![p.to.clone()];
+    assert!(old_copies::removal_check(&entry, &w.removal_ctx(&active)).is_ok());
+    // A game started from Steam before the repoint applied saved into the old copy.
+    let save = p.from.join("saves/slot1.sav");
+    fs::write(&save, b"played later").unwrap();
+    let later = SystemTime::now() + std::time::Duration::from_secs(60);
+    fs::File::options().write(true).open(&save).unwrap().set_modified(later).unwrap();
+    let refused = old_copies::removal_check(&entry, &w.removal_ctx(&active)).unwrap_err();
+    assert!(refused.contains("The old copy has newer saves (last played"), "{refused}");
+    assert!(refused.contains("Info > Restore saves"));
+}
+
+#[test]
+fn a_port_that_left_the_catalog_or_an_unfinished_switch_keeps_the_old_copy() {
+    let w = World::new("unknown_port");
+    let (p, mut entry) = moved_and_switched(&w);
+    let active = vec![p.to.clone()];
+    let unknown = |_: &old_copies::OldCopy, _: &Path| None;
+    let ctx = RemovalCtx { save_folders: &unknown, ..w.removal_ctx(&active) };
+    assert!(old_copies::removal_check(&entry, &ctx).unwrap_err().contains("not in the catalog any more"));
+    entry.switched = false;
+    assert!(old_copies::removal_check(&entry, &w.removal_ctx(&active)).unwrap_err().contains("did not finish"));
+    // Records written before the setting changes are marked unfinished until switch_over.
+    record_pending(&w.app, std::slice::from_ref(&p)).unwrap();
+    assert!(!old_copies::load(&w.app).unwrap()[0].switched);
+    switch_over(&p, &w.env(&no_steam, &nothing_running, &plenty));
+    assert!(old_copies::load(&w.app).unwrap()[0].switched);
+}
+
+#[test]
+fn an_old_copy_that_no_longer_looks_like_the_port_or_has_another_name_is_kept() {
+    let w = World::new("lookalike");
+    let (p, entry) = moved_and_switched(&w);
+    let active = vec![p.to.clone()];
+    fs::write(p.to.join("new-file-after-move"), b"x").unwrap();
+    assert!(old_copies::removal_check(&entry, &w.removal_ctx(&active)).unwrap_err().contains("does not look like the same port"));
+    fs::remove_file(p.to.join("new-file-after-move")).unwrap();
+    let renamed = old_copies::OldCopy { new_path: w.new_lib.join("Other"), ..entry.clone() };
+    fs::create_dir_all(&renamed.new_path).unwrap();
+    let active2 = vec![renamed.new_path.clone()];
+    assert!(old_copies::removal_check(&renamed, &w.removal_ctx(&active2)).unwrap_err().contains("different folder names"));
+}
+
+#[test]
+fn a_launch_option_naming_the_old_folder_keeps_it() {
+    let w = World::new("launch_options");
+    let (p, entry) = moved_and_switched(&w);
+    let options = format!("--data {}/saves %command%", p.from.display());
+    fs::write(
+        &w.vdf,
+        file_of(&[object(
+            "0",
+            &[int_field("appid", 0xAAAA_0009), str_field("AppName", b"Wrapper"), str_field("Exe", b"\"/usr/bin/env\""), str_field("StartDir", b"\"/usr/bin/\""), str_field("LaunchOptions", options.as_bytes())],
+        )]),
+    )
+    .unwrap();
+    let refused = old_copies::removal_check(&entry, &w.removal_ctx(&[p.to.clone()])).unwrap_err();
+    assert!(refused.contains("Wrapper"), "{refused}");
+}
+
+#[test]
+fn a_copied_game_file_whose_original_is_gone_does_not_stop_a_move() {
+    use crate::fork::rom_library::{apply, plan_connect, Access, Approval, ConnectRequest, Method};
+    let w = World::new("copy_original_gone");
+    let port_dir = w.old_lib.join("SoH");
+    let req = ConnectRequest {
+        port_key: w.port().key,
+        slot: "zelda".into(),
+        source: w.roms.join("n64/Zelda.z64"),
+        port_dir: port_dir.clone(),
+        dest_subdir: String::new(),
+        dest_name: None,
+        method: Method::Copy,
+        access: Access::Copy,
+        byte_order: None,
+        known_crc32: None,
+    };
+    let mapping = apply(&plan_connect(&req).unwrap(), Approval::CopyAllowed).unwrap();
+    fs::remove_file(w.roms.join("n64/Zelda.z64")).unwrap();
+    let files = GameFiles { mappings: vec![mapping.clone()], required: Vec::new() };
+    assert!(game_files::check_before(&port_dir, &files).is_empty(), "only the copy matters");
+    // A missing copy does stop it.
+    fs::remove_file(port_dir.join("Zelda.z64")).unwrap();
+    let issues = game_files::check_before(&port_dir, &files);
+    assert!(issues.iter().any(|i| i.problem.contains("link or copy in the port folder is missing")), "{issues:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_absolute_link_inside_the_port_becomes_relative_and_a_stale_one_is_caught() {
+    let w = World::new("absolute_inside");
+    let port_dir = w.old_lib.join("SoH");
+    std::os::unix::fs::symlink(port_dir.join("soh.appimage"), port_dir.join("abs-link")).unwrap();
+    std::os::unix::fs::symlink(port_dir.join("saves"), port_dir.join("saves-link")).unwrap();
+    let p = w.prepare_with(&MoveOptions::default()).unwrap();
+    assert_eq!(fs::read_link(p.to.join("abs-link")).unwrap(), PathBuf::from("soh.appimage"));
+    assert_eq!(fs::read_link(p.to.join("saves-link")).unwrap(), PathBuf::from("saves"));
+    assert!(p.rewritten_links.contains(&p.to.join("abs-link")));
+    assert!(old_copies::links_into(&p.to, &p.from).is_empty());
+
+    // The check after the copy flags an absolute link into the old folder that was not rewritten.
+    let copy_dir = w.root.join("copy");
+    let cancel = AtomicBool::new(false);
+    let mut flag = |_: u64, _: &Path| {};
+    let mut manifest = copy::Copier::new(&cancel, &mut flag).copy_tree(&port_dir, &copy_dir).unwrap();
+    for e in &mut manifest.entries {
+        if let copy::Kind::Link { target, original } = &mut e.kind {
+            if original.is_absolute() {
+                *target = original.clone();
+            }
+        }
+    }
+    let issues = game_files::check_after(&port_dir, &copy_dir, &manifest, &GameFiles::default());
+    assert!(issues.iter().any(|i| i.problem == "this link still points into the old folder"), "{issues:?}");
+
+    // And an old copy is kept while a link in the new copy reaches into it.
+    switch_over(&p, &w.env(&no_steam, &nothing_running, &plenty));
+    let entry = old_copies::load(&w.app).unwrap().into_iter().find(|o| o.old_path == p.from).unwrap();
+    fs::remove_file(p.to.join("abs-link")).unwrap();
+    std::os::unix::fs::symlink(p.from.join("soh.appimage"), p.to.join("abs-link")).unwrap();
+    let refused = old_copies::removal_check(&entry, &w.removal_ctx(&[p.to.clone()])).unwrap_err();
+    assert!(refused.contains("still points into the old one"), "{refused}");
+}
+
+#[test]
+fn leftover_staging_folders_of_dead_runs_are_swept() {
+    let w = World::new("sweep");
+    let dead = w.new_lib.join(".SoH.dpm-moving-4000000000");
+    let own = w.new_lib.join(format!(".Dusk.dpm-moving-{}", std::process::id()));
+    let other = w.new_lib.join(".notes.txt");
+    for d in [&dead, &own] {
+        fs::create_dir_all(d.join("x")).unwrap();
+    }
+    fs::write(&other, b"keep").unwrap();
+    sweep_staging(&w.new_lib);
+    assert!(!dead.exists() && !own.exists());
+    assert!(other.exists(), "only staging folders are touched");
+    #[cfg(target_os = "linux")]
+    {
+        let alive = w.new_lib.join(".X.dpm-moving-1");
+        fs::create_dir_all(&alive).unwrap();
+        sweep_staging(&w.new_lib);
+        assert!(alive.exists(), "a running process's staging folder is left alone");
+    }
+}
+
+#[test]
+fn a_drive_pulled_out_during_a_batch_stops_it_with_one_message() {
+    let w = World::new("yanked");
+    put(&w.old_lib.join("Dusk/dusk"), b"x");
+    let items = vec![
+        BatchItem { port: w.port(), from: w.old_lib.join("SoH"), to: w.new_lib.join("SoH") },
+        BatchItem { port: PortRef { key: "d".into(), name: "Dusk".into() }, from: w.old_lib.join("Dusk"), to: w.new_lib.join("Dusk") },
+    ];
+    let env = w.env(&no_steam, &nothing_running, &plenty);
+    let yanked = std::cell::Cell::new(false);
+    let mut progress = |_: usize, _: u64, _: u64| {
+        if !yanked.get() {
+            yanked.set(true);
+            // The card goes away: its folder disappears under the copy.
+            fs::rename(&w.new_lib, w.root.join("pulled-out")).unwrap();
+        }
+    };
+    let result = run_batch(&items, &env, &|_| MoveOptions::default(), &mut progress, &AtomicBool::new(false));
+    assert_eq!(result.outcomes.len(), 1, "the second port is not tried");
+    assert!(matches!(result.outcomes[0], BatchOutcome::Failed { .. }));
+    assert!(result.drive_gone.as_deref().is_some_and(|m| m.contains("went away during the move")), "{:?}", result.drive_gone);
+    assert!(w.old_lib.join("SoH/soh.appimage").is_file() && w.old_lib.join("Dusk/dusk").is_file(), "originals untouched");
+}
+
+#[test]
+fn a_cancelled_batch_reports_it() {
+    let w = World::new("batch_cancel");
+    let items = vec![BatchItem { port: w.port(), from: w.old_lib.join("SoH"), to: w.new_lib.join("SoH") }];
+    let env = w.env(&no_steam, &nothing_running, &plenty);
+    let cancel = AtomicBool::new(true);
+    let result = run_batch(&items, &env, &|_| MoveOptions::default(), &mut |_, _, _| {}, &cancel);
+    assert!(result.cancelled && result.outcomes.is_empty());
+}
+
+#[test]
+fn the_queued_repoint_summary_warns_that_steam_still_runs_the_old_copy() {
+    let w = World::new("queued_text");
+    let p = w.prepare_with(&MoveOptions::default()).unwrap();
+    let report = switch_over(&p, &w.env(&steam_up, &nothing_running, &plenty));
+    let text = report.text();
+    assert!(text.contains("starting Ship of Harkinian from Steam still runs the OLD copy"), "{text}");
 }

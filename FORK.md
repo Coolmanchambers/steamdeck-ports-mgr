@@ -90,6 +90,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-22 | `src/app/mod.rs` | Two lines registering `folder_picker_screen` and `ports_folder_screen` |
 | 2026-10-22 | `ui/app-window.slint` | One line exporting `FolderPickerDialog` and `FolderRow` from `ui/fork/folder-picker.slint` |
 | 2026-10-22 | `src/ui/slint_layout_lint.rs` | The new Slint file is linted too |
+| 2026-10-22 | `src/main.rs` | Window Close (when it quits) and tray Quit also wait for a running ports move (`ports_folder_screen::quit_waits_for_move`: the move is cancelled, its copies removed, then the app quits) |
 
 Files added by this fork:
 
@@ -155,6 +156,7 @@ Files added by this fork:
 | 2026-10-22 | `src/fork/ports_folder.rs` | The ports folder setting (`ports_folder` in `fork-settings.json`), the startup availability check, the rules for a new ports folder (`check`, with an exFAT/permission/link probe) and `plan_move` |
 | 2026-10-22 | `src/fork/port_mover/` | The move engine: copy with permission bits, links and times, verify (list, sizes, bits, links, hashes), game file check before and after, Steam repoint (written or queued, app IDs kept), ROM records follow, old copies recorded in `port-moves.json` and removed only on request |
 | 2026-10-22 | `src/app/ports_folder_screen.rs` | Settings > Ports folder, the "not available" message at startup, the move with progress and Cancel, and the "Remove the old copy now?" prompts |
+| 2026-10-22 | `src/fork/ports_folder_view.rs` | The lists of the ports folder screens (labels, row actions, preselected row), tested without UI |
 
 ## Add to Steam and adopting (Settings menu)
 
@@ -373,78 +375,110 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   `fork-settings.json`. Not set means `<app folder>/Library`, as before, so existing installs behave the
   same. `main.rs` builds `AppPaths` from it; every user of the folder reads `AppPaths::library_dir()`.
 - **Missing at startup.** A chosen folder that is not there (SD card out, drive not mounted) is never
-  created and nothing is marked installed or uninstalled: `state.json` is left alone. The app shows
-  "Your ports folder ... is not available" with Try again, Choose another folder..., Continue without it
-  and Quit. While it is missing, installs and updates are refused with a message (`refuse_when_blocked`).
-  Ports there show as not installed until it is back (they are not forgotten). The default folder is
-  re-created when missing, as upstream did.
+  created and nothing is marked installed or uninstalled: `state.json` is left alone. The app first shows
+  "Your ports folder ... is not available" with "Try again (the card is in now)", Choose another folder...,
+  Continue without it and Quit; the Steam queue offer and the setup wizard wait while it is due or showing
+  (`startup_dialog_pending`). While the folder is missing (or a move runs), installs, updates, adopting and
+  save restores are refused with a message (`refuse_when_blocked` / `blocked_reason`), so nothing is ever
+  created at an unmounted ports folder. Ports there show as not installed until it is back (they are not
+  forgotten). The default folder is re-created when missing, as upstream did. The startup log line names
+  the folder and the drive folders looked at.
+- **Drives.** Removable drives are the mounts directly in `/run/media/<user>` (from `USER`, and from the
+  home folder's name when Steam starts the app without `USER`), `/run/media` or `/media`, and any mount one
+  folder deeper (`/run/media/<x>/<label>`) whose middle folder is not a mount itself. Labels with escaped
+  characters (spaces, accents) are decoded; several SD cards are listed.
 - **Choosing a folder** (Settings > Ports folder... > Choose another folder...) goes through the folder
   picker, then `ports_folder::check`: a full path; not a system folder, the home folder itself, the top of
   a drive, inside the app folder (except the default `Library`), a folder holding the app folder, or
-  inside the current ports folder; not exFAT, FAT or NTFS (from `/proc/self/mounts`, with the reason
-  spelled out: SteamOS-formatted SD cards are ext4); writable, and executable bits and symlinks stick
-  (tried in a temporary sub-folder, removed again). A missing folder is created only after the user
-  confirms, and never where a drive is not mounted.
+  inside the current ports folder; not exFAT, FAT or NTFS ("This drive is formatted as exFAT, which can't
+  store Linux programs ... Ports need a card formatted by SteamOS: Steam > Settings > Storage > Format.
+  Formatting ERASES everything on the card, so copy your game files off it first."); writable, and
+  executable bits and symlinks stick (tried in a temporary sub-folder, removed again; a failure on an
+  unknown file system says "This folder can't keep program permissions, so ports could not start here.
+  Pick a folder on the internal drive or on a card formatted by SteamOS."). A missing folder is created
+  only after the user confirms, and never where a drive is not mounted. Cancel on these questions goes
+  back to the Ports folder list.
 - **Folder picker.** In-app, controller first (no native dialog; those misbehave in Game Mode). Quick
-  places: each mounted removable drive under `/run/media/<user>/` or `/run/media/` by label with free
-  space, Home, `~/Games`, `~/Applications`, plus places the caller adds (Game files adds ROM folders).
-  Rows: Use this folder, New folder here... (name rules: no `/`, no leading dot, not `.`/`..`, at most 255
-  bytes, no leading or trailing spaces, not already there), Up, sub-folders (sorted, hidden ones on
-  request, at most 500 listed), Cancel. Header: path, free space, file system, drive, purpose hint.
-  `open_folder_picker(app, router, PickerRequest, on_chosen, on_cancel)`.
+  places: each mounted removable drive by label with free space (an exFAT/FAT/NTFS drive says "exfat:
+  can't hold ports" when choosing a ports folder), Home, `~/Games`, `~/Applications`, plus places the
+  caller adds (Game files adds ROM folders). Rows: Use this folder, New folder here... (creates the folder
+  at once; name rules: no `/`, no leading dot, not `.`/`..`, at most 255 bytes, no leading or trailing
+  spaces, not already there), Up, sub-folders (sorted, hidden ones on request, at most 500 listed), Cancel.
+  Header: path, free space, file system, drive, and a hint or the reason the folder can't be used.
+  Whether a folder is writable is tried once per folder. `open_folder_picker(app, router, PickerRequest,
+  on_chosen, on_cancel)`.
 - **Moving the installed ports** when the folder changes (`port_mover`). Never deletes: "move" is copy,
-  verify, switch over, keep the old folder. Per port: refused while a program runs from it (save restore's
-  `/proc` check), while any install, update or restore runs, or when the target exists or space is short
-  (size + 64 MB). The copy goes to a hidden staging folder next to the target, keeps permission bits,
-  links (as links) and times, syncs each file, then is verified (file list, kinds, sizes, permission bits,
-  link targets, modification times; every file read back and compared by SHA-1 when the port is up to
-  4 GB, else programs and game files). Only then is it renamed into place. Any failure or Cancel removes
-  only the staging folder. An adopted port (a link in the ports folder) moves as a new link to the same
-  folder. Cancel works between files; ports already copied in that run are removed again (their originals
-  were never touched) and the setting does not change. When some ports fail, the user picks Switch anyway
-  (the others stay in the old folder and show as not installed), Fix in Game files or Cancel.
+  verify, switch over, keep the old folder. Refused while a program runs from a port being moved (save
+  restore's `/proc` check) or a game started from the app runs (also for Switch without moving), while
+  any install, update or restore runs, or when space is short (size + 64 MB). The copy goes to a hidden
+  staging folder next to the target (leftover staging folders of runs that are gone are swept first),
+  keeps permission bits, links (as links) and times, syncs each file, then is verified (file list, kinds,
+  sizes, permission bits, link targets, modification times; every file read back and compared by SHA-1
+  when the port is up to 4 GB, else programs and game files). Only then is it renamed into place. Any
+  failure or Cancel removes only the staging folder. An adopted port (a link in the ports folder) moves as
+  a new link to the same folder. Cancel works between files; ports already copied in that run are
+  removed again (their originals were never touched) and the setting does not change. If the target or
+  source drive goes away during the batch (card pulled out), it stops at once with one message and the
+  copies made so far are removed. When some ports fail, the user picks Switch anyway (the others stay in
+  the old folder and show as not installed), Fix in Game files or Cancel. Close and Quit during a move
+  stop it first (copies removed), then quit; during an old-copy removal they wait for it.
+- **Moving onto a kept old copy.** When the target already holds a folder that `port-moves.json` lists as
+  an old copy the user kept, the switch screen says "<port>: an old copy you kept is already there; the
+  copy at <current> is newer and is the one in use" and offers only "Replace the old copy with the current
+  one, then move" (its saves zipped to `Saves Backup/Update Backups/`, then removed, its record dropped)
+  or Cancel; Switch without moving is not offered, so the stale copy is never used silently.
 - **Game file check** (`port_mover::game_files`). Before copying: every connection recorded by Game files
-  for the port (its link or copy in the port folder, or a "use original" file) must be healthy, every link
-  in the port folder that points outside it must resolve. Files the port's entry names (`Required files:`,
-  `rom_files`) that are neither connected nor in the folder never stop a move (many are only needed once at
-  install time, like an archive or a ROM turned into an `.o2r`); the move summary mentions them as
-  information. Problems are listed with the file and where it was expected, with
-  Fix in Game files, Move anyway or Cancel. After copying: links that leave the folder must reach the same
-  file from the new place, links recorded by Game files must reach the original, and copied game files must
-  have the same size and, where a CRC is known, the same CRC (they are always read back by hash too).
-  A mismatch after the copy always stops that port's move (the copy is removed); there is no "anyway" for
-  it. A relative link that points outside the port folder (`../../roms/x.z64`) would break at the new
-  place, so the copy gets the absolute path of what it pointed at; links inside the folder stay as written.
-- **Switch over.** The setting is saved, then for each moved port: every non-Steam shortcut in every
-  Steam account whose program, start folder or icon is inside the old folder gets the same path under the
-  new one, app ID kept (artwork and play time stay attached), through the safe write (refused while Steam
-  runs, verified backup, atomic write, backups pruned). While Steam runs (always in Game Mode) a
-  `repoint` entry goes into `steam-queue.json` and is applied with the rest of the queue, before adds and
-  updates; a second move of a queued port chains (A to B, then B to C, is A to C) and a move back cancels
-  it. A shortcut with no stored app ID is left alone and named (Steam would derive a new ID from the new
-  path). Game files connections (`rom_library.json`) follow. `state.json` (install records, favorite
-  program, play time) and `ports.local.json` need nothing: they are keyed by port and hold paths relative
-  to the port folder.
+  for the port must be healthy (for a copied game file only the copy in the port folder counts; a link or
+  "use original" also needs its original), and every link in the port folder that points outside it must
+  resolve. Files the port's entry names (`Required files:`, `rom_files`) that are neither connected nor in
+  the folder never stop a move (many are only needed once at install time, like an archive or a ROM turned
+  into an `.o2r`); the move summary mentions them as information. Problems are listed with the file and
+  where it was expected, with "Fix in Game files (then start the move again)", Move anyway or Cancel.
+  After copying: links that leave the folder must reach the same file from the new place, no link may
+  still point into the old folder, links recorded by Game files must reach the original, and copied game
+  files must have the same size and, where a CRC is known, the same CRC (they are always read back by hash
+  too). A mismatch after the copy always stops that port's move (the copy is removed); there is no
+  "anyway" for it. A relative link that points outside the port folder (`../../roms/x.z64`) gets the
+  absolute path of what it pointed at, and an absolute link into the port folder itself becomes relative,
+  so both keep working at the new place; other links stay as written.
+- **Switch over.** The old-copy records are written first (marked "switch not finished"), then the setting
+  is saved, then for each moved port: every non-Steam shortcut in every Steam account whose program, start
+  folder or icon is inside the old folder gets the same path under the new one, app ID kept (artwork and
+  play time stay attached), through the safe write (refused while Steam runs, verified backup, atomic
+  write, backups pruned). While Steam runs (always in Game Mode) a `repoint` entry goes into
+  `steam-queue.json` and is applied with the rest of the queue, before adds and updates; a second move of
+  a queued port chains (A to B, then B to C, is A to C) and a move back cancels it. The summary then says:
+  "Until it is applied (next time this app runs in Desktop Mode with Steam closed), starting <port> from
+  Steam still runs the OLD copy, and anything you save there stays in the old copy." Launch options are
+  not rewritten. A shortcut with no stored app ID is left alone and named (Steam would derive a new ID from
+  the new path). Game files connections (`rom_library.json`) follow, and the record is marked finished.
+  `state.json` (install records, favorite program, play time) and `ports.local.json` need nothing: they
+  are keyed by port and hold paths relative to the port folder.
 - **Old copies** (`port_mover::old_copies`, `port-moves.json`). The app asks right after a move, per
   port, "Remove the old copy now?" with the old path, its size and where the port runs from now: Remove
-  old copy (its saves are zipped to `Saves Backup/Update Backups/` first) or Keep for now. Kept ones are listed under Settings > Ports folder > Old copies. Removal is
-  refused unless the new copy exists and is the one in use, no Steam shortcut still points into the old
-  one (so not while a repoint is queued), no program runs from it, and it is not the app folder, the home
-  folder or a folder holding a ports folder in use. Its saves are zipped first (`backup_before_update`,
-  under `Saves Backup/Update Backups/`); if that fails nothing is removed. An adopted port's old link is
+  old copy (its saves are zipped to `Saves Backup/Update Backups/` first) or Keep for now, which is the row
+  selected when the question opens. Kept ones are listed under Settings > Ports folder > Old copies.
+  Removal is refused unless: the switch finished; the new copy exists, has the same folder name, is the
+  one in use, and the old copy still holds everything at the top of the new one; no link in the new copy
+  reaches into the old one; no Steam shortcut points into it (program, start folder, icon or launch
+  options) and no repoint for the port is still queued; no program runs from it; it is not the app
+  folder, the home folder or a folder holding a ports folder in use; the port is still in the catalog (so
+  its saves can be found); and the old copy has no saves newer than the new copy's (otherwise: "The old
+  copy has newer saves (last played <date>). Restore them to the new copy first (Info > Restore saves) or
+  keep the old copy."). The zip comes first; if it fails nothing is removed. An adopted port's old link is
   removed as a link; its target folder is never touched.
 - **API for other screens** (setup wizard, import): `folder_picker_screen::open_folder_picker`,
   `fork::ports_folder::{current, configured, save_choice, check, create, at_startup, plan_move}`,
-  `port_mover::{prepare, switch_over, discard}` with `MoveEnv` / `MoveOptions` /
-  `game_files::GameFiles::for_port`, `port_mover::old_copies::{load, removal_check, remove, forget}`,
-  `ports_folder_screen::{choose_folder, consider, prompt_old_copies, open_old_copies, refuse_when_blocked}`,
-  `ForkSettings::set_adopt_folders`.
+  `port_mover::{prepare, record_pending, switch_over, discard, run_batch, sweep_staging}` with `MoveEnv` /
+  `MoveOptions` / `game_files::GameFiles::for_port`, `port_mover::old_copies::{load, removal_check, remove,
+  forget}`, `ports_folder_screen::{choose_folder, consider, prompt_old_copies, open_old_copies,
+  refuse_when_blocked, blocked_reason, startup_dialog_pending, quit_waits_for_move}`, the list models in
+  `fork::ports_folder_view`, `ForkSettings::set_adopt_folders`.
 - **Known limits.** The move copies on a worker thread; the Steam repoint, records and old-copy prompts
   run on the UI thread after it (fast). Removing a large old copy runs on a worker thread with a progress
   dialog that cannot be cancelled. Hard links inside a port are copied as separate files. Folder times
-  are best effort. Ownership is not copied (same user). An interrupted run (power loss) can leave a hidden
-  `.<folder>.dpm-moving-<pid>` next to the target; the next run of the same process id clears it, other
-  ones stay until removed by hand. English only.
+  are best effort. Ownership is not copied (same user). Launch options naming the old folder keep it
+  (the old copy is not removable) until edited in Steam. English only.
 
 ## Fixes to upstream behavior
 

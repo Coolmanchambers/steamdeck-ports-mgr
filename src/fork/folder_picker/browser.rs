@@ -68,6 +68,8 @@ pub struct Picker {
     env: Env,
     /// Places the caller adds (the Game files screen offers ROM folders), shown after the built-in ones.
     extra: Vec<(String, PathBuf)>,
+    /// Whether a folder could be written to, so redrawing does not create a test file each time.
+    write_cache: std::cell::RefCell<std::collections::HashMap<PathBuf, bool>>,
 }
 
 fn name_key(name: &str) -> (String, String) {
@@ -84,7 +86,7 @@ impl Picker {
         let current = nearest_existing_folder(start)
             .or_else(|| env.home.clone())
             .unwrap_or_else(|| PathBuf::from("/"));
-        let mut picker = Picker { purpose, current, show_hidden: false, places: Vec::new(), folders: Vec::new(), hidden_count: 0, cut_off: 0, error: None, env, extra };
+        let mut picker = Picker { purpose, current, show_hidden: false, places: Vec::new(), folders: Vec::new(), hidden_count: 0, cut_off: 0, error: None, env, extra, write_cache: Default::default() };
         picker.places = picker.find_places();
         picker.reload();
         picker
@@ -104,7 +106,8 @@ impl Picker {
             if drive.mount_point.is_dir() {
                 let mut detail = self.free_text(&drive.mount_point).unwrap_or_default();
                 if mounts::is_non_linux_fs(&drive.fs_type) {
-                    detail = if detail.is_empty() { drive.fs_type.clone() } else { format!("{detail}, {}", drive.fs_type) };
+                    let note = if self.purpose.needs_write() { format!("{}: can't hold ports", drive.fs_type) } else { drive.fs_type.clone() };
+                    detail = if detail.is_empty() { note } else { format!("{detail}, {note}") };
                 }
                 out.push(Place { label: drive.title(), path: drive.mount_point.clone(), detail });
             }
@@ -249,10 +252,19 @@ impl Picker {
         if self.error.is_some() {
             return Err("This folder can't be opened, so it can't be used.".into());
         }
-        if self.purpose.needs_write() && !writable(&self.current) {
-            return Err("You can't write to this folder. Pick or create a folder you own.".into());
+        if self.purpose.needs_write() {
+            if let Some(fs_type) = mounts::fs_type_of(&self.current, &self.env.mounts).filter(|t| mounts::is_non_linux_fs(t)) {
+                return Err(format!("This drive is {}, which can't store Linux programs, so it can't hold ports.", crate::fork::ports_folder::fs_display_name(&fs_type)));
+            }
+            if !self.writable_cached(&self.current) {
+                return Err("You can't write to this folder. Pick or create a folder you own.".into());
+            }
         }
         Ok(())
+    }
+
+    fn writable_cached(&self, dir: &Path) -> bool {
+        *self.write_cache.borrow_mut().entry(dir.to_path_buf()).or_insert_with(|| writable(dir))
     }
 
     /// Opens a sub-folder; returns false when there is no such row.
@@ -427,6 +439,26 @@ mod tests {
         let last = rows.len() - 1;
         assert_eq!(rows[last], Row::Cancel);
         assert_eq!(picker.step(last, 1), last);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_exfat_drive_is_marked_and_cannot_be_chosen_as_a_ports_folder() {
+        let root = temp("exfat");
+        let mut e = env(&root);
+        let stick = root.join("media").join("STICK");
+        fs::create_dir_all(stick.join("Ports")).unwrap();
+        e.mounts.push(super::super::mounts::MountEntry { device: "/dev/sdc1".into(), mount_point: stick.clone(), fs_type: "exfat".into() });
+        let picker = Picker::open(&stick.join("Ports"), Purpose::PortsFolder, e);
+        let place = picker.places().iter().find(|p| p.label == "USB drive (STICK)").unwrap();
+        assert_eq!(place.detail, "391.0 GB free, exfat: can't hold ports");
+        let why = picker.can_choose().unwrap_err();
+        assert!(why.contains("exFAT") && why.contains("can't hold ports"), "{why}");
+        assert_eq!(picker.hint_line(), why, "the header says why");
+        // For a scan folder it is fine.
+        let mut e = env(&root);
+        e.mounts.push(super::super::mounts::MountEntry { device: "/dev/sdc1".into(), mount_point: stick.clone(), fs_type: "exfat".into() });
+        assert!(Picker::open(&stick.join("Ports"), Purpose::ScanFolder, e).can_choose().is_ok());
         let _ = fs::remove_dir_all(root);
     }
 
