@@ -609,6 +609,18 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
         if !text.is_empty() {
             summary.push(format!("{}:\n{text}", p.port.name));
         }
+        // Information only: named by the port's entry, but neither connected nor in its folder (often needed
+        // only once, at install time).
+        if let Some(port) = find_port(app, &p.port.key) {
+            let missing = crate::fork::port_mover::game_files::required_not_found(&p.to, &GameFiles::for_port(&port, &config_dir));
+            if !missing.is_empty() {
+                summary.push(format!(
+                    "{}: for information, its entry names {} which is neither in its folder nor connected in Game files (fine if it was only needed when installing).",
+                    p.port.name,
+                    missing.join(", ")
+                ));
+            }
+        }
         if !p.accepted_issues.is_empty() {
             summary.push(format!("{}: moved although the game file check found: {}.", p.port.name, p.accepted_issues.iter().map(|i| i.file.clone()).collect::<Vec<_>>().join(", ")));
         }

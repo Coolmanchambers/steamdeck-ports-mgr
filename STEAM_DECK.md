@@ -234,9 +234,11 @@ folder in use, its free space and file system. Then:
      Cancel stops between files, removes the copies made so far and changes nothing.
    - **Switch without moving**: the ports in the old folder stay there and show as not installed here.
      Useful when the new folder already holds your ports (another card).
-4. Before copying, the app checks each port's game files (ROM links and copies made in Game files, links
-   inside the port folder, the files the port's entry says it needs). If something is missing it lists
-   which file and where it was expected, with **Fix in Game files**, **Move anyway** or **Cancel**.
+4. Before copying, the app checks each port's game files: the ROM links and copies made in Game files,
+   and links inside the port folder that point at game files. If something is missing it lists which
+   file and where it was expected, with **Fix in Game files**, **Move anyway** or **Cancel**. A file the
+   catalog lists under "Required files" that is neither connected nor in the folder does not stop the
+   move (many are only needed once, when installing); the final message mentions it for information.
    After copying it checks again at the new place; if a game file did not come through intact, that port
    is not moved (its copy is removed, the original is untouched) and you choose to switch without it, fix
    it or cancel. A ROM link with a relative path that would break on the other drive is rewritten to a

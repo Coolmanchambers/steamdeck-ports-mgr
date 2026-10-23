@@ -405,8 +405,10 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   (the others stay in the old folder and show as not installed), Fix in Game files or Cancel.
 - **Game file check** (`port_mover::game_files`). Before copying: every connection recorded by Game files
   for the port (its link or copy in the port folder, or a "use original" file) must be healthy, every link
-  in the port folder that points outside it must resolve, and each required file the port's entry names
-  must be in the folder or connected. Problems are listed with the file and where it was expected, with
+  in the port folder that points outside it must resolve. Files the port's entry names (`Required files:`,
+  `rom_files`) that are neither connected nor in the folder never stop a move (many are only needed once at
+  install time, like an archive or a ROM turned into an `.o2r`); the move summary mentions them as
+  information. Problems are listed with the file and where it was expected, with
   Fix in Game files, Move anyway or Cancel. After copying: links that leave the folder must reach the same
   file from the new place, links recorded by Game files must reach the original, and copied game files must
   have the same size and, where a CRC is known, the same CRC (they are always read back by hash too).
@@ -425,7 +427,7 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   to the port folder.
 - **Old copies** (`port_mover::old_copies`, `port-moves.json`). The app asks right after a move, per
   port, "Remove the old copy now?" with the old path, its size and where the port runs from now: Remove
-  old copy or Keep for now. Kept ones are listed under Settings > Ports folder > Old copies. Removal is
+  old copy (its saves are zipped to `Saves Backup/Update Backups/` first) or Keep for now. Kept ones are listed under Settings > Ports folder > Old copies. Removal is
   refused unless the new copy exists and is the one in use, no Steam shortcut still points into the old
   one (so not while a repoint is queued), no program runs from it, and it is not the app folder, the home
   folder or a folder holding a ports folder in use. Its saves are zipped first (`backup_before_update`,
@@ -442,8 +444,7 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   dialog that cannot be cancelled. Hard links inside a port are copied as separate files. Folder times
   are best effort. Ownership is not copied (same user). An interrupted run (power loss) can leave a hidden
   `.<folder>.dpm-moving-<pid>` next to the target; the next run of the same process id clears it, other
-  ones stay until removed by hand. The required-file part of the game file check also lists files a port
-  only needed once (to build its own data); Move anyway is right for those. English only.
+  ones stay until removed by hand. English only.
 
 ## Fixes to upstream behavior
 

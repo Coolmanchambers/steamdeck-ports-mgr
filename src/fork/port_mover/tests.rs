@@ -508,17 +508,19 @@ fn a_missing_game_file_stops_the_move_unless_the_user_moves_anyway() {
 }
 
 #[test]
-fn a_required_file_that_is_nowhere_is_reported_before_the_copy() {
+fn a_required_file_that_is_not_connected_or_present_never_stops_the_move() {
+    // Like Space Cadet Pinball: the catalog names a zip needed once at install time.
     let w = World::new("rom_required");
     let port_dir = w.old_lib.join("SoH");
-    let required = vec![RequiredFile { label: "OoT".into(), names: vec!["oot.z64".into()], slot_id: "oot".into(), crc32: Vec::new() }];
-    let files = GameFiles { mappings: Vec::new(), required: required.clone() };
-    let issues = game_files::check_before(&port_dir, &files);
-    assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].file, "oot.z64");
-    // Found in the folder (any case), it is fine.
-    put(&port_dir.join("roms/OOT.Z64"), b"rom");
-    assert!(game_files::check_before(&port_dir, &files).is_empty());
+    let required = vec![RequiredFile { label: "Space Cadet data".into(), names: vec!["3d-pinball-space-cadet_multi.zip".into()], slot_id: "zip".into(), crc32: Vec::new() }];
+    let files = GameFiles { mappings: Vec::new(), required };
+    assert!(game_files::check_before(&port_dir, &files).is_empty(), "no prompt for it");
+    assert_eq!(game_files::required_not_found(&port_dir, &files), ["3d-pinball-space-cadet_multi.zip"], "only an info line");
+    let p = w.prepare_with(&MoveOptions { game_files: files.clone(), ..Default::default() }).unwrap();
+    assert!(p.accepted_issues.is_empty());
+    // Found in the folder (any case), it is not listed at all.
+    put(&p.to.join("data/3D-PINBALL-SPACE-CADET_MULTI.ZIP"), b"zip");
+    assert!(game_files::required_not_found(&p.to, &files).is_empty());
 }
 
 #[cfg(unix)]
