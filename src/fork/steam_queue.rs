@@ -40,6 +40,9 @@ pub const RECHECK_SECONDS: u64 = 30;
 pub enum QueuedKind {
     Add,
     Update,
+    /// A port moved to another folder: its shortcuts' paths follow (see `port_mover::steam`). Carries
+    /// `QueuedChange::repoint`.
+    Repoint,
 }
 
 impl QueuedKind {
@@ -47,6 +50,15 @@ impl QueuedKind {
         match self {
             QueuedKind::Add => "add",
             QueuedKind::Update => "update",
+            QueuedKind::Repoint => "repoint",
+        }
+    }
+
+    /// How lists name it.
+    fn label(self) -> &'static str {
+        match self {
+            QueuedKind::Repoint => "moved to a new folder",
+            other => other.as_str(),
         }
     }
 }
@@ -86,10 +98,21 @@ pub struct QueuedChange {
     /// Queued in Game Mode (only changes the wording of the offer).
     pub from_game_mode: bool,
     pub queued_at: String,
+    /// For `QueuedKind::Repoint`: (old folder, new folder) of the port.
+    pub repoint: Option<(String, String)>,
 }
 
 impl QueuedChange {
     fn to_json(&self) -> Value {
+        let mut value = self.to_json_base();
+        if let (Some((from, to)), Some(obj)) = (&self.repoint, value.as_object_mut()) {
+            obj.insert("repoint_from".into(), json!(from));
+            obj.insert("repoint_to".into(), json!(to));
+        }
+        value
+    }
+
+    fn to_json_base(&self) -> Value {
         json!({
             "account_id": self.account_id,
             "account_label": self.account_label,
@@ -114,7 +137,14 @@ impl QueuedChange {
         let kind = match obj.get("kind").and_then(Value::as_str) {
             Some("add") => QueuedKind::Add,
             Some("update") => QueuedKind::Update,
+            Some("repoint") => QueuedKind::Repoint,
             _ => return Err("an entry has no usable kind".into()),
+        };
+        let path_text = |key: &str| obj.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string);
+        let repoint = match (path_text("repoint_from"), path_text("repoint_to")) {
+            (Some(from), Some(to)) => Some((from, to)),
+            _ if kind == QueuedKind::Repoint => return Err("a repoint entry has no folders".into()),
+            _ => None,
         };
         let art = match obj.get("art").and_then(Value::as_str) {
             None | Some("catalog") => ArtChoice::Catalog,
@@ -133,6 +163,7 @@ impl QueuedChange {
             art,
             from_game_mode: flag("from_game_mode"),
             queued_at: text("queued_at").unwrap_or_default(),
+            repoint,
         })
     }
 
@@ -143,9 +174,9 @@ impl QueuedChange {
     /// `  Dusklight (add)`, or with the account when several are involved, for lists in dialogs.
     pub fn line(&self, show_account: bool) -> String {
         if show_account {
-            format!("  {} ({}, {})", self.name, self.kind.as_str(), self.account_text())
+            format!("  {} ({}, {})", self.name, self.kind.label(), self.account_text())
         } else {
-            format!("  {} ({})", self.name, self.kind.as_str())
+            format!("  {} ({})", self.name, self.kind.label())
         }
     }
 }
@@ -164,13 +195,35 @@ impl SteamQueue {
         self.entries.is_empty()
     }
 
+    /// An add or update is queued for this port and account (repoints are separate).
     pub fn contains(&self, account_id: u32, port_key: &str) -> bool {
-        self.entries.iter().any(|e| e.account_id == account_id && e.port_key == port_key)
+        self.entries.iter().any(|e| e.account_id == account_id && e.port_key == port_key && e.kind != QueuedKind::Repoint)
     }
 
     /// Adds a change, replacing one already queued for the same port and account (it keeps its place).
+    /// Repoints are kept apart from adds and updates; a second move of the same port chains onto the
+    /// first (A to B, then B to C, becomes A to C), and a move back cancels out.
     pub fn upsert(&mut self, change: QueuedChange) {
-        match self.entries.iter_mut().find(|e| e.account_id == change.account_id && e.port_key == change.port_key) {
+        if change.kind == QueuedKind::Repoint {
+            let Some((from, to)) = change.repoint.clone() else { return };
+            let chained = self.entries.iter().position(|e| {
+                e.kind == QueuedKind::Repoint && e.account_id == change.account_id && e.port_key == change.port_key && e.repoint.as_ref().is_some_and(|(_, t)| *t == from)
+            });
+            match chained {
+                Some(i) => {
+                    let start = self.entries[i].repoint.as_ref().map(|(f, _)| f.clone()).unwrap_or_default();
+                    if start == to {
+                        self.entries.remove(i);
+                    } else {
+                        self.entries[i] = QueuedChange { repoint: Some((start, to)), ..change };
+                    }
+                }
+                None if self.entries.iter().any(|e| e.kind == QueuedKind::Repoint && e.account_id == change.account_id && e.repoint == change.repoint) => {}
+                None => self.entries.push(change),
+            }
+            return;
+        }
+        match self.entries.iter_mut().find(|e| e.account_id == change.account_id && e.port_key == change.port_key && e.kind != QueuedKind::Repoint) {
             Some(existing) => *existing = change,
             None => self.entries.push(change),
         }
@@ -449,6 +502,7 @@ pub fn changes_from_screen(screen: &SteamScreen, queued_at: &str) -> Vec<QueuedC
             art,
             from_game_mode: screen.game_mode,
             queued_at: queued_at.to_string(),
+            repoint: None,
         })
         .collect()
 }
@@ -510,7 +564,7 @@ pub fn manage_labels(queue: &SteamQueue, show_accounts: bool) -> Vec<String> {
             ManageLine::Entry(i) => {
                 let e = &queue.entries[i];
                 let account = if show_accounts { format!(", {}", e.account_text()) } else { String::new() };
-                format!("Remove: {} ({}{account})", e.name, e.kind.as_str())
+                format!("Remove: {} ({}{account})", e.name, e.kind.label())
             }
             ManageLine::Clear => format!("Clear the queue ({})...", plural(queue.len(), "change", "changes")),
             ManageLine::Back => "Back".to_string(),
@@ -561,6 +615,53 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
     let mut already: Vec<String> = Vec::new();
     let mut wrote = false;
     let mut refused = false;
+
+    // Moves first, in the order they were queued, so a later add or update plans from the new paths.
+    let (repoints, rest): (Vec<&QueuedChange>, Vec<&QueuedChange>) = queue.entries.iter().partition(|e| e.kind == QueuedKind::Repoint);
+    if !repoints.is_empty() {
+        let accounts = super::port_mover::steam::device_accounts(inputs.home);
+        for entry in repoints {
+            if refused {
+                remaining.entries.push(entry.clone());
+                continue;
+            }
+            let Some((from, to)) = &entry.repoint else { continue };
+            let Some(account) = accounts.iter().find(|a| a.account_id == entry.account_id) else {
+                if accounts.is_empty() {
+                    sections.push("No Steam account folder was found.".into());
+                    remaining.entries.push(entry.clone());
+                    refused = true;
+                } else {
+                    skipped.push(format!("  {}: Steam {} is not on this device any more", entry.name, entry.account_text()));
+                }
+                continue;
+            };
+            match super::port_mover::steam::write_repoint(&account.shortcuts, Path::new(from), Path::new(to), steam, inputs.settings, now) {
+                Ok((result, backup)) => {
+                    wrote |= !result.changed.is_empty();
+                    let mut text = format!("{}: {} shortcut(s) now point at {to}.", entry.name, result.changed.len());
+                    for (name, why) in &result.skipped {
+                        text.push_str(&format!("\n  {name} was left alone: {why}"));
+                    }
+                    if let Some(name) = backup.as_ref().and_then(|b| b.file_name()) {
+                        text.push_str(&format!("\nBackup of the old list: {}", name.to_string_lossy()));
+                    }
+                    sections.push(text);
+                }
+                Err(super::port_mover::steam::WriteError::SteamUp(why)) => {
+                    sections.push(format!("Nothing was written: {why}"));
+                    remaining.entries.push(entry.clone());
+                    refused = true;
+                }
+                Err(super::port_mover::steam::WriteError::Failed(why)) => {
+                    sections.push(format!("Could not update the shortcuts for {}: {why}", entry.name));
+                    remaining.entries.push(entry.clone());
+                    refused = true;
+                }
+            }
+        }
+    }
+    let queue = &SteamQueue { entries: rest.into_iter().cloned().collect() };
 
     for account_id in queue.accounts() {
         let entries: Vec<&QueuedChange> = queue.entries.iter().filter(|e| e.account_id == account_id).collect();
@@ -830,6 +931,7 @@ mod tests {
             art: ArtChoice::Catalog,
             from_game_mode: true,
             queued_at: "20261021-120000".into(),
+            repoint: None,
         }
     }
 

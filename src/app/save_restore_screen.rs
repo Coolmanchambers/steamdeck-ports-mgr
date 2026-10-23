@@ -63,7 +63,7 @@ fn open_list(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<Strin
 }
 
 fn targets_for(app: &AppState, port: &Port) -> Option<Vec<SaveTarget>> {
-    let game_dir = safe_join(&app.paths.library_dir, &port.folder).ok()?;
+    let game_dir = safe_join(&app.paths.library_dir(), &port.folder).ok()?;
     Some(save_restore::save_targets(port, &game_dir, &app.paths.saves_backup_dir, home_dir().as_deref()))
 }
 
@@ -164,7 +164,7 @@ fn busy_reason(app: &AppState, port: &Port) -> Option<String> {
     if is_port_running(app, port.key()) {
         return Some(RestoreError::GameRunning("The game (started from this app)".into()).to_string());
     }
-    if let (Ok(game_dir), Some(targets)) = (safe_join(&app.paths.library_dir, &port.folder), targets_for(app, port)) {
+    if let (Ok(game_dir), Some(targets)) = (safe_join(&app.paths.library_dir(), &port.folder), targets_for(app, port)) {
         if let Some(what) = save_restore::running_from(&game_dir, &targets) {
             return Some(RestoreError::GameRunning(what).to_string());
         }
@@ -254,7 +254,7 @@ fn start_restore(app: &Rc<AppState>, router: &Router, port: Port, backup: Backup
     if let Some(reason) = busy_reason(app, &port) {
         return message(app, router, &title, &reason);
     }
-    let Ok(game_dir) = safe_join(&app.paths.library_dir, &port.folder) else { return };
+    let Ok(game_dir) = safe_join(&app.paths.library_dir(), &port.folder) else { return };
     let key = port.key().to_string();
     // Holding the port's install slot keeps an install, update or launch of it from starting meanwhile.
     app.install_runtime.installing.borrow_mut().insert(key.clone());

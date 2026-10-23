@@ -1,0 +1,187 @@
+// Fork: the in-app folder picker (src/app/folder_picker_screen.rs). Controller first: Up/Down move,
+// A or Enter picks, B or Escape cancels; rows also take mouse and touch.
+import { Theme, ThemedScrollbar } from "../shared.slint";
+import { DialogChrome, DialogNavKeyHandler } from "../dialogs/chrome.slint";
+
+export struct FolderRow {
+    label: string,
+    detail: string,
+    heading: bool,
+    enabled: bool,
+}
+
+export component FolderPickerDialog inherits Window {
+    no-frame: true;
+    title: root.dialog-title;
+    background: Theme.list-background;
+    in property <length> initial-width: 640px;
+    in property <length> initial-height: 480px;
+    width: initial-width;
+    height: initial-height;
+    in property <string> font-family;
+    default-font-family: root.font-family;
+
+    in property <string> dialog-title: "";
+    in property <string> path-text: "";
+    in property <string> info-text: "";
+    in property <string> hint-text: "";
+    in property <[FolderRow]> rows: [];
+    in property <int> selected-index: -1;
+    in property <bool> scroll-trigger: false;
+    callback item-selected(int);
+    callback item-hovered(int);
+    callback close-requested();
+    callback move-selection-requested(int);
+    callback activate-selection-requested();
+
+    in property <length> item-font-px-physical: 14px;
+    in property <length> title-font-px-physical: 13px;
+    in property <length> row-height-physical: 48px;
+    in property <length> title-bar-height-physical: 34px;
+
+    property <length> border-px: Theme.border-width * 1px / Theme.scale-factor;
+    property <length> item-font-px: item-font-px-physical / Theme.scale-factor;
+    property <length> small-font-px: item-font-px * 0.85;
+    property <length> title-font-px: title-font-px-physical / Theme.scale-factor;
+    property <length> bar-height: title-bar-height-physical / Theme.scale-factor;
+    property <length> row-height: row-height-physical / Theme.scale-factor;
+    property <length> heading-height: row-height * 0.7;
+    property <length> gutter: 12px / Theme.scale-factor;
+    property <length> line-height: item-font-px * 1.5;
+    property <length> header-height: line-height * 4 + gutter;
+    property <length> scrollbar-width: 6px / Theme.scale-factor;
+
+    forward-focus: key-handler;
+
+    key-handler := DialogNavKeyHandler {
+        close-requested => { root.close-requested(); }
+        move-selection-requested(delta) => { root.move-selection-requested(delta); }
+        activate-selection-requested => { root.activate-selection-requested(); }
+
+        chrome := DialogChrome {
+            dialog-title: root.dialog-title;
+            bar-height: root.bar-height;
+            title-font-px: root.title-font-px;
+            border-px: root.border-px;
+            logical-w: root.width - root.border-px * 2;
+            logical-h: root.height - root.border-px * 2;
+            content-clip: true;
+            close-requested => { root.close-requested(); }
+
+            Text {
+                x: root.gutter;
+                y: root.gutter;
+                width: chrome.content-width - root.gutter * 2;
+                height: root.line-height;
+                text: root.path-text;
+                color: Theme.list-text;
+                font-size: root.item-font-px;
+                font-weight: 700;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: root.gutter;
+                y: root.gutter + root.line-height;
+                width: chrome.content-width - root.gutter * 2;
+                height: root.line-height;
+                text: root.info-text;
+                color: Theme.list-text;
+                font-size: root.small-font-px;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: root.gutter;
+                y: root.gutter + root.line-height * 2;
+                width: chrome.content-width - root.gutter * 2;
+                height: root.line-height * 2;
+                text: root.hint-text;
+                color: Theme.list-text;
+                opacity: 0.75;
+                font-size: root.small-font-px;
+                wrap: word-wrap;
+                overflow: elide;
+                vertical-alignment: top;
+            }
+
+            list := Flickable {
+                x: root.gutter;
+                y: root.header-height + root.gutter;
+                width: chrome.content-width - root.gutter * 2;
+                height: chrome.content-height - root.header-height - root.gutter * 2;
+                content-width: self.width;
+                content-height: max(self.height, rows.length * root.row-height);
+
+                property <bool> scroll-trigger-local: root.scroll-trigger;
+                property <length> selected-top: root.selected-index * root.row-height;
+                property <length> selected-bottom: self.selected-top + root.row-height;
+                changed scroll-trigger-local => {
+                    if (root.selected-index < 0) {
+                        return;
+                    }
+                    if (self.selected-top + self.content-y < 0px) {
+                        self.content-y = -self.selected-top;
+                    } else if (self.selected-bottom + self.content-y > self.height) {
+                        self.content-y = self.height - self.selected-bottom;
+                    }
+                }
+
+                for row[index] in rows: Rectangle {
+                    property <bool> is-selected: index == root.selected-index && row.enabled;
+                    x: 0px;
+                    y: index * root.row-height;
+                    width: list.width;
+                    height: root.row-height;
+                    background: self.is-selected ? Theme.selected-background : Theme.list-background;
+
+                    Text {
+                        x: row.heading ? 0px : root.row-height * 0.3;
+                        width: parent.width * 0.68;
+                        height: parent.height;
+                        text: row.label;
+                        color: parent.is-selected ? Theme.selected-text : Theme.list-text;
+                        opacity: row.heading ? 0.7 : (row.enabled ? 1.0 : 0.6);
+                        font-size: row.heading ? root.small-font-px : root.item-font-px;
+                        font-weight: row.heading ? 700 : 400;
+                        vertical-alignment: row.heading ? bottom : center;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        x: parent.width * 0.68;
+                        width: parent.width * 0.32 - root.row-height * 0.3;
+                        height: parent.height;
+                        text: row.detail;
+                        color: parent.is-selected ? Theme.selected-text : Theme.list-text;
+                        opacity: 0.75;
+                        font-size: root.small-font-px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    if row.enabled: TouchArea {
+                        clicked => { root.item-selected(index); }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.item-hovered(index);
+                            }
+                        }
+                    }
+                }
+            }
+
+            ThemedScrollbar {
+                x: list.x + list.width + (root.gutter - root.scrollbar-width) / 2;
+                y: list.y;
+                height: list.height;
+                viewport-height: list.content-height;
+                visible-height: list.height;
+                viewport-y <=> list.content-y;
+            }
+        }
+    }
+}

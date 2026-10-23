@@ -7,6 +7,8 @@
 #   - Tab opens the Deck-ready list without a crash (whether it downloads is only reported), Tab returns;
 #   - Settings > Artwork sources... opens and its Back row returns to Settings;
 #   - Settings > Game files... opens without a crash;
+#   - Settings > Ports folder... opens, its "Choose another folder..." opens the folder picker, and
+#     closing the picker returns to the Ports folder list;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
@@ -76,7 +78,7 @@ if [ "$alive" = yes ]; then
         if [ -n "${X:-}" ] && [ -n "${Y:-}" ]; then
             # Settings > Artwork sources... opens and shows its rows, and its Back row returns to Settings.
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 353)) click 1; sleep 2
+            xdotool mousemove $((X + 71)) $((Y + 395)) click 1; sleep 2
             import -window root "$OUT/art-sources.png" 2>/dev/null
             art=$(xdotool search --name "^Artwork sources$" 2>/dev/null | head -1)
             art_alive=no; kill -0 "$APP" 2>/dev/null && art_alive=yes
@@ -88,10 +90,36 @@ if [ "$alive" = yes ]; then
                 eval "$(xdotool getwindowgeometry --shell "$win")"
             fi
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 310)) click 1; sleep 2
+            xdotool mousemove $((X + 71)) $((Y + 353)) click 1; sleep 2
             import -window root "$OUT/game-files.png" 2>/dev/null
             gf_alive=no; kill -0 "$APP" 2>/dev/null && gf_alive=yes
             check "Game files screen opens and the app keeps running" '[ "$gf_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$(xdotool search --name "^Game files$" 2>/dev/null)" ]'
+            # Settings > Ports folder... (row 5), then its "Choose another folder..." row (third) opens the picker;
+            # the picker's close button cancels back to the Ports folder list.
+            # A dialog's own close button (top right), since keys need focus and there is no window manager.
+            close_named() {
+                local w; w=$(xdotool search --name "$1" 2>/dev/null | head -1); [ -n "$w" ] || return 0
+                eval "$(xdotool getwindowgeometry --shell "$w")"; xdotool mousemove $((X + WIDTH - 16)) $((Y + 16)) click 1; sleep 1
+            }
+            close_named "^Game files$"
+            eval "$(xdotool getwindowgeometry --shell "$win")"
+            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
+            xdotool mousemove $((X + 71)) $((Y + 227)) click 1; sleep 2
+            pf=$(xdotool search --name "^Ports folder$" 2>/dev/null | head -1)
+            check "Ports folder screen opens and the app keeps running" 'kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log" && [ -n "$pf" ]'
+            if [ -n "$pf" ]; then
+                eval "$(xdotool getwindowgeometry --shell "$pf")"; PX=$X; PY=$Y
+                xdotool mousemove $((PX + 100)) $((PY + 63 + 42 * 2)) click 1; sleep 2
+                import -window root "$OUT/folder-picker.png" 2>/dev/null
+                picker=$(xdotool search --name "^Choose the ports folder$" 2>/dev/null | head -1)
+                check "Choose another folder... opens the folder picker" '[ -n "$picker" ] && kill -0 "$APP" 2>/dev/null'
+                if [ -n "$picker" ]; then
+                    eval "$(xdotool getwindowgeometry --shell "$picker")"
+                    xdotool mousemove $((X + WIDTH - 16)) $((Y + 16)) click 1; sleep 1.5
+                    check "closing the picker returns to the Ports folder list" '[ -z "$(xdotool search --name "^Choose the ports folder$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Ports folder$" 2>/dev/null)" ]'
+                fi
+            fi
+            eval "$(xdotool getwindowgeometry --shell "$win")"
         fi
         # The steps above can leave a dialog open (Game files). With no window manager, an Escape sent
         # while it is open can land in the dialog and close only that, so close dialogs first and wait

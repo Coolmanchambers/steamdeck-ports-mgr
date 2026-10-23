@@ -275,7 +275,7 @@ fn run_action(app: &Rc<AppState>, router: &Router, row: &Row) {
 
 fn folder_taken(app: &AppState, folder: &str) -> bool {
     let catalog = app.catalog.borrow();
-    entry::folder_taken(&app.paths.library_dir, catalog.iter().map(|p| p.folder.as_str()), folder)
+    entry::folder_taken(&app.paths.library_dir(), catalog.iter().map(|p| p.folder.as_str()), folder)
 }
 
 fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {

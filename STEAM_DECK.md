@@ -212,6 +212,50 @@ place), it is left alone and nothing can be queued or applied until you fix or r
 The app's log has a line `game mode: yes` or `game mode: no` at startup with the two values it went by,
 and `steam queue: offering N` whenever it asks.
 
+## Choose where ports are installed (the ports folder)
+
+By default ports go into `Library/` next to the app (`~/Applications/steamdeck-ports-mgr/Library`).
+To put them on the SD card or anywhere else: Settings > **Ports folder...**. The first rows show the
+folder in use, its free space and file system. Then:
+
+1. **Choose another folder...** opens the folder picker: your SD card and USB drives (by label, with
+   free space), Home, `~/Games` and `~/Applications` at the top; below, the folders inside the current
+   one. D-pad up and down, A to open or pick, B to cancel; mouse and touch work too. **New folder
+   here...** asks for a name (the on-screen keyboard: Steam + X). For the SD card, pick the card, then
+   New folder here... `Ports`, then **Use this folder**.
+2. The app checks the folder. It refuses system folders, the home folder itself, the top of a drive, the
+   app's own folder and drives formatted as exFAT, FAT or NTFS: ports need a Linux file system (ext4) for
+   program permissions and links. An SD card formatted by SteamOS (Settings > Storage, Format) is ext4.
+   A card formatted on a PC or bought pre-formatted is usually exFAT: the app says so and nothing changes.
+   A folder that does not exist yet is created after you confirm.
+3. **Switch the ports folder?** lists the new folder and offers:
+   - **Move N ports here, then switch**: each installed port is copied, checked file by file and only
+     then used from the new place. The old copies are kept (see below). Progress shows on screen;
+     Cancel stops between files, removes the copies made so far and changes nothing.
+   - **Switch without moving**: the ports in the old folder stay there and show as not installed here.
+     Useful when the new folder already holds your ports (another card).
+4. Before copying, the app checks each port's game files (ROM links and copies made in Game files, links
+   inside the port folder, the files the port's entry says it needs). If something is missing it lists
+   which file and where it was expected, with **Fix in Game files**, **Move anyway** or **Cancel**.
+   After copying it checks again at the new place; if a game file did not come through intact, that port
+   is not moved (its copy is removed, the original is untouched) and you choose to switch without it, fix
+   it or cancel. A ROM link with a relative path that would break on the other drive is rewritten to a
+   full path in the copy.
+5. Steam shortcuts follow: each shortcut that pointed into the old folder now points at the same file in
+   the new one, with its app ID kept, so artwork and play time stay. With Steam closed (Desktop Mode, Steam
+   menu > Exit) this happens at once, after a backup of `shortcuts.vdf`. With Steam running (always in
+   Game Mode) the change is queued and the app asks to apply it next time Steam is closed in Desktop Mode.
+6. **Remove the old copy now?** The app asks right away, per port, showing the old path and its size:
+   **Remove old copy** (its saves are zipped to `Saves Backup/Update Backups/` first) or **Keep for now**.
+   It asks each time; nothing is ever removed without that choice. Kept copies are listed later under
+   Settings > Ports folder > **Old copies kept after moves**. Removal waits while a Steam shortcut still
+   points into the old copy (a queued change not applied yet) or a game runs from it.
+
+If the ports folder is on the SD card and the card is out when the app starts, it says "Your ports folder
+... is not available. Is the SD card in?" with Try again, Choose another folder, Continue without it and
+Quit. Nothing is created where the card would be, and no port is forgotten: put the card back and choose
+Try again. Until then installs and updates wait.
+
 ## Adopt ports you installed elsewhere (Desktop Mode)
 
 Settings > **Adopt installed ports...** looks one level deep in `~/Applications`, `~/Games` and

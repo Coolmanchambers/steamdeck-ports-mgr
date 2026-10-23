@@ -21,13 +21,14 @@ type Router = Rc<RefCell<GamepadRouter>>;
 const VERSION_CHOICES: usize = 3;
 
 fn game_dir(app: &AppState, port: &Port) -> Option<PathBuf> {
-    crate::core::path_safety::safe_join(&app.paths.library_dir, &port.folder).ok()
+    crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder).ok()
 }
 
 fn try_claim_op_slot(app: &AppState, port: &Port) -> Option<String> {
     let key = port.key().to_string();
     let busy = app.install_runtime.installing.borrow().contains(&key);
-    if busy || is_port_running(app, &key) {
+    // Fork: no installs into a ports folder that is missing (SD card out) or being moved.
+    if busy || is_port_running(app, &key) || super::ports_folder_screen::refuse_when_blocked(app) {
         return None;
     }
     app.install_runtime.installing.borrow_mut().insert(key.clone());
@@ -40,6 +41,9 @@ fn progress_sender(events: &std::sync::Arc<std::sync::Mutex<Vec<AppEvent>>>) -> 
 }
 
 pub(crate) fn start_install(app: &Rc<AppState>, router: &Router, port: Port, asset_override: Option<Value>, release_override: Option<Value>) {
+    if super::ports_folder_screen::refuse_when_blocked(app) {
+        return; // Fork: ports folder missing or being moved
+    }
     if port.source_type == SourceType::None {
         if let Some(dir) = game_dir(app, &port) {
             if std::fs::create_dir_all(&dir).is_ok() {
@@ -58,7 +62,7 @@ pub(crate) fn start_install(app: &Rc<AppState>, router: &Router, port: Port, ass
 
     let pin_version = release_override.is_some();
     let (github_token, gitlab_token) = app.api_tokens();
-    let library_dir = app.paths.library_dir.clone();
+    let library_dir = app.paths.library_dir();
     let saves_backup_dir = app.paths.saves_backup_dir.clone();
     let events = app.events.clone();
     let mut on_progress = progress_sender(&events);
@@ -107,7 +111,7 @@ pub(crate) fn start_extra_install(app: &Rc<AppState>, router: &Router, port: Por
     let tr = window.global::<Tr>();
     open_progress_dialog(app, router, &tr.invoke_dialog_title_extras(), &tr.invoke_progress_installing_extras(port.name.clone().into()));
 
-    let library_dir = app.paths.library_dir.clone();
+    let library_dir = app.paths.library_dir();
     let events = app.events.clone();
     let mut on_progress = progress_sender(&events);
     std::thread::spawn(move || {
@@ -282,7 +286,7 @@ pub(crate) fn delete_port(app: &Rc<AppState>, router: &Router, port: &Port) {
     if dialog_is_open(app) || installing || port.user_managed || is_port_running(app, port.key()) {
         return;
     }
-    match crate::core::installer::uninstall_port(port, &app.paths.library_dir, &app.paths.saves_backup_dir) {
+    match crate::core::installer::uninstall_port(port, &app.paths.library_dir(), &app.paths.saves_backup_dir) {
         Ok(()) => {
             app.state.borrow_mut().mark_removed(port.key());
             app.refresh_current_view();

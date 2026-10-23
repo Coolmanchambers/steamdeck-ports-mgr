@@ -17,11 +17,19 @@ const PAGE_ROWS: i32 = 10;
 const RECENT_GAMES_COUNT: usize = 5;
 
 pub(crate) struct AppPaths {
-    pub(crate) library_dir: PathBuf,
+    // Fork: the ports folder is a setting (src/fork/ports_folder.rs) and can change while the app runs.
+    pub(crate) library: RefCell<PathBuf>,
     pub(crate) cache_dir: PathBuf,
     pub(crate) config_dir: PathBuf,
     pub(crate) saves_backup_dir: PathBuf,
     pub(crate) themes_path: PathBuf,
+}
+
+impl AppPaths {
+    /// Fork: the ports folder in use (upstream's `Library/` next to the app unless the user chose another).
+    pub(crate) fn library_dir(&self) -> PathBuf {
+        self.library.borrow().clone()
+    }
 }
 
 pub(crate) struct ThemeState {
@@ -100,7 +108,7 @@ impl AppState {
     }
 
     pub(crate) fn is_installed(&self, port: &Port) -> bool {
-        crate::core::installer::is_installed(port, &self.paths.library_dir)
+        crate::core::installer::is_installed(port, &self.paths.library_dir())
     }
 
     fn recent_games(&self) -> Vec<Port> {

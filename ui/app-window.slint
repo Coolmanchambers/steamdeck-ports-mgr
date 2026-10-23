@@ -15,6 +15,8 @@ export struct PortItem {
 
 export { CardItem, CardRow, SemanticColors, Theme, MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr }
 export { DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog }
+// Fork: the in-app folder picker (src/app/folder_picker_screen.rs).
+export { FolderPickerDialog, FolderRow } from "fork/folder-picker.slint";
 
 component ActionButton inherits Rectangle {
     in property <string> text: "";

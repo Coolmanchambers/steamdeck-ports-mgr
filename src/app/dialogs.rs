@@ -13,7 +13,7 @@ use crate::ui::font_sizing::FontSizes;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::ui::theme::{SemanticPalette, ThemeColors, ThemeConfig};
 use crate::{
-    AppWindow, ConfirmDialog, DeckReadyInfoDialog, ErrorDialog, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog,
+    AppWindow, ConfirmDialog, DeckReadyInfoDialog, ErrorDialog, FolderPickerDialog, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog,
     SearchListDialog, SemanticColors, Theme, Tr,
 };
 use serde_json::Value;
@@ -162,6 +162,8 @@ pub(crate) enum DialogSlot {
     Picker(ListPickerDialog),
     SearchList(SearchListDialog),
     DeckReadyInfo(DeckReadyInfoDialog),
+    // Fork: the in-app folder picker (src/app/folder_picker_screen.rs).
+    FolderPicker(FolderPickerDialog),
 }
 
 impl DialogSlot {
@@ -176,6 +178,7 @@ impl DialogSlot {
             DialogSlot::Picker(d) => Some(d.window()),
             DialogSlot::SearchList(d) => Some(d.window()),
             DialogSlot::DeckReadyInfo(d) => Some(d.window()),
+            DialogSlot::FolderPicker(d) => Some(d.window()),
         }
     }
 
@@ -190,6 +193,7 @@ impl DialogSlot {
             DialogSlot::Picker(d) => DialogSlot::Picker(d.clone_strong()),
             DialogSlot::SearchList(d) => DialogSlot::SearchList(d.clone_strong()),
             DialogSlot::DeckReadyInfo(d) => DialogSlot::DeckReadyInfo(d.clone_strong()),
+            DialogSlot::FolderPicker(d) => DialogSlot::FolderPicker(d.clone_strong()),
         }
     }
 }
@@ -374,7 +378,7 @@ pub(crate) fn open_uninstall_confirm_dialog(app: &Rc<AppState>, router: &Router,
     let tr = window.global::<Tr>();
     let name: slint::SharedString = port.name.clone().into();
     // Fork (O1): saves with no known Linux location are not kept by the uninstall; say so before it runs.
-    let game_dir = crate::core::path_safety::safe_join(&app.paths.library_dir, &port.folder).ok();
+    let game_dir = crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder).ok();
     let unknown = game_dir.is_some_and(|dir| crate::core::save_backup::save_folder_unknown_on_linux(&port, &dir));
     let note = if unknown { crate::fork::save_notes::UNINSTALL_NOTE } else { "" };
     open_confirm_dialog(
@@ -454,7 +458,7 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
         dialog.on_instructions_link_requested(move || open_url(&link));
     }
 
-    let game_dir = crate::core::path_safety::safe_join(&app.paths.library_dir, &port.folder).ok();
+    let game_dir = crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder).ok();
     let installed_dir = game_dir.clone().filter(|p| p.is_dir());
     let installed = installed_dir.is_some();
     let website = port.website_url().filter(|u| is_web_url(u)).map(str::to_string);
@@ -545,6 +549,19 @@ pub(crate) fn build_deck_ready_info_dialog(app: &Rc<AppState>, router: &Router) 
     Some(dialog)
 }
 
+// Fork: the folder picker, sized like Info and styled like the other dialogs; src/app/folder_picker_screen.rs fills it.
+pub(crate) fn build_folder_picker_dialog(app: &Rc<AppState>, router: &Router) -> Option<FolderPickerDialog> {
+    close_current_dialog(app, router);
+    let (fonts, ..) = dialog_context(app);
+    let (dw, dh) = main_window_size(app);
+    let (x, y) = centered_position(app, dw, dh);
+    let dialog = FolderPickerDialog::new().ok()?;
+    style_dialog!(dialog, app, fonts);
+    position_dialog!(dialog, app, dw, dh, x, y);
+    wire_keyboard_nav!(dialog, app, vertical);
+    Some(dialog)
+}
+
 pub(crate) fn open_update_toggle_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
     let window = app.window();
     let tr = window.global::<Tr>();
@@ -619,6 +636,7 @@ enum SettingsEntry {
     Language,
     Files,
     Library,
+    PortsFolder,
     AddToSteam,
     AdoptPorts,
     GameFiles,
@@ -631,11 +649,12 @@ enum SettingsEntry {
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 14] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 15] = [
     SettingsEntry::Themes,
     SettingsEntry::Language,
     SettingsEntry::Files,
     SettingsEntry::Library,
+    SettingsEntry::PortsFolder,
     SettingsEntry::AddToSteam,
     SettingsEntry::AdoptPorts,
     SettingsEntry::GameFiles,
@@ -659,6 +678,7 @@ fn settings_labels(app: &AppState) -> Vec<String> {
             SettingsEntry::Language => tr.invoke_label_language(),
             SettingsEntry::Files => tr.invoke_label_files(),
             SettingsEntry::Library => tr.invoke_label_library(),
+            SettingsEntry::PortsFolder => "Ports folder...".into(),
             SettingsEntry::AddToSteam => "Add to Steam...".into(),
             SettingsEntry::AdoptPorts => "Adopt installed ports...".into(),
             SettingsEntry::GameFiles => "Game files...".into(),
@@ -705,7 +725,8 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                         SettingsEntry::Themes => open_theme_picker(&app, &router),
                         SettingsEntry::Language => open_language_picker(&app, &router),
                         SettingsEntry::Files => open_files_picker(&app, &router),
-                        SettingsEntry::Library => open_folder(&app.paths.library_dir),
+                        SettingsEntry::Library => open_folder(&app.paths.library_dir()),
+                        SettingsEntry::PortsFolder => super::ports_folder_screen::open_menu(&app, &router),
                         SettingsEntry::AddToSteam => super::steam_screens::open_steam_screen(&app, &router),
                         SettingsEntry::AdoptPorts => super::steam_screens::open_adopt_screen(&app, &router),
                         SettingsEntry::GameFiles => super::rom_screens::open_game_files(&app, &router),
@@ -929,7 +950,7 @@ fn start_save_backup(app: &Rc<AppState>, router: &Router) {
     open_progress_dialog(app, router, &tr.invoke_dialog_title_saves_backup(), &tr.invoke_progress_backing_up_saves());
 
     let catalog = app.catalog.borrow().clone();
-    let library_dir = app.paths.library_dir.clone();
+    let library_dir = app.paths.library_dir();
     let saves_backup_dir = app.paths.saves_backup_dir.clone();
     let events = app.events.clone();
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();

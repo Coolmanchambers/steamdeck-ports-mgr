@@ -64,7 +64,7 @@ pub(crate) fn open_steam_screen(app: &Rc<AppState>, router: &Router) {
     let mut screen = {
         let catalog = app.catalog.borrow();
         let state = app.state.borrow();
-        SteamScreen::load(&home, &app.paths.library_dir, &catalog, &settings, &|key| state.get(key).and_then(|i| i.favorite_exe.clone()))
+        SteamScreen::load(&home, &app.paths.library_dir(), &catalog, &settings, &|key| state.get(key).and_then(|i| i.favorite_exe.clone()))
     };
     screen.cache_dir = Some(app.paths.cache_dir.clone());
     let loaded = steam_queue::load(&queue_path(app));
@@ -102,7 +102,7 @@ fn prefetch_art(app: &AppState) {
 fn reload_after_account_change(app: &AppState, screen: &mut SteamScreen, index: usize) {
     let catalog = app.catalog.borrow();
     let state = app.state.borrow();
-    screen.set_account(index, &app.paths.library_dir, &catalog, &|key| state.get(key).and_then(|i| i.favorite_exe.clone()));
+    screen.set_account(index, &app.paths.library_dir(), &catalog, &|key| state.get(key).and_then(|i| i.favorite_exe.clone()));
 }
 
 fn show_steam_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<SteamScreen>>) {
@@ -243,7 +243,7 @@ fn apply_queue_now(app: &Rc<AppState>, router: &Router) {
         let favorite = |key: &str| state.get(key).and_then(|i| i.favorite_exe.clone());
         let inputs = ApplyInputs {
             home: &home,
-            library_dir: &app.paths.library_dir,
+            library_dir: &app.paths.library_dir(),
             catalog: &catalog,
             favorite_exe: &favorite,
             cache_dir: Some(app.paths.cache_dir.clone()),
@@ -374,7 +374,7 @@ pub(crate) fn open_adopt_screen(app: &Rc<AppState>, router: &Router) {
     }
     let Some(home) = home_dir() else { return no_home(app, router, ADOPT_TITLE) };
     let settings = ForkSettings::load(&settings_path(app));
-    let screen = AdoptScreen::load(&home, &app.paths.library_dir, &app.catalog.borrow(), &settings);
+    let screen = AdoptScreen::load(&home, &app.paths.library_dir(), &app.catalog.borrow(), &settings);
     show_adopt_screen(app, router, Rc::new(RefCell::new(screen)));
 }
 
@@ -418,7 +418,7 @@ fn confirm_adopt(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<AdoptSc
     open_confirm_dialog(app, router, ADOPT_TITLE.into(), text.into(), "Adopt".into(), move |app, router| {
         let local_json = app.paths.config_dir.join("ports.local.json");
         let catalog = app.catalog.borrow().clone();
-        let done = screens::adopt_selected(&screen.borrow(), &catalog, &app.paths.library_dir, &local_json);
+        let done = screens::adopt_selected(&screen.borrow(), &catalog, &app.paths.library_dir(), &local_json);
         for port in done.adopted {
             app.state.borrow_mut().mark_installed(port.key(), None);
             let mut catalog = app.catalog.borrow_mut();

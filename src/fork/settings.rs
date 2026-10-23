@@ -97,6 +97,20 @@ impl ForkSettings {
         self.save()
     }
 
+    /// Removes a key owned by another fork feature (no-op save when it was not there).
+    pub fn remove(&mut self, key: &str) -> io::Result<()> {
+        self.map.remove(key);
+        self.save()
+    }
+
+    /// Replaces the extra scan folders for "Adopt installed ports" (stage 2's folder picker writes
+    /// them here instead of the user editing the JSON file). Blank entries are dropped.
+    pub fn set_adopt_folders(&mut self, folders: &[String]) -> io::Result<()> {
+        let list: Vec<Value> = folders.iter().map(|f| f.trim()).filter(|f| !f.is_empty()).map(Value::from).collect();
+        self.map.insert(KEY_ADOPT_FOLDERS.into(), Value::Array(list));
+        self.save()
+    }
+
     /// Writes the file with the keys it has, plus an empty `adopt_folders` list so the user finds the
     /// place to add folders.
     pub fn save(&mut self) -> io::Result<()> {

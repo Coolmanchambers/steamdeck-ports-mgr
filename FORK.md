@@ -81,6 +81,15 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-21 | `.gitignore` | `secrets.json` added to the Secrets block (it holds the user's API keys; it is never committed) |
 | 2026-10-22 | `README.md` | The install pointer in the top note names the one-file installer |
 | 2026-10-22 | `src/ui/linux_chrome.rs` | `register_desktop_entry` writes this fork's own menu entry, `steamdeck-ports-mgr.desktop` ("Deck Ports Manager", icon `steamdeck-ports-mgr`, same Exec and `StartupWMClass`), instead of upstream's `ports_launcher.desktop` / `ports_launcher.png`, so it no longer overwrites the original Ports Launcher's entry. One-time migration: an old `ports_launcher.desktop` is removed only when its Exec is this program, and the old icon only when no remaining entry uses it. `desktop_entry_text`, `upstream_entry_is_ours`, `migrate_upstream_entry`; 5 tests. Window title and tray text unchanged |
+| 2026-10-22 | `src/main.rs` | Ports folder setting: `AppPaths.library` is built from `fork::ports_folder::at_startup` instead of `<app>/Library` (the default stays `<app>/Library` and is created as before; a chosen folder that is missing is never created and nothing is marked installed from it); one line calling `ports_folder_screen::startup_check` |
+| 2026-10-22 | `src/app/state.rs` | `AppPaths.library_dir: PathBuf` becomes `library: RefCell<PathBuf>` with a `library_dir()` accessor, so the ports folder can change while the app runs |
+| 2026-10-22 | `src/app/dialogs.rs`, `events.rs`, `install_launch.rs`, `save_restore_screen.rs`, `rom_screens.rs`, `steam_screens.rs`, `deck_ready_screen.rs` | `app.paths.library_dir` read through `library_dir()` (mechanical, one token per use) |
+| 2026-10-22 | `src/app/install_launch.rs` | `start_install` and `try_claim_op_slot` (install, update, version picker, extras) refuse with a message while the ports folder is missing or being moved (`ports_folder_screen::refuse_when_blocked`); 2 lines |
+| 2026-10-22 | `src/app/dialogs.rs` | One Settings entry, "Ports folder..." (after Library; English text); `DialogSlot::FolderPicker` (two match arms) and `build_folder_picker_dialog`, sized like Info |
+| 2026-10-22 | `src/app/gamepad_target.rs` | The folder picker in the three dialog matches (B cancels, A picks, Up/Down skip headings) |
+| 2026-10-22 | `src/app/mod.rs` | Two lines registering `folder_picker_screen` and `ports_folder_screen` |
+| 2026-10-22 | `ui/app-window.slint` | One line exporting `FolderPickerDialog` and `FolderRow` from `ui/fork/folder-picker.slint` |
+| 2026-10-22 | `src/ui/slint_layout_lint.rs` | The new Slint file is linted too |
 
 Files added by this fork:
 
@@ -95,7 +104,7 @@ Files added by this fork:
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it. A failed check prints the copy count, the processes under the test folder and the log tail (since 2026-10-21) |
-| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), opens Settings > Artwork sources and its Back row, and quits on Close. CI runs it and blocks the release on failure |
+| 2026-10-20 | `tools/smoke-test.sh` | Starts the packaged app on a virtual display with no tray host or desktop session; checks it survives 15 s without a panic, skips the tray, maps a non-blank window, opens the Deck-ready list and comes back (since 2026-10-21), opens Settings > Artwork sources and its Back row, Game files, and Settings > Ports folder with its folder picker (since 2026-10-22), and quits on Close. CI runs it and blocks the release on failure |
 | 2026-10-21 | `tools/test-app-update.sh` | Offline in-app update test: the packaged app, started from an old copy (marker appended to the program, old `BUILD_INFO`), runs Settings > Force update from the UI against a fake release on `file://`; checks the swap, `.previous/`, the restart on the new file and that saves, catalogs and state survive, then a tampered-checksum case (nothing changes, `update-failed.txt`, app reopens). CI runs it after the smoke test and blocks the release on failure |
 | 2026-10-22 | `tools/installer.sh` | The one-file installer's script: downloads the rolling release, checks its SHA-256, installs into `~/Applications/steamdeck-ports-mgr` or updates an existing install exactly like the updater, writes the app-menu entry (same bytes as the app's own) and a desktop shortcut, starts the app. Not shipped on its own (see Builds) |
 | 2026-10-22 | `tools/build-installer.sh` | Builds `steamdeck-ports-mgr-installer.desktop`: a desktop-entry launcher with `tools/installer.sh` embedded as comment lines, which its Exec line extracts from its own file (`%k`) and runs |
@@ -129,7 +138,7 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/steam_sync.rs` | Plans and applies the shortcuts for installed ports (add, update in place, up to date, blocked) |
 | 2026-10-21 | `src/fork/screens.rs` | View models for the two screens: labels, toggling, review text, apply, adopt. All the decisions, tested without UI |
 | 2026-10-21 | `src/app/steam_screens.rs` | The "Add to Steam" and "Adopt installed ports" list dialogs (thin: draws `screens.rs` text) |
-| 2026-10-22 | `src/fork/steam_queue.rs` | Steam changes queued from Game Mode: `steam-queue.json` (versioned, atomic), applying it through the screen's safe write, the startup/30-second offer decision, the mode wording; tested without UI |
+| 2026-10-22 | `src/fork/steam_queue.rs` | Steam changes queued from Game Mode: `steam-queue.json` (versioned, atomic), applying it through the screen's safe write, the startup/30-second offer decision, the mode wording; since 2026-10-22 also `repoint` entries for moved ports (applied first); tested without UI |
 | 2026-10-21 | `src/fork/rom_library/` | ROM library (library and tests only, no UI): scan a ROM folder (CRC-32, MD5, SHA-1, N64 byte-order normalization), read each port's required files from the catalog text or explicit `rom_files` in a local entry, match by checksum then name, plan and apply use-in-place / symlink / copy, record the mapping in its own `rom_library.json` |
 | 2026-10-22 | `src/fork/rom_screens/` | The logic of the game-files screens (R2): folder browser, background job runner, scan and report, results by system, Connect step, connected ports, the after-install offer; tested without UI |
 | 2026-10-22 | `src/app/rom_screens.rs` | The screens themselves: list dialogs, a timer that polls the worker thread |
@@ -141,6 +150,11 @@ Files added by this fork:
 | 2026-10-21 | `src/fork/deck_ready/entry.rs` | Turns an entry the app doesn't have into the user's own `ports.local.json` entry (backup first) |
 | 2026-10-21 | `src/app/deck_ready_screen.rs` | The Deck-ready list screen: switching lists, Filters, Info, install and play |
 | 2026-10-21 | `ui/fork/deck-ready.slint` | The Deck-ready list and its Info dialog |
+| 2026-10-22 | `src/fork/folder_picker/` | The in-app folder picker's logic: quick places (mounted SD card and USB drives from `/proc/self/mounts`, Home, `~/Games`, `~/Applications`, extra places from the caller), listing, rows, new-folder name rules, header text; tested without UI. Replaces the Game files screen's own folder walker (`rom_screens/browse.rs` keeps only its ROM start points) |
+| 2026-10-22 | `src/app/folder_picker_screen.rs`, `ui/fork/folder-picker.slint` | The folder picker screen (`open_folder_picker`), used by Settings > Ports folder and Settings > Game files |
+| 2026-10-22 | `src/fork/ports_folder.rs` | The ports folder setting (`ports_folder` in `fork-settings.json`), the startup availability check, the rules for a new ports folder (`check`, with an exFAT/permission/link probe) and `plan_move` |
+| 2026-10-22 | `src/fork/port_mover/` | The move engine: copy with permission bits, links and times, verify (list, sizes, bits, links, hashes), game file check before and after, Steam repoint (written or queued, app IDs kept), ROM records follow, old copies recorded in `port-moves.json` and removed only on request |
+| 2026-10-22 | `src/app/ports_folder_screen.rs` | Settings > Ports folder, the "not available" message at startup, the move with progress and Cancel, and the "Remove the old copy now?" prompts |
 
 ## Add to Steam and adopting (Settings menu)
 
@@ -352,6 +366,84 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   running-game check beyond the app's own record is Linux only. The "Pending Restore" copies kept
   across an uninstall are not listed (they are put back by the next install). Backups are never
   pruned. Text is English only. Not yet tried on a Deck.
+
+## Ports folder, folder picker and moving ports (`src/fork/ports_folder.rs`, `folder_picker/`, `port_mover/`)
+
+- **Setting.** Where installed ports live (upstream's `Library/` next to the app) is `ports_folder` in
+  `fork-settings.json`. Not set means `<app folder>/Library`, as before, so existing installs behave the
+  same. `main.rs` builds `AppPaths` from it; every user of the folder reads `AppPaths::library_dir()`.
+- **Missing at startup.** A chosen folder that is not there (SD card out, drive not mounted) is never
+  created and nothing is marked installed or uninstalled: `state.json` is left alone. The app shows
+  "Your ports folder ... is not available" with Try again, Choose another folder..., Continue without it
+  and Quit. While it is missing, installs and updates are refused with a message (`refuse_when_blocked`).
+  Ports there show as not installed until it is back (they are not forgotten). The default folder is
+  re-created when missing, as upstream did.
+- **Choosing a folder** (Settings > Ports folder... > Choose another folder...) goes through the folder
+  picker, then `ports_folder::check`: a full path; not a system folder, the home folder itself, the top of
+  a drive, inside the app folder (except the default `Library`), a folder holding the app folder, or
+  inside the current ports folder; not exFAT, FAT or NTFS (from `/proc/self/mounts`, with the reason
+  spelled out: SteamOS-formatted SD cards are ext4); writable, and executable bits and symlinks stick
+  (tried in a temporary sub-folder, removed again). A missing folder is created only after the user
+  confirms, and never where a drive is not mounted.
+- **Folder picker.** In-app, controller first (no native dialog; those misbehave in Game Mode). Quick
+  places: each mounted removable drive under `/run/media/<user>/` or `/run/media/` by label with free
+  space, Home, `~/Games`, `~/Applications`, plus places the caller adds (Game files adds ROM folders).
+  Rows: Use this folder, New folder here... (name rules: no `/`, no leading dot, not `.`/`..`, at most 255
+  bytes, no leading or trailing spaces, not already there), Up, sub-folders (sorted, hidden ones on
+  request, at most 500 listed), Cancel. Header: path, free space, file system, drive, purpose hint.
+  `open_folder_picker(app, router, PickerRequest, on_chosen, on_cancel)`.
+- **Moving the installed ports** when the folder changes (`port_mover`). Never deletes: "move" is copy,
+  verify, switch over, keep the old folder. Per port: refused while a program runs from it (save restore's
+  `/proc` check), while any install, update or restore runs, or when the target exists or space is short
+  (size + 64 MB). The copy goes to a hidden staging folder next to the target, keeps permission bits,
+  links (as links) and times, syncs each file, then is verified (file list, kinds, sizes, permission bits,
+  link targets, modification times; every file read back and compared by SHA-1 when the port is up to
+  4 GB, else programs and game files). Only then is it renamed into place. Any failure or Cancel removes
+  only the staging folder. An adopted port (a link in the ports folder) moves as a new link to the same
+  folder. Cancel works between files; ports already copied in that run are removed again (their originals
+  were never touched) and the setting does not change. When some ports fail, the user picks Switch anyway
+  (the others stay in the old folder and show as not installed), Fix in Game files or Cancel.
+- **Game file check** (`port_mover::game_files`). Before copying: every connection recorded by Game files
+  for the port (its link or copy in the port folder, or a "use original" file) must be healthy, every link
+  in the port folder that points outside it must resolve, and each required file the port's entry names
+  must be in the folder or connected. Problems are listed with the file and where it was expected, with
+  Fix in Game files, Move anyway or Cancel. After copying: links that leave the folder must reach the same
+  file from the new place, links recorded by Game files must reach the original, and copied game files must
+  have the same size and, where a CRC is known, the same CRC (they are always read back by hash too).
+  A mismatch after the copy always stops that port's move (the copy is removed); there is no "anyway" for
+  it. A relative link that points outside the port folder (`../../roms/x.z64`) would break at the new
+  place, so the copy gets the absolute path of what it pointed at; links inside the folder stay as written.
+- **Switch over.** The setting is saved, then for each moved port: every non-Steam shortcut in every
+  Steam account whose program, start folder or icon is inside the old folder gets the same path under the
+  new one, app ID kept (artwork and play time stay attached), through the safe write (refused while Steam
+  runs, verified backup, atomic write, backups pruned). While Steam runs (always in Game Mode) a
+  `repoint` entry goes into `steam-queue.json` and is applied with the rest of the queue, before adds and
+  updates; a second move of a queued port chains (A to B, then B to C, is A to C) and a move back cancels
+  it. A shortcut with no stored app ID is left alone and named (Steam would derive a new ID from the new
+  path). Game files connections (`rom_library.json`) follow. `state.json` (install records, favorite
+  program, play time) and `ports.local.json` need nothing: they are keyed by port and hold paths relative
+  to the port folder.
+- **Old copies** (`port_mover::old_copies`, `port-moves.json`). The app asks right after a move, per
+  port, "Remove the old copy now?" with the old path, its size and where the port runs from now: Remove
+  old copy or Keep for now. Kept ones are listed under Settings > Ports folder > Old copies. Removal is
+  refused unless the new copy exists and is the one in use, no Steam shortcut still points into the old
+  one (so not while a repoint is queued), no program runs from it, and it is not the app folder, the home
+  folder or a folder holding a ports folder in use. Its saves are zipped first (`backup_before_update`,
+  under `Saves Backup/Update Backups/`); if that fails nothing is removed. An adopted port's old link is
+  removed as a link; its target folder is never touched.
+- **API for other screens** (setup wizard, import): `folder_picker_screen::open_folder_picker`,
+  `fork::ports_folder::{current, configured, save_choice, check, create, at_startup, plan_move}`,
+  `port_mover::{prepare, switch_over, discard}` with `MoveEnv` / `MoveOptions` /
+  `game_files::GameFiles::for_port`, `port_mover::old_copies::{load, removal_check, remove, forget}`,
+  `ports_folder_screen::{prompt_old_copies, open_old_copies, refuse_when_blocked}`,
+  `ForkSettings::set_adopt_folders`.
+- **Known limits.** The move copies on a worker thread; the Steam repoint, records and old-copy prompts
+  run on the UI thread after it (fast). Removing a large old copy runs on a worker thread with a progress
+  dialog that cannot be cancelled. Hard links inside a port are copied as separate files. Folder times
+  are best effort. Ownership is not copied (same user). An interrupted run (power loss) can leave a hidden
+  `.<folder>.dpm-moving-<pid>` next to the target; the next run of the same process id clears it, other
+  ones stay until removed by hand. The required-file part of the game file check also lists files a port
+  only needed once (to build its own data); Move anyway is right for those. English only.
 
 ## Fixes to upstream behavior
 

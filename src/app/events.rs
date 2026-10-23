@@ -81,7 +81,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 {
                     let mut state = app.state.borrow_mut();
                     state.mark_installed(&key, tag);
-                    let game_dir = port.as_ref().and_then(|p| crate::core::path_safety::safe_join(&app.paths.library_dir, &p.folder).ok());
+                    let game_dir = port.as_ref().and_then(|p| crate::core::path_safety::safe_join(&app.paths.library_dir(), &p.folder).ok());
                     let moved_favorite = game_dir.and_then(|dir| {
                         let favorite = state.get(&key).and_then(|info| info.favorite_exe.clone())?;
                         crate::core::installer::follow_favorite_exe(&dir, &favorite)

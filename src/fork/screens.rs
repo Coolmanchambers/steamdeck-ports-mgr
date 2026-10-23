@@ -1182,6 +1182,7 @@ mod tests {
             art: ArtChoice::Catalog,
             from_game_mode: false,
             queued_at: String::new(),
+            repoint: None,
         });
         assert_eq!(screen.lines()[..3], [SteamLine::ApplyQueue, SteamLine::ManageQueue, SteamLine::Account]);
         assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued while Steam was running: apply now...");

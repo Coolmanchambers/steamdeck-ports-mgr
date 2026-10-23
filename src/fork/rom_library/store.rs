@@ -101,6 +101,22 @@ impl RomLibraryStore {
         self.mappings.iter().filter(|m| m.port_key == port_key).collect()
     }
 
+    /// A port folder moved from `from` to `to` (`port_mover`): connections whose link or copy lived in it
+    /// now name the same place under `to`. Originals are not touched. Saves only when something changed;
+    /// returns how many records changed.
+    pub fn repoint_dests(&mut self, from: &Path, to: &Path) -> io::Result<usize> {
+        let mut changed = 0;
+        for m in &mut self.mappings {
+            let Some(rest) = m.dest.as_ref().and_then(|d| d.strip_prefix(from).ok()).map(Path::to_path_buf) else { continue };
+            m.dest = Some(if rest.as_os_str().is_empty() { to.to_path_buf() } else { to.join(rest) });
+            changed += 1;
+        }
+        if changed > 0 {
+            self.save()?;
+        }
+        Ok(changed)
+    }
+
     /// Record a connection, replacing an earlier one for the same port and file slot.
     pub fn record(&mut self, mapping: Mapping) -> io::Result<()> {
         self.mappings.retain(|m| !(m.port_key == mapping.port_key && m.slot == mapping.slot));

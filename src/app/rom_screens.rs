@@ -16,7 +16,9 @@ use super::dialogs::{
 use super::state::AppState;
 use crate::core::path_safety::safe_join;
 use crate::fork::rom_library::{load_local_entries, Approval, RomLibraryStore, RomSpec};
-use crate::fork::rom_screens::browse::{self, FolderBrowser};
+use crate::fork::folder_picker::{PickerRequest, Purpose};
+use crate::fork::rom_screens::browse;
+use super::folder_picker_screen::open_folder_picker;
 use crate::fork::rom_screens::connect_screen::{self, ConnectScreen, Line as ConnectLine, PlanOutput};
 use crate::fork::rom_screens::connections::connection_groups;
 use crate::fork::rom_screens::job::{Background, Ctl};
@@ -256,58 +258,23 @@ fn connection_count(store: &RomLibraryStore) -> usize {
 // -- Choosing the folder --------------------------------------------------------------------------
 
 fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
+    // The shared folder picker, with the usual ROM folders (SD card, EmuDeck) as extra quick places.
     let home = home_dir();
-    let points = browse::start_points(home.as_deref(), &browse::system_mounts());
-    let mut labels: Vec<String> = points.iter().map(|(label, path)| format!("{label}  ({})", ellipsize(&path.to_string_lossy(), 46))).collect();
-    labels.push("Browse from your home folder".into());
-    labels.push("Browse from the top of the drive".into());
-    labels.push("Back".into());
-    open_picker_dialog(app, router, "Where are your game files?", labels, move |app, router, index| {
-        if index == points.len() + 2 {
-            return open_game_files(app, router);
-        }
-        let dir = if let Some((_, path)) = points.get(index) {
-            path.clone()
-        } else if index == points.len() {
-            home.clone().unwrap_or_else(|| PathBuf::from("/"))
-        } else {
-            PathBuf::from("/")
-        };
-        show_browser(app, router, Rc::new(RefCell::new(FolderBrowser::open(&dir))), then.clone());
-    });
-}
-
-fn browser_title(browser: &FolderBrowser) -> String {
-    format!("Folder: {}", ellipsize(&browser.current.to_string_lossy(), 48))
-}
-
-fn show_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FolderBrowser>>, then: Then) {
-    let labels = browser.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, &browser_title(&browser.borrow()), &labels) else { return };
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| {
-            let line = browser.borrow().lines().get(index as usize).copied();
-            match line {
-                Some(browse::Line::UseThis) => {
-                    let path = browser.borrow().current.clone();
-                    let Some(mut store) = load_store(&app, &router) else { return };
-                    match store.set_rom_dir(Some(path)) {
-                        Ok(()) => start_scan(&app, &router, then.clone()),
-                        Err(e) => message(&app, &router, TITLE, &format!("Could not use that folder: {e}")),
-                    }
-                    return;
-                }
-                Some(browse::Line::Up) => browser.borrow_mut().up(),
-                Some(browse::Line::Folder(i)) => browser.borrow_mut().enter(i),
-                Some(browse::Line::Cancel) => return open_game_files(&app, &router),
-                Some(browse::Line::More) | None => return,
+    let mut request = PickerRequest::new("Where are your game files?", home.as_deref().unwrap_or(Path::new("/")), Purpose::ScanFolder);
+    request.extra_places = browse::start_points(home.as_deref(), &browse::system_mounts());
+    open_folder_picker(
+        app,
+        router,
+        request,
+        move |app, router, path| {
+            let Some(mut store) = load_store(app, router) else { return };
+            match store.set_rom_dir(Some(path)) {
+                Ok(()) => start_scan(app, router, then.clone()),
+                Err(e) => message(app, router, TITLE, &format!("Could not use that folder: {e}")),
             }
-            show_browser(&app, &router, browser.clone(), then.clone());
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+        },
+        open_game_files,
+    );
 }
 
 // -- Scanning -------------------------------------------------------------------------------------
@@ -475,7 +442,7 @@ fn connect_from_report(app: &Rc<AppState>, router: &Router, report: &Rc<Report>,
 
 fn open_connect(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back) {
     let Some(store) = load_store(app, router) else { return };
-    let Ok(port_dir) = safe_join(&app.paths.library_dir, &row.port.folder) else { return };
+    let Ok(port_dir) = safe_join(&app.paths.library_dir(), &row.port.folder) else { return };
     let screen = Rc::new(RefCell::new(ConnectScreen::new(row, port_dir, store.mappings())));
     show_connect(app, router, screen, back);
 }

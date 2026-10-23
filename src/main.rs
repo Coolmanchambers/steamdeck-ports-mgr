@@ -75,12 +75,13 @@ fn main() {
     // Fork (upstream bug O4): clear a saved Update flag that no longer applies, and check again at once.
     let recheck_self_update = app::sync::settle_self_update_flag(&mut state.borrow_mut(), &bdir);
 
-    let library_dir = bdir.join("Library");
+    // Fork: the ports folder is a setting; a chosen folder that is missing (SD card out) is never created.
+    let ports_folder = fork::ports_folder::at_startup(&bdir, &fork::settings::ForkSettings::load(&bdir.join(fork::settings::FILE_NAME)), &fork::folder_picker::mounts::system_mounts(), &fork::folder_picker::mounts::default_media_roots());
+    let library_dir = ports_folder.dir.clone();
     let cache_dir = bdir.join("cache");
-    let _ = std::fs::create_dir_all(&library_dir);
     let _ = std::fs::create_dir_all(&cache_dir);
 
-    {
+    if ports_folder.available() {
         let mut s = state.borrow_mut();
         for port in &catalog {
             if s.get(port.key()).is_none() && core::installer::is_installed(port, &library_dir) {
@@ -167,7 +168,7 @@ fn main() {
         tray: RefCell::new(None),
         state,
         catalog: RefCell::new(catalog),
-        paths: AppPaths { library_dir, cache_dir, config_dir: bdir.clone(), saves_backup_dir: bdir.join("Saves Backup"), themes_path },
+        paths: AppPaths { library: RefCell::new(library_dir), cache_dir, config_dir: bdir.clone(), saves_backup_dir: bdir.join("Saves Backup"), themes_path },
         theme: ThemeState { theme_config: RefCell::new(theme_cfg), font_family },
         window_geometry: WindowGeometry {
             border_width: Cell::new(border_width),
@@ -235,6 +236,7 @@ fn main() {
         })
     };
     let _steam_queue_watch = app::steam_screens::start_queue_watch(&app, &router); // Fork: Steam changes queued from Game Mode
+    app::ports_folder_screen::startup_check(&app, &router, ports_folder); // Fork: ports folder missing (SD card out?)
 
     // Fork: with no tray host (Game Mode) the tray is skipped and Close quits instead of hiding.
     let _tray = start_tray(&app, &router);
