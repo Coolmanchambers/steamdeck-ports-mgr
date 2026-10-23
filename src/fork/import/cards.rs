@@ -327,9 +327,7 @@ impl Cards {
     /// Starts the walk again: what the user settled stays, everything else is asked again.
     pub fn reset(&mut self) {
         for (i, v) in self.verdicts.iter_mut().enumerate() {
-            if !self.settled[i] {
-                *v = Verdict::Undecided;
-            }
+            *v = if self.settled[i] { Verdict::Yes } else { Verdict::Undecided };
         }
     }
 }
@@ -423,7 +421,7 @@ pub fn found_page(cards: &Cards, leave_label: &str, deck_ready_note: Option<&str
         let mut p = base("found", "", &format!("Found {}", ports(matches.len())));
         p.paragraphs = vec!["These look like ports you already have. Check each one, then they can be moved into your ports folder.".to_string()];
         if unsure > 0 {
-            p.paragraphs.push(format!("{} more could be ports. You will be asked which.", folders(unsure)));
+            p.paragraphs.push(if unsure == 1 { "1 more folder could be a port. You will be asked which.".to_string() } else { format!("{unsure} more folders could be ports. You will be asked which.") });
         }
         p
     };
@@ -661,7 +659,7 @@ mod tests {
         assert!(sc.new_to_list);
         assert!(sc.lines().contains(&"New to your port list. It is added first.".to_string()), "{:?}", sc.lines());
         assert!(sc.details(&sd, &sd.join("Ports")).contains("not in the catalog"), "details explain it");
-        assert!(!named(&cards, "The Legend of Zelda: Twilight Princess (dusklight)").new_to_list);
+        assert!(cards.matches().iter().filter(|m| m.port_key != sc.port_key).all(|m| !m.new_to_list), "only the Deck-ready only port is new");
         for i in 0..cards.len() {
             cards.set(i, Verdict::Yes);
         }
@@ -813,7 +811,7 @@ mod tests {
         assert_eq!(cards.matches().len(), 4);
         assert_eq!(cards.unsure_count(), 2);
         assert_eq!(found(&cards).title, "Found 4 ports");
-        assert!(found(&cards).paragraphs.iter().any(|p| p == "2 folders more could be ports. You will be asked which.".replace("folders more", "more").replace("2 more", "2 folders") || p.starts_with("2 more")), "{:?}", found(&cards).paragraphs);
+        assert!(found(&cards).paragraphs.iter().any(|p| p == "2 more folders could be ports. You will be asked which."), "{:?}", found(&cards).paragraphs);
         let ambiguous = (0..cards.len()).find(|i| matches!(cards.item(*i), Some(Item::Unsure(u)) if !u.could_be.is_empty())).unwrap();
         let Some(Item::Unsure(u)) = cards.item(ambiguous) else { panic!() };
         assert_eq!(u.path, sd.join("The Legend of Zelda Majoras Mask"));

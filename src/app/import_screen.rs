@@ -81,13 +81,7 @@ impl Ctx {
         self.from_wizard || self.finish.is_some()
     }
 
-    /// Runs the wizard's `finish` once, whatever dialog is on screen now being closed first.
-    fn finish(&self, app: &Rc<AppState>, router: &Router) {
-        close_current_dialog(app, router);
-        self.finish_quiet(app, router);
-    }
-
-    /// As `finish`, for when the dialog on screen is already gone (or must stay).
+    /// Runs the wizard's `finish` once, for when the dialog on screen is already gone (or must stay).
     pub(super) fn finish_quiet(&self, app: &Rc<AppState>, router: &Router) {
         self.finished.run(|| {
             if let Some(finish) = &self.finish {
@@ -226,7 +220,7 @@ struct PromptRequest {
 /// Asks the user on the UI thread while the worker waits: the worker queues the question and blocks; the
 /// job timer shows it. No answer (the app is gone) counts as Cancel.
 #[derive(Clone, Default)]
-struct UiPrompter {
+pub(super) struct UiPrompter {
     queue: Arc<Mutex<VecDeque<PromptRequest>>>,
 }
 

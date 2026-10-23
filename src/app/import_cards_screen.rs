@@ -31,6 +31,7 @@ use crate::fork::screens::short_path;
 use crate::fork::settings::ForkSettings;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::PickerItem;
+use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
