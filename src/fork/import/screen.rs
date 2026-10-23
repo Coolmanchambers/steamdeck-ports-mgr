@@ -121,7 +121,7 @@ pub struct PortChoice {
 
 impl PortChoice {
     fn of(port: &Port, screen: &ImportScreen, target: &Path) -> PortChoice {
-        let found_in = screen.scan.found.iter().find(|f| f.port_key == port.key() && f.path != target).map(|f| screen.short_name(&f.path));
+        let found_in = screen.scan.found.iter().find(|f| f.port_key == port.key() && f.path != target).map(|f| f.dir_name.clone());
         PortChoice { key: port.key().to_string(), name: port.name.clone(), installed: crate::core::installer::is_installed(port, &screen.ports_folder), found_in }
     }
 

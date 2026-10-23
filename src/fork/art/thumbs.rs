@@ -41,8 +41,19 @@ pub struct Thumb {
 }
 
 /// Decodes an image and shrinks it to fit `max_edge`; an image already that small is kept as it is.
+/// Biggest picture accepted, in pixels a side, and the most memory its decoding may ask for: a cover is a few
+/// hundred pixels, so a huge or hostile file is refused before it is decoded.
+const MAX_SIDE: u32 = 8192;
+const MAX_ALLOC: u64 = 64 * 1024 * 1024;
+
 pub fn decode(bytes: &[u8], max_edge: u32) -> Option<Thumb> {
-    let img = image::load_from_memory(bytes).ok()?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_ALLOC);
+    reader.limits(limits);
+    let img = reader.decode().ok()?;
     let (w, h) = img.dimensions();
     if w == 0 || h == 0 {
         return None;
@@ -121,10 +132,14 @@ impl ThumbLoader {
             let is_cached = |r: &ArtRef| image_cache::cached_image_path(&shared.cache_dir, &r.folder).is_ok_and(|p| p.exists());
             let (cached, missing): (Vec<ArtRef>, Vec<ArtRef>) = fresh.into_iter().partition(|r| is_cached(r));
             for r in cached.into_iter().chain(missing) {
-                if let (Some(url), false) = (&r.url, is_cached(&r)) {
-                    shared.fetcher.fetch(url, &shared.cache_dir, &r.folder);
-                }
-                let thumb = load_cached(&shared.cache_dir, &r.folder, MAX_EDGE);
+                // One bad cover (a panic in a download or a decode) must not stall the ones after it.
+                let one = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let (Some(url), false) = (&r.url, is_cached(&r)) {
+                        shared.fetcher.fetch(url, &shared.cache_dir, &r.folder);
+                    }
+                    load_cached(&shared.cache_dir, &r.folder, MAX_EDGE)
+                }));
+                let thumb = one.ok().flatten();
                 lock(&shared.ready).push(Loaded { folder: r.folder, thumb });
             }
         });
@@ -293,5 +308,34 @@ mod tests {
         assert_eq!((with.folder.as_str(), with.url.as_deref()), ("dusklight", Some("https://example.com/dusk.png")));
         let local = ArtRef::of_port(&mk(json!("file:///etc/passwd")));
         assert_eq!(local.url, None, "only web links are ever fetched");
+    }
+
+    #[test]
+    fn a_picture_wider_than_any_cover_is_refused_before_it_is_decoded() {
+        assert!(decode(&png(9000, 1, [1, 1, 1, 255]), MAX_EDGE).is_none());
+        assert!(decode(&png(1, 9000, [1, 1, 1, 255]), MAX_EDGE).is_none());
+        assert!(decode(&png(8000, 2, [1, 1, 1, 255]), MAX_EDGE).is_some(), "just inside the limit still loads");
+    }
+
+    struct Panics;
+
+    impl Fetcher for Panics {
+        fn fetch(&self, _url: &str, _cache_dir: &Path, folder: &str) {
+            if folder == "Bad" {
+                panic!("a download blew up");
+            }
+        }
+    }
+
+    #[test]
+    fn one_cover_that_blows_up_does_not_stall_the_ones_after_it() {
+        let dir = temp_dir("panics");
+        std::fs::write(dir.join("Good.png"), png(40, 40, [3, 3, 3, 255])).unwrap();
+        let loader = ThumbLoader::with_fetcher(dir, Box::new(Panics));
+        loader.request(&[ArtRef { folder: "Bad".into(), url: Some("https://example.invalid/bad.png".into()) }, ArtRef { folder: "Good".into(), url: None }]);
+        let got = collect(&loader, 2);
+        let bad = got.iter().find(|l| l.folder == "Bad").unwrap();
+        assert!(bad.thumb.is_none(), "the failed one arrives as nothing");
+        assert!(got.iter().find(|l| l.folder == "Good").unwrap().thumb.is_some());
     }
 }

@@ -540,8 +540,8 @@ export component SetupWizardDialog inherits Window {
                         border-px: root.border-px;
                     }
                     if root.tiles.length > 0: Rectangle {
-                        property <length> cover-h: root.large ? root.height * 0.24 : root.row-height * 3.4;
-                        property <length> tile-w: self.cover-h * 0.68;
+                        property <length> cover-h: root.large ? root.height * 0.2 : root.row-height * 3.4;
+                        property <length> tile-w: self.cover-h * 0.85;
                         property <length> tile-h: self.cover-h + root.body-font * 3.6;
                         property <float> per-row: max(1, Math.floor((body.width - root.gutter) / (self.tile-w + root.spacing)));
                         height: Math.ceil(root.tiles.length / self.per-row) * (self.tile-h + root.spacing);

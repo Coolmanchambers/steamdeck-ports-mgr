@@ -13,7 +13,8 @@ pub fn cache_image(url: &str, cache_dir: &Path, folder_name: &str) {
         return;
     }
     let Ok(mut resp) = super::http::agent(Duration::from_secs(10)).get(url).call() else { return };
-    let Ok(bytes) = resp.body_mut().read_to_vec() else { return };
+    // At most 20 MB: a cover is a few hundred KB; more is not one.
+    let Ok(bytes) = resp.body_mut().with_config().limit(20 * 1024 * 1024).read_to_vec() else { return };
     if image::guess_format(&bytes).is_err() {
         return;
     }
