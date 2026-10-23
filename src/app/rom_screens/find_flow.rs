@@ -235,8 +235,11 @@ fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibra
         return;
     }
     let worker_req = req.clone();
-    // B on the progress list goes where Cancel does: `back`.
-    super::ABANDON_HOOK.with(|h| *h.borrow_mut() = Some(back.clone()));
+    // B on the progress list goes where Cancel does: `back`. (The automatic search after an install passes a
+    // `mark` and a plain close as `back`; B just closes there, so it has no hook.)
+    if mark.is_none() {
+        super::ABANDON_HOOK.with(|h| *h.borrow_mut() = Some(back.clone()));
+    }
     run_job(
         app,
         router,

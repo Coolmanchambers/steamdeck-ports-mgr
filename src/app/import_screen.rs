@@ -119,9 +119,16 @@ fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, text: &str, la
             app.dialog_nav.confirm_nav_index.set(1);
         }
         let (app, router) = (app.clone(), router.clone());
+        let (b_app, b_router, b_cancel) = (app.clone(), router.clone(), on_cancel.clone());
         d.on_close_requested(move || {
+            close_current_dialog(&b_app, &b_router);
+            b_cancel(&b_app, &b_router);
+        });
+        // The title bar's X only hides the window; it goes where B goes.
+        d.window().on_close_requested(move || {
             close_current_dialog(&app, &router);
             on_cancel(&app, &router);
+            slint::CloseRequestResponse::HideWindow
         });
     }
 }
@@ -229,6 +236,10 @@ struct JobView {
     closed: Cell<bool>,
     /// A question is on screen instead of the list.
     prompting: Cell<bool>,
+    /// What the question was about, and whether a problem's full text is on screen instead of it: if that
+    /// text is closed with the title bar's X, the question comes back (it is not an answer).
+    prompt_data: RefCell<Option<(Rc<String>, Rc<Vec<Issue>>)>>,
+    in_detail: Cell<bool>,
     /// The list must be shown again (a question was answered).
     reshow: Cell<bool>,
     text: RefCell<String>,
@@ -276,6 +287,8 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
     if let Some(reply) = reply {
         *view.pending_reply.borrow_mut() = Some(reply);
     }
+    *view.prompt_data.borrow_mut() = Some((port.clone(), issues.clone()));
+    view.in_detail.set(false);
     let answer = {
         let view = view.clone();
         Rc::new(move |choice: GameFileChoice| view.answer_prompt(choice))
@@ -308,6 +321,7 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
             Act::MoveAnyway => answer(GameFileChoice::MoveAnyway),
             Act::Cancel => answer(GameFileChoice::Cancel),
             Act::Detail(n) => {
+                view.in_detail.set(true);
                 let again: Step = {
                     let (view, port, issues) = (view.clone(), port.clone(), issues.clone());
                     Rc::new(move |app, router| show_prompt(app, router, &view, port.clone(), issues.clone(), None))
@@ -359,6 +373,8 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
         cancelling: Cell::new(false),
         closed: Cell::new(false),
         prompting: Cell::new(false),
+        prompt_data: RefCell::new(None),
+        in_detail: Cell::new(false),
         reshow: Cell::new(false),
         text: RefCell::new(spec.initial),
         cancel_row: Cell::new(0),
@@ -404,9 +420,14 @@ fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, spec: JobSpec
                 }
             }
             if view.prompting.get() {
-                // The question was closed with the title bar's X, which only hides it: that is Cancel.
+                // Nothing is on screen: the title bar's X hid it. If it was a problem's full text, the question
+                // comes back; if it was the question itself, that is Cancel.
                 if !dialog_is_open(&app) {
-                    view.answer_prompt(GameFileChoice::Cancel);
+                    let data = view.prompt_data.borrow().clone();
+                    match data {
+                        Some((port, issues)) if view.in_detail.get() => show_prompt(&app, &router, &view, port, issues, None),
+                        _ => view.answer_prompt(GameFileChoice::Cancel),
+                    }
                 }
                 return;
             }

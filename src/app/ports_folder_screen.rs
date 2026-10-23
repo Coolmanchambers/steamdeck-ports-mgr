@@ -862,9 +862,16 @@ fn explain_kept(app: &Rc<AppState>, router: &Router, why: &str, entry: OldCopy, 
     open_confirm_dialog(app, router, "Why it is kept".into(), format!("{why}\n").into(), "Back to the question".into(), move |app, router| on_ok(app, router));
     if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
         let (app, router) = (app.clone(), router.clone());
+        let (b_app, b_router, b_again) = (app.clone(), router.clone(), again.clone());
         d.on_close_requested(move || {
+            close_current_dialog(&b_app, &b_router);
+            b_again(&b_app, &b_router);
+        });
+        // The title bar's X only hides the window; it goes where B goes.
+        d.window().on_close_requested(move || {
             close_current_dialog(&app, &router);
             again(&app, &router);
+            slint::CloseRequestResponse::HideWindow
         });
     }
 }
