@@ -111,7 +111,12 @@ fn classify(status: u16) -> Result<bool, String> {
 
 /// The real request: `If-None-Match` when there is an ETag, 304 means unchanged.
 pub fn fetch_from_github(known_etag: &str) -> Result<Fetched, String> {
-    let agent = crate::core::http::agent(Duration::from_secs(30));
+    fetch_from_github_within(known_etag, Duration::from_secs(30))
+}
+
+/// `fetch_from_github` with its own time limit (Import ports waits at most 10 s on its scan).
+pub fn fetch_from_github_within(known_etag: &str, limit: Duration) -> Result<Fetched, String> {
+    let agent = crate::core::http::agent(limit);
     let mut req = agent.get(INDEX_URL);
     if !known_etag.is_empty() {
         req = req.header("If-None-Match", known_etag);

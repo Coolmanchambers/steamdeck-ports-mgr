@@ -79,11 +79,53 @@ pub fn build(catalog: &[Port], index: Option<&Index>, library_dir: &Path) -> Tar
     targets
 }
 
+/// Takes an entry Import added (`NewEntry::value`) off `ports.local.json` again, when that port's move did
+/// not complete. Only an entry exactly as written is removed (one the user changed since stays); the file
+/// is backed up first (`<file>.bak-<stamp>`). `Ok(false)` when there was nothing to remove.
+pub fn remove_new_entry(local_json: &Path, value: &Value, stamp: &str) -> Result<bool, crate::fork::adopt::AdoptError> {
+    use crate::fork::adopt::{read_local_file, write_backup, AdoptError};
+    let (mut file, original) = read_local_file(local_json)?;
+    let Some(Value::Array(ports)) = file.get_mut("ports") else { return Ok(false) };
+    let Some(at) = ports.iter().position(|p| p == value) else { return Ok(false) };
+    ports.remove(at);
+    let text = serde_json::to_string_pretty(&file).map_err(|e| AdoptError::Io { action: "encode", path: local_json.to_path_buf(), source: std::io::Error::other(e) })?;
+    if let Some(bytes) = &original {
+        write_backup(local_json, bytes, stamp)?;
+    }
+    crate::core::files::write_atomic(local_json, text.as_bytes()).map_err(|source| AdoptError::Io { action: "write", path: local_json.to_path_buf(), source })?;
+    Ok(true)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::fork::deck_ready::index::parse;
     use serde_json::json;
+
+    #[test]
+    fn an_added_entry_is_taken_off_again_exactly_and_with_a_backup() {
+        let dir = std::env::temp_dir().join(format!("dpm_targets_remove_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let local = dir.join("ports.local.json");
+        std::fs::write(&local, r#"{"ports":[{"name":"Mine","folder":"mine"}]}"#).unwrap();
+        let t = build(&tims_catalog(), Some(&tims_index()), &dir.join("Ports"));
+        let value = t.new_entries[0].1.value.clone();
+        crate::fork::deck_ready::entry::add_to_local_file(&local, value.clone(), "A").unwrap();
+        assert_eq!(crate::core::config::load_local_config(&local).len(), 2);
+        assert!(remove_new_entry(&local, &value, "B").unwrap());
+        let left = crate::core::config::load_local_config(&local);
+        assert_eq!(left.iter().map(|p| p.folder.as_str()).collect::<Vec<_>>(), ["mine"]);
+        assert_eq!(crate::core::config::load_local_config(&dir.join("ports.local.json.bak-B")).len(), 2, "the file as it was is backed up");
+        assert!(!remove_new_entry(&local, &value, "C").unwrap(), "nothing left to remove");
+        // An entry the user changed since is left alone.
+        let mut changed = value.clone();
+        changed["name"] = json!("My Dragoon");
+        crate::fork::deck_ready::entry::add_to_local_file(&local, changed, "D").unwrap();
+        assert!(!remove_new_entry(&local, &value, "E").unwrap());
+        assert_eq!(crate::core::config::load_local_config(&local).len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// The Deck-ready entries for Tim's four ports, as the list has them (2026-10-23).
     pub fn tims_index() -> Index {

@@ -340,15 +340,18 @@ but not offered.
 **Folders named like the download.** A port unpacked into a folder named after its download file
 (`SoH-Ackbar-Delta-Linux`, `2Ship-Keiichi-Charlie-Linux`, `Severed_Chains_Steam_Deck`) is recognised; the
 app also uses the download names from the Deck-ready list. A port the catalog does not have but the
-Deck-ready list does (Severed Chains) says **not in the catalog yet; importing adds it to your port list
-first**. Only real programs inside a folder count (an `.AppImage`, `.sh`, `.x86_64` and so on), never
-ROMs, settings files or pictures.
+Deck-ready list does (Severed Chains) is marked **new to your port list**: importing adds it to your port
+list first (and takes it off again if it is not imported). If the Deck-ready list could not be loaded, a
+row says so; connect to the internet and scan again. Only real programs inside a folder count (an
+`.AppImage`, `.sh`, `.x86_64` and so on), never ROMs, settings files or pictures. A folder recognised by
+only one word of its name (like `SoH-...`) is ticked only when the program inside is named that way too
+(`soh.appimage`); otherwise it is listed as **check this**, unticked.
 
 **Folders you choose for.** A folder that could be two or three ports shows **Choose which port this
 is...**; a folder with a program the app does not recognise shows **Not recognised... Choose the
 port...**. Choosing either lists the ports it could be, **Another port...** (every port, the ones named
-like the folder first) and **Not a port (leave it)**. A port you choose is ticked ("you chose") and goes
-through the same checks as any other. Hidden folders, Steam's library folders, `lost+found` and EmuDeck's
+like the folder first) and **Not a port (leave it)**; a port already found in another folder says so. A
+port you choose is ticked ("you chose") and goes through the same checks as any other. Hidden folders, Steam's library folders, `lost+found` and EmuDeck's
 `Emulation` are never listed; a folder full of games is shown as one line, **Skipped, looks like a
 collection of many games**.
 

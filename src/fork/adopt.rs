@@ -130,6 +130,10 @@ pub struct Candidate {
     pub how: MatchKind,
     /// Why it matched, in plain words ("folder name", "program soh.appimage").
     pub why: String,
+    /// The one word of the folder name a release-name match rests on (`soh` for `SoH-Ackbar-Delta-Linux`,
+    /// `melee` for `Melee`); `None` when two or more words matched. Such a match is ticked only when a
+    /// program in the folder is named with that word too (`fork::import::scan`).
+    pub word: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,25 +318,31 @@ fn asset_hits(words: &[String], catalog: &[Port], hints: &Hints) -> (Vec<usize>,
 
 /// Matches a folder named like a project's download, in this order:
 /// 1. strong (`ReleaseName`): its words are a download's words, or the first k words joined (longest
-///    first, k >= 2) are a port's name (`Severed_Chains_Steam_Deck` -> `severedchains`);
+///    first) are a port's name (`Severed_Chains_Steam_Deck` -> `severedchains`, `Dusklight-Linux` ->
+///    `dusklight`);
 /// 2. weak (`ReleaseWord`): its first word is a port name of at least `MIN_EXE_NAME_LEN` letters
 ///    (`Dusklight-twilight-princess`), a built-in alias (`SoH-Ackbar-Delta-Linux`), or it starts like a
 ///    download of the Deck-ready list.
-fn release_hits(dir_name: &str, catalog: &[Port], hints: &Hints) -> (MatchKind, Vec<usize>) {
+///
+/// The third value is the one word the match rests on, when it rests on one word only (every weak match,
+/// and a strong one of a single word): see `Candidate::word`.
+fn release_hits(dir_name: &str, catalog: &[Port], hints: &Hints) -> (MatchKind, Vec<usize>, Option<String>) {
     let words = release_tokens(dir_name);
-    let Some(first) = words.first() else { return (MatchKind::ReleaseName, Vec::new()) };
+    let Some(first) = words.first().cloned() else { return (MatchKind::ReleaseName, Vec::new(), None) };
+    let single = (words.len() == 1).then(|| first.clone());
     let (strong, weak) = asset_hits(&words, catalog, hints);
     if !strong.is_empty() {
-        return (MatchKind::ReleaseName, strong);
+        return (MatchKind::ReleaseName, strong, single);
     }
     // All the words joined (`Dusklight-Linux` -> `dusklight`), then fewer, down to two.
     let shortest = if words.len() == 1 { 1 } else { 2 };
     for k in (shortest..=words.len()).rev() {
         let hits = entries_named(catalog, &words[..k].concat());
         if !hits.is_empty() {
-            return (MatchKind::ReleaseName, hits);
+            return (MatchKind::ReleaseName, hits, single);
         }
     }
+    let first = &first;
     let mut hits: Vec<usize> = if words.len() > 1 && first.len() >= MIN_EXE_NAME_LEN { entries_named(catalog, first) } else { Vec::new() };
     let aliases = catalog.iter().enumerate().filter(|(_, p)| !p.is_android_only() && is_alias_of(first, p)).map(|(i, _)| i);
     for i in aliases.chain(weak) {
@@ -341,7 +351,7 @@ fn release_hits(dir_name: &str, catalog: &[Port], hints: &Hints) -> (MatchKind, 
         }
     }
     hits.sort_unstable();
-    (MatchKind::ReleaseWord, hits)
+    (MatchKind::ReleaseWord, hits, Some(first.clone()))
 }
 
 /// The program file name a catalog entry names for this platform, without extension, normalised.
@@ -363,6 +373,8 @@ pub(crate) struct Program {
     pub first: String,
     /// The file name as found (`soh.appimage`), for "why it matched".
     pub file: String,
+    /// 0 when it is right in the folder, 1 one folder down, and so on.
+    pub depth: usize,
 }
 
 impl Program {
@@ -371,18 +383,32 @@ impl Program {
         name.len() >= MIN_EXE_NAME_LEN && (self.stem == name || self.joined == name)
     }
 
+    /// Named with this one word: whole, by its release words, or by its first release word
+    /// (`Dusklight-v2.0.3-linux-x86_64.AppImage` for `dusklight`, `soh.appimage` for `soh`).
+    pub(crate) fn named_with_word(&self, word: &str) -> bool {
+        !word.is_empty() && (self.stem == word || self.joined == word || self.first == word)
+    }
+
     /// The built-in alias of this entry (`2s2h.appimage` for 2 Ship 2 Harkinian).
     fn alias_of(&self, port: &Port) -> bool {
         is_alias_of(&self.stem, port) || is_alias_of(&self.first, port)
     }
 }
 
+/// Files without an extension that are documents, not programs (they would count as programs on Windows,
+/// which has no executable bit).
+const DOC_NAMES: [&str; 7] = ["readme", "license", "copying", "changelog", "makefile", "authors", "notice"];
+
 /// Whether a file is a program: a known program extension (`.AppImage`, `.x86_64`, `.sh`, `.exe`...), or
-/// no extension and executable. Config files, images, saves and ROMs never are.
+/// no extension and executable (and not a document such as `README`). Config files, images, saves and ROMs
+/// never are.
 fn is_program(path: &Path, entry: &fs::DirEntry) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
         Some(ext) => PROGRAM_EXTENSIONS.iter().any(|p| ext.eq_ignore_ascii_case(p)),
-        None => is_executable(entry),
+        None => {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            !DOC_NAMES.contains(&name.as_str()) && is_executable(entry)
+        }
     }
 }
 
@@ -423,7 +449,7 @@ pub(crate) fn programs_within(dir: &Path, max_depth: usize) -> Vec<Program> {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     let words = release_tokens(stem);
                     let file = entry.file_name().to_string_lossy().into_owned();
-                    out.push(Program { stem: norm(stem), joined: words.concat(), first: words.first().cloned().unwrap_or_default(), file });
+                    out.push(Program { stem: norm(stem), joined: words.concat(), first: words.first().cloned().unwrap_or_default(), file, depth });
                 }
             }
         }
@@ -458,23 +484,28 @@ struct DirMatch {
     how: MatchKind,
     hits: Vec<usize>,
     why: String,
+    word: Option<String>,
+    /// How good the match is when two folders fit one port: 2 by name, 1 by a program right in the folder,
+    /// 0 by a program further down (`Games` holding `Zelda/soh.appimage`).
+    rank: u8,
 }
 
 fn match_dir(dir: &Path, dir_name: &str, catalog: &[Port], hints: &Hints) -> DirMatch {
     let by_folder = entries_named(catalog, &norm(dir_name));
     if !by_folder.is_empty() {
-        return DirMatch { how: MatchKind::FolderName, hits: by_folder, why: "folder name".to_string() };
+        return DirMatch { how: MatchKind::FolderName, hits: by_folder, why: "folder name".to_string(), word: None, rank: 2 };
     }
-    let (how, by_release) = release_hits(dir_name, catalog, hints);
+    let (how, by_release, word) = release_hits(dir_name, catalog, hints);
     if !by_release.is_empty() {
         let why = match how {
             MatchKind::ReleaseName => "folder named like its download".to_string(),
             _ => format!("folder name starts with \"{}\"", dir_name.split(['-', '_', ' ', '.']).find(|w| !w.is_empty()).unwrap_or(dir_name)),
         };
-        return DirMatch { how, hits: by_release, why };
+        return DirMatch { how, hits: by_release, why, word, rank: 2 };
     }
     let found = programs(dir);
     let mut why = String::new();
+    let mut depth = usize::MAX;
     let by_exe = catalog
         .iter()
         .enumerate()
@@ -486,6 +517,7 @@ fn match_dir(dir: &Path, dir_name: &str, catalog: &[Port], hints: &Hints) -> Dir
             match found.iter().find(|prog| prog.alias_of(p) || wanted.iter().any(|w| prog.named(w))) {
                 Some(prog) => {
                     why = format!("program {}", prog.file);
+                    depth = depth.min(prog.depth);
                     true
                 }
                 None => false,
@@ -493,7 +525,7 @@ fn match_dir(dir: &Path, dir_name: &str, catalog: &[Port], hints: &Hints) -> Dir
         })
         .map(|(i, _)| i)
         .collect();
-    DirMatch { how: MatchKind::ExecutableName, hits: by_exe, why }
+    DirMatch { how: MatchKind::ExecutableName, hits: by_exe, why, word: None, rank: u8::from(depth == 0) }
 }
 
 /// Looks one level into each root. Reads only; nothing is created or changed.
@@ -535,6 +567,8 @@ fn scan_roots_inner(roots: &[PathBuf], catalog: &[Port], hints: &Hints, library_
     let mut result = ScanResult::default();
     let library = fs::canonicalize(library_dir).unwrap_or_else(|_| library_dir.to_path_buf());
     let mut deep_budget = MAX_DEEP_FOLDERS;
+    // The rank of each candidate's match (`DirMatch::rank`).
+    let mut ranks: Vec<u8> = Vec::new();
     for root in roots {
         let Some(top) = child_dirs(root) else { continue };
         result.roots_scanned.push(root.clone());
@@ -555,7 +589,7 @@ fn scan_roots_inner(roots: &[PathBuf], catalog: &[Port], hints: &Hints, library_
             if fs::canonicalize(&dir).is_ok_and(|real| real.starts_with(&library) || library.starts_with(&real)) {
                 continue;
             }
-            let DirMatch { how, hits, why } = match_dir(&dir, &dir_name, catalog, hints);
+            let DirMatch { how, hits, why, word, rank } = match_dir(&dir, &dir_name, catalog, hints);
             // Named like a port, it is that port even with a `roms` folder inside; otherwise a folder of
             // ROMs, emulators or Steam games is a collection, and so is one that fits many ports.
             let named = matches!(how, MatchKind::FolderName | MatchKind::ReleaseName | MatchKind::ReleaseWord) && !hits.is_empty();
@@ -586,20 +620,30 @@ fn scan_roots_inner(roots: &[PathBuf], catalog: &[Port], hints: &Hints, library_
                 }
                 [one] => {
                     let port = &catalog[*one];
+                    let candidate = Candidate {
+                        path: dir.clone(),
+                        dir_name,
+                        port_key: port.key().to_string(),
+                        port_name: port.display_name().to_string(),
+                        catalog_folder: port.folder.clone(),
+                        how,
+                        why,
+                        word,
+                    };
                     if crate::core::installer::is_installed(port, library_dir) {
                         result.already_in_library.push(port.display_name().to_string());
-                    } else if result.candidates.iter().any(|c| c.port_key == port.key()) {
-                        result.duplicates.push((port.display_name().to_string(), dir));
+                    } else if let Some(at) = result.candidates.iter().position(|c| c.port_key == port.key()) {
+                        // Two folders for one port: the better match is offered, the other reported.
+                        if rank > ranks[at] {
+                            let other = std::mem::replace(&mut result.candidates[at], candidate);
+                            ranks[at] = rank;
+                            result.duplicates.push((port.display_name().to_string(), other.path));
+                        } else {
+                            result.duplicates.push((port.display_name().to_string(), dir));
+                        }
                     } else {
-                        result.candidates.push(Candidate {
-                            path: dir,
-                            dir_name,
-                            port_key: port.key().to_string(),
-                            port_name: port.display_name().to_string(),
-                            catalog_folder: port.folder.clone(),
-                            how,
-                            why,
-                        });
+                        result.candidates.push(candidate);
+                        ranks.push(rank);
                     }
                 }
                 many => result.ambiguous.push(Ambiguous {
@@ -1029,6 +1073,9 @@ mod tests {
         }
         touch(&dir.join("plain"));
         touch(&dir.join("notes.md"));
+        // On Windows a file without an extension counts, but never a document like these.
+        touch(&dir.join("README"));
+        touch(&dir.join("LICENSE"));
         let mut stems: Vec<String> = programs(&dir).into_iter().map(|p| p.stem).collect();
         stems.sort();
         stems.retain(|s| cfg!(unix) || s != "plain");
@@ -1037,8 +1084,14 @@ mod tests {
         {
             touch_exe(&dir.join("plain"));
             touch_exe(&dir.join("rom.z64"));
+            for doc in ["README", "LICENSE", "Makefile", "copying", "CHANGELOG", "AUTHORS", "NOTICE"] {
+                touch_exe(&dir.join(doc));
+            }
+            touch_exe(&dir.join(".hidden-launcher"));
             let stems: Vec<String> = programs(&dir).into_iter().map(|p| p.stem).collect();
             assert!(stems.contains(&"plain".to_string()) && !stems.contains(&"rom".to_string()), "{stems:?}");
+            let docs = ["readme", "license", "makefile", "copying", "changelog", "authors", "notice", "hiddenlauncher"];
+            assert!(!stems.iter().any(|s| docs.contains(&s.as_str())), "documents and hidden files are not programs: {stems:?}");
         }
         let _ = fs::remove_dir_all(dir);
     }

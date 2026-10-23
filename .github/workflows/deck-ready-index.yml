@@ -7,7 +7,10 @@ name: Deck-ready index
 #   a missing_since date, then are removed.
 # - The file is committed to the branch the run was started on (main for the schedule) only when it
 #   changed. The change summary is in the run summary.
-# - Pushes made with GITHUB_TOKEN do not trigger CI. That is fine: the commit only touches index/.
+# - Pushes made with GITHUB_TOKEN do not trigger CI, yet the app's Import ports matching reads this file
+#   (download names, projects the catalog lacks). So before committing, this run builds the app and runs
+#   its live-list test (`live_lists_still_match_...`, ignored in normal runs, which use a pinned copy in
+#   testdata/import/): a list that would stop known ports matching, or tick ordinary folders, fails here.
 # - The builder refuses to publish a list that shrank by more than 30 percent (a failed source
 #   would look like that); rerun with allow_shrink once the drop is confirmed real.
 
@@ -57,6 +60,24 @@ jobs:
           # Show the summary even when the builder stopped (for example the shrink guard).
           [ -f "$RUNNER_TEMP/out/summary.md" ] && cat "$RUNNER_TEMP/out/summary.md" >> "$GITHUB_STEP_SUMMARY"
           exit $status
+
+      - name: System libraries for the app's test build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfontconfig1-dev libfreetype-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libudev-dev libgl1-mesa-dev libegl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: false
+
+      - name: Check the new list against Import ports matching
+        run: cargo test --locked -- --ignored live_lists_still_match_tims_card_and_tick_no_ordinary_folder
 
       - name: Commit if changed
         env:

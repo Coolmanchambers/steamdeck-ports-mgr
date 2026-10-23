@@ -1,0 +1,4258 @@
+{
+"ports": [
+{
+"-name": "007: Nightfire (??)",
+"folder": "",
+"source": "",
+"tags": [
+"gc",
+"fps",
+"multiplayer"
+]
+},
+{
+"name": "3D Pinball for Windows: Space Cadet (SpaceCadetPinball)",
+"folder": "SpaceCadetPinball",
+"source": "https://github.com/k4zmu2a/SpaceCadetPinball",
+"tags": [
+"pc",
+"pinball"
+]
+},
+{
+"name": "Abuse (Abuse_2025)",
+"folder": "Abuse_2025",
+"source": "https://github.com/apancik/Abuse_2025",
+"tags": [
+"free",
+"macos",
+"shooter, multilingual"
+]
+},
+{
+"name": "Ace Combat 3: Electrosphere (Japan) (ace-combat-3-electrosphere-recomp)",
+"folder": "ace-combat-3-electrosphere-recomp",
+"source": "https://github.com/Alexbeav/ace-combat-3-electrosphere-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"simulation"
+]
+},
+{
+"name": "Ace Combat 3: Electrosphere (USA) (ace-combat-3-electrosphere-usa-recomp)",
+"folder": "ace-combat-3-electrosphere-usa-recomp",
+"source": "https://github.com/Alexbeav/ace-combat-3-electrosphere-usa-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"simulation"
+]
+},
+{
+"name": "Ace Combat 5: The Unsung War (Ace-Combat-5-Static-recompilation)",
+"folder": "Ace-Combat-5-Static-recompilation",
+"source": "https://github.com/sal063/Ace-Combat-5-Static-recompilation",
+"tags": [
+"ps2",
+"simulation"
+]
+},
+{
+"name": "Ace Combat 6: Fires of Liberation (AC6_recomp)",
+"folder": "AC6_recomp",
+"source": "https://github.com/sal063/AC6_recomp",
+"tags": [
+"360",
+"simulation",
+"multilingual"
+]
+},
+{
+"name": "AeroGauge (aerogauge-recomp)",
+"folder": "aerogauge-recomp",
+"source": "https://github.com/alondero/aerogauge-recomp",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Alien Resurrection (alien-resurrection-recomp)",
+"folder": "alien-resurrection-recomp",
+"source": "https://github.com/Alexbeav/alien-resurrection-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Alone in the Dark: The New Nightmare (alone-in-the-dark-the-new-nightmare-recomp)",
+"folder": "alone-in-the-dark-the-new-nightmare-recomp",
+"source": "https://github.com/Alexbeav/alone-in-the-dark-the-new-nightmare-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Alundra (alundra-recomp)",
+"folder": "alundra-recomp",
+"source": "https://github.com/Alexbeav/alundra-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Animal Crossing (ACGC-PC-Port)",
+"folder": "ACGC-PC-Port",
+"source": "https://github.com/flyngmt/ACGC-PC-Port",
+"tags": [
+"gc",
+"simulation"
+]
+},
+{
+"name": "Ape Escape (ApeEscapeRecomp)",
+"folder": "ApeEscapeRecomp",
+"source": "https://github.com/mstan/ApeEscapeRecomp",
+"tags": [
+"saru",
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Ape Escape (ApeEscapeRecomp-MacWindowsLinux)",
+"folder": "ApeEscapeRecomp-MacWindowsLinux",
+"source": "https://github.com/NVDEMU/ApeEscapeRecomp-MacWindowsLinux",
+"tags": [
+"saru",
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Ape Escape: Mind Over Monkey (bigmission-recomp)",
+"folder": "bigmission-recomp",
+"source": "https://github.com/jackgllghr/bigmission-recomp",
+"tags": [
+"saru",
+"ps1",
+"platformer"
+]
+},
+{
+"-name": "Apocalypse (Apocalypse-PC-Native-Port)",
+"folder": "Apocalypse-PC-Native-Port",
+"source": "https://github.com/MustafaSamer93/Apocalypse-PC-Native-Port",
+"tags": [
+"ps1",
+"shooter"
+]
+},
+{
+"-name": "Apocalypse (apocalypse-recomp)",
+"folder": "apocalypse-recomp",
+"source": "https://github.com/Alexbeav/apocalypse-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"shooter"
+]
+},
+{
+"name": "Armored Core (armored-core-recomp)",
+"folder": "armored-core-recomp",
+"source": "https://github.com/Alexbeav/armored-core-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Armored Core: Master of Arena (armored-core-master-of-arena-recomp)",
+"folder": "armored-core-master-of-arena-recomp",
+"source": "https://github.com/Alexbeav/armored-core-master-of-arena-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Armored Core: Project Phantasma (armored-core-project-phantasma-recomp)",
+"folder": "armored-core-project-phantasma-recomp",
+"source": "https://github.com/Alexbeav/armored-core-project-phantasma-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Astral Chain (AC-Recomp)",
+"folder": "AC-Recomp",
+"source": "https://github.com/swaymun/AC-Recomp",
+"tags": [
+"switch",
+"action-adventure"
+]
+},
+{
+"name": "Asuka 120% (asuka100-recomp)",
+"folder": "asuka100-recomp",
+"source": "https://github.com/elprogramadorloco-arch/asuka100-recomp",
+"tags": [
+"ps1",
+"fighting"
+]
+},
+{
+"name": "Automobili Lamborghini (automobililamborghini-recomp)",
+"folder": "automobililamborghini-recomp",
+"source": "https://github.com/alondero/automobililamborghini-recomp",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Azure Dreams (Azure-Dreams-HD-Recompilation)",
+"folder": "Azure-Dreams-HD-Recompilation",
+"source": "https://github.com/PotionDweller/Azure-Dreams-HD-Recompilation",
+"tags": [
+"ps1",
+"rpg"
+]
+},
+{
+"name": "Azure Dreams (azure-dreams-recomp)",
+"folder": "azure-dreams-recomp",
+"source": "https://github.com/Alexbeav/azure-dreams-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Banjo-Kazooie (BanjoRecomp)",
+"folder": "BanjoRecomp",
+"source": "https://github.com/BanjoRecomp/BanjoRecomp",
+"tags": [
+"quality",
+"n64",
+"platformer",
+"multilingual"
+]
+},
+{
+"name": "Banjo-Kazooie (Lighthouse)",
+"folder": "Lighthouse",
+"source": "https://github.com/HarbourMasters/Lighthouse",
+"tags": [
+"quality",
+"n64",
+"platformer",
+"multilingual"
+]
+},
+{
+"name": "Banjo-Kazooie: Nuts & Bolts (reNut)",
+"folder": "reNut",
+"source": "https://github.com/masterspike52/reNut",
+"tags": [
+"360",
+"platformer",
+"multilingual"
+]
+},
+{
+"name": "Battle Arena Toshinden (BATRecomp)",
+"folder": "BATRecomp",
+"source": "https://github.com/NJH-1001/BATRecomp",
+"tags": [
+"ps1",
+"njh-1001",
+"fighting"
+]
+},
+{
+"name": "BattleTanx: Global Assault (BattleTanx-Global-Assault-PC-Port)",
+"folder": "BattleTanx-Global-Assault-PC-Port",
+"source": "https://github.com/TheGh0stShip/BattleTanx-Global-Assault-PC-Port",
+"tags": [
+"n64",
+"action",
+"multiplayer",
+"online"
+]
+},
+{
+"-name": "Bayonetta 2 (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"switch",
+"beat them all"
+]
+},
+{
+"-name": "Bayonetta 3 (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"switch",
+"beat them all"
+]
+},
+{
+"name": "Beetle Adventure Racing (beetle-adventure-racing-recomp)",
+"folder": "beetle-adventure-racing-recomp",
+"source": "https://github.com/danielgomesvieira2000/beetle-adventure-racing-recomp",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Black (BLACK-XBERecomp)",
+"folder": "BLACK-XBERecomp",
+"source": "https://github.com/TGP482/BLACK-XBERecomp",
+"tags": [
+"xbox",
+"fps"
+]
+},
+{
+"name": "Blood Omen: Legacy of Kain (blood-omen-legacy-of-kain-recomp)",
+"folder": "blood-omen-legacy-of-kain-recomp",
+"source": "https://github.com/Alexbeav/blood-omen-legacy-of-kain-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Bloodborne (bloodborne_pc)",
+"folder": "bloodborne_pc",
+"source": "https://github.com/Supermedo/bloodborne_pc",
+"tags": [
+"ps4",
+"action-adventure"
+]
+},
+{
+"name": "Bloody Roar 2: Bringer of the New Age (BloodyRoar2Recomp)",
+"folder": "BloodyRoar2Recomp",
+"source": "https://github.com/novapowers0/BloodyRoar2Recomp",
+"tags": [
+"ps1",
+"fighting"
+]
+},
+{
+"name": "Bloody Roar II (bloody-roar-ii-recomp)",
+"folder": "bloody-roar-ii-recomp",
+"source": "https://github.com/Alexbeav/bloody-roar-ii-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Blue Dragon (reblue)",
+"folder": "reblue",
+"source": "https://github.com/zolaware/reblue",
+"tags": [
+"quality",
+"360",
+"rpg"
+]
+},
+{
+"name": "Bomberman 64 (BM64Recomp)",
+"folder": "BM64Recomp",
+"source": "https://github.com/RevoSucks/BM64Recomp",
+"tags": [
+"n64",
+"platformer",
+"multiplayer"
+]
+},
+{
+"name": "Bomberman Hero (BMHeroRecomp)",
+"folder": "BMHeroRecomp",
+"source": "https://github.com/RevoSucks/BMHeroRecomp",
+"tags": [
+"n64",
+"platformer"
+]
+},
+{
+"name": "Brave Fencer Musashi (brave-fencer-musashi-recomp)",
+"folder": "brave-fencer-musashi-recomp",
+"source": "https://github.com/Alexbeav/brave-fencer-musashi-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Buck Bumble (project-bumble)",
+"folder": "project-bumble",
+"tags": [
+"n64",
+"shooter"
+]
+},
+{
+"name": "Buffy the Vampire Slayer: Chaos Bleeds (buffy-chaos-bleeds-pc)",
+"folder": "buffy-chaos-bleeds-pc",
+"source": "https://github.com/KaikoClanworth1/buffy-chaos-bleeds-pc",
+"tags": [
+"xbox",
+"action-adventure"
+]
+},
+{
+"name": "Buffy the Vampire Slayer: Chaos Bleeds (buffy-chaos-bleeds-pc)",
+"folder": "buffy-chaos-bleeds-pc",
+"source": "https://github.com/KaikoClanworth1/buffy-chaos-bleeds-pc",
+"tags": [
+"xbox",
+"action-adventure"
+]
+},
+{
+"name": "Burnout 3: Takedown (takedawn)",
+"folder": "takedawn",
+"source": "https://github.com/xenophobentx/takedawn",
+"tags": [
+"xbox",
+"racing"
+]
+},
+{
+"name": "Burnout Revenge (Xerenge)",
+"folder": "Xerenge",
+"source": "https://github.com/shipa-2/Xerenge",
+"tags": [
+"360",
+"racing"
+]
+},
+{
+"name": "Bushido Blade 2 (bushido-blade-2-recomp)",
+"folder": "bushido-blade-2-recomp",
+"source": "https://github.com/Alexbeav/bushido-blade-2-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Call of Duty 2 (??)",
+"tags": [
+"360",
+"fps",
+"android_only"
+]
+},
+{
+"name": "Call of Duty: Finest Hour (FinestHourRemastered)",
+"folder": "FinestHourRemastered",
+"source": "https://github.com/crazyriddler/FinestHourRemastered",
+"tags": [
+"ps2",
+"fps",
+"multilingual"
+]
+},
+{
+"name": "Castlevania 64 (CV64Recomp)",
+"folder": "CV64Recomp",
+"source": "https://github.com/DankZoneStudios/CV64Recomp",
+"tags": [
+"n64",
+"action-adventure"
+]
+},
+{
+"name": "Castlevania Chronicles (castlevania-chronicles-recomp)",
+"folder": "castlevania-chronicles-recomp",
+"source": "https://github.com/Spicywonda/castlevania-chronicles-recomp",
+"tags": [
+"ps1",
+"action-adventure"
+]
+},
+{
+"name": "Castlevania: Legacy of Darkness (cvlod_recomp)",
+"folder": "cvlod_recomp",
+"source": "https://github.com/fliperama86/cvlod_recomp",
+"tags": [
+"n64",
+"action-adventure"
+]
+},
+{
+"name": "Castlevania: Symphony of the Night (NocturneRecomp)",
+"folder": "NocturneRecomp",
+"source": "https://github.com/birabittoh/NocturneRecomp",
+"tags": [
+"360",
+"metroidvania",
+"multilingual"
+]
+},
+{
+"name": "Castlevania: Symphony of the Night (SymphonyRecomp)",
+"folder": "SymphonyRecomp",
+"source": "https://github.com/BlackLabelHQ/SymphonyRecomp",
+"tags": [
+"quality",
+"ps1",
+"metroidvania"
+]
+},
+{
+"name": "Chameleon Twist (ChameleonTwist1-JP-Recomp)",
+"folder": "ChameleonTwist1-JP-Recomp",
+"source": "https://github.com/Rainchus/ChameleonTwist1-JP-Recomp",
+"tags": [
+"n64",
+"platformer"
+]
+},
+{
+"name": "ClayFighter 63⅓ (ClayFighter64)",
+"folder": "ClayFighter64",
+"source": "https://github.com/djultra64/ClayFighter64",
+"tags": [
+"n64",
+"fighting"
+]
+},
+{
+"name": "Colin McRae Rally 2.0 (colin-mcrae-rally-2-0-recomp)",
+"folder": "colin-mcrae-rally-2-0-recomp",
+"source": "https://github.com/Alexbeav/colin-mcrae-rally-2-0-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Colin McRae Rally 2.0 (OpenCMR2)",
+"folder": "OpenCMR2",
+"source": "https://github.com/pablocpas/OpenCMR2",
+"tags": [
+"pc",
+"racing"
+]
+},
+{
+"name": "Colony Wars (colony-wars-recomp)",
+"folder": "colony-wars-recomp",
+"source": "https://github.com/Alexbeav/colony-wars-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Colony Wars: Red Sun (colony-wars-red-sun-recomp)",
+"folder": "colony-wars-red-sun-recomp",
+"source": "https://github.com/Alexbeav/colony-wars-red-sun-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Command & Conquer (CNC3D_Source)",
+"folder": "CNC3D_Source",
+"tags": [
+"n64",
+"strategy"
+]
+},
+{
+"name": "Condemned 2: Bloodshot (Condemned2Recomp)",
+"folder": "Condemned2Recomp",
+"source": "https://github.com/psxrestore/Condemned2Recomp",
+"tags": [
+"360",
+"survival horror",
+"multilingual"
+]
+},
+{
+"name": "Conker's Bad Fur Day (CBFD-Recompiled)",
+"folder": "CBFD-Recompiled",
+"source": "https://github.com/sciaschi/CBFD-Recompiled",
+"tags": [
+"n64",
+"platformer"
+]
+},
+{
+"name": "Contre Jour (contrejour-dx)",
+"folder": "contrejour-dx",
+"source": "https://github.com/yell0wsuit/contrejour-dx",
+"tags": [
+"pc",
+"puzzle"
+]
+},
+{
+"name": "Crash Bandicoot (CrashBandicoot-Launcher)",
+"folder": "CrashBandicoot-Launcher",
+"source": "https://github.com/Matteo842/CrashBandicoot-Launcher",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Crash Bandicoot 2: Cortex Strikes Back (Crash2Recomp)",
+"folder": "Crash2Recomp",
+"source": "https://github.com/Zumbo06/Crash2Recomp",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Crash Bandicoot 3: Warped (crash-bandicoot-3-warped-recomp)",
+"folder": "crash-bandicoot-3-warped-recomp",
+"source": "https://github.com/Alexbeav/crash-bandicoot-3-warped-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Crash of the Titans (crashott-pc)",
+"folder": "crashott-pc",
+"source": "https://github.com/VitoMiguelF/crashott-pc",
+"tags": [
+"ps2",
+"platformer"
+]
+},
+{
+"name": "Crash Team Racing (ctr-native)",
+"folder": "ctr-native",
+"source": "https://github.com/CTR-tools/ctr-native",
+"tags": [
+"ps1",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "Crash Team Racing: Nitro-Fueled (CTR-NitroFueled-PC)",
+"folder": "CTR-NitroFueled-PC",
+"source": "https://github.com/GetLostIn/CTR-NitroFueled-PC",
+"tags": [
+"ps4",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "Dante's Inferno (hells-gate-recomp)",
+"folder": "hells-gate-recomp",
+"source": "https://github.com/florinp93/hells-gate-recomp",
+"tags": [
+"360",
+"beat them all"
+]
+},
+{
+"name": "Dead or Alive (Jiggle-or-Physics)",
+"folder": "Jiggle-or-Physics",
+"source": "https://github.com/3dge7161/Jiggle-or-Physics",
+"tags": [
+"ps1",
+"fighting"
+]
+},
+{
+"name": "Dead or Alive 3 (doa3-recomp)",
+"folder": "doa3-recomp",
+"source": "https://github.com/parkerallan/doa3-recomp",
+"tags": [
+"xbox",
+"fighting"
+]
+},
+{
+"name": "Dead or Alive Xtreme Beach Volleyball (doaxbv-re)",
+"folder": "doaxbv-re",
+"source": "https://github.com/NoRain211/doaxbv-re",
+"tags": [
+"xbox",
+"sport"
+]
+},
+{
+"name": "Dead Rising 2 : Case Zero (Dead_Rising_2_Case_Zero_Xenon_Recomp)",
+"folder": "Dead_Rising_2_Case_Zero_Xenon_Recomp",
+"source": "https://github.com/wivi514/Dead_Rising_2_Case_Zero_Xenon_Recomp",
+"tags": [
+"360",
+"action-adventure"
+]
+},
+{
+"name": "Deadly Premonition (DPRecomp)",
+"folder": "DPRecomp",
+"source": "https://github.com/LittleBitUA/DPRecomp",
+"tags": [
+"360",
+"survival horror",
+"multilingual"
+]
+},
+{
+"name": "Def Jam Vendetta (def-jam-vendetta-recomp)",
+"folder": "def-jam-vendetta-recomp",
+"source": "https://github.com/jcsix694/def-jam-vendetta-recomp",
+"tags": [
+"ps2",
+"fighting"
+]
+},
+{
+"name": "Def Jam: Fight for NY (DefJam-xbox-RE)",
+"folder": "DefJam-xbox-RE",
+"source": "https://github.com/vh-ssantos/DefJam-xbox-RE",
+"tags": [
+"xbox",
+"fighting"
+]
+},
+{
+"name": "Destruction Derby 2 (destruction-derby-2-recomp)",
+"folder": "destruction-derby-2-recomp",
+"source": "https://github.com/Alexbeav/destruction-derby-2-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Destruction Derby Raw (destruction-derby-raw-recomp)",
+"folder": "destruction-derby-raw-recomp",
+"source": "https://github.com/Alexbeav/destruction-derby-raw-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Devil Dice (devil-dice-recomp)",
+"folder": "devil-dice-recomp",
+"source": "https://github.com/Alexbeav/devil-dice-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Diablo (diablo-recomp)",
+"folder": "diablo-recomp",
+"source": "https://github.com/Alexbeav/diablo-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Diablo + Hellfire (DevilutionX)",
+"folder": "DevilutionX",
+"source": "https://github.com/diasurgical/DevilutionX",
+"tags": [
+"pc",
+"hack and slash"
+]
+},
+{
+"name": "Diddy Kong Racing (DKR-R)",
+"folder": "DKR-R",
+"source": "https://github.com/ThatGuyMcd/DKR-R",
+"tags": [
+"quality",
+"online",
+"n64",
+"racing",
+"multiplayer",
+"multilingual"
+]
+},
+{
+"name": "Diddy Kong Racing (goldenballoon)",
+"folder": "goldenballoon",
+"source": "https://github.com/akratch/goldenballoon",
+"tags": [
+"online",
+"n64",
+"racing",
+"multiplayer",
+"multilingual"
+]
+},
+{
+"name": "Die Hard Trilogy (die-hard-trilogy-recomp)",
+"folder": "die-hard-trilogy-recomp",
+"source": "https://github.com/Alexbeav/die-hard-trilogy-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Dig Dug (digdug-native)",
+"folder": "digdug-native",
+"source": "https://github.com/TekRantGaming/digdug-native",
+"tags": [
+"arcade",
+"action"
+]
+},
+{
+"-name": "Digimon World (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"ps1",
+"rpg"
+]
+},
+{
+"name": "Digimon World 2 (digimon-world-2-recomp)",
+"folder": "digimon-world-2-recomp",
+"source": "https://github.com/Alexbeav/digimon-world-2-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Digimon World 2003 (digimon-world-2003-recomp)",
+"folder": "digimon-world-2003-recomp",
+"source": "https://github.com/Alexbeav/digimon-world-2003-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Dino Crisis (dino-crisis-recomp)",
+"folder": "dino-crisis-recomp",
+"source": "https://github.com/Alexbeav/dino-crisis-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Dino Crisis 2 (dino-crisis-2-recomp)",
+"folder": "dino-crisis-2-recomp",
+"source": "https://github.com/Alexbeav/dino-crisis-2-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Dinosaur Planet (dino-recomp)",
+"folder": "dino-recomp",
+"source": "https://github.com/DinosaurPlanetRecomp/dino-recomp",
+"tags": [
+"quality",
+"star fox",
+"n64",
+"action-adventure"
+]
+},
+{
+"name": "DoDonPachi SaiDaiOuJou (SDOJ-Recomp)",
+"folder": "SDOJ-Recomp",
+"source": "https://github.com/eandis/SDOJ-Recomp",
+"tags": [
+"quality",
+"360",
+"shmup",
+"danmaku",
+"multiplayer"
+]
+},
+{
+"-name": "Donkey Kong 64 (dk64)",
+"folder": "dk64",
+"source": "https://gitlab.com/dk64_decomp/dk64",
+"tags": [
+"n64",
+"dk",
+"platformer"
+]
+},
+{
+"name": "Donkey Kong 64 (Donkey-Kong-64-Recompiled)",
+"folder": "Donkey-Kong-64-Recompiled",
+"source": "https://github.com/Rainchus/Donkey-Kong-64-Recompiled",
+"tags": [
+"quality",
+"n64",
+"dk",
+"platformer"
+]
+},
+{
+"name": "Donkey Kong Country (DKC1Recomp)",
+"folder": "DKC1Recomp",
+"source": "https://github.com/elliotttate/DKC1Recomp/",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"name": "Donkey Kong Country 2: Diddy's Kong Quest (DKC2-Android-Port)",
+"tags": [
+"snes",
+"platformer",
+"android_only"
+]
+},
+{
+"name": "Donkey Kong Country 2: Diddy's Kong Quest (DKC2Recomp)",
+"folder": "DKC2Recomp",
+"source": "https://github.com/elliotttate/DKC2Recomp",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"name": "Donkey Kong Country 3: Dixie Kong's Double Trouble! (DKC3Recomp)",
+"folder": "DKC3Recomp",
+"source": "https://github.com/elliotttate/DKC3Recomp",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"name": "Doom (uzdoom)",
+"folder": "uzdoom",
+"source": "https://github.com/UZDoom/uzdoom",
+"tags": [
+"quality",
+"pc",
+"fps"
+]
+},
+{
+"name": "Dr. Mario 64 (drmario64_recomp_plus)",
+"folder": "drmario64_recomp_plus",
+"source": "https://github.com/theboy181/drmario64_recomp_plus",
+"tags": [
+"n64",
+"puzzle",
+"multiplayer"
+]
+},
+{
+"name": "Dr. Robotnik's Ring Racers (RingRacers)",
+"folder": "RingRacers",
+"source": "https://github.com/KartKrewDev/RingRacers",
+"tags": [
+"quality",
+"pc",
+"racing",
+"multiplayer",
+"online"
+]
+},
+{
+"name": "Dragon Ball Z: Budokai (DBZ1)",
+"folder": "DBZ1",
+"source": "https://github.com/WistfulHopes/DBZ1",
+"tags": [
+"360",
+"fighting",
+"multiplayer"
+]
+},
+{
+"-name": "Dragon Ball Z: Budokai 3 (DBZ-Budokai-3-HD-Collection)",
+"folder": "DBZ-Budokai-3-HD-Collection",
+"source": "https://github.com/novapowers0/DBZ-Budokai-3-HD-Collection",
+"tags": [
+"360",
+"fighting",
+"multiplayer"
+]
+},
+{
+"name": "Dragon Ball Z: Budokai Tenkaichi 3 (Tenkaichi3Decomp)",
+"folder": "Tenkaichi3Decomp",
+"source": "https://github.com/z3xox/Tenkaichi3Decomp",
+"tags": [
+"ps2",
+"fighting"
+]
+},
+{
+"name": "Dragon Ball Z: Burst Limit (DBZ-Burst-Limit-Recompiled)",
+"folder": "DBZ-Burst-Limit-Recompiled",
+"source": "https://github.com/iExplosiveRage/DBZ-Burst-Limit-Recompiled",
+"tags": [
+"360",
+"fighting"
+]
+},
+{
+"name": "Dragon Ball Z: Buu's Fury (DragonBallZBuusFuryRecomp)",
+"folder": "DragonBallZBuusFuryRecomp",
+"source": "https://github.com/mstan/DragonBallZBuusFuryRecomp",
+"tags": [
+"gba",
+"racing"
+]
+},
+{
+"name": "Dragon Ball Z: Ultimate Battle 22 (dragon-ball-z-ultimate-battle-22-recomp)",
+"folder": "dragon-ball-z-ultimate-battle-22-recomp",
+"source": "https://github.com/Alexbeav/dragon-ball-z-ultimate-battle-22-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Dragon Ball: Final Bout (DB-Final-Bout-Recomp)",
+"folder": "DB-Final-Bout-Recomp",
+"source": "https://github.com/novapowers0/DB-Final-Bout-Recomp",
+"tags": [
+"ps1",
+"fighting"
+]
+},
+{
+"name": "Dragon Ball: Raging Blast 2 (RB2-Android)",
+"tags": [
+"360",
+"fighting",
+"android_only"
+]
+},
+{
+"name": "Dragon's Crown Pro (dragons-crown-pro-pc)",
+"folder": "dragons-crown-pro-pc",
+"source": "https://github.com/saulob/dragons-crown-pro-pc",
+"tags": [
+"ps4",
+"action-adventure"
+]
+},
+{
+"name": "DriveClub (Driveclub-pc-wrapper)",
+"folder": "Driveclub-pc-wrapper",
+"source": "https://github.com/ondrejeder/Driveclub-pc-wrapper",
+"tags": [
+"ps4",
+"racing"
+]
+},
+{
+"name": "Driver (driver-recomp)",
+"folder": "driver-recomp",
+"source": "https://github.com/Alexbeav/driver-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Driver 2 (REDRIVER2)",
+"folder": "REDRIVER2",
+"source": "https://github.com/OpenDriver2/REDRIVER2",
+"tags": [
+"quality",
+"ps1",
+"racing",
+"multiplayer",
+"multilingual",
+"online"
+]
+},
+{
+"name": "Duck Game (DuckGameRebuilt)",
+"folder": "DuckGameRebuilt",
+"source": "https://github.com/TheFlyingFoool/DuckGameRebuilt",
+"tags": [
+"quality",
+"free",
+"pc",
+"shooter",
+"multiplayer",
+"online"
+]
+},
+{
+"name": "Duke Nukem: Land of the Babes (duke-nukem-land-of-the-babes-recomp)",
+"folder": "duke-nukem-land-of-the-babes-recomp",
+"source": "https://github.com/Alexbeav/duke-nukem-land-of-the-babes-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Duke Nukem: Time to Kill (duke-nukem-time-to-kill-recomp)",
+"folder": "duke-nukem-time-to-kill-recomp",
+"source": "https://github.com/Alexbeav/duke-nukem-time-to-kill-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Duke Nukem: Zero Hour (dnzh-overclocked)",
+"folder": "dnzh-overclocked",
+"source": {
+"windows": "https://dnzh-overclocked.com/assets/files/dnzh-windows-x64-full-1.0.0.zip",
+"linux": "https://dnzh-overclocked.com/assets/files/dnzh-linux-x64-full-1.0.1.zip"
+},
+"executable": {
+"windows": "DNZHRecompiled.exe",
+"linux": "DNZHRecompiled"
+},
+"tags": [
+"quality",
+"n64",
+"fps",
+"multiplayer"
+]
+},
+{
+"name": "Dune II (dunedynasty)",
+"folder": "dunedynasty",
+"source": "https://github.com/gameflorist/dunedynasty",
+"tags": [
+"pc",
+"strategy"
+]
+},
+{
+"name": "Dungeon Keeper (keeperfx)",
+"folder": "keeperfx",
+"source": "https://github.com/dkfans/keeperfx",
+"tags": [
+"pc",
+"strategy"
+]
+},
+{
+"name": "EarthBound (Phase-Distorter)",
+"folder": "Phase-Distorter",
+"source": "https://github.com/TheRunaway5/Phase-Distorter",
+"tags": [
+"snes",
+"rpg"
+]
+},
+{
+"name": "Einhänder (Einhander-Recompiled)",
+"folder": "Einhander-Recompiled",
+"source": "https://github.com/strider973/Einhander-Recompiled",
+"tags": [
+"ps1",
+"shmup"
+]
+},
+{
+"-name": "Eternal Darkness: Sanity's Requiem (EternalDarknessRecomp)",
+"folder": "EternalDarknessRecomp",
+"source": "https://github.com/griches/EternalDarknessRecomp",
+"tags": [
+"gc",
+"survival horror"
+]
+},
+{
+"name": "Eternal Sonata (EternalSonataReprise)",
+"folder": "EternalSonataReprise",
+"source": "https://github.com/birabittoh/EternalSonataReprise",
+"tags": [
+"quality",
+"trusty bell",
+"360",
+"rpg",
+"multilingual"
+]
+},
+{
+"-name": "Excitebike 64 (WindowSmash)",
+"folder": "",
+"source": "",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Extreme-G (ExtremeGRecomp)",
+"folder": "ExtremeGRecomp",
+"source": "https://gitlab.com/sonicdcer/ExtremeGRecomp",
+"tags": [
+"n64",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "F-Zero (FZeroSNESRecomp)",
+"folder": "FZeroSNESRecomp",
+"source": "https://github.com/mstan/FZeroSNESRecomp",
+"tags": [
+"quality",
+"snes",
+"racing"
+]
+},
+{
+"name": "F-Zero X (G-Diffuser)",
+"folder": "G-Diffuser",
+"source": "https://github.com/Zorkats/G-Diffuser",
+"tags": [
+"quality",
+"n64",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "Fable II (Fable-2-Recomp)",
+"folder": "Fable-2-Recomp",
+"source": "https://github.com/himdo/Fable-2-Recomp",
+"tags": [
+"360",
+"rpg"
+]
+},
+{
+"name": "Fade to Black (fade-to-black-recomp)",
+"folder": "fade-to-black-recomp",
+"source": "https://github.com/Alexbeav/fade-to-black-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Fatal Frame (MikuPan)",
+"folder": "MikuPan",
+"source": "https://github.com/Mikompilation/MikuPan",
+"tags": [
+"project zero",
+"ps2",
+"survival horror",
+"multilingual"
+]
+},
+{
+"name": "Fatal Racing (ROLLER)",
+"folder": "ROLLER",
+"source": "https://github.com/FatalDecomp/ROLLER",
+"tags": [
+"xbox",
+"racing"
+]
+},
+{
+"name": "Fear Effect (fear-effect-recomp)",
+"folder": "fear-effect-recomp",
+"source": "https://github.com/Alexbeav/fear-effect-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Fear Effect 2: Retro Helix (fear-effect-2-retro-helix-recomp)",
+"folder": "fear-effect-2-retro-helix-recomp",
+"source": "https://github.com/Alexbeav/fear-effect-2-retro-helix-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Fighting Force (fighting-force-recomp)",
+"folder": "fighting-force-recomp",
+"source": "https://github.com/Alexbeav/fighting-force-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Final Fantasy IX (final-fantasy-ix-recomp)",
+"folder": "final-fantasy-ix-recomp",
+"source": "https://github.com/Alexbeav/final-fantasy-ix-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Final Fantasy Tactics (FinFanTacRecomp)",
+"folder": "FinFanTacRecomp",
+"source": "https://github.com/NJH-1001/FinFanTacRecomp",
+"tags": [
+"ps1",
+"njh-1001",
+"tactical"
+]
+},
+{
+"name": "Final Fantasy Tactics Advance (FFTARecomp)",
+"folder": "FFTARecomp",
+"source": "https://github.com/Jorge262007/FFTARecomp",
+"tags": [
+"gba",
+"tactical"
+]
+},
+{
+"name": "Final Fantasy VIII (final-fantasy-viii-recomp)",
+"folder": "final-fantasy-viii-recomp",
+"source": "https://github.com/Alexbeav/final-fantasy-viii-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Fire Emblem: Three Houses (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"switch",
+"strategy"
+]
+},
+{
+"-name": "Forza Horizon (pinyon-shift)",
+"folder": "pinyon-shift",
+"source": "https://github.com/arcanite24/pinyon-shift",
+"tags": [
+"360",
+"racing"
+]
+},
+{
+"-name": "Forza Motorsport 5 (RaceOneHub)",
+"folder": "RaceOneHub",
+"source": "https://github.com/LoZazaMastro/RaceOneHub",
+"tags": [
+"xone",
+"racing"
+]
+},
+{
+"name": "Future Cop: L.A.P.D. (future-cop-lapd-recomp)",
+"folder": "future-cop-lapd-recomp",
+"source": "https://github.com/Alexbeav/future-cop-lapd-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "G-Police (g-police-recomp)",
+"folder": "g-police-recomp",
+"source": "https://github.com/Alexbeav/g-police-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "G-Police: Weapons of Justice (g-police-weapons-of-justice-recomp)",
+"folder": "g-police-weapons-of-justice-recomp",
+"source": "https://github.com/Alexbeav/g-police-weapons-of-justice-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Galerians (galerians-recomp)",
+"folder": "galerians-recomp",
+"source": "https://github.com/Alexbeav/galerians-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Gears of War 2 (??)",
+"folder": "",
+"source": "",
+"tags": [
+"360",
+"shooter"
+]
+},
+{
+"name": "Geometry Wars: Retro Evolved 2 (geometry-wars-2-pc-plus)",
+"folder": "geometry-wars-2-pc-plus",
+"source": "https://github.com/omenhachi/geometry-wars-2-pc-plus",
+"tags": [
+"360",
+"shmup"
+]
+},
+{
+"-name": "Ghost in the Shell (ghost-in-the-shell-recomp)",
+"folder": "ghost-in-the-shell-recomp",
+"source": "https://github.com/Alexbeav/ghost-in-the-shell-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Go! Go! Ackman (gogoackman1recomp)",
+"folder": "gogoackman1recomp",
+"source": "https://github.com/catmidori/gogoackman1recomp",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"-name": "God of War (Tobiichi-Port)",
+"folder": "Tobiichi-Port",
+"source": "https://github.com/YYOzcan/Tobiichi-Port",
+"tags": [
+"ps2",
+"action-adventure"
+]
+},
+{
+"name": "God of War III Remastered (gow3_pc)",
+"folder": "gow3_pc",
+"source": "https://github.com/FelipePrado0/gow3_pc",
+"tags": [
+"ps4",
+"action-adventure"
+]
+},
+{
+"name": "Goemon's Great Adventure (Goemon64Recomp)",
+"folder": "Goemon64Recomp",
+"source": "https://github.com/klorfmorf/Goemon64Recomp",
+"tags": [
+"n64",
+"platformer"
+]
+},
+{
+"name": "GoldenEye 007 (goldeneye-pc-port)",
+"folder": "goldeneye-pc-port",
+"source": "https://github.com/jkdansereau/goldeneye-pc-port",
+"tags": [
+"n64",
+"fps",
+"multiplayer"
+]
+},
+{
+"name": "GoldenEye 007 (GoldenEye-Recomp)",
+"folder": "GoldenEye-Recomp",
+"source": "https://github.com/SunJaycy/GoldenEye-Recomp",
+"tags": [
+"360",
+"fps",
+"multiplayer"
+]
+},
+{
+"name": "GoldenEye 007 (Project-Midas)",
+"folder": "Project-Midas",
+"source": "https://github.com/murkantor/Project-Midas",
+"tags": [
+"n64",
+"fps",
+"multiplayer"
+]
+},
+{
+"name": "Gran Turismo 2 (OpenGTPS1)",
+"folder": "OpenGTPS1",
+"source": "https://github.com/GTTeancum/OpenGTPS1",
+"tags": [
+"ps1",
+"simulation"
+]
+},
+{
+"name": "Grand Theft Auto : Liberty City Stories (lcs-recomp)",
+"folder": "lcs-recomp",
+"source": "https://github.com/elmasas/lcs-recomp",
+"tags": [
+"gta",
+"psp",
+"action-adventure"
+]
+},
+{
+"-name": "Grand Theft Auto: Vice City Stories (PSPRecomp_vcs)",
+"folder": "PSPRecomp_vcs",
+"source": "https://github.com/jessicanataliagta/PSPRecomp/tree/main/profiles/vcs",
+"tags": [
+"gta",
+"psp",
+"action-adventure"
+]
+},
+{
+"name": "Half Life (xash3d-fwgs)",
+"tags": [
+"fps",
+"android_only"
+]
+},
+{
+"name": "Harvest Moon 64 (HarvestMoon64Recomp)",
+"folder": "HarvestMoon64Recomp",
+"source": "https://github.com/HarvestMoon64Recomp/HarvestMoon64Recomp",
+"tags": [
+"hm",
+"n64",
+"simulation"
+]
+},
+{
+"name": "Hercules (hercules-recompiled)",
+"folder": "hercules-recompiled",
+"source": "https://github.com/obaidr1/hercules-recompiled",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Hollow Knight: Silksong (SilksongAndroid)",
+"tags": [
+"metroidvania",
+"android_only"
+]
+},
+{
+"name": "Ico (ico-pc)",
+"folder": "ico-pc",
+"source": "https://github.com/nathanialf/ico-pc",
+"tags": [
+"ps2",
+"action-adventure",
+"ueda",
+"multilingual"
+]
+},
+{
+"name": "Ikemen GO",
+"folder": "Ikemen-GO",
+"source": "https://github.com/ikemen-engine/Ikemen-GO/",
+"tags": [
+"pc",
+"mugen",
+"fighting",
+"multiplayer"
+]
+},
+{
+"-name": "Import Tuner Challenge (??)",
+"folder": "",
+"source": "",
+"tags": [
+"360",
+"racing"
+]
+},
+{
+"name": "In Cold Blood (in-cold-blood-recomp)",
+"folder": "in-cold-blood-recomp",
+"source": "https://github.com/Alexbeav/in-cold-blood-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Incredible Crisis (incredible-crisis-recomp)",
+"folder": "incredible-crisis-recomp",
+"source": "https://github.com/Alexbeav/incredible-crisis-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "InFAMOUS (inFAMOUSreborn)",
+"folder": "inFAMOUSreborn",
+"source": "https://github.com/whompay/inFAMOUSreborn",
+"tags": [
+"ps3",
+"action-adventure"
+]
+},
+{
+"name": "Infinite Mario 64 Ever (infinite-mario-64-ever)",
+"folder": "infinite-mario-64-ever",
+"source": "https://github.com/Brawmario/infinite-mario-64-ever",
+"tags": [
+"quality",
+"n64",
+"platformer"
+]
+},
+{
+"name": "Initial D Arcade Stage Ver. 3 (Initial-D-Arcade-Stage-3-Native-SH-4-Recompilation-WIP-)",
+"folder": "Initial-D-Arcade-Stage-3-Native-SH-4-Recompilation-WIP-",
+"source": "https://github.com/distilledorion-sketch/Initial-D-Arcade-Stage-3-Native-SH-4-Recompilation-WIP-",
+"tags": [
+"naomi",
+"arcade",
+"racing"
+]
+},
+{
+"name": "Jackie Chan Stuntmaster (jackie-chan-stuntmaster-recomp)",
+"folder": "jackie-chan-stuntmaster-recomp",
+"source": "https://github.com/Alexbeav/jackie-chan-stuntmaster-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Jade Cocoon: Story of the Tamamayu (jade-cocoon-recomp)",
+"folder": "jade-cocoon-recomp",
+"source": "https://github.com/Alexbeav/jade-cocoon-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Jak and Daxter / Jak II / Jak 3 (jak-project)",
+"folder": "jak-project",
+"source": "https://github.com/open-goal/jak-project",
+"tags": [
+"quality",
+"ps2",
+"platformer",
+"multilingual"
+]
+},
+{
+"name": "Jet Force Gemini (JetForceGemini-Recomp)",
+"folder": "JetForceGemini-Recomp",
+"source": "https://github.com/TK22-26/JetForceGemini-Recomp",
+"tags": [
+"n64",
+"action-adventure"
+]
+},
+{
+"-name": "Jet Moto / 2 / 3 (Jet-Moto-Anthology)",
+"folder": "Jet-Moto-Anthology",
+"source": "https://github.com/GTTeancum/Jet-Moto-Anthology",
+"tags": [
+"ps1",
+"racing"
+]
+},
+{
+"name": "Jet Set Radio Future (JetSetRadioFuture-Unleashed)",
+"folder": "JetSetRadioFuture-Unleashed",
+"source": "https://github.com/JuMatt/JetSetRadioFuture-Unleashed",
+"tags": [
+"xbox",
+"sport"
+]
+},
+{
+"name": "Kartia: The Word of Fate (kartia-recomp)",
+"folder": "kartia-recomp",
+"source": "https://github.com/Alexbeav/kartia-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "King Kong (king-kong-recompiled)",
+"folder": "king-kong-recompiled",
+"source": "https://github.com/TekRantGaming/king-kong-recompiled",
+"tags": [
+"360",
+"fps"
+]
+},
+{
+"name": "King's Field (kings-field-recomp)",
+"folder": "kings-field-recomp",
+"source": "https://github.com/Alexbeav/kings-field-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"rpg"
+]
+},
+{
+"name": "King's Field (verdite2)",
+"folder": "verdite2",
+"source": "https://github.com/Voicedrew11/verdite2",
+"tags": [
+"ps1",
+"rpg"
+]
+},
+{
+"-name": "Kingdom Hearts: Chain of Memories (khcom)",
+"folder": "khcom",
+"source": "https://github.com/Pheenoh/khcom",
+"tags": [
+"gba",
+"rpg"
+]
+},
+{
+"name": "Kirby's Dream Land (Kirby-Dream-Land-Recomp)",
+"folder": "Kirby-Dream-Land-Recomp",
+"source": "https://github.com/omegakatana92/Kirby-Dream-Land-Recomp",
+"tags": [
+"gba",
+"racing"
+]
+},
+{
+"name": "Kirby's Return to Dream Land (ModernGekko)",
+"folder": "ModernGekko",
+"source": "https://github.com/ExpansionPak/ModernGekko",
+"tags": [
+"wii",
+"platformer",
+"co-op",
+"multilingual"
+]
+},
+{
+"name": "Klonoa: Door to Phantomile (Klonoa-Door-to-Phantomile)",
+"folder": "Klonoa-Door-to-Phantomile",
+"source": "https://github.com/TechnicallyComputers/Klonoa-Door-to-Phantomile",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "KoroKoro Post nin (korokoro-recomp)",
+"folder": "korokoro-recomp",
+"source": "https://github.com/elprogramadorloco-arch/korokoro-recomp",
+"tags": [
+"ps1",
+"puzzle"
+]
+},
+{
+"name": "Koudelka (koudelka-recomp)",
+"folder": "koudelka-recomp",
+"source": "https://github.com/Alexbeav/koudelka-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Kula World (kula-world-recomp)",
+"folder": "kula-world-recomp",
+"source": "https://github.com/Alexbeav/kula-world-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Legacy of Kain: Soul Reaver (legacy-of-kain-soul-reaver-recomp)",
+"folder": "legacy-of-kain-soul-reaver-recomp",
+"source": "https://github.com/Alexbeav/legacy-of-kain-soul-reaver-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Little Big Planet (??)",
+"folder": "",
+"source": "",
+"tags": [
+"ps3",
+"platformer"
+]
+},
+{
+"-name": "Little Big Planet 3 (??)",
+"folder": "",
+"source": "",
+"tags": [
+"ps4",
+"platformer"
+]
+},
+{
+"name": "Lollipop Chainsaw (Re-Cherry)",
+"folder": "Re-Cherry",
+"source": "https://github.com/MaxDeadBear/Re-Cherry",
+"tags": [
+"360",
+"beat them all"
+]
+},
+{
+"-name": "Lost Odyssey (LostOdysseyRecomp)",
+"folder": "LostOdysseyRecomp",
+"source": "https://github.com/freefrank/LostOdysseyRecomp/",
+"tags": [
+"360",
+"rpg"
+]
+},
+{
+"name": "Luanti",
+"folder": "luanti",
+"source": "https://github.com/luanti-org/luanti",
+"tags": [
+"quality",
+"free",
+"pc",
+"minecraft",
+"multiplayer",
+"sandbox"
+]
+},
+{
+"name": "Luigi's Mansion (luigis-mansion-recompiled)",
+"folder": "luigis-mansion-recompiled",
+"source": "https://github.com/rob646464/luigis-mansion-recompiled",
+"tags": [
+"gc",
+"action-adventure"
+]
+},
+{
+"name": "Marble Blast Gold (OpenMBG)",
+"folder": "OpenMBG",
+"source": "https://github.com/The-New-Platinum-Team/OpenMBG",
+"tags": [
+"free",
+"pc",
+"platformer",
+"multiplayer"
+]
+},
+{
+"name": "Marble Blast Ultra (OpenMBU)",
+"folder": "OpenMBU",
+"source": "https://github.com/MBU-Team/OpenMBU",
+"tags": [
+"quality",
+"free",
+"360",
+"platformer",
+"multiplayer"
+]
+},
+{
+"name": "Mario Kart 64 (MarioKart64Recomp)",
+"folder": "MarioKart64Recomp",
+"source": "https://gitlab.com/sonicdcer/MarioKart64Recomp",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Mario Kart 64 (SpaghettiKart)",
+"folder": "SpaghettiKart",
+"source": "https://github.com/HarbourMasters/SpaghettiKart",
+"tags": [
+"quality",
+"n64",
+"racing"
+]
+},
+{
+"name": "Mario Kart Wii (Wiicompiled)",
+"folder": "Wiicompiled",
+"source": "https://github.com/patchzyy/Wiicompiled",
+"tags": [
+"wii",
+"racing"
+]
+},
+{
+"name": "Mario Kart: Super Circuit (MarioKartSuperCircuitRecomp)",
+"folder": "MarioKartSuperCircuitRecomp",
+"source": "https://github.com/mstan/MarioKartSuperCircuitRecomp",
+"tags": [
+"gba",
+"racing"
+]
+},
+{
+"name": "Mario Party 4 (marioparty4)",
+"folder": "marioparty4",
+"source": "https://github.com/mariopartyrd/marioparty4",
+"tags": [
+"gc",
+"multiplayer"
+]
+},
+{
+"-name": "Mario Party 6 (??)",
+"folder": "",
+"source": "",
+"tags": [
+"gc",
+"multiplayer"
+]
+},
+{
+"name": "Martian Gothic (martian-gothic-recomp)",
+"folder": "martian-gothic-recomp",
+"source": "https://github.com/Alexbeav/martian-gothic-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "MDK (mdk-recomp)",
+"folder": "mdk-recomp",
+"source": "https://github.com/Alexbeav/mdk-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "MediEvil (medievil-recomp)",
+"folder": "medievil-recomp",
+"source": "https://github.com/Alexbeav/medievil-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"action-adventure"
+]
+},
+{
+"name": "MediEvil (medievil-recomp)",
+"folder": "MediEvilRecomp",
+"source": "https://github.com/BlackLabelHQ/MediEvilRecomp",
+"tags": [
+"ps1",
+"action-adventure"
+]
+},
+{
+"-name": "MediEvil 2019 (medievil_2019_pc_port)",
+"folder": "medievil_2019_pc_port",
+"source": "https://github.com/bc160201983/medievil_2019_pc_port",
+"tags": [
+"ps4",
+"action-adventure"
+]
+},
+{
+"name": "MediEvil II (medievil-ii-recomp)",
+"folder": "medievil-ii-recomp",
+"source": "https://github.com/Alexbeav/medievil-ii-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Mega Man 64 (MegaMan64Recompiled)",
+"folder": "MegaMan64Recompiled",
+"source": "https://github.com/MegaMan64Recomp/MegaMan64Recompiled",
+"tags": [
+"n64",
+"action-adventure"
+]
+},
+{
+"name": "Mega Man Legends (mega-man-legends-recomp)",
+"folder": "mega-man-legends-recomp",
+"source": "https://github.com/Alexbeav/mega-man-legends-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Mega Man Legends 2 (mega-man-legends-2-recomp)",
+"folder": "mega-man-legends-2-recomp",
+"source": "https://github.com/Alexbeav/mega-man-legends-2-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Mega Man X (MegaManXSNESRecomp)",
+"folder": "MegaManXSNESRecomp",
+"source": "https://github.com/mstan/MegaManXSNESRecomp",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"name": "Mega Man X2 (MegaManX2Recomp)",
+"folder": "MegaManX2Recomp",
+"source": "https://github.com/mstan/MegaManX2Recomp",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"-name": "Mega Man X3 (MegaManX3Recomp)",
+"folder": "MegaManX3Recomp",
+"source": "https://github.com/mstan/MegaManX3Recomp",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"name": "Mega Man X4 (MegaManX4Recomp)",
+"folder": "MegaManX4Recomp",
+"source": "https://github.com/mstan/MegaManX4Recomp",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Mega Man X5 (MegaManX5Recomp)",
+"folder": "MegaManX5Recomp",
+"source": "https://github.com/mstan/MegaManX5Recomp",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Mega Man X6 (MegaManX6Recomp)",
+"folder": "MegaManX6Recomp",
+"source": "https://github.com/mstan/MegaManX6Recomp",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Mega Man Zero (MegaManZeroRecomp)",
+"folder": "MegaManZeroRecomp",
+"source": "https://github.com/mstan/MegaManZeroRecomp",
+"tags": [
+"gba",
+"platformer"
+]
+},
+{
+"name": "Men in Black: The Game (men-in-black-the-game-recomp)",
+"folder": "men-in-black-the-game-recomp",
+"source": "https://github.com/Alexbeav/men-in-black-the-game-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Metal Gear Solid (metal-gear-solid-recomp)",
+"folder": "metal-gear-solid-recomp",
+"source": "https://github.com/Alexbeav/metal-gear-solid-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Metal Slug X (metal-slug-x-recomp)",
+"folder": "metal-slug-x-recomp",
+"source": "https://github.com/Alexbeav/metal-slug-x-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Metroid Prime (MetroidPrimePort)",
+"folder": "MetroidPrimePort",
+"source": "https://github.com/Odrannnn/MetroidPrimePort",
+"tags": [
+"gc",
+"fps"
+]
+},
+{
+"name": "Metroid Prime Hunters (MetroidPrimeHuntersRecomp)",
+"folder": "MetroidPrimeHuntersRecomp",
+"source": "https://github.com/mstan/MetroidPrimeHuntersRecomp",
+"tags": [
+"ds",
+"platformer"
+]
+},
+{
+"name": "Mickey & Donald Collection (MickeyAndDonaldCollection)",
+"folder": "MickeyAndDonaldCollection",
+"source": "https://github.com/Darhkfox/MickeyAndDonaldCollection",
+"tags": [
+"smd",
+"platformer",
+"emucomp",
+"illusion",
+"quackshot"
+]
+},
+{
+"name": "Minecraft (horizon)",
+"folder": "horizon-minecraft",
+"source": "https://github.com/ludovic111/horizon",
+"tags": [
+"pc",
+"fps",
+"sandbox",
+"multiplayer"
+]
+},
+{
+"name": "Minecraft Java (Amethyst-Android)",
+"tags": [
+"fps",
+"sandbox",
+"android_only"
+]
+},
+{
+"name": "Mischief Makers (trouble-makers-pc-recomp)",
+"folder": "trouble-makers-pc-recomp",
+"source": "https://github.com/ThiagoLira/trouble-makers-pc-recomp",
+"tags": [
+"trouble makers",
+"n64",
+"platformer"
+]
+},
+{
+"name": "Monster Hunter Freedom Unite (FreedomUnbound)",
+"folder": "FreedomUnbound",
+"source": "https://github.com/Dudux42/FreedomUnbound",
+"tags": [
+"psp",
+"action-adventure"
+]
+},
+{
+"name": "Monster Hunter Portable 3rd HD Ver. (Yakumo)",
+"folder": "Yakumo",
+"source": "https://github.com/TeamGDB/Yakumo",
+"tags": [
+"psp",
+"rpg"
+]
+},
+{
+"name": "Monster Rancher (monster-rancher-recomp)",
+"folder": "monster-rancher-recomp",
+"source": "https://github.com/Alexbeav/monster-rancher-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Monster Rancher 2 (monster-rancher-2-recomp)",
+"folder": "monster-rancher-2-recomp",
+"source": "https://github.com/Alexbeav/monster-rancher-2-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Mortal Kombat 4 (mortal-kombat-4-recomp)",
+"folder": "mortal-kombat-4-recomp",
+"source": "https://github.com/Alexbeav/mortal-kombat-4-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Mortal Kombat Trilogy (mortal-kombat-trilogy-recomp)",
+"folder": "mortal-kombat-trilogy-recomp",
+"source": "https://github.com/Alexbeav/mortal-kombat-trilogy-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Mother 3 (Mother3Recomp)",
+"folder": "Mother3Recomp",
+"source": "https://github.com/josiahg2502-glitch/Mother3Recomp",
+"tags": [
+"gba",
+"rpg"
+]
+},
+{
+"name": "Namco System 22 (namco22-decompile)",
+"folder": "namco22-decompile",
+"source": "https://github.com/spacestate1/namco22-decompile",
+"tags": [
+"arcade"
+]
+},
+{
+"name": "NANACA†CRASH!!",
+"folder": "Nanaca-Crash",
+"source": "https://github.com/Nyaldee/Nanaca-Crash",
+"tags": [
+"quality",
+"nyaldee",
+"flash",
+"cross channel",
+"arcade"
+]
+},
+{
+"name": "Nanosaur",
+"folder": "Nanosaur",
+"source": "https://github.com/jorio/Nanosaur",
+"tags": [
+"quality",
+"free",
+"msdos",
+"shooter"
+]
+},
+{
+"name": "Nanosaur2",
+"folder": "Nanosaur2",
+"source": "https://github.com/jorio/Nanosaur2",
+"tags": [
+"quality",
+"free",
+"macos",
+"shooter"
+]
+},
+{
+"name": "Naruto: The Broken Bond (Naruto-The-Broken-Bond-PC-Port)",
+"folder": "Naruto-The-Broken-Bond-PC-Port",
+"source": "https://github.com/Auremana666/Naruto-The-Broken-Bond-PC-Port",
+"tags": [
+"360",
+"action-adventure"
+]
+},
+{
+"name": "Naughty Bear: Gold Edition (NaughtyBear_ReStuff)",
+"folder": "NaughtyBear_ReStuff",
+"source": "https://github.com/MaxDeadBear/NaughtyBear_ReStuff",
+"tags": [
+"360",
+"action-adventure"
+]
+},
+{
+"name": "NBA JAM: On Fire Edition (OpenJam)",
+"folder": "OpenJam",
+"source": "https://github.com/GTTeancum/OpenJam",
+"tags": [
+"360",
+"sport",
+"multiplayer"
+]
+},
+{
+"-name": "Need for Speed: Underground 2 (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"ps2",
+"racing"
+]
+},
+{
+"name": "NetHack (NetHack-Android)",
+"tags": [
+"puzzle",
+"android_only"
+]
+},
+{
+"name": "New Super Mario Bros. U (nsmbu-recomp)",
+"folder": "nsmbu-recomp",
+"source": "https://github.com/nsmbu-recomp/nsmbu-recomp",
+"tags": [
+"wiiu",
+"platformer"
+]
+},
+{
+"name": "Nightmare Creatures (nightmare-creatures-recomp)",
+"folder": "nightmare-creatures-recomp",
+"source": "https://github.com/Alexbeav/nightmare-creatures-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Nightmare Creatures II (nightmare-creatures-ii-recomp)",
+"folder": "nightmare-creatures-ii-recomp",
+"source": "https://github.com/Alexbeav/nightmare-creatures-ii-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Ninja Gaiden 2 (Ninja-s-Dawn---A-Ninja-Gaiden-2-Recompilation-Project)",
+"folder": "Ninja-s-Dawn---A-Ninja-Gaiden-2-Recompilation-Project",
+"source": "https://github.com/TheSaltTrader/Ninja-s-Dawn---A-Ninja-Gaiden-2-Recompilation-Project",
+"tags": [
+"360",
+"beat them all",
+"multilingual"
+]
+},
+{
+"-name": "Ninja Gaiden Black (xrevive)",
+"folder": "xrevive",
+"source": "https://github.com/Teraflopping/xrevive",
+"tags": [
+"xbox",
+"beat them all",
+"multilingual"
+]
+},
+{
+"name": "Oddworld: Abe's Oddysee (oddworld-abe-s-oddysee-recomp)",
+"folder": "oddworld-abe-s-oddysee-recomp",
+"source": "https://github.com/Alexbeav/oddworld-abe-s-oddysee-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "osu!",
+"folder": "osu",
+"source": "https://github.com/ppy/osu",
+"tags": [
+"quality",
+"free",
+"pc",
+"rhythm",
+"multiplayer",
+"online"
+]
+},
+{
+"name": "OutRun (cannonball)",
+"folder": "cannonball",
+"source": "https://github.com/djyt/cannonball",
+"tags": [
+"arcade",
+"racing"
+]
+},
+{
+"name": "OutRun (cannonball-dx)",
+"folder": "cannonball-dx",
+"source": "https://github.com/Endprodukt/cannonball-dx",
+"tags": [
+"arcade",
+"racing"
+]
+},
+{
+"-name": "OutRun 2006: Coast 2 Coast (outrun2-decomp)",
+"folder": "outrun2-decomp",
+"source": "https://github.com/r4dius/outrun2-decomp",
+"tags": [
+"arcade",
+"racing"
+]
+},
+{
+"name": "P.T. (pt-pc)",
+"folder": "pt-pc",
+"source": "https://github.com/LoreanXavier/pt-pc",
+"tags": [
+"ps4",
+"survival horror"
+]
+},
+{
+"name": "Paper Mario (Paper-Mario-ReCut)",
+"folder": "Paper-Mario-ReCut",
+"source": "https://github.com/SMCGames/Paper-Mario-ReCut",
+"tags": [
+"n64",
+"rpg"
+]
+},
+{
+"name": "Paper Mario (PaperBoat)",
+"folder": "PaperBoat",
+"source": "https://github.com/HarbourMasters/PaperBoat",
+"tags": [
+"quality",
+"n64",
+"rpg"
+]
+},
+{
+"-name": "Parasite Eve (khasinski-parasite-eve-decomp)",
+"folder": "khasinski-parasite-eve-decomp",
+"source": "https://github.com/khasinski/parasite-eve-decomp",
+"tags": [
+"ps1",
+"rpg",
+"squaresoft"
+]
+},
+{
+"name": "Parasite Eve (parasite-eve-recomp)",
+"folder": "parasite-eve-recomp",
+"source": "https://github.com/Alexbeav/parasite-eve-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Parasite Eve 2 (Parasite-Eve-2-HD-Remaster)",
+"folder": "Parasite-Eve-2-HD-Remaster",
+"source": "https://github.com/faligame/Parasite-Eve-2-HD-Remaster",
+"tags": [
+"ps1",
+"rpg",
+"squaresoft"
+]
+},
+{
+"name": "Perfect Dark (perfect-dark-dabs-mod)",
+"folder": "perfect-dark-dabs-mod",
+"source": "https://github.com/DabDavis/perfect-dark-dabs-mod",
+"tags": [
+"n64",
+"fps",
+"multiplayer",
+"multilingual"
+]
+},
+{
+"name": "Perfect Dark (perfect_dark)",
+"folder": "perfect_dark",
+"source": "https://github.com/perfect-dark-pc-port/perfect_dark",
+"tags": [
+"n64",
+"fps",
+"multiplayer",
+"multilingual"
+]
+},
+{
+"name": "Pikmin (Open-Nectar)",
+"folder": "Open-Nectar",
+"source": "https://github.com/SSunnKing/Open-Nectar---Pikmin-Native-PC-Mobile-Port",
+"tags": [
+"gc",
+"strategy"
+]
+},
+{
+"-name": "Pikmin 2 (pikmin2)",
+"folder": "pikmin2",
+"source": "https://github.com/projectPiki/pikmin2",
+"tags": [
+"gc",
+"strategy"
+]
+},
+{
+"name": "Pilotwings 64 (pilotwings-64-recomp)",
+"folder": "pilotwings-64-recomp",
+"source": "https://github.com/danielgomesvieira2000/pilotwings-64-recomp",
+"tags": [
+"n64",
+"simulation"
+]
+},
+{
+"-name": "Pilotwings 64 (Pilotwings64Recomp)",
+"folder": "Pilotwings64Recomp",
+"source": "https://github.com/gcsmith/Pilotwings64Recomp",
+"tags": [
+"n64",
+"simulation"
+]
+},
+{
+"name": "Pokémon Gen 1 (pokemon-gen1-recomp-project)",
+"folder": "pokemon-gen1-recomp-project",
+"source": "https://github.com/bryanthaboi/pokemon-gen1-recomp-project",
+"tags": [
+"gb",
+"rpg",
+"multilingual"
+]
+},
+{
+"-name": "Pokémon Platinum (pokeplatinum)",
+"folder": "pokeplatinum",
+"source": "https://github.com/pret/pokeplatinum",
+"tags": [
+"ds",
+"rpg"
+]
+},
+{
+"name": "Pokémon Snap (Snap64Recomp)",
+"folder": "Snap64Recomp",
+"source": "https://github.com/JackandBeans/Snap64Recomp",
+"tags": [
+"n64",
+"simulation"
+]
+},
+{
+"name": "Pokémon Stadium (PokemonStadiumRecomp)",
+"folder": "PokemonStadiumRecomp",
+"source": "https://github.com/mstan/PokemonStadiumRecomp",
+"tags": [
+"n64",
+"strategy",
+"multiplayer"
+]
+},
+{
+"name": "Pokémon: Let's Go, Pikachu! and Let's Go, Eevee! (letsgo-recomp)",
+"folder": "letsgo-recomp",
+"source": "https://github.com/raulzrrs/letsgo-recomp",
+"tags": [
+"switch",
+"rpg"
+]
+},
+{
+"-name": "Prince of Persia: The Sands of Time (rePOP)",
+"folder": "rePOP",
+"source": "https://github.com/FulGerNet/rePOP",
+"tags": [
+"xbox",
+"racing"
+]
+},
+{
+"name": "Pro Pinball: Timeshock! (pro-pinball-timeshock-recomp)",
+"folder": "pro-pinball-timeshock-recomp",
+"source": "https://github.com/Alexbeav/pro-pinball-timeshock-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Project Gotham Racing 4 (PGR4-Recomp)",
+"folder": "PGR4-Recomp",
+"source": "https://github.com/beatrixzy/PGR4-Recomp",
+"tags": [
+"360",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "Quake II (quake-ii-recomp)",
+"folder": "quake-ii-recomp",
+"source": "https://github.com/Alexbeav/quake-ii-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Quake II (yquake2)",
+"folder": "yquake2",
+"source": "https://github.com/yquake2/yquake2",
+"tags": [
+"pc",
+"fps"
+]
+},
+{
+"name": "Quake II Remaster (yquake2remaster)",
+"folder": "yquake2remaster",
+"source": "https://github.com/yquake2/yquake2remaster",
+"tags": [
+"pc",
+"fps"
+]
+},
+{
+"name": "Quest 64 (Quest64-Recomp)",
+"folder": "Quest64-Recomp",
+"source": "https://github.com/Rainchus/Quest64-Recomp",
+"tags": [
+"n64",
+"rpg"
+]
+},
+{
+"name": "R-Type Delta (r-type-delta-recomp)",
+"folder": "r-type-delta-recomp",
+"source": "https://github.com/Alexbeav/r-type-delta-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "RalliSport Challenge 2 (RallisportChallenge2-decomp)",
+"folder": "RallisportChallenge2-decomp",
+"source": "https://github.com/Mortify7612/RallisportChallenge2-decomp",
+"tags": [
+"xbox",
+"racing"
+]
+},
+{
+"name": "Ratchet and Clank (rerac-launcher)",
+"folder": "rerac-launcher",
+"source": "https://github.com/re-rac/rerac-launcher",
+"tags": [
+"ps2",
+"action-adventure"
+]
+},
+{
+"name": "Rayman Origins (RaymanOriginsRecomp)",
+"tags": [
+"360",
+"platformer",
+"android_only"
+]
+},
+{
+"name": "Re-Volt (RVGL Launcher/Re-Volt)",
+"folder": "Re-Volt",
+"source": {
+"windows": "https://rvgl.org/downloads/rvgl_launcher_win64.zip",
+"linux": "https://rvgl.org/downloads/rvgl_launcher_linux.zip"
+},
+"tags": [
+"pc",
+"racing",
+"multiplayer",
+"online"
+]
+},
+{
+"name": "Resident Evil (resident-evil-pc-decomp)",
+"folder": "resident-evil-pc-decomp",
+"source": "https://github.com/ecruells/resident-evil-pc-decomp",
+"tags": [
+"ps1",
+"survival horror"
+]
+},
+{
+"-name": "Resident Evil 2 (Project-RE-Visited-RE2)",
+"folder": "Project-RE-Visited-RE2",
+"source": "https://github.com/BrazilianHobbyist/Project-RE-Visited-RE2",
+"tags": [
+"ps1",
+"survival horror"
+]
+},
+{
+"name": "Resident Evil 3: Nemesis (Project-RE-Visited-RE3)",
+"folder": "Project-RE-Visited-RE3",
+"source": "https://github.com/BrazilianHobbyist/Project-RE-Visited-RE3",
+"tags": [
+"ps1",
+"survival horror"
+]
+},
+{
+"name": "Resident Evil 3: Nemesis (resident-evil-3-recomp)",
+"folder": "resident-evil-3-recomp",
+"source": "https://github.com/Alexbeav/resident-evil-3-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"survival horror"
+]
+},
+{
+"-name": "Resident Evil 5 (??)",
+"tags": [
+"pc",
+"survival horror",
+"android_only"
+]
+},
+{
+"name": "Resident Evil Gaiden (regaiden-recomp)",
+"folder": "regaiden-recomp",
+"source": "https://github.com/sergiomanzur/regaiden-recomp",
+"tags": [
+"gbc",
+"survival horror"
+]
+},
+{
+"name": "Ridge Racer (rage-racer-pc)",
+"folder": "rage-racer-pc",
+"source": "https://github.com/khasinski/rage-racer-pc",
+"tags": [
+"ps1",
+"racing"
+]
+},
+{
+"name": "Ridge Racer 6 (RidgeRacer6-Recompilation)",
+"folder": "RidgeRacer6-Recompilation",
+"source": "https://github.com/Sirhalo23/RidgeRacer6-Recompilation",
+"tags": [
+"360",
+"racing"
+]
+},
+{
+"name": "Ridge Racer V (fukami)",
+"folder": "fukami",
+"source": "https://github.com/danisandoval/fukami",
+"tags": [
+"ps2",
+"racing"
+]
+},
+{
+"name": "Rival Schools: Evolution Disc (rival-schools-evolution-recomp)",
+"folder": "rival-schools-evolution-recomp",
+"source": "https://github.com/Alexbeav/rival-schools-evolution-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Rival Schools: United by Fate (rival-schools-recomp)",
+"folder": "rival-schools-recomp",
+"source": "https://github.com/Alexbeav/rival-schools-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Road Rash 64 (RoadRash64Recompiled)",
+"folder": "RoadRash64Recompiled",
+"source": "https://github.com/linkssy2/RoadRash64Recompiled",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Rocket: Robot on Wheels (Rocket-R)",
+"folder": "Rocket-R",
+"source": "https://github.com/ThatGuyMcd/Rocket-R",
+"tags": [
+"n64",
+"platformer"
+]
+},
+{
+"-name": "Rockstar Games Presents Table Tennis (Table-Tennis-Rockstar-PC)",
+"folder": "Table-Tennis-Rockstar-PC",
+"source": "https://github.com/davidptrssvea/Table-Tennis-Rockstar-PC",
+"tags": [
+"360",
+"sport"
+]
+},
+{
+"name": "Rollcage Stage II (rollcage-stage-ii-recomp)",
+"folder": "rollcage-stage-ii-recomp",
+"source": "https://github.com/Alexbeav/rollcage-stage-ii-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Rumble Roses XX (rumble-roses-xx-recomp)",
+"folder": "rumble-roses-xx-recomp",
+"source": "https://github.com/JesusTaylo/rumble-roses-xx-recomp",
+"tags": [
+"360",
+"fighting"
+]
+},
+{
+"name": "Rush 2: Extreme Racing USA (rush2recompiled)",
+"folder": "rush2recompiled",
+"source": "https://github.com/bryantmh/rush2recompiled",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Sega Superstars Tennis (Sega-Superstars-Tennis-ReMatch)",
+"folder": "Sega-Superstars-Tennis-ReMatch",
+"source": "https://github.com/m1ndcrap/Sega-Superstars-Tennis-ReMatch",
+"tags": [
+"360",
+"sport",
+"multiplayer"
+]
+},
+{
+"name": "Serial Experiments Lain (lain-psx-decompiled)",
+"folder": "lain-psx-decompiled",
+"source": "https://github.com/Y0oshi/lain-psx-decompiled",
+"tags": [
+"ps1",
+"visual novel"
+]
+},
+{
+"name": "Serious Sam: Next Encounter (Silly-ReEncounter)",
+"folder": "Silly-ReEncounter",
+"source": "https://github.com/takoshero96/Silly-ReEncounter",
+"tags": [
+"gc",
+"fps"
+]
+},
+{
+"name": "Sexy Parodius (SexyParoRecomp)",
+"folder": "SexyParoRecomp",
+"source": "https://github.com/NJH-1001/SexyParoRecomp",
+"tags": [
+"ps1",
+"njh-1001",
+"shmup"
+]
+},
+{
+"name": "Shadow of the Colossus 2018 (ShadowOfTheColossus-PC)",
+"folder": "ShadowOfTheColossus-PC",
+"source": "https://github.com/AjncSystem/ShadowOfTheColossus-PC",
+"tags": [
+"ps4",
+"action-adventure"
+]
+},
+{
+"name": "Silent Bomber (silent-bomber-recomp)",
+"folder": "silent-bomber-recomp",
+"source": "https://github.com/Alexbeav/silent-bomber-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Silent Hill (silent-hill-decomp)",
+"folder": "silent-hill-decomp",
+"source": "https://github.com/SlickAmogus/silent-hill-decomp",
+"tags": [
+"ps1",
+"survival horror"
+]
+},
+{
+"name": "Silent Hill: Downpour (DownpourRecomp)",
+"folder": "DownpourRecomp",
+"source": "https://github.com/LittleBitUA/DownpourRecomp",
+"tags": [
+"360",
+"survival horror"
+]
+},
+{
+"name": "Skate 2 (skate2-recompile-pc)",
+"folder": "skate2-recompile-pc",
+"source": "https://github.com/christianortel/skate2-recompile-pc",
+"tags": [
+"360",
+"sport",
+"multilingual"
+]
+},
+{
+"name": "Skate 3 (Skate3-Mobile)",
+"tags": [
+"360",
+"sport",
+"multilingual",
+"android_only"
+]
+},
+{
+"name": "Skate 3 (skate3recomp)",
+"folder": "skate3recomp",
+"source": "https://github.com/mchughalex/skate3recomp",
+"tags": [
+"360",
+"sport",
+"multilingual"
+]
+},
+{
+"name": "Slay the Spire 2 (StS2-Launcher)",
+"tags": [
+"strategy",
+"android_only"
+]
+},
+{
+"name": "Sly Cooper (ProjectCane)",
+"folder": "ProjectCane",
+"source": "https://github.com/theclub654/ProjectCane",
+"tags": [
+"ps2",
+"action-adventure",
+"platformer"
+]
+},
+{
+"name": "Snowboard Kids 2 (snowboardkids2-recomp)",
+"folder": "snowboardkids2-recomp",
+"source": "https://github.com/cdlewis/snowboardkids2-recomp",
+"tags": [
+"quality",
+"sk2",
+"n64",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "Sonic 3 & Knuckles (sonic3air)",
+"folder": "sonic3air",
+"source": "https://github.com/Eukaryot/sonic3air",
+"tags": [
+"quality",
+"smd",
+"genesis",
+"platformer"
+]
+},
+{
+"-name": "Sonic Advance 2 (sa2)",
+"folder": "sa2",
+"source": "https://github.com/SAT-R/sa2",
+"tags": [
+"gba",
+"platformer",
+"multilingual"
+]
+},
+{
+"name": "Sonic Adventure (SARecomp)",
+"folder": "SARecomp",
+"source": "https://github.com/sonicfreak1337/SARecomp",
+"tags": [
+"dreamcast",
+"platformer"
+]
+},
+{
+"name": "Sonic Free Riders (Free-Riders-Recompiled)",
+"folder": "Free-Riders-Recompiled",
+"source": "https://github.com/YuutaTsubasa/Free-Riders-Recompiled",
+"tags": [
+"360",
+"racing",
+"multiplayer"
+]
+},
+{
+"-name": "Sonic Heroes",
+"folder": "",
+"source": "",
+"tags": [
+"gc",
+"platformer"
+]
+},
+{
+"name": "Sonic R (sonic-r)",
+"folder": "sonic-r",
+"source": "https://github.com/jnmartin84/sonic-r",
+"tags": [
+"saturn",
+"racing"
+]
+},
+{
+"name": "Sonic Robo Blast 2 (srb2)",
+"folder": "srb2",
+"source": "https://github.com/stjr/srb2",
+"tags": [
+"pc",
+"platformer"
+]
+},
+{
+"name": "Sonic Robo Blast 2 Kart (Kart-Public)",
+"folder": "Kart-Public",
+"source": "https://github.com/STJr/Kart-Public",
+"tags": [
+"quality",
+"pc",
+"racing",
+"multiplayer",
+"online"
+]
+},
+{
+"name": "Sonic Unleashed (UnleashedRecomp)",
+"folder": "UnleashedRecomp",
+"source": "https://github.com/hedge-dev/UnleashedRecomp",
+"tags": [
+"quality",
+"360",
+"platformer"
+]
+},
+{
+"-name": "SoulCalibur II (RingOut)",
+"folder": "RingOut",
+"source": "https://github.com/jackpoison-prog/RingOut/",
+"tags": [
+"gc",
+"fighting",
+"soul edge"
+]
+},
+{
+"name": "Space Channel 5 (Space-Channel-5)",
+"folder": "Space-Channel-5",
+"source": "https://github.com/ZoomiesZaggy/Space-Channel-5/",
+"tags": [
+"dc",
+"rhythm"
+]
+},
+{
+"-name": "Spider-Man (spider-man-recomp)",
+"folder": "spider-man-recomp",
+"source": "https://github.com/Alexbeav/spider-man-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"action-adventure"
+]
+},
+{
+"name": "Spider-Man / Spider-Man 2 (OpenSpideyPS1)",
+"folder": "OpenSpideyPS1",
+"source": "https://github.com/GTTeancum/OpenSpideyPS1",
+"tags": [
+"ps1",
+"action-adventure"
+]
+},
+{
+"name": "Spider-Man 2: Enter Electro (spider-man-2-enter-electro-recomp)",
+"folder": "spider-man-2-enter-electro-recomp",
+"source": "https://github.com/Alexbeav/spider-man-2-enter-electro-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Spider-Man: Edge of Time (EdgeOfTimeRecomp)",
+"folder": "EdgeOfTimeRecomp",
+"source": "https://github.com/goliathret/EdgeOfTimeRecomp",
+"tags": [
+"360",
+"action-adventure"
+]
+},
+{
+"-name": "Spyro the Dragon (openpete)",
+"folder": "openpete",
+"source": "https://openpete.com/",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Spyro the Dragon (spyro-the-dragon-recomp)",
+"folder": "spyro-the-dragon-recomp",
+"source": "https://github.com/Alexbeav/spyro-the-dragon-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"platformer"
+]
+},
+{
+"-name": "SSX 3 (ssx3-decomp)",
+"folder": "ssx3-decomp",
+"source": "https://github.com/andersfischernielsen/ssx3-decomp",
+"tags": [
+"ps2",
+"sport"
+]
+},
+{
+"name": "Star Fox (starfox-enhanced)",
+"folder": "starfox-enhanced",
+"source": "https://github.com/kandowontu/starfox-enhanced",
+"tags": [
+"quality",
+"snes",
+"shooter"
+]
+},
+{
+"name": "Star Fox 64 (Starfox64Recomp)",
+"folder": "Starfox64Recomp",
+"source": "https://gitlab.com/sonicdcer/Starfox64Recomp",
+"tags": [
+"lylat wars",
+"n64",
+"shooter"
+]
+},
+{
+"name": "Star Fox 64 (starship)",
+"folder": "starship",
+"source": "https://github.com/harbourmasters/starship",
+"tags": [
+"quality",
+"lylat wars",
+"n64",
+"shooter"
+]
+},
+{
+"name": "Star Fox Adventures (foxhollow)",
+"folder": "foxhollow",
+"source": "https://github.com/JackPriceBurns/foxhollow",
+"tags": [
+"gc",
+"action-adventure"
+]
+},
+{
+"name": "Star Wars Episode I: The Phantom Menace (star-wars-episode-i-the-phantom-menace-recomp)",
+"folder": "star-wars-episode-i-the-phantom-menace-recomp",
+"source": "https://github.com/Alexbeav/star-wars-episode-i-the-phantom-menace-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Star Wars: Battlefront 1 & 2 (openbf)",
+"folder": "openbf",
+"source": "https://github.com/sprucey149/openbf",
+"tags": [
+"ps2",
+"action"
+]
+},
+{
+"name": "Star Wars: Shadows of the Empire (SotE-Recomp)",
+"folder": "SotE-Recomp",
+"source": "https://github.com/GTTeancum/SotE-Recomp",
+"tags": [
+"n64",
+"action-adventure"
+]
+},
+{
+"name": "Star Wars: TIE Fighter (OpenTIE)",
+"folder": "OpenTIE",
+"source": "https://github.com/elyosh/OpenTIE",
+"tags": [
+"pc",
+"simulation"
+]
+},
+{
+"name": "Star Wars: X-Wing (OpenXW)",
+"folder": "OpenXW",
+"source": "https://github.com/elyosh/OpenXW",
+"tags": [
+"pc",
+"simulation"
+]
+},
+{
+"-name": "StarCraft 64 (StarCraft64-recomp)",
+"folder": "StarCraft64-recomp",
+"source": "https://github.com/n0madic/StarCraft64-recomp",
+"tags": [
+"n64",
+"strategy"
+]
+},
+{
+"name": "Stardew Valley (Cinderbox)",
+"tags": [
+"strategy",
+"android_only"
+]
+},
+{
+"name": "StepMania",
+"folder": "stepmania",
+"source": "https://github.com/stepmania/stepmania",
+"tags": [
+"quality",
+"free",
+"ddr",
+"pc",
+"rhythm",
+"multiplayer"
+]
+},
+{
+"name": "Street Fighter Alpha 3 (Street-Fighter-Alpha-3-Recomp)",
+"folder": "Street-Fighter-Alpha-3-Recomp",
+"source": "https://github.com/TechnicallyComputers/Street-Fighter-Alpha-3-Recomp",
+"tags": [
+"sf",
+"ps1",
+"fighting",
+"multiplayer"
+]
+},
+{
+"name": "Street Fighter EX 2 Plus (Street-Fighter-EX2-Plus-Recompiled)",
+"folder": "Street-Fighter-EX2-Plus-Recompiled",
+"source": "https://github.com/strider973/Street-Fighter-EX2-Plus-Recompiled",
+"tags": [
+"sf",
+"ps1",
+"fighting",
+"multiplayer"
+]
+},
+{
+"name": "Street Fighter EX Plus Alpha (plusalpha-recomp)",
+"folder": "plusalpha-recomp",
+"source": "https://github.com/guimaraf/plusalpha-recomp",
+"tags": [
+"sf",
+"ps1",
+"fighting",
+"multiplayer"
+]
+},
+{
+"name": "Street Fighter III: 3rd Strike (3sx)",
+"folder": "3sx",
+"source": "https://github.com/crowded-street/3sx",
+"tags": [
+"quality",
+"sf",
+"ps2",
+"fighting",
+"multiplayer"
+]
+},
+{
+"name": "Strider 2 (STRIDER-2-Recompiled)",
+"folder": "STRIDER-2-Recompiled",
+"source": "https://github.com/strider973/STRIDER-2-Recompiled",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Suikoden (suikoden-recomp)",
+"folder": "suikoden-recomp",
+"source": "https://github.com/Alexbeav/suikoden-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Suikoden II (suikoden-ii-recomp)",
+"folder": "suikoden-ii-recomp",
+"source": "https://github.com/Alexbeav/suikoden-ii-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Super Kirby Clash (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"switch",
+"platformer"
+]
+},
+{
+"name": "Super Mario 64 (Ghostship)",
+"folder": "Ghostship",
+"source": "https://github.com/HarbourMasters/Ghostship",
+"tags": [
+"quality",
+"n64",
+"platformer"
+]
+},
+{
+"name": "Super Mario 64 (sm64coopdx)",
+"folder": "sm64coopdx",
+"source": "https://github.com/coop-deluxe/sm64coopdx",
+"tags": [
+"quality",
+"online",
+"n64",
+"platformer",
+"co-op"
+]
+},
+{
+"-name": "Super Mario 64 DS (sm64ds-decomp)",
+"folder": "sm64ds-decomp",
+"source": "https://github.com/tangosdev/sm64ds-decomp",
+"tags": [
+"ds",
+"platformer"
+]
+},
+{
+"name": "Super Mario Bros. (Super-Mario-Bros.-Remastered-Public)",
+"folder": "Super-Mario-Bros.-Remastered-Public",
+"source": "https://github.com/JHDev2006/Super-Mario-Bros.-Remastered-Public",
+"tags": [
+"quality",
+"smb",
+"nes",
+"platformer"
+]
+},
+{
+"name": "Super Mario Bros. X (thextech)",
+"tags": [
+"platformer",
+"android_only"
+]
+},
+{
+"-name": "Super Mario Galaxy (ace-combat-3-electrosphere-usa-recomp)",
+"folder": "??",
+"source": "??",
+"tags": [
+"wii",
+"platformer"
+]
+},
+{
+"-name": "Super Mario Odyssey (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"switch",
+"platformer"
+]
+},
+{
+"name": "Super Mario RPG: Legend of the Seven Stars (SuperMarioRPGRecomp)",
+"folder": "SuperMarioRPGRecomp",
+"source": "https://github.com/mstan/SuperMarioRPGRecomp",
+"tags": [
+"snes",
+"rpg"
+]
+},
+{
+"name": "Super Mario Strikers (strikers)",
+"folder": "strikers",
+"source": "https://github.com/new-coke/strikers",
+"tags": [
+"gc",
+"mario smash football",
+"sport",
+"multiplayer"
+]
+},
+{
+"name": "Super Mario Sunshine (sms-pc-port)",
+"folder": "sms-pc-port",
+"source": "https://github.com/TekRantGaming/sms-pc-port",
+"tags": [
+"gc",
+"platformer"
+]
+},
+{
+"name": "Super Mario World (smw)",
+"folder": "smw",
+"source": "https://github.com/snesrev/smw",
+"tags": [
+"snes",
+"platformer"
+]
+},
+{
+"name": "Super Metroid (Super-Metroid-Launcher)",
+"folder": "Super-Metroid-Launcher",
+"source": "https://github.com/RadzPrower/Super-Metroid-Launcher",
+"tags": [
+"snes",
+"metroidvania",
+"multilingual"
+]
+},
+{
+"-name": "Super Paper Mario (??)",
+"folder": "",
+"source": "",
+"tags": [
+"wii",
+"rpg"
+]
+},
+{
+"name": "Super Robot Taisen 64 (srw64-recomp)",
+"folder": "srw64-recomp",
+"source": "https://github.com/dyzz/srw64-recomp",
+"tags": [
+"n64",
+"strategy"
+]
+},
+{
+"name": "Super Smash Bros. (BattleShip)",
+"folder": "BattleShip",
+"source": "https://github.com/JRickey/BattleShip",
+"tags": [
+"n64",
+"fighting",
+"multiplayer",
+"multilingual"
+]
+},
+{
+"name": "Super Smash Bros. Melee (melee-pc)",
+"folder": "melee-pc",
+"source": "https://github.com/999sian/melee-pc",
+"tags": [
+"online",
+"gc",
+"fighting",
+"multiplayer"
+]
+},
+{
+"-name": "Super Smash Bros. Ultimate (WindowSmash)",
+"folder": "WindowSmash",
+"source": "https://github.com/SNO2207/WindowSmash",
+"tags": [
+"switch",
+"fighting",
+"multiplayer",
+"online"
+]
+},
+{
+"name": "Syphon Filter (SF-pc-port)",
+"folder": "SF-pc-port",
+"source": "https://github.com/Madxbio97/SF-pc-port",
+"tags": [
+"ps1",
+"shooter"
+]
+},
+{
+"name": "Syphon Filter 3 (syphon-filter-3-recomp)",
+"folder": "syphon-filter-3-recomp",
+"source": "https://github.com/Alexbeav/syphon-filter-3-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Tail Concerto (tail-concerto-recomp)",
+"folder": "tail-concerto-recomp",
+"source": "https://github.com/Alexbeav/tail-concerto-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Team Buddies (team-buddies-recomp)",
+"folder": "team-buddies-recomp",
+"source": "https://github.com/Alexbeav/team-buddies-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Tekken 3 (Tekken3Recomp)",
+"folder": "Tekken3Recomp",
+"source": "https://github.com/fabioap-cpu/Tekken3Recomp",
+"tags": [
+"ps1",
+"fighting",
+"multiplayer"
+]
+},
+{
+"name": "Tekken Tag Tournament 2 (tekken-tag-tournament-2-pc)",
+"folder": "tekken-tag-tournament-2-pc",
+"source": "https://github.com/shihabal3amri/tekken-tag-tournament-2-pc",
+"tags": [
+"360",
+"fighting"
+]
+},
+{
+"name": "Tenchu: Stealth Assassins (tenchu-stealth-assassins-recomp)",
+"folder": "tenchu-stealth-assassins-recomp",
+"source": "https://github.com/Alexbeav/tenchu-stealth-assassins-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Terranigma (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"snes",
+"rpg"
+]
+},
+{
+"name": "The Darkness (The-Darkness-Recomp)",
+"folder": "The-Darkness-Recomp",
+"source": "https://github.com/portingpete/The-Darkness-Recomp",
+"tags": [
+"360",
+"survival horror",
+"multilingual"
+]
+},
+{
+"name": "The Elder Scrolls II: Daggerfall (daggerfall-unity-android)",
+"tags": [
+"fps",
+"android_only"
+]
+},
+{
+"name": "The Elder Scrolls III: Morrowind (openmw)",
+"folder": "openmw",
+"source": "https://github.com/OpenMW/openmw",
+"tags": [
+"pc",
+"rpg"
+]
+},
+{
+"name": "The Fifth Element (the-fifth-element-recomp)",
+"folder": "the-fifth-element-recomp",
+"source": "https://github.com/Alexbeav/the-fifth-element-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "The Last Guardian (TLG-Port)",
+"folder": "TLG-Port",
+"source": "https://github.com/SulphurS16/TLG-Port",
+"tags": [
+"ps4",
+"action-adventure"
+]
+},
+{
+"-name": "The Legend of Dragoon (Severed-Chains)",
+"folder": "Severed-Chains",
+"source": "https://github.com/Legend-of-Dragoon-Modding/Severed-Chains",
+"tags": [
+"ps1",
+"rpg"
+]
+},
+{
+"name": "The Legend of Zelda: A Link to the Past (zelda3-PL)",
+"folder": "zelda3-PL",
+"source": "https://raw.githubusercontent.com/Nyaldee/Ports-Launcher/main/extra/zelda3-PL/zelda3-PL.zip",
+"tags": [
+"nyaldee",
+"snes",
+"action-adventure"
+]
+},
+{
+"-name": "The Legend of Zelda: Breath of the Wild (SavageWindRecomp)",
+"folder": "SavageWindRecomp",
+"source": "https://github.com/Revivedx/SavageWindRecomp",
+"tags": [
+"wiiu",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Legend of Zelda: Link's Awakening (LASRecomp)",
+"folder": "LASRecomp",
+"source": "https://github.com/peiikai/LASRecomp",
+"tags": [
+"switch",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Legend of Zelda: Link's Awakening DX (LADXHD)",
+"folder": "LADXHD Updated",
+"source": "https://gitlab.com/bighead.0/ladxhd_updated",
+"executable": "Link's Awakening DX HD.exe",
+"tags": [
+"quality",
+"gb",
+"action-adventure",
+"multilingual",
+"android"
+]
+},
+{
+"name": "The Legend of Zelda: Majora's Mask (2ship2harkinian)",
+"folder": "2ship2harkinian",
+"source": "https://github.com/HarbourMasters/2ship2harkinian",
+"tags": [
+"quality",
+"n64",
+"action-adventure"
+]
+},
+{
+"name": "The Legend of Zelda: Majora's Mask (Zelda64Recomp)",
+"folder": "Zelda64Recomp",
+"source": "https://github.com/Zelda64Recomp/Zelda64Recomp",
+"tags": [
+"n64",
+"action-adventure"
+]
+},
+{
+"name": "The Legend of Zelda: Majora's Mask 3D (MM3D-PC)",
+"folder": "MM3D-PC",
+"source": "https://github.com/Volpe34/MM3D-PC",
+"tags": [
+"3ds",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Legend of Zelda: Ocarina of Time (Shipwright)",
+"folder": "Shipwright",
+"source": "https://github.com/HarbourMasters/Shipwright",
+"tags": [
+"quality",
+"online",
+"n64",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Legend of Zelda: Ocarina of Time 3D (TriAevum)",
+"folder": "TriAevum",
+"source": "https://github.com/coccofresco/TriAevum/",
+"tags": [
+"3ds",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Legend of Zelda: Oracle (oracles-decomp)",
+"folder": "oracles-decomp",
+"source": "https://github.com/kirby-letsgo/oracles-decomp",
+"tags": [
+"gb",
+"rpg"
+]
+},
+{
+"-name": "The Legend of Zelda: Skyward Sword HD (SkyRecomp)",
+"folder": "SkyRecomp",
+"source": "https://github.com/Apolinario-coder/SkyRecomp",
+"tags": [
+"wiiu",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Legend of Zelda: The Minish Cap (tmc)",
+"folder": "tmc",
+"source": "https://github.com/zeldaret/tmc",
+"tags": [
+"gba",
+"action-adventure"
+]
+},
+{
+"name": "The Legend of Zelda: The Wind Waker HD (WindWakerHD-Android-Plus)",
+"tags": [
+"gc",
+"action-adventure",
+"multilingual",
+"android_only"
+]
+},
+{
+"name": "The Legend of Zelda: The Wind Waker HD (ZeldaWWHDRecomp)",
+"folder": "ZeldaWWHDRecomp",
+"source": "https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp",
+"tags": [
+"wiiu",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Legend of Zelda: Twilight Princess (dusklight)",
+"folder": "dusklight",
+"source": "https://github.com/TwilitRealm/dusklight",
+"tags": [
+"quality",
+"gc",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "The Lost World: Jurassic Park Special Edition (the-lost-world-jurassic-park-special-edition-recomp)",
+"folder": "the-lost-world-jurassic-park-special-edition-recomp",
+"source": "https://github.com/Alexbeav/the-lost-world-jurassic-park-special-edition-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "The Misadventures of Tron Bonne (misadventures-of-tron-bonne-recomp)",
+"folder": "misadventures-of-tron-bonne-recomp",
+"source": "https://github.com/Alexbeav/misadventures-of-tron-bonne-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "The Mummy (the-mummy-recomp)",
+"folder": "the-mummy-recomp",
+"source": "https://github.com/Alexbeav/the-mummy-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "The Order: 1886 (The-Order-1886_pc)",
+"folder": "The-Order-1886_pc",
+"source": "https://github.com/JulioCacko/The-Order-1886_pc",
+"tags": [
+"ps4",
+"action-adventure"
+]
+},
+{
+"name": "The Simpsons Game (TheSimpsonsGameRecomp)",
+"folder": "TheSimpsonsGameRecomp",
+"source": "https://github.com/YesterMester/TheSimpsonsGameRecomp",
+"tags": [
+"360",
+"action-adventure"
+]
+},
+{
+"name": "The Simpsons: Hit and Run (The-Simpsons-Hit-and-Run-Android)",
+"tags": [
+"gta-like",
+"android_only"
+]
+},
+{
+"-name": "The SpongeBob SquarePants Movie (??)",
+"folder": "",
+"source": "",
+"tags": [
+"ps2",
+"platformer"
+]
+},
+{
+"name": "Threads of Fate (threads-of-fate-recomp)",
+"folder": "threads-of-fate-recomp",
+"source": "https://github.com/Alexbeav/threads-of-fate-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Tiny Toon Adventures: Buster Busts Loose! (BusterBustsLoose)",
+"folder": "BusterBustsLoose",
+"source": "https://github.com/Darhkfox/BusterBustsLoose",
+"tags": [
+"snes",
+"platformer",
+"emucomp"
+]
+},
+{
+"name": "Tiny Toon Adventures: Buster's Hidden Treasure (busters-hidden-treasure-pc)",
+"folder": "busters-hidden-treasure-pc",
+"source": "https://github.com/Darhkfox/busters-hidden-treasure-pc",
+"tags": [
+"smd",
+"platformer",
+"emucomp"
+]
+},
+{
+"name": "Tokyo Highway Battle (tokyo-highway-battle-recomp)",
+"folder": "tokyo-highway-battle-recomp",
+"source": "https://github.com/Alexbeav/tokyo-highway-battle-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Tomba (tombarecomp)",
+"folder": "tombarecomp",
+"source": "https://github.com/mstan/tombarecomp",
+"tags": [
+"ps1",
+"platformer"
+]
+},
+{
+"name": "Tony Hawk's Pro Skater (tony-hawk-s-pro-skater-recomp)",
+"folder": "tony-hawk-s-pro-skater-recomp",
+"source": "https://github.com/Alexbeav/tony-hawk-s-pro-skater-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Tony Hawk's Pro Skater 2 (tony-hawk-s-pro-skater-2-recomp)",
+"folder": "tony-hawk-s-pro-skater-2-recomp",
+"source": "https://github.com/Alexbeav/tony-hawk-s-pro-skater-2-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Tony Hawk's Pro Skater 3 (tony-hawk-s-pro-skater-3-recomp)",
+"folder": "tony-hawk-s-pro-skater-3-recomp",
+"source": "https://github.com/Alexbeav/tony-hawk-s-pro-skater-3-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"name": "Tony Hawk's Pro Skater 4 (tony-hawk-s-pro-skater-4-recomp)",
+"folder": "tony-hawk-s-pro-skater-4-recomp",
+"source": "https://github.com/Alexbeav/tony-hawk-s-pro-skater-4-recomp",
+"tags": [
+"ps1",
+"alexbeav",
+"multiplayer"
+]
+},
+{
+"-name": "Tony Hawk's Project 8 (Project8Recomp)",
+"folder": "Project8Recomp",
+"source": "https://github.com/theokyr/Project8Recomp",
+"tags": [
+"360",
+"sport",
+"multilingual"
+]
+},
+{
+"-name": "Toy Story 2: Buzz Lightyear to the Rescue! (SpaceRanger)",
+"folder": "SpaceRanger",
+"source": "https://github.com/Capridog/SpaceRanger",
+"tags": [
+"n64",
+"platformer",
+"pixar"
+]
+},
+{
+"-name": "Ultra Street Fighter IV (UltraStreetFighterIVRecomp)",
+"folder": "UltraStreetFighterIVRecomp",
+"source": "https://github.com/BelmanteGu/UltraStreetFighterIVRecomp",
+"tags": [
+"360",
+"fighting"
+]
+},
+{
+"name": "Uncharted: The Nathan Drake Collection (uncharted_pc)",
+"folder": "uncharted_pc",
+"source": "https://github.com/Supermedo/uncharted_pc",
+"tags": [
+"ps4",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "Valkyrie Profile (valkyrie-profile-recomp)",
+"folder": "valkyrie-profile-recomp",
+"source": "https://github.com/Alexbeav/valkyrie-profile-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Valkyrie Profile (ValkyrieRecomp)",
+"folder": "ValkyrieRecomp",
+"source": "https://github.com/Ed1z19/ValkyrieRecomp",
+"tags": [
+"ps1",
+"rpg"
+]
+},
+{
+"name": "Vampire Hunter D (vampire-hunter-d-recomp)",
+"folder": "vampire-hunter-d-recomp",
+"source": "https://github.com/Alexbeav/vampire-hunter-d-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Vandal Hearts (VandalHearts-PcPort)",
+"folder": "VandalHearts-PcPort",
+"source": "https://github.com/HalmyLyseas/VandalHearts-PcPort",
+"tags": [
+"ps1",
+"rpg"
+]
+},
+{
+"name": "Vib-Ribbon (vib-ribbon-recomp)",
+"folder": "vib-ribbon-recomp",
+"source": "https://github.com/Alexbeav/vib-ribbon-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Vigilante 8 (vigilante-8-recomp)",
+"folder": "vigilante-8-recomp",
+"source": "https://github.com/Alexbeav/vigilante-8-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Virtua Racing (Virtua-Racing---XBOXONE-Windows)",
+"folder": "Virtua-Racing---XBOXONE-Windows",
+"source": "https://github.com/wanszai/Virtua-Racing---XBOXONE-Windows",
+"tags": [
+"xone",
+"vr",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "Viva Piñata: Trouble in Paradise (TiP-Recomp)",
+"folder": "TiP-Recomp",
+"source": "https://github.com/SolarCookies/TiP-Recomp",
+"tags": [
+"360",
+"simulation",
+"multilingual"
+]
+},
+{
+"-name": "Wario Land 4 (warioland4)",
+"folder": "warioland4",
+"source": "https://github.com/BioRhythmicStudios/warioland4",
+"tags": [
+"gba",
+"platformer"
+]
+},
+{
+"name": "WarioWare: Twisted! (WarioWareTwistedRecomp)",
+"folder": "WarioWareTwistedRecomp",
+"source": "https://github.com/mstan/WarioWareTwistedRecomp",
+"tags": [
+"gba",
+"party"
+]
+},
+{
+"name": "Wave Race 64 (RaceWave46)",
+"folder": "RaceWave46",
+"source": "https://github.com/DomazinUS/RaceWave46",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Wave Race 64 (wave-race-64-recomp)",
+"folder": "wave-race-64-recomp",
+"source": "https://github.com/elliotttate/wave-race-64-recomp",
+"tags": [
+"n64",
+"racing"
+]
+},
+{
+"name": "Wild Arms (wild-arms-recomp)",
+"folder": "wild-arms-recomp",
+"source": "https://github.com/Alexbeav/wild-arms-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "Wing Commander (wc1-re)",
+"folder": "wc1-re",
+"source": "https://github.com/neuromancer/wc1-re",
+"tags": [
+"msdos",
+"simulation"
+]
+},
+{
+"name": "WipeOut (wipeout-phantom-edition)",
+"folder": "wipeout-phantom-edition",
+"source": "https://github.com/wipeout-phantom-edition/wipeout-phantom-edition",
+"tags": [
+"ps1",
+"racing",
+"multiplayer"
+]
+},
+{
+"name": "WipEout (wipeout-recomp)",
+"folder": "wipeout-recomp",
+"source": "https://github.com/Alexbeav/wipeout-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "wipEout 2097 (Wipeout2K97XL)",
+"folder": "Wipeout2K97XL",
+"source": "https://github.com/NJH-1001/Wipeout2K97XL",
+"tags": [
+"ps1",
+"njh-1001",
+"racing"
+]
+},
+{
+"name": "Wipeout Pure (pure-recomp)",
+"folder": "pure-recomp",
+"source": "https://github.com/erreib/pure-recomp",
+"tags": [
+"psp",
+"racing"
+]
+},
+{
+"-name": "Wipeout XL (wipeout-xl-recomp)",
+"folder": "wipeout-xl-recomp",
+"source": "https://github.com/Alexbeav/wipeout-xl-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"-name": "X-Men: Destiny (xmd-recompiled)",
+"folder": "xmd-recompiled",
+"source": "https://github.com/florinp93/xmd-recompiled",
+"tags": [
+"360",
+"action-adventure",
+"multilingual"
+]
+},
+{
+"name": "X-Men: Mutant Academy 2 (xmen-mutant-academy-2-pc)",
+"folder": "xmen-mutant-academy-2-pc",
+"source": "https://github.com/GTTeancum/xmen-mutant-academy-2-pc",
+"tags": [
+"ps1",
+"fighting"
+]
+},
+{
+"name": "Xena: Warrior Princess (xena-warrior-princess-recomp)",
+"folder": "xena-warrior-princess-recomp",
+"source": "https://github.com/Alexbeav/xena-warrior-princess-recomp",
+"tags": [
+"ps1",
+"alexbeav"
+]
+},
+{
+"name": "Xonotic",
+"folder": "xonotic",
+"source": "https://dl.xonotic.org/xonotic-0.8.6.zip",
+"tags": [
+"quality",
+"free",
+"pc",
+"fps",
+"multiplayer",
+"online"
+]
+},
+{
+"name": "Yoshi's Story (dinotale)",
+"folder": "dinotale",
+"source": "https://github.com/wootbeer/dinotale",
+"tags": [
+"n64",
+"platformer"
+]
+},
+{
+"name": "Yu-Gi-Oh! Forbidden Memories (YuGiOhForbiddenMemoriesRecomp)",
+"folder": "YuGiOhForbiddenMemoriesRecomp",
+"source": "https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp",
+"tags": [
+"ps1",
+"tcg",
+"rpg"
+]
+},
+{
+"-name": "Zelda II: The Adventure of Link (??)",
+"folder": "??",
+"source": "??",
+"tags": [
+"nes",
+"rpg"
+]
+},
+{
+"-name": "Zoids Legacy (ZoidsLegacyDecomp)",
+"folder": "ZoidsLegacyDecomp",
+"source": "https://github.com/jmacato/ZoidsLegacyDecomp",
+"tags": [
+"gba",
+"rpg"
+]
+},
+{
+"name": "Zombies Ate My Neighbors (zombies-ate-my-neighbors-pc-port)",
+"folder": "zombies-ate-my-neighbors-pc-port",
+"source": "https://github.com/moshferatu/zombies-ate-my-neighbors-pc-port",
+"tags": [
+"snes",
+"action-adventure"
+]
+},
+{
+"-name": "ZZemplate",
+"folder": "FolderNameUnderLibrary",
+"source": "https://github.com/owner/repo -- or https://gitlab.com/owner/repo, or a direct download URL (DirectUrl, no update tracking), or {\"windows\": \"...\", \"linux\": \"...\"} for per-platform, or omit \"source\" entirely for a Local/manually-managed port",
+"executable": "optional -- relative path launched by Play, or {\"windows\": \"...\", \"linux\": \"...\"}; omit entirely to auto-detect the only .exe in the folder (or ask if several)",
+"tags": [
+"platform-tag (pc/n64/ps1/ps2/gc/360/etc)",
+"genre-tag"
+]
+}
+]
+}

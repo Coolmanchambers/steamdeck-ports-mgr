@@ -76,8 +76,9 @@ pub enum Block {
     /// The old folder holds the home folder, the app's folder, the ports folder or a scan folder.
     Protected(PathBuf, &'static str),
     NotEnoughSpace { need: u64, free: u64 },
-    /// Another folder in the same import already goes to this destination (two folders for one port).
-    SameDestination(PathBuf),
+    /// Another folder in the same import (`winner`) already goes to this destination (`to`), so this one
+    /// (`from`) is left out: two folders for one port.
+    SameDestination { from: PathBuf, winner: PathBuf, to: PathBuf },
 }
 
 impl Block {
@@ -89,7 +90,9 @@ impl Block {
             Block::Nested => "the old folder and the ports folder contain each other".to_string(),
             Block::Link(target) => format!("this is a link to {}; import the real folder instead", short_path(target, home)),
             Block::Protected(path, what) => format!("{} holds {what}, so it is not imported", short_path(path, home)),
-            Block::SameDestination(p) => format!("another folder in this import already goes to {}", short_path(p, home)),
+            Block::SameDestination { from, winner, to } => {
+                format!("{} is left out: {} already goes to {}", short_path(from, home), short_path(winner, home), short_path(to, home))
+            }
             Block::NotEnoughSpace { need, free } => {
                 format!("not enough free space: needs {} plus {} spare, {} free", human_bytes(*need), human_bytes(SPACE_MARGIN), human_bytes(*free))
             }
@@ -203,17 +206,20 @@ pub fn plan_all(requests: &[MoveRequest], free: Option<u64>, steam_write: SteamW
 
 pub fn plan_all_with(requests: &[MoveRequest], free: Option<u64>, steam_write: SteamWrite, guards: &PlanGuards) -> Vec<PortPlan> {
     let mut left = free;
-    let mut taken: Vec<PathBuf> = Vec::new();
+    // (destination, the folder going there)
+    let mut taken: Vec<(PathBuf, PathBuf)> = Vec::new();
     requests
         .iter()
         .map(|r| {
             let mut plan = plan_port_with(r, left, steam_write, guards);
-            if plan.block.is_none() && taken.contains(&r.to) {
-                plan.block = Some(Block::SameDestination(r.to.clone()));
+            if plan.block.is_none() {
+                if let Some((_, winner)) = taken.iter().find(|(to, _)| *to == r.to) {
+                    plan.block = Some(Block::SameDestination { from: r.from.clone(), winner: winner.clone(), to: r.to.clone() });
+                }
             }
             if plan.block.is_none() {
                 left = left.map(|l| l.saturating_sub(r.size.bytes));
-                taken.push(r.to.clone());
+                taken.push((r.to.clone(), r.from.clone()));
             }
             plan
         })
@@ -443,8 +449,8 @@ mod tests {
         let other = MoveRequest { from: h.home.join("Games/dusk-old"), ..soh.clone() };
         let plans = plan_all(&[soh.clone(), other], None, SteamWrite::Now);
         assert!(plans[0].block.is_none());
-        assert_eq!(plans[1].block, Some(Block::SameDestination(soh.to.clone())));
-        assert!(plans[1].block.as_ref().unwrap().text(&h.home).starts_with("another folder in this import already goes to ~/DeckPorts/Library/SoH"));
+        assert_eq!(plans[1].block, Some(Block::SameDestination { from: h.home.join("Games/dusk-old"), winner: soh.from.clone(), to: soh.to.clone() }));
+        assert_eq!(plans[1].block.as_ref().unwrap().text(&h.home), "~/Games/dusk-old is left out: ~/Applications/SoH already goes to ~/DeckPorts/Library/SoH");
     }
 
     #[test]

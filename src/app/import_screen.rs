@@ -518,9 +518,9 @@ fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, le
                 let shortcuts = read_shortcuts(&work_home, &settings);
                 // The Deck-ready list adds download names and projects the catalog lacks; fetched once if
                 // it was never saved (a failure only means matching by the catalog alone).
-                let index = saved_index.or_else(|| {
-                    ctl.set_progress("Getting the Deck-ready list...".into());
-                    crate::fork::deck_ready::sync::refresh(&cache_dir, chrono::Utc::now(), crate::fork::deck_ready::sync::fetch_from_github).index
+                let index = saved_index.or_else(|| fetch_deck_ready(&cache_dir, ctl));
+                let deck_ready_note = index.is_none().then(|| {
+                    "The Deck-ready list couldn't be loaded, so ports only on that list (like Severed Chains) aren't recognised. Connect to the internet and Scan again.".to_string()
                 });
                 let t = targets::build(&catalog, index.as_ref(), &work_ports);
                 let input = ScanInput {
@@ -533,6 +533,7 @@ fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, le
                     hints: t.hints,
                     new_entries: t.new_entries,
                     choices,
+                    deck_ready_note,
                 };
                 run_scan(&input, &|| ctl.cancelled(), &|t| ctl.set_progress(t))
             }),
@@ -544,17 +545,38 @@ fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders, le
     );
 }
 
+/// Fetches the Deck-ready list once (it was never saved), waiting at most about 10 s; Cancel stops the wait
+/// at once (the request then ends by itself and only saves the list for next time).
+fn fetch_deck_ready(cache_dir: &std::path::Path, ctl: &Ctl) -> Option<crate::fork::deck_ready::index::Index> {
+    use crate::fork::deck_ready::sync;
+    ctl.set_progress("Getting the Deck-ready list...".into());
+    let (tx, rx) = mpsc::channel();
+    let dir = cache_dir.to_path_buf();
+    std::thread::spawn(move || {
+        let outcome = sync::refresh(&dir, chrono::Utc::now(), |etag| sync::fetch_from_github_within(etag, Duration::from_secs(10)));
+        let _ = tx.send(outcome.index);
+    });
+    loop {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(index) => return index,
+            Err(mpsc::RecvTimeoutError::Timeout) if !ctl.cancelled() => {}
+            Err(_) => return None,
+        }
+    }
+}
+
 // -- The main list -------------------------------------------------------------------------------------
 
 fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<ImportScreen>>) {
     let labels = screen.borrow().labels();
     let Some(dialog) = build_picker_dialog(app, router, TITLE, &labels) else { return ctx.finish_quiet(app, router) };
-    let first = screen.borrow().first_row() as i32;
+    let first = screen.borrow().start_row() as i32;
     dialog.set_selected_index(first);
     app.dialog_nav.picker_index.set(first);
     {
         let (app, router, ctx, weak) = (app.clone(), router.clone(), ctx.clone(), dialog.as_weak());
         dialog.on_item_selected(move |index| {
+            screen.borrow_mut().last_row = Some(index as usize);
             let line = screen.borrow().lines().get(index as usize).copied();
             match line {
                 Some(ImportLine::Found(i)) => screen.borrow_mut().toggle(i),
@@ -604,6 +626,13 @@ fn show_main(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Rc<RefCell<
         });
     }
     let _ = dialog.show();
+    // The row it comes back on may be below the fold: scroll it into view once the list is laid out.
+    let weak = dialog.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(60), move || {
+        if let Some(d) = weak.upgrade() {
+            d.set_scroll_trigger(!d.get_scroll_trigger());
+        }
+    });
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
@@ -905,9 +934,10 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCel
     }
     // Deck-ready projects the catalog lacks are added to the user's port list first (built and checked before
     // anything is written, the file backed up), as the Deck-ready screen's "Add and install" does.
-    if let Err(why) = add_new_entries(app, &plans) {
-        return notice_back(app, router, &format!("Nothing was imported: {why}"), back);
-    }
+    let added = match add_new_entries(app, &plans) {
+        Ok(added) => added,
+        Err(why) => return notice_back(app, router, &format!("Nothing was imported: {why}"), back),
+    };
     // While it runs these ports count as busy, so nothing installs or updates them underneath it.
     let keys: Vec<String> = plans.iter().map(|p| p.request.port_key.clone()).collect();
     for k in &keys {
@@ -936,35 +966,82 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCel
                 app.install_runtime.installing.borrow_mut().remove(k);
             }
             match result {
-                Ok(summary) => show_result(app, router, &ctx, Rc::new(summary), &home),
-                Err(e) => end_notice(app, router, &ctx, "Import problem", &format!("The import stopped: {e}\nThe old folders were not changed by the app.")),
+                Ok(summary) => {
+                    let moved: Vec<String> = summary.moved().map(|i| i.plan.request.port_key.clone()).collect();
+                    let note = take_off_unmoved(app, &added, &moved);
+                    show_result(app, router, &ctx, Rc::new(summary), &home, note)
+                }
+                Err(e) => {
+                    let note = take_off_unmoved(app, &added, &[]).map_or(String::new(), |n| format!("\n{n}"));
+                    end_notice(app, router, &ctx, "Import problem", &format!("The import stopped: {e}\nThe old folders were not changed by the app.{note}"))
+                }
             }
         },
     );
 }
 
+/// A port list entry this import added: its port key, name and the entry as written.
+struct Added {
+    key: String,
+    name: String,
+    value: serde_json::Value,
+}
+
 /// Adds the port list entries the runnable plans need (Deck-ready projects the catalog lacks) and puts them in
-/// the app's catalog. Stops at the first failure; entries added before it stay (they are only list entries).
-fn add_new_entries(app: &Rc<AppState>, plans: &[PortPlan]) -> Result<(), String> {
+/// the app's catalog. On a failure the ones added before it are taken off again, and nothing is imported.
+fn add_new_entries(app: &Rc<AppState>, plans: &[PortPlan]) -> Result<Vec<Added>, String> {
     let local_json = app.paths.config_dir.join("ports.local.json");
+    let mut added: Vec<Added> = Vec::new();
     for plan in plans.iter().filter(|p| p.can_run()) {
         let Some(new) = &plan.request.new_entry else { continue };
         if app.catalog.borrow().iter().any(|p| p.key() == plan.request.port_key) {
             continue;
         }
-        let mut port = crate::core::models::port_from_value(&new.value).map_err(|_| format!("the entry for {} could not be built", plan.request.port_name))?;
-        crate::fork::deck_ready::entry::add_to_local_file(&local_json, new.value.clone(), &crate::fork::store::backup_stamp()).map_err(|e| format!("{}: {e}", plan.request.port_name))?;
+        let built = crate::core::models::port_from_value(&new.value).map_err(|_| format!("the entry for {} could not be built", plan.request.port_name));
+        let written = built.and_then(|port| {
+            crate::fork::deck_ready::entry::add_to_local_file(&local_json, new.value.clone(), &crate::fork::store::backup_stamp()).map(|_| port).map_err(|e| format!("{}: {e}", plan.request.port_name))
+        });
+        let mut port = match written {
+            Ok(port) => port,
+            Err(why) => {
+                let _ = take_off_unmoved(app, &added, &[]);
+                return Err(why);
+            }
+        };
         port.user_managed = true;
-        let mut catalog = app.catalog.borrow_mut();
-        let old = std::mem::take(&mut *catalog);
-        *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
+        {
+            let mut catalog = app.catalog.borrow_mut();
+            let old = std::mem::take(&mut *catalog);
+            *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
+        }
+        added.push(Added { key: plan.request.port_key.clone(), name: plan.request.port_name.clone(), value: new.value.clone() });
     }
-    Ok(())
+    Ok(added)
+}
+
+/// Takes the entries this import added off the port list again for the ports that did not move (cancelled,
+/// refused, failed), so a port that never came in does not stay listed. Returns what to tell the user.
+fn take_off_unmoved(app: &Rc<AppState>, added: &[Added], moved: &[String]) -> Option<String> {
+    let local_json = app.paths.config_dir.join("ports.local.json");
+    let mut lines = Vec::new();
+    for a in added.iter().filter(|a| !moved.contains(&a.key)) {
+        match crate::fork::import::targets::remove_new_entry(&local_json, &a.value, &crate::fork::store::backup_stamp()) {
+            Ok(_) => {
+                app.catalog.borrow_mut().retain(|p| !(p.user_managed && p.key() == a.key));
+                lines.push(format!("{} was not imported, so it was taken off your port list again.", a.name));
+            }
+            Err(e) => lines.push(format!("{} stays in your port list (it could not be taken off: {e}).", a.name)),
+        }
+    }
+    if !lines.is_empty() {
+        app.refresh_current_view();
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 /// Marks what moved as installed, redraws, then continues: the link offer for ports that did not fit,
 /// then "Remove the old copy now?" for each port that moved, then the game file search.
-fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<ImportSummary>, home: &std::path::Path) {
+fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<ImportSummary>, home: &std::path::Path, note: Option<String>) {
     {
         let dir = app.paths.library_dir();
         let mut state = app.state.borrow_mut();
@@ -984,7 +1061,10 @@ fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<Impor
 
     let moved_from: Vec<PathBuf> = summary.moved().map(|i| i.plan.request.from.clone()).collect();
     let copies: VecDeque<old_copies::OldCopy> = old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().filter(|o| moved_from.contains(&o.old_path)).collect();
-    let text = summary.text(home);
+    let mut text = summary.text(home);
+    if let Some(note) = note {
+        text.push_str(&format!("\n\n{note}"));
+    }
     let candidates = summary.link_candidates();
     let moved_keys: Vec<String> = summary.moved().map(|i| i.plan.request.port_key.clone()).collect();
     let wants_game_files = summary.wants_game_files();

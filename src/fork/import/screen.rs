@@ -41,12 +41,24 @@ pub struct ImportScreen {
     pub scan: ImportScan,
     pub selected: Vec<bool>,
     pub from_wizard: bool,
+    /// The row last chosen, so the list comes back on it after a tick or a dialog.
+    pub last_row: Option<usize>,
 }
 
 impl ImportScreen {
     pub fn new(home: &Path, ports_folder: &Path, folders: ScanFolders, scan: ImportScan, from_wizard: bool) -> ImportScreen {
         let selected = scan.found.iter().map(|f| f.confidence.preselected()).collect();
-        ImportScreen { home: home.to_path_buf(), ports_folder: ports_folder.to_path_buf(), folders, scan, selected, from_wizard }
+        ImportScreen { home: home.to_path_buf(), ports_folder: ports_folder.to_path_buf(), folders, scan, selected, from_wizard, last_row: None }
+    }
+
+    /// Where the cursor goes when the list is shown: the row last chosen (the nearest one left when rows
+    /// went), else the first row that does something.
+    pub fn start_row(&self) -> usize {
+        let count = self.lines().len();
+        match self.last_row {
+            Some(row) if count > 0 => row.min(count - 1),
+            _ => self.first_row(),
+        }
     }
 
     /// Rows under the finds: what was left out and why, then what was looked at.
@@ -60,7 +72,13 @@ impl ImportScreen {
             out.push("Nothing was recognised for sure: choose the port for a folder above".to_string());
         }
         if scan.found.iter().any(|f| f.confidence == Confidence::CheckThis) {
-            out.push("\"Check this\" rows matched only by a program inside the folder, so they start unticked: look before you tick them".to_string());
+            out.push("\"Check this\" rows matched by one word of the folder name or a program inside it, so they start unticked: look before you tick them".to_string());
+        }
+        if scan.found.iter().any(|f| f.new_entry.is_some()) {
+            out.push("\"New to your port list\": on the Deck-ready list but not in the catalog; importing adds it to your port list first".to_string());
+        }
+        if let Some(note) = &scan.deck_ready_note {
+            out.push(note.clone());
         }
         if !scan.collections.is_empty() {
             let names: Vec<String> = scan.collections.iter().map(|p| self.short_name(p)).collect();
@@ -123,10 +141,9 @@ impl ImportScreen {
             1 => ", Steam shortcut".to_string(),
             n => format!(", {n} Steam shortcuts"),
         };
-        // Right after the name, so a narrow list cuts the folder rather than this.
-        let new = if f.new_entry.is_some() { ", not in the catalog yet; importing adds it to your port list first" } else { "" };
+        let new = if f.new_entry.is_some() { ", new to your port list" } else { "" };
         format!(
-            "{}{}{new} ({}) {at_least}{}, {}{steam}",
+            "{}{} ({}{new}) {at_least}{}, {}{steam}",
             if self.selected[i] { "[x] " } else { "[ ] " },
             f.port_name,
             f.confidence.label(),
@@ -136,7 +153,7 @@ impl ImportScreen {
     }
 
     /// A folder for an information row: `~/...` under the home folder, else just its name.
-    fn short_name(&self, path: &Path) -> String {
+    pub fn short_name(&self, path: &Path) -> String {
         let short = short_path(path, &self.home);
         if short.starts_with('~') {
             short
@@ -225,7 +242,8 @@ impl ImportScreen {
 }
 
 /// The ports a folder could be, short: two catalog entries for one game ("Majora's Mask (2ship2harkinian)",
-/// "Majora's Mask (Zelda64Recomp)") read "Majora's Mask (2ship2harkinian or Zelda64Recomp)".
+/// "Majora's Mask (Zelda64Recomp)") read by their projects, "2ship2harkinian or Zelda64Recomp" (the
+/// chooser then shows the full names).
 fn could_be(names: &[String]) -> String {
     let split = |n: &str| -> Option<(String, String)> {
         let open = n.strip_suffix(')')?.rfind(" (")?;
@@ -236,7 +254,7 @@ fn could_be(names: &[String]) -> String {
         let parts: Vec<(String, String)> = parts.into_iter().flatten().collect();
         if parts.iter().all(|(game, _)| *game == parts[0].0) {
             let notes: Vec<String> = parts.iter().map(|(_, note)| note.clone()).collect();
-            return format!("{} ({})", parts[0].0, or_list(&notes));
+            return or_list(&notes);
         }
     }
     or_list(names)
@@ -268,18 +286,21 @@ pub struct PortChoice {
     pub key: String,
     pub name: String,
     pub installed: bool,
+    /// Another folder of this scan already found as this port (shortened for the label).
+    pub found_in: Option<String>,
 }
 
 impl PortChoice {
-    fn of(port: &Port, ports_folder: &Path) -> PortChoice {
-        PortChoice { key: port.key().to_string(), name: port.name.clone(), installed: crate::core::installer::is_installed(port, ports_folder) }
+    fn of(port: &Port, screen: &ImportScreen, target: &Path) -> PortChoice {
+        let found_in = screen.scan.found.iter().find(|f| f.port_key == port.key() && f.path != target).map(|f| screen.short_name(&f.path));
+        PortChoice { key: port.key().to_string(), name: port.name.clone(), installed: crate::core::installer::is_installed(port, &screen.ports_folder), found_in }
     }
 
     fn label(&self) -> String {
-        if self.installed {
-            format!("{} (already in your ports folder)", self.name)
-        } else {
-            self.name.clone()
+        match (&self.found_in, self.installed) {
+            (_, true) => format!("{} (already in your ports folder)", self.name),
+            (Some(folder), false) => format!("{} (already found in {folder})", self.name),
+            (None, false) => self.name.clone(),
         }
     }
 }
@@ -302,7 +323,7 @@ pub struct ChooserScreen {
 
 impl ChooserScreen {
     pub fn new(screen: &ImportScreen, target: ChoiceTarget) -> ChooserScreen {
-        let matches = target.could_be.iter().filter_map(|k| screen.port(k)).map(|p| PortChoice::of(p, &screen.ports_folder)).collect();
+        let matches = target.could_be.iter().filter_map(|k| screen.port(k)).map(|p| PortChoice::of(p, screen, &target.path)).collect();
         ChooserScreen { target, home: screen.home.clone(), matches }
     }
 
@@ -358,7 +379,7 @@ impl PortListScreen {
             .ports
             .iter()
             .filter(|p| !p.is_android_only() && !p.name.trim().is_empty())
-            .map(|p| (shared_words(&dir_name, p), PortChoice::of(p, &screen.ports_folder)))
+            .map(|p| (shared_words(&dir_name, p), PortChoice::of(p, screen, &target.path)))
             .collect();
         scored.sort_by(|(a, x), (b, y)| b.cmp(a).then_with(|| x.name.to_lowercase().cmp(&y.name.to_lowercase())));
         let related = scored.iter().filter(|(n, _)| *n > 0).count();
@@ -602,7 +623,7 @@ mod tests {
         let i = s.scan.found.iter().position(|f| f.confidence == Confidence::CheckThis).unwrap();
         assert!(!s.selected[i]);
         assert!(s.labels()[3 + i].starts_with("[ ] Severed Chains (check this)"));
-        assert!(s.labels().iter().any(|l| l.starts_with("\"Check this\" rows matched only by a program inside the folder")), "{:?}", s.labels());
+        assert!(s.labels().iter().any(|l| l.starts_with("\"Check this\" rows matched by one word of the folder name or a program inside it")), "{:?}", s.labels());
     }
 
     #[test]
@@ -734,7 +755,9 @@ mod tests {
         let (_, s) = tims_screen(&dir, |_| {});
         let labels = s.labels();
         assert_eq!(s.selected_count(), 4);
-        assert!(labels[3].starts_with("[x] The Legend of Dragoon (Severed-Chains), not in the catalog yet; importing adds it to your port list first (likely match) "), "{labels:#?}");
+        assert!(labels[3].starts_with("[x] The Legend of Dragoon (Severed-Chains) (likely match, new to your port list) "), "{labels:#?}");
+        assert!(labels[3].ends_with("~/sd/Severed_Chains_Steam_Deck") || labels[3].contains("Severed_Chains_Steam_Deck"), "{}", labels[3]);
+        assert!(labels.contains(&"\"New to your port list\": on the Deck-ready list but not in the catalog; importing adds it to your port list first".to_string()), "{labels:#?}");
         assert!(labels[4..7].iter().all(|l| l.starts_with("[x] The Legend of Zelda") && !l.contains("not in the catalog")), "{labels:#?}");
         assert!(!labels.iter().any(|l| l.contains("Emulation") || l.contains("steamapps") || l.contains("lost+found") || l.contains("Trash")), "{labels:#?}");
         assert_eq!(labels.last().unwrap(), "Import 4 ports...");
@@ -763,7 +786,7 @@ mod tests {
         assert_eq!(lines[choose - 1], ImportLine::Found(3), "after the finds");
         assert!(
             labels[choose].starts_with("Choose which port this is: ")
-                && labels[choose].ends_with(" (could be The Legend of Zelda: Majora's Mask (2ship2harkinian or Zelda64Recomp))..."),
+                && labels[choose].ends_with(" (could be 2ship2harkinian or Zelda64Recomp)..."),
             "{}",
             labels[choose]
         );
@@ -775,10 +798,44 @@ mod tests {
     }
 
     #[test]
+    fn a_port_already_found_elsewhere_says_so_in_the_choosers() {
+        let dir = temp_dir("screen_found_elsewhere");
+        let (sd, s) = tims_screen(&dir, |sd| put_exe(&sd.join("The Legend of Zelda Majoras Mask/mm.appimage"), b"x"));
+        let i = s.lines().iter().position(|l| matches!(l, ImportLine::Choose(_))).unwrap();
+        let target = s.choice_target(s.lines()[i]).unwrap();
+        let chooser = ChooserScreen::new(&s, target.clone());
+        assert_eq!(chooser.labels()[1], "The Legend of Zelda: Majora's Mask (2ship2harkinian) (already found in 2Ship-Keiichi-Charlie-Linux)");
+        assert_eq!(chooser.labels()[2], "The Legend of Zelda: Majora's Mask (Zelda64Recomp)");
+        let list = PortListScreen::new(&s, &target);
+        assert!(list.labels().contains(&"The Legend of Zelda: Ocarina of Time (Shipwright) (already found in SoH-Ackbar-Delta-Linux)".to_string()), "{:#?}", list.labels());
+        let _ = sd;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_cursor_comes_back_to_the_row_last_chosen() {
+        let h = fake_home("screen_last_row");
+        let mut s = screen(&h, false);
+        assert_eq!(s.start_row(), s.first_row());
+        s.last_row = Some(4);
+        assert_eq!(s.start_row(), 4);
+        s.last_row = Some(99);
+        assert_eq!(s.start_row(), s.lines().len() - 1, "rows that went: the nearest one left");
+    }
+
+    #[test]
+    fn a_missing_deck_ready_list_gets_an_information_row() {
+        let h = fake_home("screen_no_list");
+        let mut s = screen(&h, false);
+        s.scan.deck_ready_note = Some("The Deck-ready list couldn't be loaded.".into());
+        assert!(s.labels().contains(&"The Deck-ready list couldn't be loaded.".to_string()));
+    }
+
+    #[test]
     fn the_could_be_list_names_one_game_once() {
         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(could_be(&names(&["Mask (a)", "Mask (b)"])), "Mask (a or b)");
-        assert_eq!(could_be(&names(&["Mask (a)", "Mask (b)", "Mask (c)"])), "Mask (a, b or c)");
+        assert_eq!(could_be(&names(&["Mask (a)", "Mask (b)"])), "a or b");
+        assert_eq!(could_be(&names(&["Mask (a)", "Mask (b)", "Mask (c)"])), "a, b or c");
         assert_eq!(could_be(&names(&["Fan Remake", "Fan Remake Deluxe"])), "Fan Remake or Fan Remake Deluxe");
         assert_eq!(could_be(&names(&["Mask (a)", "Other (b)"])), "Mask (a) or Other (b)");
     }
@@ -807,7 +864,16 @@ mod tests {
         let chooser = ChooserScreen::new(&s, target.clone());
         let labels = chooser.labels();
         assert!(labels[0].starts_with("Which port is in ") && labels[0].ends_with("It could be one of these:"), "{}", labels[0]);
-        assert_eq!(&labels[1..], ["The Legend of Zelda: Majora's Mask (2ship2harkinian)", "The Legend of Zelda: Majora's Mask (Zelda64Recomp)", "Another port...", "Not a port (leave it)", "Back to Import ports"]);
+        assert_eq!(
+            &labels[1..],
+            [
+                "The Legend of Zelda: Majora's Mask (2ship2harkinian) (already found in 2Ship-Keiichi-Charlie-Linux)",
+                "The Legend of Zelda: Majora's Mask (Zelda64Recomp)",
+                "Another port...",
+                "Not a port (leave it)",
+                "Back to Import ports"
+            ]
+        );
         assert_eq!(chooser.lines()[chooser.first_row()], ChooseLine::Match(0));
         assert_eq!(chooser.matches[1].key, "Zelda64Recomp/Zelda64Recomp");
 

@@ -261,14 +261,23 @@ steam links"). It is also step c of the setup wizard, which opens it through
   source); (2) release name: the folder's words (split on `-`, `_`, space, `.`; platform words like `linux`,
   `x86_64`, `appimage`, `steam` before `deck`, and versions dropped) are a Deck-ready download's words, or
   the first k words joined (longest first) are a port name (`Severed_Chains_Steam_Deck`, `Dusklight-Linux`)
-  = `ReleaseName`; (3) first word only (`ReleaseWord`, ticked only when a program is inside): a port name of
-  4+ letters (`Dusklight-twilight-princess`), a built-in alias (`soh`, `2ship`, `2s2h`: the list cannot cover
-  program names or a never-fetched list), or the start of a Deck-ready download (`SoH-Dewey-Bravo.appimage`;
-  one shared word counts only when no other project's downloads start with it); (4) a program inside, two
+  = `ReleaseName`; (3) first word only (`ReleaseWord`): a port name of 4+ letters
+  (`Dusklight-twilight-princess`), a built-in alias (`soh`, `2ship`, `2s2h`: the list cannot cover program
+  names or a never-fetched list), or the start of a Deck-ready download (`SoH-Dewey-Bravo.appimage`; one
+  shared word counts only when no other project's downloads start with it); (4) a program inside, two
   levels deep: only files with a program extension (`.AppImage`, `.x86_64`, `.x86`, `.sh`, `.run`, `.bin`,
   `.elf`, `.exe`) or no extension and executable (on Windows, which has no such bit, any file without an
-  extension); hidden files never. ROMs, `.o2r`, JSON, images and saves never count, even
-  with the executable bit (Tim's ROMs have it). Folders never looked at: hidden ones, `steamapps`,
+  extension except `README`, `LICENSE`, `COPYING`, `CHANGELOG`, `Makefile`, `AUTHORS`, `NOTICE`); hidden
+  files never. ROMs, `.o2r`, JSON, images and saves never count, even with the executable bit (Tim's ROMs
+  have it).
+  **Ticking (Fable review 2026-10-23):** a match that rests on one word of the folder name (every
+  `ReleaseWord`, and a one-word `ReleaseName` such as `Melee` or `Dusklight-Linux`; `Candidate::word`) is
+  ticked only when a program right in the folder is named with that word (`soh.appimage`,
+  `Dusklight-v2.0.3-linux-x86_64.AppImage`) or is the one the catalog names; otherwise "check this".
+  Two or more words matched (`Severed_Chains_Steam_Deck`) are ticked. A program match is ticked only for a
+  program right in the folder, so `Games` holding `Zelda/soh.appimage` is never ticked; when two folders fit
+  one port the better match is offered (by name, then a program right inside, then a program further
+  down) and the other is "Also found". Folders never looked at: hidden ones, `steamapps`,
   `SteamLibrary`, `lost+found`, `Emulation`, `compatdata`, `shadercache`. A folder that fits more than 3
   ports, or holds `roms`, `bios` or `steamapps` or a `libraryfolder.vdf` (unless named like a port), is a
   collection: one info row. Each find carries `why` in plain words ("folder name", "folder named like its
@@ -276,20 +285,31 @@ steam links"). It is also step c of the setup wizard, which opens it through
 - **Deck-ready list** (`targets.rs`): the saved list (or one fetch when it was never saved) adds download
   names as hints, and projects the catalog lacks (Severed Chains: upstream's catalog disables it) as extra
   entries built with `deck_ready::entry::local_entry`, the Deck-ready screen's "Add and install" entry
-  (Deck build: `preferred_asset` = the Deck marker of the main release's file). Such a find says "not in the
-  catalog yet; importing adds it to your port list first"; Import writes the entry (`add_to_local_file`,
-  `ports.local.json` backed up) just before the move, then moves the folder in like any other.
+  (Deck build: `preferred_asset` = the Deck marker of the main release's file). Such a find is marked "new to
+  your port list" (an info row explains it); Import writes the entry (`add_to_local_file`,
+  `ports.local.json` backed up) just before the move, then moves the folder in like any other. If that port
+  does not move (cancelled, refused, failed), the entry is taken off again (`targets::remove_new_entry`:
+  only the entry exactly as written, file backed up first) and the summary says so. The fetch on the scan
+  waits at most 10 s and Cancel stops waiting at once. When the list cannot be loaded, an info row says
+  ports only on that list (like Severed Chains) are not recognised.
+- **Test data**: unit tests use a pinned, trimmed copy of the catalog and the Deck-ready list in
+  `testdata/import/`; `live_lists_still_match_tims_card_and_tick_no_ordinary_folder` (ignored in normal
+  runs) checks the live `ports.json` and `index/deck-ready.json`, and `deck-ready-index.yml` runs it before
+  committing a refreshed list (that push does not trigger CI).
 - **Choosing** (`screen.rs` `ChooserScreen`, `PortListScreen`; `scan.rs` `Choices`): a folder that fits 2 or 3
   ports is a row "Choose which port this is: <folder> (could be A or B)...", and a top-level folder that
   fits nothing but holds a program (in it or one folder in) is "Not recognised: <folder>. Choose the
   port...". The chooser lists the matches, "Another port..." (every port, those sharing a word with the
-  folder first) and "Not a port (leave it)". A chosen folder is measured on the worker and becomes a ticked
+  folder first, most shared words first) and "Not a port (leave it)"; a port already found in another folder
+  says "(already found in <folder>)". A chosen folder is measured on the worker and becomes a ticked
   find ("you chose") that goes through the same plan and checks as any other; choices last while the screen
   is open (a new scan keeps them). Two folders for one port in one import: the second is refused
-  (`Block::SameDestination`).
+  (`Block::SameDestination`, naming the folder left out and the one that goes). The main list comes back
+  on the row last chosen.
 - **Finds** (`scan.rs`, on a worker thread with a Cancel row): the matcher of `adopt.rs` (never the library
   or a folder that holds it), plus a confidence (exact match = folder named like the catalog folder;
-  likely; check this = program name only or a first-word match without a program, starts unticked; you chose),
+  likely; check this = a one-word or program match without a program named so right in the folder, starts
+  unticked; you chose),
   the folder's size (links not followed, capped at 400,000 entries, "at least" when cut) and the Steam
   shortcuts of the active account whose program or start folder lies inside it (the shortcuts file is only
   read; a missing or broken one is a note).
