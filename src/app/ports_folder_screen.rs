@@ -55,6 +55,7 @@ thread_local! {
     static STARTUP_PENDING: Cell<bool> = const { Cell::new(false) };
     static JOB_TIMER: slint::Timer = slint::Timer::default();
     static CHECK_TIMER: slint::Timer = slint::Timer::default();
+    static CHECK_RUNNING: Cell<bool> = const { Cell::new(false) };
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -363,7 +364,22 @@ fn plan_switch(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, summary: S
             let note = if act == Act::SwitchWithoutMoving { format!("{} port(s) stay in the old folder and show as not installed here.", plan.ports.len()) } else { String::new() };
             switch_now(app, router, &new_dir, Vec::new(), note);
         }
-        Act::Move | Act::ReplaceStaleAndMove => check_game_files_then_move(app, router, new_dir.clone(), plan.clone()),
+        Act::Move => check_game_files_then_move(app, router, new_dir.clone(), plan.clone()),
+        Act::ReplaceStaleAndMove => {
+            let kept: Vec<String> = plan.stale.iter().map(|s| format!("  {}: {}", s.name, s.to.display())).collect();
+            let text = format!(
+                "The old {} you kept {} removed first (saves zipped to Saves Backup/Update Backups), then the copy in use is moved there:
+{}
+
+If the move then fails, the kept copy is already gone; the copy in use is not touched.",
+                if kept.len() == 1 { "copy" } else { "copies" },
+                if kept.len() == 1 { "is" } else { "are" },
+                kept.join("
+")
+            );
+            let (new_dir, plan) = (new_dir.clone(), plan.clone());
+            confirm_or(app, router, "Replace the old copy?", text, "Replace and move", move |app, router| check_game_files_then_move(app, router, new_dir.clone(), plan.clone()), open_menu);
+        }
         Act::NotEnoughSpace => message(app, router, "There is not enough free space in the new folder for the ports. Free some space or pick another folder."),
         _ => {}
     });
@@ -724,19 +740,45 @@ pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies:
         }
         return;
     };
+    // One check at a time: a second request (another screen) is not allowed to replace the first.
+    if CHECK_RUNNING.with(Cell::get) {
+        let mut text = "Another old copy is being checked right now. These old copies stay listed under Settings > Ports folder > Old copies, to remove later.".to_string();
+        if !summary.is_empty() {
+            text = format!("{summary}
+
+{text}");
+        }
+        return message(app, router, &text);
+    }
     // The check walks the old copy (gigabytes on an SD card): on the worker thread, with a progress note.
     let parts = RemovalParts::of(app);
     let checked = entry.clone();
     let job = Rc::new(Background::spawn(move |_| parts.check(&checked)));
     open_progress_dialog(app, router, "Checking the old copy", &format!("Checking the old copy of {}...", entry.name));
+    // Only this dialog is closed when the check ends, never another progress dialog (an install's).
+    let own = match &*app.dialog_nav.dialogs.borrow() {
+        DialogSlot::Progress(d) => Some(d.as_weak()),
+        _ => None,
+    };
+    CHECK_RUNNING.with(|c| c.set(true));
     let (app2, router2) = (app.clone(), router.clone());
     let pending = RefCell::new(Some((entry, copies, summary)));
     CHECK_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(150), move || {
             let Some(result) = job.take() else { return };
             CHECK_TIMER.with(|t| t.stop());
-            if matches!(&*app2.dialog_nav.dialogs.borrow(), DialogSlot::Progress(_)) {
+            CHECK_RUNNING.with(|c| c.set(false));
+            let ours = own.as_ref().and_then(slint::Weak::upgrade);
+            let showing_ours = match (&*app2.dialog_nav.dialogs.borrow(), &ours) {
+                (DialogSlot::Progress(d), Some(o)) => std::ptr::eq(d.window(), o.window()),
+                _ => false,
+            };
+            if showing_ours {
                 close_current_dialog(&app2, &router2);
+            } else if super::dialogs::dialog_is_open(&app2) {
+                // Something else is on screen now: leave it; the old copies stay listed under Old copies.
+                eprintln!("ports folder: old-copy prompt skipped, another dialog is open");
+                return;
             }
             if let Some((entry, copies, summary)) = pending.borrow_mut().take() {
                 show_old_copy_prompt(&app2, &router2, entry, copies, summary, result.and_then(|r| r));
@@ -856,7 +898,11 @@ fn finish_switch(app: &Rc<AppState>, router: &Router, record: &OldCopy) {
     let settings = ForkSettings::load(&settings_path(app));
     let steam = SystemSteamCheck::new();
     let env = MoveEnv { home: &home, config_dir: &config_dir, settings: &settings, steam: &steam, game_mode: game_mode(), running: &running_in, free_space: &free_space };
-    let report = port_mover::finish_switch(record, &env);
+    let parts = RemovalParts::of(app);
+    let report = match port_mover::finish_switch(record, &env, &parts.library, &parts.active) {
+        Ok(report) => report,
+        Err(why) => return message(app, router, &why),
+    };
     let text = report.text();
     let summary = if text.is_empty() { format!("Finished switching {}.", record.name) } else { format!("Finished switching {}.\n\n{text}", record.name) };
     let entry = old_copies::load(&config_dir).unwrap_or_default().into_iter().find(|o| o.old_path == record.old_path);

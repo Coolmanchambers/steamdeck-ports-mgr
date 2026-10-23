@@ -431,7 +431,9 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   use), nothing may run from it, and it must not have saves newer than the copy in use ("The old copy at
   <path> has newer saves (last played <date>) than the copy in use. Copy the save files from <old save
   folder> into <new save folder>, or keep the old copy and cancel."). A refusal stops only that port.
-  Then its saves are zipped to `Saves Backup/Update Backups/`, it is removed and its record dropped.
+  Then its saves are zipped to `Saves Backup/Update Backups/`, it is removed and its record dropped. A
+  confirm says so before anything starts: the kept copy is removed first, so if the move then fails it is
+  already gone (the copy in use is never touched).
 - **Game file check** (`port_mover::game_files`). Before copying: every connection recorded by Game files
   for the port must be healthy (for a copied game file only the copy in the port folder counts; a link or
   "use original" also needs its original), and every link in the port folder that points outside it must
@@ -449,7 +451,10 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   so both keep working at the new place; other links stay as written.
 - **Switch over.** The old-copy records are written first (marked "switch not finished"; if the app closes
   before Steam follows, Settings > Ports folder shows "Finish switching <port> (Steam and game files still
-  point at the old copy)", which runs the rest of the switch for that record), then the setting
+  point at the old copy)", which runs the rest of the switch for that record after checking it: the new
+  copy exists and is in use, the two places differ, share their folder name, are not inside each other,
+  and the old one holds neither home, the app folder nor the ports folder; otherwise nothing changes),
+  then the setting
   is saved, then for each moved port: every non-Steam shortcut in every Steam account whose program, start
   folder or icon is inside the old folder gets the same path under the new one, app ID kept (artwork and
   play time stay attached), through the safe write (refused while Steam runs, verified backup, atomic
@@ -477,7 +482,8 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   Steam has not finished setting up (no stored app ID) is named in the refusal ("open Steam, quit it, then
   try again"). The zip comes first; if it fails nothing is removed. An adopted port's old link is removed
   as a link; its target folder is never touched. The check walks the old copy, so it runs on the worker
-  thread behind a "Checking the old copy..." note.
+  thread behind a "Checking the old copy..." note; only that note is closed when it ends, and one check
+  runs at a time (a second request says the old copies stay listed under Old copies).
 - **API for other screens** (import, and later screens): `folder_picker_screen::open_folder_picker`,
   `fork::ports_folder::{current, configured, save_choice, check, create, at_startup, plan_move}`,
   `port_mover::{prepare, record_pending, switch_over, finish_switch, discard, run_batch, sweep_staging}` with `MoveEnv` /

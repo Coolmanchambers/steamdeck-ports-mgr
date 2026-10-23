@@ -133,11 +133,11 @@ pub struct RemovalCtx<'a> {
     pub save_folders: &'a dyn Fn(&OldCopy, &Path) -> Option<Vec<PathBuf>>,
 }
 
-fn same(a: &Path, b: &Path) -> bool {
+pub(crate) fn same(a: &Path, b: &Path) -> bool {
     a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
-fn holds(outer: &Path, inner: &Path) -> bool {
+pub(crate) fn holds(outer: &Path, inner: &Path) -> bool {
     is_within(inner, outer) || matches!((fs::canonicalize(outer), fs::canonicalize(inner)), (Ok(o), Ok(i)) if i.starts_with(&o))
 }
 

@@ -454,6 +454,35 @@ impl Prepared {
 
 /// Finishes a switch the app was closed in the middle of (a record with `switched: false` whose new copy
 /// is the one in use): Steam and the game files records follow, and the record is marked finished.
-pub fn finish_switch(record: &old_copies::OldCopy, env: &MoveEnv) -> SwitchReport {
-    switch_over(&Prepared::from_record(record), env)
+/// The record is checked first; a record that does not describe a real move changes nothing.
+/// `library_dir` is the ports folder in use and `active_paths` where the app looks for each port now.
+pub fn finish_switch(record: &old_copies::OldCopy, env: &MoveEnv, library_dir: &Path, active_paths: &[PathBuf]) -> Result<SwitchReport, String> {
+    finish_check(record, env, library_dir, active_paths)?;
+    Ok(switch_over(&Prepared::from_record(record), env))
+}
+
+fn finish_check(record: &old_copies::OldCopy, env: &MoveEnv, library_dir: &Path, active_paths: &[PathBuf]) -> Result<(), String> {
+    let (old, new) = (&record.old_path, &record.new_path);
+    let refuse = |why: &str| Err(format!("The record of {} can't be finished: {why}. Nothing was changed.", record.name));
+    if fs::symlink_metadata(new).is_err() {
+        return refuse(&format!("the new copy {} is not there", new.display()));
+    }
+    if !active_paths.iter().any(|p| old_copies::same(p, new)) {
+        return refuse(&format!("the app does not use {} now", new.display()));
+    }
+    if old == new || (!record.link_only && old_copies::same(old, new)) {
+        return refuse("the old and new places are the same");
+    }
+    if old.file_name().is_none() || old.file_name() != new.file_name() {
+        return refuse("the old and new folders have different names");
+    }
+    if is_within(old, new) || is_within(new, old) {
+        return refuse("the old and new places are inside each other");
+    }
+    for (what, protected) in [("the home folder", env.home), ("the app's folder", env.config_dir), ("the ports folder", library_dir)] {
+        if old_copies::holds(old, protected) {
+            return refuse(&format!("{} holds {what}", old.display()));
+        }
+    }
+    Ok(())
 }

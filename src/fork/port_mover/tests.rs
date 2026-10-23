@@ -922,7 +922,7 @@ fn an_unfinished_switch_is_finished_from_its_record() {
     assert!(refused.contains("Finish switching Ship of Harkinian") && refused.contains("Settings > Ports folder"), "{refused}");
     assert!(w.shortcuts()[0].exe_path().starts_with(p.from.to_str().unwrap()), "Steam still points at the old copy");
 
-    let report = finish_switch(&record, &w.env(&no_steam, &nothing_running, &plenty));
+    let report = finish_switch(&record, &w.env(&no_steam, &nothing_running, &plenty), &w.new_lib, &active).unwrap();
     assert_eq!(report.steam.changed_count(), 1);
     assert_eq!(w.shortcuts()[0].exe_path(), p.to.join("soh.appimage").to_str().unwrap());
     let record = old_copies::load(&w.app).unwrap().remove(0);
@@ -963,4 +963,35 @@ fn a_relative_link_that_leaves_the_port_on_its_way_is_made_safe() {
     let p = w.prepare_with(&MoveOptions::default()).unwrap();
     assert_eq!(fs::read_link(p.to.join("sub/saves-link")).unwrap(), PathBuf::from("../saves"));
     assert!(p.rewritten_links.contains(&p.to.join("sub/saves-link")));
+}
+
+#[test]
+fn a_corrupted_unfinished_record_repoints_nothing() {
+    let w = World::new("finish_corrupt");
+    let p = w.prepare_with(&MoveOptions::default()).unwrap();
+    record_pending(&w.app, std::slice::from_ref(&p)).unwrap();
+    let record = old_copies::load(&w.app).unwrap().remove(0);
+    let before = fs::read(&w.vdf).unwrap();
+    let active = vec![p.to.clone()];
+    let env = w.env(&no_steam, &nothing_running, &plenty);
+    let root = if cfg!(unix) { PathBuf::from("/") } else { PathBuf::from("C:\\") };
+    let named_like_home = w.home.clone();
+    let holder = w.root.join("holder").join("SoH");
+    for bad in [
+        old_copies::OldCopy { old_path: root.clone(), ..record.clone() },
+        old_copies::OldCopy { old_path: named_like_home.clone(), ..record.clone() },
+        old_copies::OldCopy { new_path: w.new_lib.join("Missing").join("SoH"), ..record.clone() },
+        old_copies::OldCopy { old_path: p.to.clone(), ..record.clone() },
+        old_copies::OldCopy { old_path: p.to.join("saves").join("SoH"), ..record.clone() },
+    ] {
+        let refused = finish_switch(&bad, &env, &w.new_lib, &active).unwrap_err();
+        assert!(refused.contains("can't be finished") && refused.contains("Nothing was changed"), "{refused}");
+    }
+    // An old place that holds the app folder, even with the right name.
+    let holding_app = old_copies::OldCopy { old_path: holder.clone(), ..record.clone() };
+    let _ = fs::create_dir_all(&holder);
+    let app_like = MoveEnv { config_dir: &holder, ..w.env(&no_steam, &nothing_running, &plenty) };
+    assert!(finish_switch(&holding_app, &app_like, &w.new_lib, &active).unwrap_err().contains("holds"));
+    assert_eq!(fs::read(&w.vdf).unwrap(), before, "no shortcut was touched");
+    assert!(!old_copies::load(&w.app).unwrap()[0].switched, "the record is still unfinished");
 }

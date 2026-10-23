@@ -247,7 +247,8 @@ folder in use, its free space and file system. (In Desktop Mode there is also **
      then move** or Cancel. The old copy is checked first: if a game runs from it, or it has saves newer
      than the copy in use ("Copy the save files from <old save folder> into <new save folder>, or keep the
      old copy and cancel"), it is left alone and that port is not moved. Otherwise its saves are zipped to
-     `Saves Backup/Update Backups/` and it is removed. The old copy is never used in place of the current one.
+     `Saves Backup/Update Backups/` and it is removed. A confirm says this first: the kept copy is removed
+     before the move, so if the move then fails it is already gone (the copy in use is never touched). The old copy is never used in place of the current one.
    Moving and switching wait while a game runs from a port that would move.
 4. Before copying, the app checks each port's game files: the ROM links and copies made in Game files,
    and links inside the port folder that point at game files. If something is missing it lists which
