@@ -956,8 +956,8 @@ closed. Privacy: [PRIVACY.md](PRIVACY.md).
   found by name before anything is made (so a second run never makes a second copy). A file up to 5 MB goes up in
   one multipart request, a bigger one by a resumable session in 8 MiB pieces; after a dropped connection, a 5xx or a
   lost answer the app asks the session where it stands and carries on from there (five tries in a row without
-  progress, then it gives up with the failure's kind). The session address is a credential: it is never logged and
-  the pieces carry no token. Listing always asks for `sha256Checksum` and follows pages. A 401 makes one forced
+  progress, then it gives up with the failure's kind). The session address is a credential: it is never logged; the
+  pieces and the status questions carry the bearer token too, and a 401 on one goes through the same one-refresh rule. Listing always asks for `sha256Checksum` and follows pages. A 401 makes one forced
   token refresh and one more try; a 401 after that is signed out. Drive's code words (`storageQuotaExceeded`,
   `rateLimitExceeded`, `userRateLimitExceeded`, `dailyLimitExceeded`) and `Retry-After` pick the failure kind. The
   code never deletes, trashes or changes a file (a test reads the source for `DELETE`, `PATCH`, `trashed`, `/trash`).

@@ -57,7 +57,10 @@ own Google Drive. It does nothing with Google until you do this.
 
 **Where sign-in data is kept.** The sign-in tokens are stored only on your device, in a private file
 (readable only by your user) in the app's config folder. They are never sent to the developer or to any
-third party, and are never written to logs, `state.json` or bug reports. Signing out in the app deletes that file.
+third party, and are never written to logs, `state.json` or bug reports. Besides the tokens the file holds the
+email address of your account and a random label the app gives each sign-in (it names nothing about you; it only
+lets the app tell whether a copy that started under one sign-in is still running under the same one). Signing out
+in the app deletes that file.
 
 **What the app does with the files.** It uploads your save backups, lists them so you can pick one to
 restore, and downloads the one you pick. It does not read the contents of your saves for any other
@@ -79,7 +82,9 @@ or GitLab token to `state.json` by hand, remove that line before sending the fil
 - **Stop copying:** in the app, Settings > Cloud backup > Sign out. This deletes the tokens on your
   device. Backups already in Google Drive stay there.
 - **Revoke the app's access from Google:** Google Account > Security > Third-party apps & services (the
-  "Third-party access" list), choose Deck Ports Manager, then Remove access.
+  "Third-party access" list), choose Deck Ports Manager, then Remove access. Revoking also takes away the app's
+  access to the folders it made before: if you sign in again later, the app may not see the backups it copied
+  earlier. They are still in your Drive, and the app then starts a new "Deck Ports Manager" folder.
 - **Delete the cloud copies:** open Google Drive and delete the "Deck Ports Manager" folder.
 - **Delete everything local:** uninstall the app and delete its config folder, cache folder, ports
   folder, and `Saves Backup` folder. Your original save files are not touched by any of this.

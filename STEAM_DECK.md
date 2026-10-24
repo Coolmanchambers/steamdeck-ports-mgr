@@ -534,6 +534,19 @@ Pictures that had to be cropped or padded to fit are marked as composed in `conf
 and animated pictures are not used. The images belong to their authors and the games' publishers; the app downloads them
 to your device, never uploads or shares them, and the credits are in the screen's last list.
 
+## Cloud backup to Google Drive
+
+Settings > **Cloud backup...** copies the zips in `Saves Backup` to your own Google Drive, after you sign in with
+your phone (a code and a QR code; no password is typed on the Deck). It only runs while the app is open, never
+deletes anything in Drive, and the app can only see the folder it makes there. What it stores and sends is in
+[PRIVACY.md](PRIVACY.md). Getting a backup back never replaces a file on the Deck; you then choose what to restore in
+Restore saves.
+
+If you remove the app's access in your Google Account (Security > Third-party access), Google also removes its access
+to the folders it made earlier. After signing in again the app may not see the backups it copied before; they are
+still in your Drive, and the app starts a new "Deck Ports Manager" folder. The app's folder must be on a drive that
+can keep a file private (the internal drive, not an exFAT SD card), or sign-in is refused.
+
 ## What to test
 
 | Area | Pass looks like |
