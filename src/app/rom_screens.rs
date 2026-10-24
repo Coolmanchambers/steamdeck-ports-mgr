@@ -500,7 +500,8 @@ fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
         app,
         router,
         JobUi::Cancellable { title: "Scanning game files" },
-        move |ctl| scan_work::run_scan(ctl, &store, &root, &input),
+        // The wizard reads only what the installed ports could need; Settings reads everything (its lists show it all).
+        move |ctl| scan_work::run_scan(ctl, &store, &root, &input, for_wizard),
         move |app, router, result| match result.and_then(|r| r) {
             Err(e) => message(app, router, TITLE, &e),
             Ok(None) => open_game_files(app, router),

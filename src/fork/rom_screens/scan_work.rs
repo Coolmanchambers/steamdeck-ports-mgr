@@ -4,8 +4,36 @@
 use super::job::Ctl;
 use super::report::{build_report, Report, ReportInput};
 use super::util::{file_name, human_bytes};
-use crate::fork::rom_library::{scan_folder, RomLibraryStore, ScanOptions, ScanResult};
+use crate::fork::rom_library::scan::{Progress, Wanted};
+use crate::fork::rom_library::{scan_folder, RomLibraryStore, RomSpec, ScanOptions, ScanResult};
 use std::path::Path;
+use std::time::Duration;
+
+/// "Looking at 3 of 412 files (1.2 GB of 4.0 GB), about 2 min left", then the file being read. `elapsed` is the
+/// time since the scan started; the estimate appears once enough has been read to judge the speed.
+pub fn progress_text(p: &Progress<'_>, elapsed: Duration) -> String {
+    let n = (p.files_read + 1).min(p.to_read.max(1));
+    let mut line = if p.to_read == 0 {
+        format!("Looked at {} files", p.seen)
+    } else {
+        format!("Looking at {n} of {} files ({} of {})", p.to_read, human_bytes(p.bytes_hashed), human_bytes(p.bytes_to_read))
+    };
+    if p.to_read > 0 && p.to_read < p.seen {
+        line.push_str(&format!("; {} others are not needed", p.seen - p.to_read));
+    }
+    let secs = elapsed.as_secs_f64();
+    if secs >= 3.0 && p.bytes_hashed > 0 && p.bytes_to_read > p.bytes_hashed {
+        let left = (p.bytes_to_read - p.bytes_hashed) as f64 / (p.bytes_hashed as f64 / secs);
+        line.push_str(&if left < 60.0 { ", under a minute left".to_string() } else { format!(", about {} min left", (left / 60.0).ceil() as u64) });
+    }
+    format!("{line}\n{}", file_name(p.current))
+}
+
+/// What the installed ports of `input` need: the files worth reading.
+pub fn wanted_for(input: &ReportInput) -> Wanted {
+    let specs: Vec<RomSpec> = input.catalog.iter().filter(|p| input.installed.contains(p.key())).map(|p| RomSpec::for_port(p, input.local_entries.get(&p.folder))).collect();
+    Wanted::from_specs(specs.iter())
+}
 
 pub struct ScanOutput {
     pub report: Report,
@@ -15,11 +43,14 @@ pub struct ScanOutput {
 }
 
 /// Scan `root`. `Ok(None)` means the user cancelled; nothing is saved then, so a half scan never
-/// stands in for a whole one.
-pub fn run_scan(ctl: &Ctl, store: &RomLibraryStore, root: &Path, input: &ReportInput) -> Result<Option<ScanOutput>, String> {
+/// stands in for a whole one. `only_wanted`: read only the files the installed ports could need (the setup
+/// wizard); otherwise every game file (Settings > Game files, whose lists show everything).
+pub fn run_scan(ctl: &Ctl, store: &RomLibraryStore, root: &Path, input: &ReportInput, only_wanted: bool) -> Result<Option<ScanOutput>, String> {
     let prior = store.load_scan_cache().filter(|p| p.root == root);
-    let scan = scan_folder(root, &ScanOptions::default(), prior.as_ref(), ctl.flag(), &mut |p| {
-        ctl.set_progress(format!("Checked {} files, {} read\n{}", p.files_done, human_bytes(p.bytes_hashed), file_name(p.current)));
+    let options = ScanOptions { wanted: only_wanted.then(|| wanted_for(input)), ..ScanOptions::default() };
+    let started = std::time::Instant::now();
+    let scan = scan_folder(root, &options, prior.as_ref(), ctl.flag(), &mut |p| {
+        ctl.set_progress(progress_text(&p, started.elapsed()));
     })
     .map_err(|e| format!("Could not read {}: {e}\n\nIs the drive or card plugged in? Plug it in, or choose another folder in Settings > Game files.", root.display()))?;
     if scan.cancelled || ctl.cancelled() {
@@ -72,7 +103,7 @@ mod tests {
         let store = RomLibraryStore::load(&tmp.path().join("rom_library.json")).unwrap();
         let job = Background::spawn({
             let (store, roms, input) = (store.clone(), roms.clone(), input(&zelda));
-            move |ctl| run_scan(ctl, &store, &roms, &input)
+            move |ctl| run_scan(ctl, &store, &roms, &input, false)
         });
         let out = wait(&job).unwrap().unwrap();
         assert_eq!(out.report.total_files, 1);
@@ -103,7 +134,7 @@ mod tests {
             let (store, roms) = (store.clone(), roms.clone());
             move |ctl| {
                 ctl.flag().store(true, std::sync::atomic::Ordering::Relaxed);
-                run_scan(ctl, &store, &roms, &input(b"x"))
+                run_scan(ctl, &store, &roms, &input(b"x"), false)
             }
         });
         assert!(wait(&job).unwrap().is_none());

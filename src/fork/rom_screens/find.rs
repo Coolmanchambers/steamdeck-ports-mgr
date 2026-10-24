@@ -263,22 +263,25 @@ enum Lookup {
 
 /// The folder's files: the saved scan where nothing changed, files read again where something did.
 /// `Ok(None)` when cancelled.
-fn library_files(store: &RomLibraryStore, root: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(String)) -> Result<Option<(ScanResult, LookedIn)>, Lookup> {
+/// Only the files the requests could need are read (`ScanOptions::wanted`); the rest of the folder is listed.
+fn library_files(store: &RomLibraryStore, root: &Path, wanted: crate::fork::rom_library::scan::Wanted, cancel: &AtomicBool, progress: &mut dyn FnMut(String)) -> Result<Option<(ScanResult, LookedIn)>, Lookup> {
     let prior = store.load_scan_cache().filter(|p| p.root == root);
-    let scan = scan_folder(root, &ScanOptions::default(), prior.as_ref(), cancel, &mut |p| {
-        progress(format!("Checked {} files, {} read\n{}", p.files_done, human_bytes(p.bytes_hashed), file_name(p.current)));
+    let options = ScanOptions { wanted: Some(wanted), ..ScanOptions::default() };
+    let started = std::time::Instant::now();
+    let scan = scan_folder(root, &options, prior.as_ref(), cancel, &mut |p| {
+        progress(super::scan_work::progress_text(&p, started.elapsed()));
     })
     .map_err(|e| Lookup::Unreadable(e.to_string()))?;
     if scan.cancelled || cancel.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(None);
     }
     // Never let an empty walk replace a populated saved scan: an unmounted card leaves an empty folder.
-    if let Some(saved) = prior.as_ref().map(|p| p.files.len()).filter(|n| *n > 0 && scan.files.is_empty()) {
+    if let Some(saved) = prior.as_ref().map(|p| p.files.len().max(p.rom_files_seen)).filter(|n| *n > 0 && scan.rom_files_seen == 0) {
         return Err(Lookup::LooksEmpty { saved });
     }
     let rescanned = prior.as_ref().is_none_or(|p| p.files != scan.files);
     let cache_error = if rescanned { store.save_scan_cache(&scan).err().map(|e| e.to_string()) } else { None };
-    let looked_in = LookedIn { folder: root.to_path_buf(), files: scan.files.len(), rescanned, problems: scan.issues.len(), cache_error };
+    let looked_in = LookedIn { folder: root.to_path_buf(), files: scan.rom_files_seen, rescanned, problems: scan.issues.len(), cache_error };
     Ok(Some((scan, looked_in)))
 }
 
@@ -352,7 +355,8 @@ pub fn find_game_files_for_ports(store: &RomLibraryStore, reqs: &[FindRequest], 
     let Some(root) = store.rom_dir().map(Path::to_path_buf) else {
         return Some(reqs.iter().map(|r| if r.needs_files() { FindOutcome::NoRomFolder { needs: required_needs(&r.spec) } } else { FindOutcome::NoFilesNeeded }).collect());
     };
-    match library_files(store, &root, cancel, progress) {
+    let wanted = crate::fork::rom_library::scan::Wanted::from_specs(reqs.iter().filter(|r| r.needs_files()).map(|r| &r.spec));
+    match library_files(store, &root, wanted, cancel, progress) {
         Ok(None) => None,
         Err(lookup) => Some(
             reqs.iter()

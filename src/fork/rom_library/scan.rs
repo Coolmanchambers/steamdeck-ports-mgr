@@ -3,6 +3,11 @@
 //! Read-only: files are opened for reading and nothing else. The walk is bounded in depth, follows
 //! symlinks (SD cards and NAS mounts are often linked in) but never enters the same real folder
 //! twice, and hashes in 1 MiB chunks so a 30 GB image never sits in memory.
+//!
+//! With `ScanOptions::wanted` (what the installed ports need), only candidates are read: a file whose
+//! name answers a needed file (its full name, a disc serial, or most of the words of its title), and,
+//! for a needed file no name answered, the files with its extension. Everything else is listed, not
+//! read. A file the saved scan already has (same path, size and time) is never read again.
 
 use super::hash::{from_hex, to_hex, Digests, MultiHasher};
 use super::system::{self, ByteOrder, System};
@@ -25,11 +30,99 @@ pub struct ScanOptions {
     pub sha1: bool,
     /// Hash files whose extension is not a known ROM or disc extension too.
     pub hash_all_extensions: bool,
+    /// Read only the files these needs could be (`None`: every ROM file, the full scan of Settings > Game files).
+    pub wanted: Option<Wanted>,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
-        ScanOptions { max_depth: 6, sha1: true, hash_all_extensions: false }
+        ScanOptions { max_depth: 6, sha1: true, hash_all_extensions: false, wanted: None }
+    }
+}
+
+/// Short title words that say nothing about which game it is.
+const STOP_WORDS: [&str; 13] = ["the", "and", "for", "usa", "europe", "japan", "world", "rev", "disc", "version", "edition", "bios", "track"];
+
+fn squash(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()
+}
+
+fn words(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for w in s.split(|c: char| !c.is_ascii_alphanumeric()).map(str::to_ascii_lowercase) {
+        if w.len() >= 3 && !STOP_WORDS.contains(&w.as_str()) && !out.contains(&w) {
+            out.push(w);
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Default)]
+struct WantedAlt {
+    /// Full file names, lowercase.
+    names: Vec<String>,
+    /// Disc serials, BIOS names (squashed).
+    tokens: Vec<String>,
+    /// The words of the title (before its first parenthesis).
+    words: Vec<String>,
+    exts: Vec<String>,
+    /// A checksum is known, so a file of the right kind can be confirmed by reading it.
+    checkable: bool,
+}
+
+/// What a set of ports needs, to decide which files are worth reading.
+#[derive(Debug, Clone, Default)]
+pub struct Wanted {
+    alts: Vec<WantedAlt>,
+}
+
+impl Wanted {
+    pub fn from_specs<'a>(specs: impl IntoIterator<Item = &'a super::requirements::RomSpec>) -> Wanted {
+        let mut alts = Vec::new();
+        for spec in specs {
+            for alt in spec.requirement.slots.iter().flat_map(|s| s.alternatives.iter()) {
+                let title = alt.display.split('(').next().unwrap_or("");
+                let mut exts = alt.exts.clone();
+                // An N64 image is the same game in any of its three byte orders.
+                if exts.iter().any(|e| matches!(e.as_str(), "z64" | "v64" | "n64")) {
+                    for e in ["z64", "v64", "n64"] {
+                        if !exts.iter().any(|x| x == e) {
+                            exts.push(e.to_string());
+                        }
+                    }
+                }
+                alts.push(WantedAlt {
+                    names: alt.names.iter().map(|n| n.to_lowercase()).collect(),
+                    tokens: alt.tokens.iter().map(|t| squash(t)).filter(|t| t.len() >= 4).collect(),
+                    words: words(title),
+                    exts,
+                    checkable: !alt.crc32.is_empty() || !alt.sha1.is_empty(),
+                });
+            }
+        }
+        Wanted { alts }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.alts.is_empty()
+    }
+
+    /// The alternatives `file_name` answers by name: its full name, a serial in it, or more than half of the
+    /// title's words.
+    fn named(&self, file_name: &str) -> Vec<usize> {
+        let lower = file_name.to_lowercase();
+        let squashed = squash(file_name);
+        let file_words = words(file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem));
+        self.alts
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| {
+                a.names.contains(&lower)
+                    || a.tokens.iter().any(|t| squashed.contains(t.as_str()))
+                    || (!a.words.is_empty() && a.words.iter().filter(|w| file_words.contains(w)).count() * 2 > a.words.len())
+            })
+            .map(|(i, _)| i)
+            .collect()
     }
 }
 
@@ -130,6 +223,10 @@ pub struct ScanResult {
     pub folders_already_seen: usize,
     pub issues: Vec<ScanIssue>,
     pub cancelled: bool,
+    /// ROM files the walk saw (read, taken from the saved scan, or left unread).
+    pub rom_files_seen: usize,
+    /// ROM files left unread because no wanted file could be them.
+    pub not_read: usize,
 }
 
 impl ScanResult {
@@ -149,6 +246,7 @@ impl ScanResult {
             "version": 1,
             "root": self.root.to_string_lossy(),
             "files": self.files.iter().map(RomFile::to_json).collect::<Vec<_>>(),
+            "rom_files_seen": self.rom_files_seen,
         })
     }
 
@@ -158,6 +256,7 @@ impl ScanResult {
         ScanResult {
             root: PathBuf::from(v.get("root").and_then(Value::as_str).unwrap_or("")),
             files: v.get("files").and_then(Value::as_array).map(|a| a.iter().filter_map(RomFile::from_json).collect()).unwrap_or_default(),
+            rom_files_seen: v.get("rom_files_seen").and_then(Value::as_u64).map_or(0, |n| n as usize),
             ..ScanResult::default()
         }
     }
@@ -168,6 +267,13 @@ pub struct Progress<'a> {
     pub current: &'a Path,
     pub files_done: usize,
     pub bytes_hashed: u64,
+    /// Files this scan reads (the candidates not in the saved scan), and how many of them are done.
+    pub to_read: usize,
+    pub files_read: usize,
+    /// Their size in all.
+    pub bytes_to_read: u64,
+    /// ROM files the walk saw.
+    pub seen: usize,
 }
 
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
@@ -266,9 +372,22 @@ pub fn scan(
     let mut result = ScanResult { root: root.to_path_buf(), ..ScanResult::default() };
     let mut seen_dirs: HashSet<PathBuf> = HashSet::new();
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
-    let mut bytes_hashed = 0u64;
 
-    'walk: while let Some((dir, depth)) = stack.pop() {
+    // 1. The walk: names, sizes and times only, nothing is opened.
+    struct Seen {
+        path: PathBuf,
+        rel_path: PathBuf,
+        system: System,
+        size: u64,
+        modified: u64,
+        ext: String,
+    }
+    let mut seen: Vec<Seen> = Vec::new();
+    while let Some((dir, depth)) = stack.pop() {
+        if cancel.load(Ordering::Relaxed) {
+            result.cancelled = true;
+            return Ok(result);
+        }
         match fs::canonicalize(&dir) {
             Ok(real) => {
                 if !seen_dirs.insert(real) {
@@ -322,49 +441,90 @@ pub fn scan(
             }
             let rel_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             let system = system::classify(&rel_path);
-            let size = meta.len();
-            let modified = mtime_ms(&meta);
-            progress(Progress { current: &path, files_done: result.files.len(), bytes_hashed });
-
-            if let Some(old) = known.get(path.as_path()) {
-                if old.size == size && old.mtime_ms == modified && (old.raw.sha1.is_some() || !options.sha1) {
-                    let mut kept = (*old).clone();
-                    kept.rel_path = rel_path;
-                    kept.system = system;
-                    result.files.push(kept);
-                    continue;
-                }
-            }
-            let is_n64 = system == System::N64 || matches!(ext.as_str(), "z64" | "v64" | "n64");
-            let mut counted = 0u64;
-            let hashed = hash_file(&path, is_n64, options.sha1, cancel, &mut |n| {
-                counted += n;
-                progress(Progress { current: &path, files_done: result.files.len(), bytes_hashed: bytes_hashed + counted });
-            });
-            match hashed {
-                Ok(Some(h)) => {
-                    bytes_hashed += counted;
-                    result.files.push(RomFile {
-                        path: path.clone(),
-                        rel_path,
-                        system,
-                        size: h.size,
-                        mtime_ms: modified,
-                        ext,
-                        byte_order: h.byte_order,
-                        raw: h.raw,
-                        normalized: h.normalized,
-                    });
-                }
-                Ok(None) => {
-                    result.cancelled = true;
-                    break 'walk;
-                }
-                Err(e) => result.issues.push(ScanIssue { path: path.clone(), message: format!("could not read: {e}") }),
-            }
+            seen.push(Seen { path, rel_path, system, size: meta.len(), modified: mtime_ms(&meta), ext });
         }
         // Reverse so the stack pops in name order and the result is stable.
         stack.extend(subdirs.into_iter().rev().map(|p| (p, depth + 1)));
+    }
+    result.rom_files_seen = seen.len();
+
+    // 2. What to read: everything (no `wanted`), else the files a wanted one could be. A file the saved scan
+    // has unchanged is kept as it is either way.
+    let unchanged = |s: &Seen| known.get(s.path.as_path()).filter(|old| old.size == s.size && old.mtime_ms == s.modified && (old.raw.sha1.is_some() || !options.sha1)).copied();
+    let read: Vec<bool> = match options.wanted.as_ref().filter(|w| !w.is_empty()) {
+        None => seen.iter().map(|s| unchanged(s).is_none()).collect(),
+        Some(wanted) => {
+            let mut answered = vec![false; wanted.alts.len()];
+            let mut pick: Vec<bool> = seen
+                .iter()
+                .map(|s| {
+                    let hits = wanted.named(&s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+                    for h in &hits {
+                        answered[*h] = true;
+                    }
+                    !hits.is_empty()
+                })
+                .collect();
+            // A needed file no name answered (a renamed dump): the files of its kind, confirmed by their checksum.
+            for alt in wanted.alts.iter().enumerate().filter(|(i, a)| !answered[*i] && a.checkable && !a.exts.is_empty()).map(|(_, a)| a) {
+                for (n, s) in seen.iter().enumerate() {
+                    if alt.exts.contains(&s.ext) {
+                        pick[n] = true;
+                    }
+                }
+            }
+            seen.iter().zip(pick).map(|(s, p)| p && unchanged(s).is_none()).collect()
+        }
+    };
+    let to_read = read.iter().filter(|r| **r).count();
+    let bytes_to_read: u64 = seen.iter().zip(&read).filter(|(_, r)| **r).map(|(s, _)| s.size).sum();
+
+    // 3. Read the candidates; keep what the saved scan has; leave the rest.
+    let mut bytes_hashed = 0u64;
+    let mut files_read = 0usize;
+    let total_seen = seen.len();
+    for (s, must_read) in seen.into_iter().zip(read) {
+        if let Some(old) = unchanged(&s) {
+            let mut kept = old.clone();
+            kept.rel_path = s.rel_path;
+            kept.system = s.system;
+            result.files.push(kept);
+            continue;
+        }
+        if !must_read {
+            result.not_read += 1;
+            continue;
+        }
+        progress(Progress { current: &s.path, files_done: result.files.len(), bytes_hashed, to_read, files_read, bytes_to_read, seen: total_seen });
+        let is_n64 = s.system == System::N64 || matches!(s.ext.as_str(), "z64" | "v64" | "n64");
+        let mut counted = 0u64;
+        let files_done = result.files.len();
+        let hashed = hash_file(&s.path, is_n64, options.sha1, cancel, &mut |n| {
+            counted += n;
+            progress(Progress { current: &s.path, files_done, bytes_hashed: bytes_hashed + counted, to_read, files_read, bytes_to_read, seen: total_seen });
+        });
+        files_read += 1;
+        match hashed {
+            Ok(Some(h)) => {
+                bytes_hashed += counted;
+                result.files.push(RomFile {
+                    path: s.path,
+                    rel_path: s.rel_path,
+                    system: s.system,
+                    size: h.size,
+                    mtime_ms: s.modified,
+                    ext: s.ext,
+                    byte_order: h.byte_order,
+                    raw: h.raw,
+                    normalized: h.normalized,
+                });
+            }
+            Ok(None) => {
+                result.cancelled = true;
+                break;
+            }
+            Err(e) => result.issues.push(ScanIssue { path: s.path.clone(), message: format!("could not read: {e}") }),
+        }
     }
     result.files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(result)
@@ -659,5 +819,72 @@ mod tests {
         .unwrap();
         assert!(res.cancelled);
         assert!(res.files.is_empty(), "a half-hashed file is not reported");
+    }
+
+    // -- reading only what the ports could need --------------------------------------------------
+
+    fn spec(instructions: &str) -> super::super::requirements::RomSpec {
+        super::super::requirements::RomSpec { requirement: super::super::requirements::parse_instructions(instructions), access: super::super::connect::Access::InPlace, dest_subdir: String::new() }
+    }
+
+    /// A big file nobody can read: if the scan opened it, it would report "could not read".
+    #[cfg(unix)]
+    fn big_unreadable(path: &Path, len: u64) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let f = File::create(path).unwrap();
+        f.set_len(len).unwrap(); // sparse: large on paper, nothing on disk
+        drop(f);
+        fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_candidates_are_read_and_large_files_nobody_needs_are_never_opened() {
+        let tmp = temp_dir();
+        let root = tmp.path().join("roms");
+        let oot = n64_rom(1, 40_000);
+        let mm = n64_rom(2, 30_000);
+        let disc = random_bytes(3, 50_000);
+        // What the ports need: two N64 games by checksum (one well named, one renamed) and a PS1 disc by name.
+        write(&root.join("n64/Legend of Zelda, The - Ocarina of Time (USA).z64"), &oot);
+        write(&root.join("n64/mm-backup.v64"), &to_v64(&mm));
+        write(&root.join("psx/Legend of Dragoon, The (USA) (Disc 1).bin"), &disc);
+        // Many large files nobody needs: other games of other consoles, and other N64 games (named, so not candidates).
+        for i in 0..40 {
+            big_unreadable(&root.join(format!("ps2/Some Game {i} (USA).iso")), 4_000_000_000);
+            big_unreadable(&root.join(format!("gc/Another Game {i} (USA).iso")), 1_400_000_000);
+        }
+        big_unreadable(&root.join("psx/Final Fantasy VII (USA) (Disc 1).bin"), 700_000_000);
+        let specs = [
+            spec(&format!("Required files: Legend of Zelda, The - Ocarina of Time (USA).z64 (CRC32: {:08X})", digests_of(&oot).crc32)),
+            spec(&format!("Required files: Legend of Zelda, The - Majora's Mask (USA).z64 (CRC32: {:08X})", digests_of(&mm).crc32)),
+            spec(&format!("Required files: Legend of Dragoon, The (USA) (Disc 1).bin (CRC32: {:08X})", digests_of(&disc).crc32)),
+        ];
+        let options = ScanOptions { wanted: Some(Wanted::from_specs(specs.iter())), ..ScanOptions::default() };
+        let mut last = (0usize, 0u64, 0usize);
+        let res = scan(&root, &options, None, &AtomicBool::new(false), &mut |p| last = (p.to_read, p.bytes_to_read, p.seen)).unwrap();
+        assert!(res.issues.is_empty(), "nothing unreadable was opened: {:?}", res.issues);
+        let names: Vec<String> = res.files.iter().map(RomFile::file_name).collect();
+        assert_eq!(names, ["Legend of Zelda, The - Ocarina of Time (USA).z64", "mm-backup.v64", "Legend of Dragoon, The (USA) (Disc 1).bin"]);
+        assert_eq!((res.rom_files_seen, res.not_read), (84, 81));
+        assert_eq!(last, (3, (40_000 + 30_000 + 50_000) as u64, 84), "progress counts only the files read");
+        // Again with the saved scan: nothing is read at all.
+        let mut read_again = 0u64;
+        let again = scan(&root, &options, Some(&res), &AtomicBool::new(false), &mut |p| read_again = read_again.max(p.bytes_hashed)).unwrap();
+        assert_eq!((again.files.len(), read_again), (3, 0));
+        // Without needs (Settings > Game files), every game file is read: the unreadable ones are reported.
+        let full = scan(&root, &ScanOptions::default(), Some(&res), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(full.issues.len(), 81);
+    }
+
+    #[test]
+    fn a_name_answers_by_full_name_by_serial_or_by_most_of_the_title_words() {
+        let w = Wanted::from_specs([spec("Required files: Legend of Zelda, The - Ocarina of Time (USA).z64 (CRC32: 12345678)"), spec("Required files: SLUS-00972. BIOS: Regional SCPH")].iter());
+        assert_eq!(w.named("Legend of Zelda, The - Ocarina of Time (USA).z64"), [0]);
+        assert_eq!(w.named("Zelda - Ocarina of Time.z64"), [0], "zelda, ocarina, time: 3 of 4 words");
+        assert!(w.named("Zelda - Majora's Mask.z64").is_empty(), "one word of four is not enough");
+        assert!(w.named("Ocarina.z64").is_empty());
+        assert_eq!(w.named("SLUS_009.72.Legend.bin"), [1], "the serial, whatever the punctuation");
     }
 }
