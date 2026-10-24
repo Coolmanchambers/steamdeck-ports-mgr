@@ -411,10 +411,15 @@ impl Outcome {
         for s in &self.scripts {
             lines.push(format!("{s} now names the new version (the original is in .previous)."));
         }
+        let mut kept_lines: Vec<String> = Vec::new();
         for (name, why) in &self.kept {
             let label = parse(name).version.map(|v| format!("The old version ({v})")).unwrap_or_else(|| name.clone());
-            lines.push(format!("{label} was left where it is: {why}."));
+            let line = format!("{label} was left where it is: {why}.");
+            if !kept_lines.contains(&line) {
+                kept_lines.push(line);
+            }
         }
+        lines.extend(kept_lines);
         if self.older_bytes > 0 {
             lines.push(format!(
                 "Older versions in .previous use {} (in Desktop Mode's file manager, Ctrl+H shows hidden folders); remove them from the port's folder if you need the room.",
@@ -480,9 +485,10 @@ fn path_char(c: char) -> bool {
 }
 
 /// Whether the text before a match lets it name an entry of the port folder: nothing, a separator or
-/// quote, `./`, or a variable folder (`$HERE/`, `${DIR}/`, `"$(dirname "$0")"/`). Not a deeper path
+/// quote, `./`, a variable folder (`$HERE/`, `${DIR}/`, `"$(dirname "$0")"/`), or a path whose last folder
+/// is the port folder (`/home/deck/.../dusklight/`, `"$HOME/.../dusklight/`). Not another folder's path
 /// (`~/.local/share/Game-v1.0`) and not the middle of a longer name.
-fn starts_a_port_path(before: &str) -> bool {
+fn starts_a_port_path(before: &str, port_folder: &str) -> bool {
     let Some(last) = before.chars().last() else { return true };
     if last != '/' {
         return !path_char(last);
@@ -493,18 +499,18 @@ fn starts_a_port_path(before: &str) -> bool {
         return true;
     }
     let component = head.rsplit(|c: char| c == '/' || c.is_whitespace() || matches!(c, '"' | '\'' | '=' | '(')).next().unwrap_or("");
-    component == "." || component.starts_with('$')
+    component == "." || component.starts_with('$') || (!port_folder.is_empty() && component == port_folder)
 }
 
 /// `text` with every `old` that stands alone as a port-folder name (see `starts_a_port_path`, and no
 /// name character right after it) replaced by `new`; `None` when there is none.
-fn replace_names(text: &str, old: &str, new: &str) -> Option<String> {
+fn replace_names(text: &str, old: &str, new: &str, port_folder: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     let mut any = false;
     for (i, _) in text.match_indices(old) {
         let after = &text[i + old.len()..];
-        if starts_a_port_path(&text[..i]) && !after.chars().next().is_some_and(path_char) {
+        if starts_a_port_path(&text[..i], port_folder) && !after.chars().next().is_some_and(path_char) {
             out.push_str(&text[last..i]);
             out.push_str(new);
             last = i + old.len();
@@ -521,6 +527,7 @@ fn replace_names(text: &str, old: &str, new: &str) -> Option<String> {
 /// original goes next to the old version as `<script>.before-update`.
 fn rewrite_scripts(game_dir: &Path, release: &[String], moved: &[(Supersede, String)], notes: &mut Vec<String>) -> Vec<String> {
     let mut done = Vec::new();
+    let port_folder = folder_name(game_dir);
     for name in top_level_names(game_dir) {
         if !name.to_lowercase().ends_with(".sh") || release.contains(&name) {
             continue;
@@ -534,7 +541,7 @@ fn rewrite_scripts(game_dir: &Path, release: &[String], moved: &[(Supersede, Str
         let mut new_text = text.clone();
         let mut folder: Option<&str> = None;
         for (m, f) in moved {
-            if let Some(changed) = replace_names(&new_text, &m.old, &m.new) {
+            if let Some(changed) = replace_names(&new_text, &m.old, &m.new, &port_folder) {
                 new_text = changed;
                 folder.get_or_insert(f.as_str());
             }
@@ -557,15 +564,51 @@ fn rewrite_scripts(game_dir: &Path, release: &[String], moved: &[(Supersede, Str
     done
 }
 
+fn folder_name(game_dir: &Path) -> String {
+    game_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// A top-level `.sh` launcher that is not part of the release: the ones `rewrite_scripts` updates.
+fn rewritable_script(target: &str, release: &[String]) -> bool {
+    !target.contains('/') && target.to_lowercase().ends_with(".sh") && !release.iter().any(|r| r == target)
+}
+
+/// When the launch target is a script (`.sh`, or `#!` at the start) at any depth: the planned moves
+/// whose old name it would still contain after the rewrite (a script in a subfolder or in the release
+/// is not rewritten; a match `replace_names` refuses stays). Those stay in place, or the game would no
+/// longer start. A script that is itself superseded is not looked at.
+fn names_left_in_launcher<'a>(game_dir: &Path, target: &str, release: &[String], moves: &'a [Supersede]) -> Vec<&'a Supersede> {
+    let head = target.split('/').next().unwrap_or(target);
+    if moves.iter().any(|m| m.old == head) {
+        return Vec::new();
+    }
+    let Ok(path) = safe_join(game_dir, target) else { return Vec::new() };
+    if !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MAX_SCRIPT_BYTES) {
+        return Vec::new();
+    }
+    let Ok(text) = fs::read_to_string(&path) else { return Vec::new() };
+    if !(target.to_lowercase().ends_with(".sh") || text.starts_with("#!")) {
+        return Vec::new();
+    }
+    let rewrite = rewritable_script(target, release);
+    let port_folder = folder_name(game_dir);
+    moves
+        .iter()
+        .filter(|m| {
+            let after = if rewrite { replace_names(&text, &m.old, &m.new, &port_folder).unwrap_or_else(|| text.clone()) } else { text.clone() };
+            after.contains(&m.old)
+        })
+        .collect()
+}
+
 /// A repoint to `to` for this port is in the Steam queue now (a queued change can cancel out an
 /// earlier one, which leaves nothing waiting).
 fn still_queued(ctx: &SteamCtx, port_key: &str, to: &Path) -> bool {
-    let to = to.to_string_lossy();
     crate::fork::steam_queue::load(&crate::fork::steam_queue::queue_path(ctx.config_dir))
         .queue
         .entries
         .iter()
-        .any(|e| e.kind == crate::fork::steam_queue::QueuedKind::Repoint && e.port_key == port_key && e.repoint.as_ref().is_some_and(|(_, t)| *t == to))
+        .any(|e| e.kind == crate::fork::steam_queue::QueuedKind::Repoint && e.port_key == port_key && e.repoint.as_ref().is_some_and(|(_, t)| Path::new(t) == to))
 }
 
 /// The program the app starts today for this port (relative), if it can tell without asking.
@@ -611,9 +654,22 @@ pub fn finish_with(input: &FinishInput, pending: &Pending) -> Outcome {
         out.target = Some(new_target.clone());
     }
 
+    // A launcher script that would still name an old entry after the rewrite keeps that entry in place.
+    let held: Vec<(String, String)> = match old_target.as_deref() {
+        Some(t) => names_left_in_launcher(game_dir, t, &pending.release, &plan.moves)
+            .into_iter()
+            .map(|m| (m.old.clone(), format!("the launcher {t} still names it")))
+            .collect(),
+        None => Vec::new(),
+    };
+
     // Steam first (the old paths still exist), then move only what nothing points at any more.
     let mut moves: Vec<&Supersede> = Vec::new();
     for m in &plan.moves {
+        if let Some(h) = held.iter().find(|(old, _)| *old == m.old) {
+            out.kept.push(h.clone());
+            continue;
+        }
         let from = game_dir.join(&m.old);
         let to = game_dir.join(&m.new);
         if fs::symlink_metadata(&to).is_err() {
@@ -622,7 +678,7 @@ pub fn finish_with(input: &FinishInput, pending: &Pending) -> Outcome {
         }
         // A change queued by an earlier update may still end at this old entry: it ends at the new one now.
         let queue = crate::fork::steam_queue::queue_path(ctx.config_dir);
-        if let Err(e) = crate::fork::steam_queue::retarget_repoints(&queue, input.port.key(), &from.to_string_lossy(), &to.to_string_lossy()) {
+        if let Err(e) = crate::fork::steam_queue::retarget_repoints(&queue, &from, &to) {
             out.kept.push((m.old.clone(), format!("the queue of Steam changes could not be updated ({e})")));
             continue;
         }

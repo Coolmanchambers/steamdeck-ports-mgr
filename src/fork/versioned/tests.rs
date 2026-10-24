@@ -675,8 +675,11 @@ fn script_names_are_replaced_only_where_they_name_an_entry_of_the_port_folder() 
         ("cp Game-v1.0.cfg /tmp", None),
         ("MyGame-v1.0", None),
         ("/Game-v1.0/game", None),
+        ("exec /home/deck/Applications/dpm/Library/game/Game-v1.0/game", Some("exec /home/deck/Applications/dpm/Library/game/Game-v1.1/game")),
+        ("\"$HOME/Ports/game/Game-v1.0/game\"", Some("\"$HOME/Ports/game/Game-v1.1/game\"")),
+        ("/home/deck/other/Game-v1.0/game", None),
     ] {
-        assert_eq!(replace_names(line, old, new).as_deref(), want, "{line}");
+        assert_eq!(replace_names(line, old, new, "game").as_deref(), want, "{line}");
     }
 }
 
@@ -688,7 +691,8 @@ fn a_launcher_script_keeps_its_other_lines_when_its_program_moves() {
     let script = format!("#!/bin/sh\nCONF=~/.local/share/{OLD}\ncp ./{OLD}.cfg /tmp\nexec ./{OLD}\n");
     put(&w.game.join("launch.sh"), script.as_bytes());
     w.install(&p, NEW, &elf("new")).unwrap();
-    w.finish(&p, Some("launch.sh"), &no_steam, false);
+    // No favorite: the script is not the known launch target, so the launcher guard does not apply.
+    w.finish(&p, None, &no_steam, false);
     assert_eq!(fs::read_to_string(w.game.join("launch.sh")).unwrap(), format!("#!/bin/sh\nCONF=~/.local/share/{OLD}\ncp ./{OLD}.cfg /tmp\nexec ./{NEW}\n"));
 }
 
@@ -781,4 +785,72 @@ fn a_change_that_cancels_out_in_the_queue_leaves_nothing_waiting() {
     assert!(w.previous("v1.1", NEW).is_file());
     assert_eq!(w.shortcuts()[0].exe_path(), w.game.join(OLD).to_str().unwrap(), "the shortcut never left v1.0");
     assert!(!steam_queue::queue_path(&w.app).exists(), "the queued v1.0 -> v1.1 change is gone: applied later it would point Steam into .previous");
+}
+
+#[test]
+fn a_launcher_script_with_a_full_path_into_the_port_folder_is_updated() {
+    let w = World::new("e2e_script_full_path");
+    let p = port(None);
+    put(&w.game.join(OLD), &elf("old"));
+    let script = format!("#!/bin/sh\nexec \"{}\"\n", w.game.join(OLD).display());
+    put(&w.game.join("launch.sh"), script.as_bytes());
+    w.install(&p, NEW, &elf("new")).unwrap();
+    let out = w.finish(&p, Some("launch.sh"), &no_steam, false);
+    assert!(w.previous("v1.0", OLD).is_file(), "{:?}", out.kept);
+    assert_eq!(fs::read_to_string(w.game.join("launch.sh")).unwrap(), script.replace(OLD, NEW));
+}
+
+#[test]
+fn a_launcher_in_a_subfolder_that_names_the_old_files_keeps_them_in_place() {
+    let w = World::new("e2e_launcher_guard");
+    let p = port(None);
+    let arm_old = "Game-v1.0-linux-aarch64.AppImage";
+    let arm_new = "Game-v1.1-linux-aarch64.AppImage";
+    put(&w.game.join(OLD), &elf("old"));
+    put(&w.game.join(arm_old), &elf("old arm"));
+    let script = format!("#!/bin/sh\ncd \"$(dirname \"$0\")/..\"\n[ \"$(uname -m)\" = aarch64 ] && exec ./{arm_old}\nexec ./{OLD}\n");
+    put(&w.game.join("bin").join("run.sh"), script.as_bytes());
+    let download = w.root.join("pack");
+    put(&download.join(NEW), &elf("new"));
+    put(&download.join(arm_new), &elf("new arm"));
+    let archive = w.root.join("Game-v1.1.zip");
+    let tool = crate::core::installer::sevenzip_exe_path().expect("7-Zip next to the test binary");
+    assert!(std::process::Command::new(tool).arg("a").arg("-tzip").arg(&archive).arg(".").current_dir(&download).output().unwrap().status.success());
+    let saves = w.root.join("Saves Backup");
+    apply_archive(&p, InstallPaths { library_dir: &w.library, saves_backup_dir: &saves }, &archive, &w.game, "2026-10-24_12-00-00", &mut |_| {}).unwrap();
+
+    let out = w.finish(&p, Some("bin/run.sh"), &no_steam, false);
+
+    assert!(out.moved.is_empty(), "{:?}", out.moved);
+    assert!(w.game.join(OLD).is_file() && w.game.join(arm_old).is_file(), "the script would no longer start the game otherwise");
+    assert_eq!(fs::read_to_string(w.game.join("bin").join("run.sh")).unwrap(), script, "a subfolder script is never rewritten");
+    assert_eq!(out.new_favorite, None);
+    let text = out.summary("Game", "game", Some("v1.1")).unwrap();
+    let line = "The old version (v1.0) was left where it is: the launcher bin/run.sh still names it.";
+    assert_eq!(text.matches(line).count(), 1, "two files, one line: {text}");
+}
+
+#[test]
+fn queued_repoints_are_matched_by_path_whichever_port_queued_them() {
+    let w = World::new("retarget_paths");
+    let queue = steam_queue::queue_path(&w.app);
+    let entry = |port_key: &str, from: &str, to: &str| steam_queue::QueuedChange {
+        account_id: 1234,
+        account_label: "Steam user".into(),
+        port_key: port_key.into(),
+        name: "Game".into(),
+        kind: QueuedKind::Repoint,
+        repoint_by_name: false,
+        art: steam_queue::ArtChoice::None,
+        from_game_mode: false,
+        queued_at: "2026-10-24_12-00-00".into(),
+        repoint: Some((from.into(), to.into())),
+    };
+    let a = w.game.join("Game-v1.0").to_string_lossy().into_owned();
+    let b = w.game.join("Game-v1.1");
+    steam_queue::save(&queue, &steam_queue::SteamQueue { entries: vec![entry("someone/else", &a, &format!("{}/", b.display()))] }).unwrap();
+    let c = w.game.join("Game-v1.2");
+    assert_eq!(steam_queue::retarget_repoints(&queue, &b, &c), Ok(1), "a trailing slash is the same path, and the port key does not matter");
+    let entries = steam_queue::load(&queue).queue.entries;
+    assert_eq!(entries[0].repoint.as_ref().map(|(_, t)| PathBuf::from(t)), Some(c));
 }

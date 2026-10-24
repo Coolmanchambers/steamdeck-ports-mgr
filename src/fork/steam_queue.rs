@@ -516,10 +516,10 @@ pub fn queue_confirm(changes: &[QueuedChange], game_mode: bool, show_accounts: b
 
 /// Adds the changes to the queue file. Returns the message to show.
 /// A port's file or folder `old` is being replaced by `new` (a versioned update, `fork::versioned`):
-/// queued repoints of that port that end at `old` end at `new` instead; one that would now start where it
-/// ends is dropped, and so is a second identical one. Returns how many entries changed. An unreadable
-/// queue is an error, so the caller keeps `old` in place.
-pub fn retarget_repoints(path: &Path, port_key: &str, old: &str, new: &str) -> Result<usize, String> {
+/// queued repoints that end at `old` (by path, whichever port queued them) end at `new` instead; one that
+/// would now start where it ends is dropped, and so is a second identical one. Returns how many entries
+/// changed. An unreadable queue is an error, so the caller keeps `old` in place.
+pub fn retarget_repoints(path: &Path, old: &Path, new: &Path) -> Result<usize, String> {
     let loaded = load(path);
     if loaded.unreadable {
         return Err(loaded.problem.unwrap_or_default());
@@ -527,9 +527,9 @@ pub fn retarget_repoints(path: &Path, port_key: &str, old: &str, new: &str) -> R
     let mut queue = loaded.queue;
     let mut changed = 0;
     for e in queue.entries.iter_mut() {
-        if e.kind == QueuedKind::Repoint && e.port_key == port_key {
-            if let Some((_, to)) = e.repoint.as_mut().filter(|(_, to)| to == old) {
-                *to = new.to_string();
+        if e.kind == QueuedKind::Repoint {
+            if let Some((_, to)) = e.repoint.as_mut().filter(|(_, to)| Path::new(to) == old) {
+                *to = new.to_string_lossy().into_owned();
                 changed += 1;
             }
         }
@@ -539,7 +539,7 @@ pub fn retarget_repoints(path: &Path, port_key: &str, old: &str, new: &str) -> R
     }
     let mut kept: Vec<QueuedChange> = Vec::new();
     for e in queue.entries {
-        let no_op = e.kind == QueuedKind::Repoint && e.repoint.as_ref().is_some_and(|(f, t)| f == t);
+        let no_op = e.kind == QueuedKind::Repoint && e.repoint.as_ref().is_some_and(|(f, t)| Path::new(f) == Path::new(t));
         let duplicate = e.kind == QueuedKind::Repoint && kept.iter().any(|k| k.kind == QueuedKind::Repoint && k.account_id == e.account_id && k.port_key == e.port_key && k.repoint == e.repoint);
         if !no_op && !duplicate {
             kept.push(e);
