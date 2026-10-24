@@ -498,5 +498,10 @@ mod tests {
         assert!(!c.linux_file.is_empty() && !c.version.is_empty(), "{c:?}");
         let missing = check(&crate::fork::art::net::Net::new(), &parse_link("github.com/this-owner-does-not-exist-12345/nope").unwrap());
         assert!(matches!(missing, Err(CheckError::NotFound(_))), "{missing:?}");
+        // The two examples the Deck test plan gives for the link errors.
+        let windows_only = check(&crate::fork::art::net::Net::new(), &parse_link("github.com/nefarius/ViGEmBus").unwrap());
+        assert!(matches!(windows_only, Err(CheckError::NoLinuxFile(_))), "a project with only a Windows installer: {windows_only:?}");
+        let no_releases = check(&crate::fork::art::net::Net::new(), &parse_link("github.com/octocat/Hello-World").unwrap());
+        assert!(matches!(no_releases, Err(CheckError::NoReleases(_))), "a project with no releases: {no_releases:?}");
     }
 }

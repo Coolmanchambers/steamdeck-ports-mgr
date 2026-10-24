@@ -110,6 +110,8 @@ pub enum Action {
     SkipGameFileCopies,
     /// Add every port that is not in Steam yet (or queue them while Steam runs).
     AddToSteam,
+    /// Look at Steam again (after signing in once).
+    TryAgain,
     /// This account (by position in the names the page showed) gets the ports.
     ChooseAccount(usize),
     OpenArtSources,
@@ -427,6 +429,7 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
             w.handoff = Some(HandOff::RomFolder);
             a.rom_folder_step();
         }
+        Action::TryAgain if w.step == Step::Steam => show_step(w, a),
         Action::AddToSteam if w.step == Step::Steam => {
             if !w.summary.steam_account_asked {
                 let accounts = a.steam_accounts();
@@ -1002,6 +1005,7 @@ mod tests {
             Action::CopyGameFiles,
             Action::SkipGameFileCopies,
             Action::AddToSteam,
+            Action::TryAgain,
             Action::ChooseAccount(0),
             Action::OpenArtSources,
             Action::Finish,
@@ -1267,6 +1271,16 @@ mod tests {
         let (mut w, mut a) = (scanned(2), Fake::default());
         w.step = Step::Steam;
         press(&mut w, Action::ConnectGameFiles, &mut a);
+        assert!(a.calls.is_empty());
+    }
+
+    #[test]
+    fn try_again_on_the_steam_page_draws_it_again_and_changes_nothing_else() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::TryAgain, &mut a);
+        assert_eq!((w.step, a.calls.clone()), (Step::Steam, vec!["show Steam Step".to_string()]));
+        let (mut w, mut a) = (at(Step::GameFiles, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::TryAgain, &mut a);
         assert!(a.calls.is_empty());
     }
 

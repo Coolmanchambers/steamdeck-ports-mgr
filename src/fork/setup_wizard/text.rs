@@ -203,7 +203,8 @@ fn steam_page(w: &Wizard, ctx: &Context) -> Page {
     let mut p = page(w, "Add your ports to Steam?");
     if let Some(problem) = &info.problem {
         p.paragraphs = vec![problem.clone()];
-        p.options = vec![recommended("Continue", "Do this later from Settings", Action::Next)];
+        // Sign in to Steam once, then look again; or go on and do it later.
+        p.options = vec![recommended("Try again", "After starting Steam once and signing in", Action::TryAgain), option("Continue", "Do this later from Settings", Action::Next)];
     } else if info.to_add == 0 {
         p.paragraphs = paras(&["Nothing to add: no ports are installed yet, or they are already in Steam."]);
         p.options = vec![recommended("Continue", "", Action::Next)];
@@ -721,7 +722,7 @@ mod tests {
         assert!(all_text(&p).contains("Nothing to add"));
         let problem = crate::fork::setup_wizard::steam::Info { problem: Some("No Steam account folder was found. Start Steam once and sign in, then try again.".into()), ..Default::default() };
         let p = page_for(&at(Step::Steam), &steam_ctx(problem));
-        assert_eq!(option_actions(&p), [Action::Next]);
+        assert_eq!(option_actions(&p), [Action::TryAgain, Action::Next], "try again is the first choice");
         assert!(all_text(&p).contains("Start Steam once"));
         assert_eq!(start(&p), Focus::Option(0));
     }

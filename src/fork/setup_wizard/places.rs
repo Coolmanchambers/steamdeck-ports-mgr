@@ -43,6 +43,12 @@ fn plain_note(path: &Path, fs_type: Option<&str>) -> Option<String> {
     }
 }
 
+/// The note of a drive's Ports folder: when the folder is there already, the wizard says it is used as it is.
+fn drive_note(path: &Path, fs_type: &str) -> Option<String> {
+    let note = plain_note(path, Some(fs_type))?;
+    Some(if path.is_dir() && !is_non_linux_fs(fs_type) { format!("uses the Ports folder already there. {note}") } else { note })
+}
+
 fn notes(path: &Path, fs_type: Option<&str>) -> String {
     plain_note(path, fs_type).map(|n| format!(" - {}", n.replace("a new folder will be made", "new folder"))).unwrap_or_default()
 }
@@ -61,7 +67,7 @@ pub fn quick_choices(current: &Path, internal_default: &Path, drives: &[Drive], 
         let choice = QuickChoice {
             title: if can_hold { drive.title() } else { format!("{} (can't be used)", drive.title()) },
             detail: detail(&path, Some(&drive.fs_type)),
-            note: plain_note(&path, Some(&drive.fs_type)).unwrap_or_default(),
+            note: drive_note(&path, &drive.fs_type).unwrap_or_default(),
             path,
             kind: if drive.kind == "SD card" { Kind::SdCard } else { Kind::OtherDrive },
             usable: can_hold,
@@ -189,6 +195,10 @@ mod tests {
         let notes: Vec<(&str, &str)> = choices.iter().map(|c| (c.title.as_str(), c.note.as_str())).collect();
         assert_eq!(notes[0], ("SD card (SD)", "a new folder will be made"));
         assert!(notes[1].1.is_empty() || notes[1].1.ends_with(" free"), "{notes:?}"); // free space is not known everywhere
+        // A card whose Ports folder is there already says it is used as it is.
+        fs::create_dir_all(sd.join("Ports")).unwrap();
+        let again = quick_choices(&internal, &internal, &drives, None);
+        assert!(again[0].note.starts_with("uses the Ports folder already there"), "{:?}", again[0].note);
         assert!(notes[2].1.contains("exFAT cannot hold ports"), "{notes:?}");
         assert!(choices.iter().all(|c| !c.note.contains('/')), "no path in a note");
     }

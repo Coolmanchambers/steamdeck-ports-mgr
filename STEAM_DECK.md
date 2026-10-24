@@ -111,7 +111,10 @@ anything and run setup again later.
    goes on.
 3. **Where are your game files?** Only when an installed port names a game file it needs. Pick the folder that
    holds your ROMs and disc images (it is only read); the page then says "Found game files for 3 of 4 ports" and
-   what is still missing. With nothing needing a file this step is not shown.
+   what is still missing. A file already inside the port's own folder counts as found. "Connect them now" connects the
+   files found in your folder to their ports, with the same rules as Settings > Game files: used in place or linked
+   where the port allows, and a copy only after "Copy game files?" showed its size (your own files are never moved,
+   changed or deleted). With nothing needing a file this step is not shown.
 4. **Add your ports to Steam?** "Add all N" adds every port that is not in Steam yet (Desktop Mode, Steam closed:
    written now, with the old shortcut list backed up) or queues them (Steam running, and always in Game Mode: the
    shortcut file is not touched and the app offers to apply the queue next time in Desktop Mode with Steam

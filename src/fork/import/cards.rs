@@ -505,13 +505,15 @@ pub fn found_page(cards: &Cards, leave_label: &str, deck_ready_note: Option<&str
         if let Some(note) = deck_ready_note {
             p.paragraphs.push(note.to_string());
         }
+        // In the setup wizard (first run, nothing found) the likely answer is to go on; in Settings the person came to look.
+        let wizard = leave_label == "Skip";
         p.options = vec![
-            option("Look in another folder...", "Choose a folder to look in", CardAction::AddFolder, true),
+            option("Look in another folder...", "Choose a folder to look in", CardAction::AddFolder, !wizard),
             option("Use a GitHub link...", "For a port you have that is not on the list", CardAction::GithubLink, false),
-            option(leave_label_for_empty(leave_label), "", CardAction::Leave, false),
+            option(leave_label_for_empty(leave_label), "", CardAction::Leave, wizard),
         ];
         p.buttons[LEFT] = details_button();
-        p.initial = Focus::Option(0);
+        p.initial = Focus::Option(if wizard { 2 } else { 0 });
         return p;
     }
     let unsure = cards.unsure_count();
@@ -705,8 +707,10 @@ pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines
 pub fn steps_page(texts: &[String]) -> Page<CardAction> {
     let mut p = base("steps", "", "What will happen");
     p.paragraphs = texts.to_vec();
-    p.options = vec![option("Back", "", CardAction::Back, true)];
-    p.initial = Focus::Option(0);
+    // Back is a footer button: always on screen, so the page opens at the top of the text, not scrolled down to a choice.
+    p.options = Vec::new();
+    p.buttons[LEFT] = footer("Back", CardAction::Back);
+    p.initial = Focus::Button(LEFT);
     p
 }
 
@@ -940,7 +944,7 @@ mod tests {
         assert!(p.tiles.is_empty());
         assert_eq!(p.options[0].action, CardAction::AddFolder);
         assert_eq!(p.options[1].action, CardAction::GithubLink, "nothing matched: the GitHub link is the way to say what the folder is");
-        assert!(p.options[0].recommended);
+        assert!(!p.options[0].recommended && p.options[2].recommended, "in the wizard Next is highlighted");
         assert_eq!(p.options[2].title, "Next", "in the wizard leaving goes to the next step");
         assert_eq!(found_page(&Cards::new(vec![]), "Not now", None, 0).options[2].title, "Done");
         assert_eq!(p.paragraphs.len(), 2);
@@ -1297,8 +1301,9 @@ mod tests {
         let p = steps_page(&["A:\n\n1. one".to_string(), "B:\n\n1. two".to_string()]);
         assert_eq!(p.title, "What will happen");
         assert_eq!(p.paragraphs.len(), 2);
-        assert_eq!(p.options.len(), 1);
-        assert_eq!(p.options[0].action, CardAction::Back);
+        assert!(p.options.is_empty());
+        assert_eq!(p.buttons[LEFT].as_ref().map(|b| &b.action), Some(&CardAction::Back));
+        assert_eq!(p.initial, Focus::Button(LEFT), "the page opens at the top of the text");
     }
 
     #[test]
@@ -1379,4 +1384,14 @@ mod tests {
         assert_eq!(cards.index_of(Path::new("/home/deck/Games/Other")), None);
         assert_eq!(cards.walk(), [0]);
     }
+    #[test]
+    fn nothing_found_in_the_wizard_highlights_next_and_in_settings_looking_further() {
+        let cards = Cards::new(vec![]);
+        let wizard = found_page(&cards, "Skip", None, 0);
+        assert_eq!((wizard.options[2].title.as_str(), wizard.options[2].recommended, wizard.initial), ("Next", true, Focus::Option(2)));
+        assert!(!wizard.options[0].recommended);
+        let settings = found_page(&cards, "Not now", None, 0);
+        assert_eq!((settings.options[0].recommended, settings.initial), (true, Focus::Option(0)));
+    }
+
 }

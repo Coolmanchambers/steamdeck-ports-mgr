@@ -603,8 +603,9 @@ export component SetupWizardDialog inherits Window {
                         border-px: root.border-px;
                     }
                     if root.tiles.length > 0: Rectangle {
-                        property <length> cover-h: root.large ? root.height * 0.2 : root.row-height * 3.4;
-                        property <length> tile-w: self.cover-h * 0.85;
+                        // Three choices under the covers (Which port is this?) need the room: the covers are a little smaller.
+                        property <length> cover-h: root.large ? root.height * (root.options.length >= 3 ? 0.16 : 0.2) : root.row-height * 3.4;
+                        property <length> tile-w: self.cover-h * (root.large && root.options.length >= 3 ? 1.07 : 0.85);
                         property <length> tile-h: self.cover-h + root.body-font * 3.6;
                         property <float> per-row: max(1, Math.floor((body.width - root.gutter) / (self.tile-w + root.spacing)));
                         height: Math.ceil(root.tiles.length / self.per-row) * (self.tile-h + root.spacing);
