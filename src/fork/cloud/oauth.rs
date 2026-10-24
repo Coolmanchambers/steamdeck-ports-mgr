@@ -11,7 +11,7 @@
 //! or an email, and the types print no values.
 
 use super::net::{classify_status, Net, Reply, Request};
-use super::service::{ErrorKind, ServiceError, ServiceId};
+use super::service::{ErrorKind, ServiceError};
 use super::tokens::ServiceTokens;
 use serde_json::Value;
 use std::fmt;

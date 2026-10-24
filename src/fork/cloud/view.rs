@@ -188,7 +188,8 @@ pub fn status_lines(s: &Status) -> Vec<String> {
 /// The page Settings > Cloud backup opens once signed in.
 pub fn status_page(account: &str, lines: Vec<String>, busy: bool, signed_out: bool) -> Page<Act> {
     let mut page = base("Cloud backup");
-    let mut facts = vec![format!("Signed in as {account}.")];
+    // A revoked sign-in is not "signed in as" anyone any more: the line says what to do.
+    let mut facts = if signed_out { Vec::new() } else { vec![format!("Signed in as {account}.")] };
     facts.extend(lines);
     page.facts = facts;
     if signed_out {
@@ -431,6 +432,7 @@ mod tests {
         assert_eq!(out.options.len(), 1);
         assert_eq!(out.options[0].action, Act::SignIn);
         assert!(status_page("a", vec![], true, false).options[0].title.contains("Backing up"));
+        assert!(out.facts.iter().all(|f| !f.contains("Signed in as")), "{:?}", out.facts);
     }
 
     #[test]
