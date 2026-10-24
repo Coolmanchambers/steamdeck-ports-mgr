@@ -56,7 +56,7 @@ pub struct RepointResult {
     pub skipped: Vec<(String, String)>,
 }
 
-pub const NO_APP_ID: &str = "Steam has not finished setting this shortcut up yet; open Steam, quit it, then move again";
+pub const NO_APP_ID: &str = "Steam has not finished setting this shortcut up yet; open Steam once, quit it, then try again, or pick the new program in Info > Favorite executable";
 
 /// Rewrites, in `doc`, every shortcut that points inside `from`. Pure: nothing is written.
 pub fn repoint_doc(doc: &mut Document, from: &Path, to: &Path) -> RepointResult {
