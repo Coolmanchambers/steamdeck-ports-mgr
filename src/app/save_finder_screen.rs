@@ -143,9 +143,12 @@ enum Stage {
     Notice,
     /// A message that ends the finder.
     Last,
-    /// The backup runs; B and the X wait until it reports.
+    /// The backup runs; B and the X wait until it reports (or until `BACKUP_PATIENCE` has passed).
     Backing,
 }
+
+/// How long B and the X wait for a running backup before they may leave it behind.
+const BACKUP_PATIENCE: Duration = Duration::from_secs(120);
 
 struct Session {
     port: RefCell<Port>,
@@ -156,6 +159,8 @@ struct Session {
     found: RefCell<Vec<Candidate>>,
     job: RefCell<Option<Rc<Background<search::Found>>>>,
     back: Back,
+    /// When "Back up now" started.
+    backing_since: Cell<Option<Instant>>,
 }
 
 fn name_of(s: &Session) -> String {
@@ -169,7 +174,7 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router, port: Port, back: Back) 
     }
     let Some(game_dir) = safe_join(&app.paths.library_dir(), &port.folder).ok().filter(|d| d.is_dir()) else { return };
     let previous = finder::overrides(&ForkSettings::load(&settings_path(app))).remove(&port.folder);
-    let s = Rc::new(Session { port: RefCell::new(port), game_dir, previous, stage: Cell::new(Stage::First), found: RefCell::new(Vec::new()), job: RefCell::new(None), back });
+    let s = Rc::new(Session { port: RefCell::new(port), game_dir, previous, stage: Cell::new(Stage::First), found: RefCell::new(Vec::new()), job: RefCell::new(None), back, backing_since: Cell::new(None) });
     show_first(app, router, &s);
 }
 
@@ -209,8 +214,21 @@ fn show(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, stage: Stage, page
     show_page(app, router, page, handlers(s));
 }
 
+/// While a backup runs, B and the X are ignored for `BACKUP_PATIENCE`; after that they leave it running in the
+/// background and say so (the next press leaves). True when the press was used up here.
+fn backing_holds(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) -> bool {
+    if s.stage.get() != Stage::Backing {
+        return false;
+    }
+    if s.backing_since.get().is_some_and(|at| at.elapsed() >= BACKUP_PATIENCE) {
+        BACKUP_TIMER.with(slint::Timer::stop);
+        notice(app, router, s, "The backup is still running", vec!["It keeps going by itself. Look in Restore saves in a few minutes: it is listed there when it is done.".into()], true);
+    }
+    true
+}
+
 fn leave(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
-    if s.stage.get() == Stage::Backing {
+    if backing_holds(app, router, s) {
         return;
     }
     if let Some(job) = s.job.borrow_mut().take() {
@@ -247,7 +265,7 @@ fn notice(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, title: &str, par
 }
 
 fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
-    if s.stage.get() == Stage::Backing {
+    if backing_holds(app, router, s) {
         return;
     }
     match act {
@@ -425,6 +443,7 @@ fn back_up(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     show_page(app, router, view::backing_up_page(&name_of(s)), handlers(s));
     // From here B and the X wait: the result must be seen (`Stage::Backing`).
     s.stage.set(Stage::Backing);
+    s.backing_since.set(Some(Instant::now()));
     let (app, router, s) = (app.clone(), router.clone(), s.clone());
     BACKUP_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {

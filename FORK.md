@@ -210,6 +210,7 @@ Files added by this fork:
 | 2026-10-24 | `src/fork/save_restore/mod.rs`, `src/fork/save_restore/broad.rs` | Save finder review fixes: the guards moved into one `folder_problem` that `resolve_target`, the finder and the symlink re-check share; new refusals for folders that hold many apps' files (`broad::container_reason`: another port's folder in the library, `~/.local/share`, `~/.config`, Steam and Proton prefix levels, Documents, mount roots); a save folder that is a link is checked again by where it leads before the swap; `tree_size_capped`, `free_bytes` made `pub(crate)` |
 | 2026-10-24 | `src/core/save_backup.rs` | `backup_before_update`: a save folder outside the game folder is checked against the free room before it is copied (fork: save finder) |
 | 2026-10-24 | `src/fork/folder_picker/mod.rs`, `src/app/folder_picker_screen.rs` | `PickerRequest.cursor_off_use_this`: the cursor starts on the first sub-folder (or Cancel), never "Use this folder" (used by the save finder) |
+| 2026-10-24 | `src/fork/save_restore/mod.rs`, `src/fork/save_restore/broad.rs`, `src/core/save_backup.rs` | Save guards (branch `save-guards`): Restore checks where a linked save folder leads (`link_problem`) before the safety backup copies anything; `backup_before_update` refuses a save folder that holds many apps' files and a link that leads to one (no copy, no staging); `userdata` and Flatpak roots (`~/.var/app/<id>`, its `data`/`config`/`cache`) join the refused folders; the ports library is passed to `folder_problem`/`container_reason` explicitly |
 
 ## Add to Steam (Settings menu)
 
@@ -827,6 +828,9 @@ find the saves.
   before the swap), and a folder over 2 GB is refused as "very large for saves". The folder picker the finder opens
   never starts on "Use this folder". "Back up now" and the update backup check the free room first for a save folder
   outside the game folder, and the Saved page shows the size.
+- **Links and the update backup:** Restore checks a linked save folder's destination before the safety backup copies
+  anything; the update backup refuses (no copy) a save folder that holds many apps' files and a link that leads to one,
+  and "Back up now" B/X are held for 2 minutes while it runs, then leave it running with a message.
 - **Known limits:** a catalog entry adopted into `ports.local.json` while an override is active carries the
   overridden `save` value into the local entry (harmless; it is the same folder). The uninstall preserve only copies
   saves that are inside the game folder (as upstream does); a folder outside it is simply left in place. Not yet tried

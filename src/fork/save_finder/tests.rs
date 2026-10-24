@@ -525,7 +525,7 @@ mod refusals {
         let (fx, _p, gd) = setup();
         // Real top-level paths cannot be made in a test, so the rule is checked on the path itself.
         for path in ["/run/media/deck/SD", "/run/media/deck", "/media/sd", "/mnt/data"] {
-            let found = crate::fork::save_restore::folder_problem(Path::new(path), &gd, &fx.saves_backup, Some(&fx.home));
+            let found = crate::fork::save_restore::folder_problem(Path::new(path), &gd, gd.parent(), &fx.saves_backup, Some(&fx.home));
             assert!(found.is_some_and(|w| w.contains("holds many apps")), "{path}");
         }
     }
@@ -573,5 +573,64 @@ mod refusals {
         assert!(crate::fork::save_restore::space_problem(3 * 1024 * 1024 * 1024, Some(1024 * 1024 * 1024), place).is_some());
         assert!(crate::fork::save_restore::space_problem(1024, Some(1024 * 1024 * 1024), place).is_none());
         assert!(crate::fork::save_restore::space_problem(u64::MAX / 2, None, place).is_none(), "unknown free room does not refuse");
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod guards {
+    use super::*;
+    use crate::core::save_backup::backup_before_update;
+
+    fn setup() -> (Fx, PathBuf) {
+        let fx = Fx::new();
+        let gd = fx.game_dir(&port("Dusklight", "dusklight", None));
+        (fx, gd)
+    }
+
+    #[test]
+    fn the_update_backup_refuses_a_link_that_leads_to_a_container_and_copies_nothing() {
+        let (fx, gd) = setup();
+        let share = fx.home.join(".local/share");
+        put(&share.join("other-app/data.bin"), b"another app");
+        std::os::unix::fs::symlink(&share, gd.join("Save")).unwrap();
+        let p = port("Dusklight", "dusklight", Some(json!("Save")));
+        let err = backup_before_update(&p, &fx.saves_backup, &gd, "2026-10-24_12-00-00", &mut |_| {}).unwrap_err();
+        assert!(err.contains("holds many apps") && err.contains("nothing was backed up"), "{err}");
+        assert!(!fx.saves_backup.join("Update Backups").exists(), "no zip, no staging");
+    }
+
+    #[test]
+    fn the_update_backup_refuses_a_link_into_another_ports_folder_and_a_hand_edited_container() {
+        let (fx, gd) = setup();
+        put(&fx.library.join("soh/Save/slot.sav"), b"soh");
+        std::os::unix::fs::symlink(fx.library.join("soh/Save"), gd.join("Save")).unwrap();
+        let p = port("Dusklight", "dusklight", Some(json!("Save")));
+        assert!(backup_before_update(&p, &fx.saves_backup, &gd, "s1", &mut |_| {}).unwrap_err().contains("holds many apps"));
+        let edited = port("Dusklight", "dusklight", Some(json!(fx.home.join(".config").to_string_lossy())));
+        fs::create_dir_all(fx.home.join(".config")).unwrap();
+        assert!(backup_before_update(&edited, &fx.saves_backup, &gd, "s2", &mut |_| {}).unwrap_err().contains("holds many apps"));
+    }
+
+    #[test]
+    fn the_update_backup_still_follows_a_link_to_a_real_save_folder() {
+        let (fx, gd) = setup();
+        let real = fx.root.join("sdcard/DuskSaves");
+        put(&real.join("slot1.sav"), b"one");
+        std::os::unix::fs::symlink(&real, gd.join("Save")).unwrap();
+        let p = port("Dusklight", "dusklight", Some(json!("Save")));
+        assert!(backup_before_update(&p, &fx.saves_backup, &gd, "s3", &mut |_| {}).unwrap().is_some());
+    }
+
+    #[test]
+    fn link_problem_names_the_link_and_where_it_leads_and_ignores_plain_folders() {
+        let (fx, gd) = setup();
+        let share = fx.home.join(".local/share");
+        fs::create_dir_all(&share).unwrap();
+        let link = gd.join("Save");
+        std::os::unix::fs::symlink(&share, &link).unwrap();
+        let why = crate::fork::save_restore::link_problem(&link, &gd, &fx.saves_backup, Some(&fx.home)).unwrap();
+        assert!(why.contains("is a link to") && why.contains("holds many apps"), "{why}");
+        fs::create_dir_all(gd.join("Plain")).unwrap();
+        assert!(crate::fork::save_restore::link_problem(&gd.join("Plain"), &gd, &fx.saves_backup, Some(&fx.home)).is_none());
     }
 }

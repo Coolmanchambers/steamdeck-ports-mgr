@@ -272,6 +272,15 @@ pub fn folder_size(dir: &Path) -> (u64, bool) {
     crate::fork::save_restore::tree_size_capped(dir, MAX_SAVE_BYTES, MAX_SIZE_ENTRIES)
 }
 
+/// The bare reason (see `refusal`) a link at `chosen` cannot be used, from where it leads.
+fn link_reason(chosen: &Path, game_dir: &Path, saves_backup_dir: &Path, home: Option<&Path>) -> Option<String> {
+    let real = fs::canonicalize(chosen).ok().filter(|r| r != chosen)?;
+    let game_real = fs::canonicalize(game_dir).unwrap_or_else(|_| game_dir.to_path_buf());
+    let home_real = home.map(|h| fs::canonicalize(h).unwrap_or_else(|_| h.to_path_buf()));
+    crate::fork::save_restore::folder_problem(&real, &game_real, game_real.parent(), saves_backup_dir, home_real.as_deref())
+        .or_else(|| crate::fork::save_restore::folder_problem(&real, game_dir, game_dir.parent(), saves_backup_dir, home))
+}
+
 const BROAD_MESSAGE: &str = "That folder holds many apps' files, not this game's. Open the game's own folder inside it.";
 
 fn refusal(why: &str) -> String {
@@ -300,15 +309,8 @@ pub fn check_choice(port: &Port, chosen: &Path, game_dir: &Path, saves_backup_di
         _ => return Err("That folder cannot be used for saves.".into()),
     }
     // A link is judged by where it leads, as a restore would.
-    if let Ok(real) = fs::canonicalize(chosen) {
-        if real != chosen {
-            let game_real = fs::canonicalize(game_dir).unwrap_or_else(|_| game_dir.to_path_buf());
-            let home_real = home.map(|h| fs::canonicalize(h).unwrap_or_else(|_| h.to_path_buf()));
-            let why = crate::fork::save_restore::folder_problem(&real, &game_real, saves_backup_dir, home_real.as_deref()).or_else(|| crate::fork::save_restore::folder_problem(&real, game_dir, saves_backup_dir, home));
-            if let Some(why) = why {
-                return Err(refusal(&why));
-            }
-        }
+    if let Some(why) = link_reason(chosen, game_dir, saves_backup_dir, home) {
+        return Err(refusal(&why));
     }
     if folder_size(chosen).1 {
         return Err("That folder is very large for saves. Open the game's own save folder inside it.".into());

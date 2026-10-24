@@ -111,6 +111,17 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
     if sources.is_empty() {
         return Ok(None);
     }
+    // Fork (save-guards): a save folder (a hand-edited one, or a link swapped in later) that holds many apps' files,
+    // or a link that leads to one, is never copied: it would recurse into its own staging and copy all of Steam.
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    for (src, _) in &sources {
+        let problem = crate::fork::save_restore::folder_problem(src, game_dir, game_dir.parent(), saves_backup_dir, home.as_deref())
+            .map(|why| format!("{} {why}; nothing was backed up", src.display()))
+            .or_else(|| crate::fork::save_restore::link_problem(src, game_dir, saves_backup_dir, home.as_deref()).map(|why| why.replace("nothing was changed", "nothing was backed up")));
+        if let Some(problem) = problem {
+            return Err(format!("The save folder of {} cannot be backed up: {problem}", port.name));
+        }
+    }
     // Fork (save finder): a save folder outside the game folder (one the user chose) can be big; check the room first.
     let outside: u64 = sources.iter().filter(|(src, _)| !is_within(src, game_dir)).map(|(src, _)| crate::fork::save_restore::tree_size_capped(src, u64::MAX / 2, 2_000_000).0).sum();
     if outside > 0 {

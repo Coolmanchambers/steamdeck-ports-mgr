@@ -497,6 +497,7 @@ fn a_save_folder_that_is_a_link_into_another_ports_folder_is_refused_and_untouch
         std::os::unix::fs::symlink(&other, dir.join("Save")).unwrap();
         let err = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap_err().to_string();
         assert!(err.contains("holds many apps"), "{err}");
+        assert!(!fx.saves_backup.join(RESTORE_BACKUPS_DIR).exists(), "refused before the safety backup copied anything");
         assert_eq!(snapshot(&other), before, "the other port's saves are untouched");
         assert!(fs::symlink_metadata(dir.join("Save")).unwrap().file_type().is_symlink());
     }

@@ -133,7 +133,7 @@ fn resolve_target(value: &Value, game_dir: &Path, saves_backup_dir: &Path, home:
     if from_game_folder && !is_within(&path, game_dir) {
         return Target::Refused("points outside the game folder".into());
     }
-    if let Some(why) = folder_problem(&path, game_dir, saves_backup_dir, home) {
+    if let Some(why) = folder_problem(&path, game_dir, game_dir.parent(), saves_backup_dir, home) {
         return Target::Refused(why);
     }
     Target::Folder(path)
@@ -141,7 +141,7 @@ fn resolve_target(value: &Value, game_dir: &Path, saves_backup_dir: &Path, home:
 
 /// Why a (normalized) folder cannot be a save folder, or `None`: the guards against replacing something far too
 /// broad. Restore, the save finder and the symlink re-check all use this one function.
-pub fn folder_problem(path: &Path, game_dir: &Path, saves_backup_dir: &Path, home: Option<&Path>) -> Option<String> {
+pub fn folder_problem(path: &Path, game_dir: &Path, library: Option<&Path>, saves_backup_dir: &Path, home: Option<&Path>) -> Option<String> {
     if is_within(game_dir, path) {
         return Some("is the whole game folder".into());
     }
@@ -151,13 +151,26 @@ pub fn folder_problem(path: &Path, game_dir: &Path, saves_backup_dir: &Path, hom
     if home.is_some_and(|h| is_within(h, path)) {
         return Some("is your whole home folder".into());
     }
-    if let Some(why) = broad::container_reason(path, game_dir) {
+    if let Some(why) = broad::container_reason(path, game_dir, library) {
         return Some(why.into());
     }
     if path.components().filter(|c| matches!(c, Component::Normal(_))).count() < 2 {
         return Some("is too close to the top of the drive".into());
     }
     None
+}
+
+/// When `shown` is a link, the reason its destination cannot be a save folder (the same guards as a folder written
+/// out in full, on the real game and home paths and on the written ones), as a sentence; `None` for anything else.
+pub fn link_problem(shown: &Path, game_dir: &Path, saves_backup_dir: &Path, home: Option<&Path>) -> Option<String> {
+    if !fs::symlink_metadata(shown).is_ok_and(|m| m.file_type().is_symlink()) {
+        return None;
+    }
+    let real = fs::canonicalize(shown).ok().filter(|p| p.is_dir())?;
+    let game_real = fs::canonicalize(game_dir).unwrap_or_else(|_| game_dir.to_path_buf());
+    let home_real = home.map(|h| fs::canonicalize(h).unwrap_or_else(|_| h.to_path_buf()));
+    let problem = folder_problem(&real, &game_real, game_real.parent(), saves_backup_dir, home_real.as_deref()).or_else(|| folder_problem(&real, game_dir, game_dir.parent(), saves_backup_dir, home));
+    problem.map(|why| format!("{} is a link to {}, which {why}; nothing was changed", shown.display(), real.display()))
 }
 
 /// Bytes in files under `path` (links not followed), stopping once past `cap` or after `max_entries` entries;
@@ -734,6 +747,13 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
         }
     }
 
+    // A save folder that is a link is judged by where it leads, before anything is copied (not after the safety backup).
+    for (_, shown) in &plan.replace {
+        if let Some(why) = link_problem(shown, input.game_dir, input.saves_backup_dir, input.home) {
+            return Err(RestoreError::Failed(why));
+        }
+    }
+
     // Read the names again from the file itself: it may have changed since the list was shown.
     let entries = read_index(&input.backup.zip).map_err(|e| RestoreError::UnusableBackup(format!("the file cannot be read ({e})")))?;
     if let Some(problem) = zip_problem(&entries) {
@@ -781,17 +801,7 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
         let meta = fs::symlink_metadata(shown);
         let real = match &meta {
             Ok(m) if m.file_type().is_symlink() => match fs::canonicalize(shown) {
-                Ok(p) if p.is_dir() => {
-                    // The link's destination gets the same guards as a save folder written out in full.
-                    let game_real = fs::canonicalize(input.game_dir).unwrap_or_else(|_| input.game_dir.to_path_buf());
-                    let home_real = input.home.map(|h| fs::canonicalize(h).unwrap_or_else(|_| h.to_path_buf()));
-                    let problem = folder_problem(&p, &game_real, input.saves_backup_dir, home_real.as_deref()).or_else(|| folder_problem(&p, input.game_dir, input.saves_backup_dir, input.home));
-                    if let Some(why) = problem {
-                        clean_up(&prepared);
-                        return Err(RestoreError::Failed(format!("{} is a link to {}, which {why}; nothing was changed", shown.display(), p.display())));
-                    }
-                    p
-                }
+                Ok(p) if p.is_dir() => p,
                 _ => {
                     clean_up(&prepared);
                     return Err(RestoreError::Failed(format!("{} is a link that does not lead to a folder", shown.display())));
