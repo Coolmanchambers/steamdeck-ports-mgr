@@ -27,14 +27,15 @@ pub fn start_points(home: Option<&Path>, drives: &[mounts::Drive]) -> Vec<(Strin
         }
     };
     if let Some(rec) = emudeck_folder(home, drives) {
-        let place = drives.iter().find(|d| rec.starts_with(&d.mount_point)).map_or("Home", |d| d.kind);
+        let place = drives.iter().find(|d| rec.starts_with(&d.mount_point)).map_or_else(|| "Home".to_string(), |d| d.title());
         add(format!("{place}: {EMUDECK} (Recommended)"), rec);
     }
+    // By the drive's title (its name; a card named only by its ID is just "SD card"), so two drives differ.
     for d in drives {
         for sub in ROM_FOLDER_NAMES {
-            add(format!("{}: {sub}", d.kind), d.mount_point.join(sub));
+            add(format!("{}: {sub}", d.title()), d.mount_point.join(sub));
         }
-        add(format!("{} (whole card)", d.kind), d.mount_point.clone());
+        add(format!("{} (whole drive)", d.title()), d.mount_point.clone());
     }
     if let Some(home) = home {
         for sub in ROM_FOLDER_NAMES {
@@ -74,7 +75,12 @@ mod tests {
         let points = start_points(Some(&tmp.path().join("home")), &[sd(&card)]);
         assert_eq!(points[0], ("SD card: Emulation/roms (Recommended)".to_string(), card.join("Emulation/roms")));
         assert_eq!(points[1], ("SD card: ROMs".to_string(), card.join("ROMs")));
-        assert!(points.iter().any(|(l, _)| l == "SD card (whole card)"));
+        assert!(points.iter().any(|(l, _)| l == "SD card (whole drive)"));
+        // Two USB sticks are told apart by their names.
+        make_dirs(tmp.path(), &["a/ROMs", "b/ROMs"]);
+        let stick = |p: &str, label: &str| mounts::Drive { mount_point: tmp.path().join(p), kind: "USB drive", label: label.into(), fs_type: "ext4".into() };
+        let two = start_points(None, &[stick("a", "RED"), stick("b", "BLUE")]);
+        assert!(two.iter().any(|(l, _)| l == "USB drive (RED): ROMs") && two.iter().any(|(l, _)| l == "USB drive (BLUE): ROMs"), "{two:?}");
         assert!(points.iter().any(|(l, p)| l == "Home: Emulation/roms" && *p == tmp.path().join("home/Emulation/roms")));
         assert!(points.iter().all(|(l, _)| !l.contains("c14f9023")), "{points:?}");
         assert_eq!(emudeck_folder(Some(&tmp.path().join("home")), &[sd(&card)]), Some(card.join("Emulation/roms")));

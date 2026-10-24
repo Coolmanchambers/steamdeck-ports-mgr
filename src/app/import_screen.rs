@@ -1109,9 +1109,8 @@ fn offer_link(app: &Rc<AppState>, router: &Router, requests: Vec<MoveRequest>, p
     }, on_cancel);
 }
 
-/// The last steps of an import: the old-copy questions, then the game file search for the ports that came
-/// in (`rom_screens::after_ports_added_then`, which shows the summary at the top of its list when it has
-/// something to look for), else the summary alone, or Continue in the wizard.
+/// The last steps of an import: the old-copy questions, then the card page "N ports moved", which offers the game
+/// file search as its own page (`rom_screens::search_ports_now`), or Continue in the wizard.
 fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, keys: Vec<String>, wants_game_files: bool, outcome: Outcome) {
     // In the setup wizard the old copies are asked about once, on its own page near the end.
     let copies = if ctx.from_wizard { VecDeque::new() } else { copies };

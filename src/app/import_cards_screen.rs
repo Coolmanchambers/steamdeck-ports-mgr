@@ -739,8 +739,9 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
                     let ctx = ctx.clone();
                     Rc::new(move |app, router| leave(app, router, &ctx))
                 };
-                if !super::rom_screens::after_ports_added_then(app, router, &keys_now, "", Some(leave_after)) {
-                    super::rom_screens::open_game_files(app, router);
+                // Searched even when these ports were looked for before (the user asked for it now).
+                if !super::rom_screens::search_ports_now(app, router, &keys_now, Some(leave_after)) {
+                    super::import_screen::message(app, router, "Game files", "Another task is still running. Try Find their game files again in a moment.");
                 }
             }
             // The shared flow; this page comes back after it, saying what is left.

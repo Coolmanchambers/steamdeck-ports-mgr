@@ -120,7 +120,7 @@ mod tests {
         let home = Path::new("/home/deck");
         assert_eq!(folder_label(&sd.mount_point.join("Emulation/roms"), &drives, Some(home)), "SD card > Emulation > roms");
         assert_eq!(folder_label(&sd.mount_point, &drives, Some(home)), "SD card");
-        assert_eq!(folder_label(Path::new("/run/media/deck/STICK/games"), &drives, Some(home)), "USB drive > games");
+        assert_eq!(folder_label(Path::new("/run/media/deck/STICK/games"), &drives, Some(home)), "USB drive (STICK) > games", "two drives of a kind differ by name");
         assert_eq!(folder_label(Path::new("/home/deck/ROMs/psx"), &drives, Some(home)), "Home > ROMs > psx");
         assert_eq!(folder_label(Path::new("/mnt/other"), &drives, Some(home)), "/mnt/other");
         assert_eq!(place_of(&sd.mount_point.join("Ports"), Path::new("/home/deck/App/Library"), &drives), Some(Kind::SdCard));

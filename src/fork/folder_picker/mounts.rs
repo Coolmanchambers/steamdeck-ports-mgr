@@ -196,7 +196,8 @@ pub fn folder_label(path: &Path, drives: &[Drive], home: Option<&Path>) -> Strin
         parts.join(" > ")
     };
     if let Some(d) = drives.iter().filter(|d| path.starts_with(&d.mount_point)).max_by_key(|d| d.mount_point.as_os_str().len()) {
-        return crumbs(d.kind, path.strip_prefix(&d.mount_point).unwrap_or(Path::new("")));
+        // The drive's title ("USB drive (STICK)"; a card named only by its ID is just "SD card"), so two drives differ.
+        return crumbs(&d.title(), path.strip_prefix(&d.mount_point).unwrap_or(Path::new("")));
     }
     if let Some(rest) = home.and_then(|h| path.strip_prefix(h).ok()) {
         return crumbs("Home", rest);

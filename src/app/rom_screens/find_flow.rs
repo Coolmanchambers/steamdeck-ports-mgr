@@ -4,9 +4,8 @@
 //! - [`after_install`]: called by the app when an install finishes. Once per port, only for a port
 //!   that names files it cannot run without and is not connected yet, it looks in the game files folder
 //!   on a worker thread (with progress and Cancel) and shows what it found.
-//! - [`after_ports_added_then`]: for screens that add several ports at once (adopt/import). One walk of
-//!   the folder, then a list with each port's result. Returns false when there is nothing to show, so
-//!   the caller shows its own message instead.
+//! - [`search_ports_now`]: "Find their game files" on the import's card page. One walk of the folder for
+//!   several ports, then a list with each port's result and Pick another folder...
 //! - [`find_for_port`]: the same search for one port from anywhere (the setup wizard, the port's Info
 //!   dialog, Settings > Game files). `back` runs when the user leaves (Later, Cancel, Back).
 //! - [`show_ports_needing_files`]: Settings > Game files > Find game files for a port.
@@ -20,6 +19,7 @@ use super::{
     choose_folder, load_store, message, open_connect, open_list, run_job, show_connect, store_path, Back, JobUi, Router, Then, JOB_RUNNING, TITLE,
 };
 use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_picker_dialog, DialogSlot};
+use crate::app::folder_picker_screen::open_folder_picker;
 use crate::app::state::AppState;
 use crate::core::models::Port;
 use crate::core::path_safety::safe_join;
@@ -148,13 +148,17 @@ pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
     find_for_port(app, router, port.key(), close_back());
 }
 
-/// After several ports were added at once (adopt or import). `intro` is the caller's own result text,
-/// shown at the top of the list. Returns false when none of the ports needs looking for (nothing was
-/// shown; the caller shows its own message).
-/// `then` runs when the user is done with what it shows: the Done row, B on the
-/// list, Continue on its notices, or B on the search's progress list. (Not when it returns false: nothing
-/// was shown and the caller carries on itself.)
-pub(crate) fn after_ports_added_then(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &str, then: Option<Back>) -> bool {
+/// "Find their game files" (the import's card page): every port among `keys` that needs a game file, whether or not
+/// it was searched before. False only when it cannot start (another task runs).
+pub(crate) fn search_ports_now(app: &Rc<AppState>, router: &Router, keys: &[String], then: Option<Back>) -> bool {
+    search_ports(app, router, keys, "", then, true)
+}
+
+/// Searches several ports with one walk of the folder and lists the outcomes. `intro` lines go at the top of the list.
+/// `then` runs when the user is done with what it shows: the Done row, B on the list, Continue on its notices, or B
+/// on the search's progress list (not when it returns false: nothing was shown). `force`: search every port that
+/// needs files; otherwise only the ones not searched after their install yet.
+fn search_ports(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &str, then: Option<Back>, force: bool) -> bool {
     if JOB_RUNNING.with(Cell::get) || ports_folder_busy(app) {
         return false;
     }
@@ -165,7 +169,7 @@ pub(crate) fn after_ports_added_then(app: &Rc<AppState>, router: &Router, keys: 
         .iter()
         .filter_map(|k| app.find_port(k))
         .map(|p| request_for(app, &local, &p, store.mappings().to_vec()))
-        .filter(|r| offer::after_install(r, r.port.is_android_only(), settings.rom_prompted(r.port.key())) == AutoSearch::Search)
+        .filter(|r| if force { !r.port.is_android_only() && r.needs_files() } else { offer::after_install(r, r.port.is_android_only(), settings.rom_prompted(r.port.key())) == AutoSearch::Search })
         .collect();
     if reqs.is_empty() {
         return false;
@@ -379,11 +383,39 @@ fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items
     let first = labels.len();
     let shown: Vec<usize> = (0..items.len()).filter(|i| !matches!(items[*i].1, FindOutcome::NoFilesNeeded)).collect();
     labels.extend(shown.iter().map(|i| format!("Game files for {}: {}", ellipsize(items[*i].0.port.display_name(), 50), items[*i].1.short())));
+    // Another folder, then the same ports searched again.
+    let pick = labels.len();
+    let has_folder = RomLibraryStore::load(&store_path(app)).ok().is_some_and(|s| s.rom_dir().is_some());
+    labels.push(if has_folder { "Pick another folder..." } else { "Pick a folder..." }.into());
     let done = labels.len();
     labels.push("Done".into());
+    let keys: Vec<String> = items.iter().map(|(r, _)| r.port.key().to_string()).collect();
     let on_done = then.clone();
     let then_for_close = then.clone();
     open_list_at(app, router, TITLE, labels, first, move |app, router, index| {
+        if index == pick {
+            let (keys, then, again) = (keys.clone(), then.clone(), {
+                let (intro, items, then) = (intro.clone(), items.clone(), then.clone());
+                move |app: &Rc<AppState>, router: &Router| show_batch(app, router, intro.clone(), items.clone(), then.clone())
+            });
+            return open_folder_picker(
+                app,
+                router,
+                super::game_files_picker(),
+                move |app, router, path| {
+                    let Some(mut store) = load_store(app, router) else { return };
+                    match store.set_rom_dir(Some(path)) {
+                        Ok(()) => {
+                            if !search_ports_now(app, router, &keys, then.clone()) {
+                                message(app, router, TITLE, "Another game files task is still running. Try again in a moment.");
+                            }
+                        }
+                        Err(e) => message(app, router, TITLE, &format!("Could not use that folder: {e}")),
+                    }
+                },
+                move |app, router| again(app, router),
+            );
+        }
         if index == done {
             close_current_dialog(app, router);
             if let Some(then) = &on_done {

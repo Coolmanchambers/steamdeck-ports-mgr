@@ -44,7 +44,7 @@ const NOTE_READ_ONLY: &str = "Your game files are only read, never moved or dele
 // The "find this port's game files" flow (after an install, Info, Settings, and for other screens).
 mod find_flow;
 #[allow(unused_imports)]
-pub(crate) use find_flow::{after_install, after_ports_added_then, find_for_port, open_from_info, port_missing_game_files, port_needs_game_files};
+pub(crate) use find_flow::{after_install, find_for_port, open_from_info, port_missing_game_files, port_needs_game_files, search_ports_now};
 
 /// What to do once a folder is chosen (and where Back goes).
 #[derive(Clone)]
@@ -477,15 +477,21 @@ fn connection_count(store: &RomLibraryStore) -> usize {
 
 // -- Choosing the folder --------------------------------------------------------------------------
 
-fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
-    // The shared folder picker, with the usual ROM folders (SD card, EmuDeck) as extra quick places.
+/// The game files folder picker as every screen opens it: the usual ROM folders (SD card, EmuDeck) first as quick
+/// places, and it opens in the EmuDeck ROM folder when there is one (Use this folder is then one press), else the home
+/// folder.
+pub(super) fn game_files_picker() -> PickerRequest {
     let home = home_dir();
     let drives = browse::system_drives();
-    // It opens in the EmuDeck ROM folder when there is one (Use this folder is then one press), else the home folder.
     let start = browse::emudeck_folder(home.as_deref(), &drives).or_else(|| home.clone()).unwrap_or_else(|| PathBuf::from("/"));
     let mut request = PickerRequest::new("Where are your game files?", &start, Purpose::ScanFolder);
     request.extra_places = browse::start_points(home.as_deref(), &drives);
     request.extra_first = true;
+    request
+}
+
+fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
+    let request = game_files_picker();
     let on_cancel = then.clone();
     open_folder_picker(
         app,

@@ -481,7 +481,7 @@ Settings > **Game files...** is where the app finds your ROMs and connects them 
 your game folder: nothing in it is ever moved, renamed, changed or deleted.
 
 1. **Game files folder** > choose your ROM folder in the folder picker (the same one as Settings > Ports folder). It opens in
-   your EmuDeck folder when there is one, listed first as "SD card: Emulation/roms (Recommended)", so **Use this folder** is
+   your EmuDeck folder when there is one, listed first as "SD card: Emulation/roms" (marked Best pick), so **Use this folder** is
    one press; other usual places follow ("SD card: ROMs", "Home: Emulation/roms"...), and the folder you are in reads as
    "SD card > Emulation > roms" (a card is never named by its ID). **Use this folder** saves it and scans. The scan shows its
    progress and has Cancel (or B). This full scan reads every game file, since its lists show everything; a big folder takes
@@ -500,7 +500,9 @@ confirmed by its checksum. Everything else is only listed, so a 100 GB folder ta
 not read again. The progress says "Looking at 3 of 12 files (1.2 GB of 4.0 GB)", how many others are not needed, and about
 how long is left. In the setup wizard **Skip for now** stops it and keeps the folder. A port whose file is already in its own
 folder, or that already made its game archive from it (Ship of Harkinian's `oot.o2r`, 2 Ship 2 Harkinian's `mm.o2r`), counts
-as having its game without any search.
+as having its game without any search. (Settings > Game files > Results by system does not know the archive rule: it lists
+such a port by its ROM, which may say Missing.) The search's result list has **Pick another folder...** to look somewhere
+else; **Find their game files** searches even ports that were searched before.
 
 **After you install a port that needs game files**, the app looks for them in your game files folder by itself (once per
 port). If the file is there, the Connect step opens (with a pick list first when several files match). If not, it says so plainly:
