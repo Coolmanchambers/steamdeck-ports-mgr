@@ -5,7 +5,7 @@ use super::net::Net;
 use super::oauth::{self, OAuthConfig, Poll};
 use super::service::{ErrorKind, ServiceId};
 use super::tokens::{CloudTokens, ServiceTokens};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 const DEVICE_CODE: &str = "DEVICE-CODE-SECRET-0123456789";
 const ACCESS: &str = "ACCESS-TOKEN-SECRET-abcdef";

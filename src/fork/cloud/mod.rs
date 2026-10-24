@@ -4,7 +4,7 @@
 //! back. Nothing here runs until the user signs in, and nothing here deletes anything in the cloud: the
 //! service trait ([`service::CloudService`]) can list, upload and download, and that is all.
 //!
-//! - `sha256`, `log`: a file checksum and the one place diagnostics are written (never a token).
+//! - `sha256`, `log`: a file checksum (the `sha2` crate) and the one place diagnostics are written (never a token).
 //! - `tokens`: `cloud-tokens.json` (mode 0600), the only file that holds sign-in tokens and the account email.
 //! - `record`: `cloud-backup.json`, what was uploaded where (no secrets), safe in a bug report.
 //! - `local`, `plan`, `sync`: which zips are candidates, what to upload, and one pass that does it.

@@ -122,6 +122,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-24 | `src/fork/secrets.rs` | `file_is_private`, `tighten_permissions` and `write_private` made `pub(crate)` so `cloud-tokens.json` follows the same rules as `secrets.json` |
 | 2026-10-24 | `.github/workflows/ci.yml` | The release build step gets `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` from repository secrets, only for a push to main (never branches, pull requests or the upstream-sync build) |
 | 2026-10-24 | `src/fork/mod.rs` | One line registering `cloud` |
+| 2026-10-24 | `Cargo.toml`, `Cargo.lock` | Added `sha2` and `qrcode` (default features off) for cloud backup; the lock gained eight crates, all MIT or Apache-2.0 |
 
 Files added by this fork:
 
@@ -909,6 +910,37 @@ AppImages and left the Steam shortcut pointing at a missing file. Now, for any p
 - **Known limits:** a catalog `executable` naming a versioned file is not rewritten (the favorite
   covers it); launcher scripts in subfolders are not rewritten; a release folder holding a settings
   file, or of a port whose save folder is unknown here, stays beside the new one (named in the summary).
+
+## Cloud backup (`src/fork/cloud/`, `src/app/cloud_screen.rs`)
+
+Optional copy of the save backups in `Saves Backup` to the user's own Google Drive (design and decisions in the
+project notes). Off until the user signs in under Settings > Cloud backup; nothing runs while the app is
+closed. Privacy: [PRIVACY.md](PRIVACY.md).
+
+- **Files.** `cloud-tokens.json` holds the sign-in tokens and the account email, mode 0600, and nothing else the
+  app writes holds either. `cloud-backup.json` records what was uploaded (path, size, modified time, SHA-256,
+  cloud path, times, last failure as a code word); it holds no secret and is safe in a bug report.
+- **What goes up.** Only zips: `Global Backups/<date>.zip`, `Update Backups/<folder>/<stamp>.zip`, `Restore
+  Backups/<folder>/<stamp>.zip`. Never `Pending Restore`, scratch folders (`_backup_*`, `_update_backup_*`,
+  `_restore_*`, `_cloud_download_*`), links, hidden or empty files.
+- **Readiness rule.** A zip is taken only when it reads back as a zip (its central directory is at the end, so a
+  half-written file does not) and has not changed for a few seconds: 3 s for a pass started by a backup the app
+  has just reported finished or by Back up now, 60 s for a pass nobody asked for after a specific backup (app
+  start, retry, the ten-minute check). A zip that is not ready is looked at again about 70 s later; one that
+  still does not read back after 10 minutes is called broken and never uploaded.
+- **Never replaces, never deletes.** An upload goes to a name that is not taken. A zip rewritten the same day
+  (a second Backup Saves) goes up beside the old copy as `<name>-<first 8 of SHA-256>.zip`. A cloud file with the
+  same name and size is recognised, not uploaded again. The service trait offers list, upload and download only;
+  there is no delete or trash call.
+- **Sign-in.** The OAuth device flow (code and QR, finished on a phone), scopes `openid email drive.file`
+  only. Signing out, or signing in again, forgets the upload record of that service (it may have been another
+  account); the next pass recognises what the cloud already holds.
+- **Build credentials.** `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` are compiled in from repository
+  secrets for a push to `main` only (never branches, pull requests or the upstream-sync build). A build without
+  them says "Cloud backup isn't set up in this build". The mock-server and demo-folder switches
+  (`DPM_CLOUD_TEST_BASE`, `DPM_CLOUD_DEMO_DIR`) exist only in test and debug builds.
+- **New crates.** `sha2` (MIT or Apache-2.0) for the checksum and `qrcode` with default features off (MIT or
+  Apache-2.0) for the sign-in QR code, plus the RustCrypto pieces `sha2` needs (all MIT or Apache-2.0).
 
 ## Fixes to upstream behavior
 
