@@ -3,6 +3,7 @@
 use super::search::{self, Input, Place};
 use super::*;
 use crate::core::models::port_from_value;
+#[cfg(target_os = "linux")]
 use crate::core::save_backup::{backup_before_update, preserve_all_before_uninstall, save_folder_unknown_on_linux, unknown_on_linux_fields};
 use serde_json::json;
 use std::cell::Cell;
@@ -191,6 +192,7 @@ fn fresh_entry_applies_then_a_cleared_override_brings_the_catalog_back() {
 
 // -- Portable form and the checks on a chosen folder ------------------------------------------------------
 
+#[cfg(target_os = "linux")]
 #[test]
 fn portable_form_is_relative_in_the_game_percent_home_in_home_else_absolute() {
     let (game, home) = (Path::new("/home/deck/Ports/Dusk"), Path::new("/home/deck"));
