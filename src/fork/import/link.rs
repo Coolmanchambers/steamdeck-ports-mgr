@@ -58,6 +58,23 @@ pub fn entry_page(text: &str, game_mode: bool) -> Page<LinkRow> {
     p
 }
 
+/// "More help" as a page of its own: the same words as [`HELP`], one OK.
+pub fn help_page() -> Page<CardAction> {
+    let mut p = Page::<CardAction> {
+        window_title: format!("{HEADER}: help"),
+        large: true,
+        header: HEADER.to_string(),
+        title: "What should I look for?".to_string(),
+        paragraphs: HELP.split("
+
+").map(str::to_string).collect(),
+        ..Page::default()
+    };
+    p.options = vec![PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: CardAction::Back }];
+    p.initial = Focus::Option(0);
+    p
+}
+
 pub fn entry_title() -> &'static str {
     "Use a GitHub link"
 }
@@ -133,6 +150,16 @@ mod tests {
         let input = p.input.unwrap();
         assert!(input.placeholder.contains("Steam + X"));
         assert_eq!(input.text, "github.com/a/b");
+    }
+
+    #[test]
+    fn the_help_is_a_page_with_one_ok_and_no_cancel() {
+        let p = help_page();
+        assert_eq!(p.window_title, "Import ports: help");
+        assert_eq!(p.paragraphs.len(), 4);
+        assert_eq!(p.options.len(), 1);
+        assert!(p.buttons.iter().all(Option::is_none), "nothing to cancel");
+        assert_eq!(p.initial, Focus::Option(0));
     }
 
     #[test]

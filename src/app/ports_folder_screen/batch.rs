@@ -139,7 +139,9 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
         on_exit: keep,
         on_input: None,
     };
-    if !show_page(app, router, batch.page(), handlers) {
+    // In the setup wizard this is its old copy question, between Steam and the last page.
+    let page = if crate::app::setup_wizard_screen::active() { batch.page().in_wizard(4, crate::fork::setup_wizard::flow::Step::COUNTED) } else { batch.page() };
+    if !show_page(app, router, page, handlers) {
         // The page could not be built: nothing is removed, and the flow goes on.
         then(app, router, Some(with_summary(&summary, &batch.kept_text())));
     }

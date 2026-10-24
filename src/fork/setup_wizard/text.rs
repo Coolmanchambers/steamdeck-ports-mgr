@@ -161,7 +161,7 @@ fn step_page(w: &Wizard, ctx: &Context) -> Page {
         Step::PortsFolder => ports_page(w, ctx),
         Step::YourPorts => {
             let mut p = page(w, "Ports you already have");
-            p.paragraphs = paras(&["Look for ports on this device and move them into your ports folder.", "Each is copied and checked first. Old copies stay until you say."]);
+            p.paragraphs = paras(&["Look for ports on this device and move them into your ports folder.", "Each is copied and checked first. Old copies stay until you choose to remove them."]);
             if let Some(n) = w.summary.imported {
                 p.facts = vec![moved_line(n)];
             }
@@ -262,7 +262,7 @@ fn ports_page(w: &Wizard, ctx: &Context) -> Page {
         let in_use = choice.path == ctx.ports_folder;
         let mut o = if in_use {
             // The place in use is kept by choosing it: it goes on without changing anything.
-            let detail = if choice.note.is_empty() { "In use now".to_string() } else { format!("In use now. {}", choice.note) };
+            let detail = if choice.note.is_empty() { "In use now".to_string() } else { format!("In use now. {}", capitalised(&choice.note)) };
             option(&choice.title, &detail, Action::Next)
         } else {
             option(&choice.title, &choice.note, Action::UseFolder(choice.path.clone()))
@@ -272,7 +272,7 @@ fn ports_page(w: &Wizard, ctx: &Context) -> Page {
         // place, and the checks still run before anything changes.
         if choice.usable && !in_use && !suggested && ctx.current_is_default && choice.kind == Kind::SdCard {
             o.recommended = true;
-            o.detail = if choice.note.is_empty() { "Recommended".to_string() } else { format!("Recommended. {}", choice.note) };
+            o.detail = if choice.note.is_empty() { "Recommended".to_string() } else { format!("Recommended. {}", capitalised(&choice.note)) };
             suggested = true;
         }
         p.options.push(o);
@@ -292,6 +292,11 @@ fn ports_page(w: &Wizard, ctx: &Context) -> Page {
         },
     }
     p
+}
+
+fn capitalised(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
 fn ports_where(ctx: &Context) -> String {
@@ -467,7 +472,7 @@ mod tests {
         assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["SD card (SD512)", "Internal storage", "Pick a folder..."]);
         assert_eq!(option_actions(&p), [Action::UseFolder("/run/media/deck/SD512/Ports".into()), Action::Next, Action::ChooseFolder]);
         assert!(p.options[0].recommended && !p.options[1].recommended);
-        assert!(p.options[0].detail.starts_with("Recommended") && p.options[0].detail.contains("a new folder will be made"), "{}", p.options[0].detail);
+        assert!(p.options[0].detail.starts_with("Recommended. A new folder will be made"), "{}", p.options[0].detail);
         assert_eq!(p.options[1].detail, "In use now. 94 GB free");
         assert!(p.options.iter().all(|o| o.choice.is_none()), "choices, not radio buttons");
         assert_eq!(start(&p), Focus::Option(0), "the cursor starts on the suggestion");
@@ -540,7 +545,7 @@ mod tests {
         assert_eq!(option_actions(&p), [Action::FindPorts, Action::Skip]);
         assert!(p.options[0].recommended && p.facts.is_empty());
         assert_eq!(start(&p), Focus::Option(0));
-        assert!(all_text(&p).contains("Old copies stay until you say"));
+        assert!(all_text(&p).contains("Old copies stay until you choose to remove them"));
         for (n, text) in [(0, "No ports were moved in."), (1, "1 port was moved into your ports folder."), (4, "4 ports were moved into your ports folder.")] {
             w.summary.imported = Some(n);
             assert_eq!(page_for(&w, &ctx()).facts, [text]);

@@ -141,6 +141,20 @@ pub enum Focus {
     Button(usize),
 }
 
+impl<A> Page<A> {
+    /// The page as a part of the setup wizard (Import ports and the old copy question open from it): the wizard's
+    /// name in the header, "Step 2 of 5" at the top right (the page's own counter, "Port 2 of 5", follows it) and
+    /// the wizard's progress bar.
+    pub fn in_wizard(mut self, step: usize, count: usize) -> Page<A> {
+        self.header = "Deck Ports Manager".to_string();
+        let own = std::mem::take(&mut self.step_text);
+        self.step_text = if own.is_empty() { format!("Step {step} of {count}") } else { format!("Step {step} of {count} - {own}") };
+        self.step_number = step;
+        self.step_count = count;
+        self
+    }
+}
+
 impl<A: Clone> Page<A> {
     /// Every cover the page shows, once each (the card first), for the image loader.
     pub fn art_refs(&self) -> Vec<ArtRef> {
@@ -417,4 +431,12 @@ mod tests {
         assert_eq!(focus_at(&bare, down), Some(Focus::Button(LEFT)));
         assert_eq!(move_focus(&bare, down, 0, -1), 0, "up from the footer reaches the box when there is nothing between");
     }
+    #[test]
+    fn a_page_in_the_wizard_says_which_step_it_is_and_keeps_its_own_counter() {
+        let p = Page::<u8> { header: "Import ports".into(), step_text: "Port 2 of 5".into(), ..Page::default() }.in_wizard(2, 5);
+        assert_eq!((p.header.as_str(), p.step_text.as_str(), p.step_number, p.step_count), ("Deck Ports Manager", "Step 2 of 5 - Port 2 of 5", 2, 5));
+        let q = Page::<u8> { header: "Import ports".into(), ..Page::default() }.in_wizard(4, 5);
+        assert_eq!(q.step_text, "Step 4 of 5");
+    }
+
 }

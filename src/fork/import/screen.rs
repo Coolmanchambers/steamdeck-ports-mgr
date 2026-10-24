@@ -113,7 +113,10 @@ pub struct ChoiceTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortChoice {
     pub key: String,
+    /// What the list shows: the name without its trailing note, unless another port has the same name.
     pub name: String,
+    /// The name without its trailing note.
+    pub display: String,
     pub installed: bool,
     /// Another folder of this scan already found as this port (shortened for the label).
     pub found_in: Option<String>,
@@ -122,7 +125,7 @@ pub struct PortChoice {
 impl PortChoice {
     fn of(port: &Port, screen: &ImportScreen, target: &Path) -> PortChoice {
         let found_in = screen.scan.found.iter().find(|f| f.port_key == port.key() && f.path != target).map(|f| f.dir_name.clone());
-        PortChoice { key: port.key().to_string(), name: port.name.clone(), installed: crate::core::installer::is_installed(port, &screen.ports_folder), found_in }
+        PortChoice { key: port.key().to_string(), name: port.name.clone(), display: port.display_name().to_string(), installed: crate::core::installer::is_installed(port, &screen.ports_folder), found_in }
     }
 
     pub fn label(&self) -> String {
@@ -154,6 +157,13 @@ impl PortListScreen {
             .filter(|(_, c)| !c.installed)
             .collect();
         scored.sort_by(|(a, x), (b, y)| b.cmp(a).then_with(|| x.name.to_lowercase().cmp(&y.name.to_lowercase())));
+        // The trailing note (a project name, a fork) is shown only to tell apart ports that share a name.
+        let shown: Vec<String> = scored.iter().map(|(_, c)| c.display.to_lowercase()).collect();
+        for (_, c) in &mut scored {
+            if shown.iter().filter(|n| **n == c.display.to_lowercase()).count() == 1 {
+                c.name = c.display.clone();
+            }
+        }
         let related = scored.iter().filter(|(n, _)| *n > 0).count();
         PortListScreen { ports: scored.into_iter().map(|(_, c)| c).collect(), related }
     }
@@ -467,5 +477,25 @@ mod tests {
         folders.toggle_drive(0);
         let s = FoldersScreen::new(Path::new("/home/deck"), folders);
         assert!(s.labels().contains(&"[ ] SD card (SD512) (standard)".to_string()));
+    }
+
+    #[test]
+    fn the_port_list_names_show_no_trailing_note_unless_two_ports_share_a_name() {
+        let dir = temp_dir("screen_list_names");
+        let (sd, s) = tims_screen(&dir, |sd| {
+            crate::fork::adopt::test_fixtures::touch_exe(&sd.join("The Legend of Zelda Majoras Mask/mm.appimage"));
+        });
+        let target = ChoiceTarget { path: sd.join("The Legend of Zelda Majoras Mask"), could_be: vec![] };
+        let list = PortListScreen::new(&s, &target);
+        let mut seen: Vec<String> = Vec::new();
+        for p in &list.ports {
+            let same = list.ports.iter().filter(|o| o.display.to_lowercase() == p.display.to_lowercase()).count();
+            if same == 1 {
+                assert_eq!(p.name, p.display, "{}", p.name);
+            }
+            seen.push(p.name.clone());
+        }
+        assert!(!seen.is_empty());
+        let _ = fs::remove_dir_all(dir);
     }
 }

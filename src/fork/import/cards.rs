@@ -619,7 +619,9 @@ pub fn port_list_page(rows: &[(usize, String)], matching: usize, filter: &str, g
     p.paragraphs = vec!["Choose the port this folder is. Type part of its name to narrow the list.".to_string()];
     p.input = Some(InputBox { placeholder: if game_mode { "Press Steam + X to type".to_string() } else { "Type to filter the list".to_string() }, text: filter.to_string() });
     p.options = rows.iter().take(MAX_LIST_ROWS).map(|(i, label)| option(label, "", CardAction::ListPort(*i), false)).collect();
-    p.footnote = if rows.is_empty() {
+    p.footnote = if rows.is_empty() && filter.trim().is_empty() {
+        "There are no ports to pick from. Use a GitHub link, or go back.".to_string()
+    } else if rows.is_empty() {
         format!("No port is called \"{}\". Try fewer letters, or use a GitHub link.", filter.trim())
     } else if matching > MAX_LIST_ROWS {
         format!("Showing {MAX_LIST_ROWS} of {matching}. Type more of the name to narrow the list.")
@@ -1345,6 +1347,13 @@ mod tests {
         assert_eq!(p.buttons[MIDDLE].as_ref().unwrap().action, CardAction::GithubLink);
         assert!(p.buttons[EXTRA].is_none() && p.footnote.is_empty());
         assert!(!all_text(&p).contains("Steam"));
+    }
+
+    #[test]
+    fn an_empty_list_with_no_filter_does_not_say_no_port_is_called_nothing() {
+        let p = port_list_page(&[], 0, "", false);
+        assert!(p.footnote.starts_with("There are no ports to pick from"), "{}", p.footnote);
+        assert!(!p.footnote.contains("is called"));
     }
 
     #[test]

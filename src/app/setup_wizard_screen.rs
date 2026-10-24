@@ -111,6 +111,12 @@ fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
     ui.show(&session.borrow());
 }
 
+/// The title bar X of a screen the wizard handed over to: leave the wizard like the X on its own pages (setup stays
+/// unfinished and comes back at the next start).
+pub(crate) fn exit_wizard(app: &Rc<AppState>, router: &Router) {
+    end_session(app, router);
+}
+
 fn end_session(app: &Rc<AppState>, router: &Router) {
     SESSION.with(|s| *s.borrow_mut() = None);
     WATCH.with(|t| t.stop());
