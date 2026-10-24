@@ -95,32 +95,35 @@ still open from the same folder is recognized too; quit old copies from the tray
 ## First launch: the setup wizard
 
 The first time the app starts (and on an install from before the wizard existed) it opens **Setup wizard**
-on top of the list instead of leaving you in it. It takes a few minutes; the steps after the ports folder can
-be skipped, and on the ports folder step Next keeps the current folder. A chooses, the D-pad moves between
-the options and buttons (the button that moves on is selected first), B goes back one step (on the first
-page B asks whether to skip setup; the cursor starts on "Keep going with setup"). The header shows
-"Step N of 6".
+on top of the list instead of leaving you in it. It takes a few minutes. Every page asks one question with a
+few big choices: A chooses (and moves on), the D-pad moves, B goes back one page. On the first page B asks
+"Skip setup?" and the cursor starts on "Keep going with setup". The header shows "Step N of 5". You can skip
+anything and run setup again later.
 
-1. **Welcome:** what the app does and the steps. "Start setup" or "Skip setup...".
-2. **Ports folder:** where installed ports are kept. With an SD card in, it is offered first (a `Ports` folder
-   on it) and selected, so one press of A offers it; then internal storage, then "Choose another folder..."
-   (the same folder picker as Settings > Ports folder). The folder in use is dimmed ("in use now"), and a
-   card formatted exFAT is listed as "(can't be used)". Without a card the page says so. The folder is
-   checked, a folder that does not exist yet is created only after you say so, and ports you already
-   installed can be moved there. The old copies are kept until you choose to remove them. When you close those
-   screens you are back in the wizard. The button reads "Keep this folder" until you pick a different one.
-3. **Ports you already have:** opens Import ports, which finds ports installed outside the ports folder and moves
-   them in (game files checked first, old copies kept until you remove them). Continue setup, or B, brings you
-   back to the wizard, which says how many ports were moved.
-4. **Game files:** choose the folder that holds your ROMs and disc images (they are only read), then the app
-   scans it. Close the results to come back.
-5. **Steam:** opens Add to Steam (Desktop Mode, Steam closed; in Game Mode you can queue the change) and,
-   if you like, Artwork sources for a free SteamGridDB key. Close them to come back.
-6. **All done:** what was set, then Finish. Finish (or confirmed Skip setup) is what marks setup as done.
-   If you quit the app half-way, the wizard opens again next time.
+1. **Where should ports go?** With an SD card in, it is offered first ("Recommended", a `Ports` folder on it),
+   then internal storage, then "Pick a folder..." (the same folder picker as Settings > Ports folder). The place
+   in use says "In use now"; choosing it keeps it. A card formatted exFAT is listed as "can't be used". A folder
+   that does not exist is made only after "Make it". Ports you already installed: "Move your N ports there?"
+   shows the size and the room; "Move them" copies and checks each one (a progress page with a line per port and a
+   Cancel), "Leave them" uses the place without moving anything. A port whose game file is missing is asked about
+   one by one (Skip this port / Move anyway). The old copies are kept; the wizard asks about them at the end.
+2. **Your ports** opens Import ports straight away (see below). B on its first page comes back to step 1, Skip
+   goes on.
+3. **Where are your game files?** Only when an installed port names a game file it needs. Pick the folder that
+   holds your ROMs and disc images (it is only read); the page then says "Found game files for 3 of 4 ports" and
+   what is still missing. With nothing needing a file this step is not shown.
+4. **Add your ports to Steam?** "Add all N" adds every port that is not in Steam yet (Desktop Mode, Steam closed:
+   written now, with the old shortcut list backed up) or queues them (Steam running, and always in Game Mode: the
+   shortcut file is not touched and the app offers to apply the queue next time in Desktop Mode with Steam
+   closed). A Steam account is asked about only when the Deck has several. "Artwork sources (optional)" is the
+   free SteamGridDB key.
+5. **You're set up.** Where the ports go, how many moved in, game files, Steam and old copies, then Finish.
+   Before it, if this run kept old copies, one page asks "Remove the N old copies?" (Keep them is the default
+   and B). Finish (or a confirmed skip) is what marks setup as done; if you quit half-way the wizard opens again
+   next time.
 
-**Run it again any time:** Settings (Y) > **Setup wizard...**, the first row. It starts at Welcome and shows
-what is set now; every page has a "Close the wizard" button, and it leaves without changing anything.
+**Run it again any time:** Settings (Y) > **Setup wizard...**, the first row. It starts at the first page; every
+page has a "Close the wizard" button, and it leaves without changing anything you did not choose.
 
 ## Updating
 
@@ -319,60 +322,64 @@ card back and choose Try again. Until then installs, updates, adopting and save 
 
 ## Import ports you installed elsewhere
 
-Settings > **Import ports...** (it replaces "Adopt installed ports") finds ports installed outside your
-ports folder and moves them into it. Nothing to edit by hand: the folders are chosen from a folder
-list, and no file is opened.
+Settings > **Import ports...** (it replaces "Adopt installed ports"), and step 2 of the setup wizard, find ports
+installed outside your ports folder and move them into it. You see pictures and plain sentences, not lists, and
+the whole thing works with the D-pad, A and B. Nothing to edit by hand; no file is opened.
 
-**Where it looks.** One level deep in `~/Applications`, `~/Games` and `~/Ports` (each can be switched
-off), plus any folder you add. The first row, **Scan folders...**, shows them: **Add a folder to
-scan...** opens a folder list (start points are your SD card and home folder, then walk down folder by
-folder and choose **Add this folder**), choosing a folder you added removes it after asking (the folder
-itself is never touched), and **Also look one folder deeper** looks inside folders that matched nothing
-(slower, limited to 400 folders). Your choices are remembered.
+**Where it looks.** One level deep in `~/Applications`, `~/Games` and `~/Ports`, and the top of every SD card or
+USB drive that is plugged in (ports kept in folders right on the card are found), each of which can be switched off,
+plus any folder you add. In Details of the first page, **Change scan folders...** shows them; **Add a folder to
+scan...** opens the folder picker, and **Also look one folder deeper** looks inside folders that matched nothing
+(slower, limited to 400 folders). Your choices are remembered. Hidden folders, Steam's library folders,
+`lost+found`, EmuDeck's `Emulation` and the ports folder itself are never listed; a folder full of games is one
+line, "looks like a collection of many games".
 
-**What it shows.** One row per find: the catalog port it matches, how sure the match is (**exact
-match** = the folder is named like the port; **likely match**; **check this** = only a program inside
-is named like the port, so it starts unticked), its size, where it is, and **Steam shortcut** when a
-shortcut you made points into it. Tick the ones you want. **Show what importing will do...** lists the
-steps for each port in order. A second copy of a port and ports already in your ports folder are listed
-but not offered.
+**The pages.**
+- **Found N ports** shows the covers of what was recognised (a name tile when there is no cover) and "Check them".
+- **One card per port** ("Port 2 of 5"): the cover, the name, where it came from, how it matched in plain words, its
+  size and "Has a Steam shortcut" when one points into it. "Yes, this is it", "Pick another port" and "Not a port".
+  A weak match (only a program inside is named like the port) loses the highlight and says "check the picture".
+  "Not a port" is remembered so the folder is not offered again (the folder itself is never touched); it asks first
+  on a strong match, shows "You said this is not a port" if you come back, and Details has "Ask again".
+- **Which port is this?** for a folder that fits several ports, or none: the likely ports as covers (left and right,
+  A chooses), "Another port..." (a box to type in, the ones named like the folder first; ports already in your ports
+  folder are left out), "Use a GitHub link..." and "Not a port".
+- **Move N ports into your ports folder?** with their covers, the size and the room. "Each one is copied and checked
+  first. Old copies stay until you say." Details lists the steps of each port.
+- **N ports moved** with their covers and one short line for anything that went wrong; the long text with paths is
+  behind Details.
+
+**A port that is not in the list: Use a GitHub link.** The page says what to look for in two lines: open the
+project's GitHub page and copy its address (`github.com/owner/project`), and it needs a Releases section with a
+Linux download (`.AppImage`, `.tar.gz` or `.zip`). Type or paste it into the box (Game Mode: press Steam + X for the
+keyboard, or "Show keyboard"; A or Down leaves the box). "Check this link" asks GitHub (at most two questions,
+nothing is downloaded) and shows "Is this the project?" with the name, description, latest version and date, and
+the Linux file. "Yes, use this" adds the project to your port list just before the move (the file is backed up
+first, and the entry is taken off again if the port does not move). Each problem has a plain sentence: not a link,
+not GitHub, a person's page, no releases, no Linux file, GitHub unreachable, too many questions (try again in about an hour), no such project. A project already in the list counts as picking that port.
 
 **Folders named like the download.** A port unpacked into a folder named after its download file
-(`SoH-Ackbar-Delta-Linux`, `2Ship-Keiichi-Charlie-Linux`, `Severed_Chains_Steam_Deck`) is recognised; the
-app also uses the download names from the Deck-ready list. A port the catalog does not have but the
-Deck-ready list does (Severed Chains) is marked **new to your port list**: importing adds it to your port
-list first (and takes it off again if it is not imported). If the Deck-ready list could not be loaded, a
-row says so; connect to the internet and scan again. Only real programs inside a folder count (an
-`.AppImage`, `.sh`, `.x86_64` and so on), never ROMs, settings files or pictures. A folder recognised by
-only one word of its name (like `SoH-...`) is ticked only when the program inside is named that way too
-(`soh.appimage`); otherwise it is listed as **check this**, unticked.
+(`SoH-Ackbar-Delta-Linux`, `2Ship-Keiichi-Charlie-Linux`, `Severed_Chains_Steam_Deck`) is recognised; the app also
+uses the download names from the Deck-ready list. A port the catalog does not have but the Deck-ready list does
+(Severed Chains) is marked "new to your port list": importing adds it first. Only real programs inside a folder
+count (an `.AppImage`, `.sh`, `.x86_64`), never ROMs, settings files or pictures.
 
-**Folders you choose for.** A folder that could be two or three ports shows **Choose which port this
-is...**; a folder with a program the app does not recognise shows **Not recognised... Choose the
-port...**. Choosing either lists the ports it could be, **Another port...** (every port, the ones named
-like the folder first) and **Not a port (leave it)**; a port already found in another folder says so. A
-port you choose is ticked ("you chose") and goes through the same checks as any other. Hidden folders, Steam's library folders, `lost+found` and EmuDeck's
-`Emulation` are never listed; a folder full of games is shown as one line, **Skipped, looks like a
-collection of many games**.
+**What importing does.** For each port, one at a time: the game files it needs are checked in the old folder (it
+asks if one is missing or broken: Skip this port / Move anyway, or B to stop there); the folder is copied into the
+ports folder (a hidden staging folder first, so a failure or Cancel leaves only the old folder); the copy is
+checked, game files again; the app switches over to the new folder; a Steam shortcut that pointed into the old
+folder is repointed and keeps its app ID (play time and art stay), or the change is queued for Desktop Mode when
+Steam is running (always in Game Mode). **The old folder is kept.** Then one page asks "Remove the N old copies?"
+(Keep them is the default and B; Remove them checks each copy first, zips its saves, and says what stayed and
+why). Inside the setup wizard that question comes once, near the end. Nothing is deleted automatically. A
+progress page shows each port's state and a Cancel; a cancel stops the copy in progress and removes its partial
+copy, and ports already moved stay moved.
 
-**What importing does.** For each ticked port, one at a time: the game files it needs are checked in the
-old folder (it stops and asks if one is missing or broken); the folder is copied into the ports folder (a hidden staging folder first, so a failure or Cancel leaves only the old folder);
-the copy is checked, game files again; the app switches over to the new folder; a Steam shortcut that
-pointed into the old folder is repointed to the new one and keeps its app ID (so play time and art stay),
-or the change is queued for Desktop Mode when Steam is running (always, in Game Mode). **The old folder
-is kept.** After each verified move you are asked whether to remove the old copy now; the answer is
-never assumed and nothing is deleted automatically. A progress list shows each port's state and a
-**Cancel** row; a cancel stops the copy in progress and removes its partial copy, and the ports already moved stay moved. The summary at
-the end says what moved, which old copies are still on disk (with their size and a pointer to remove
-them yourself), what happened to each Steam shortcut, and any problem.
-
-If a game file the port needs is missing or broken, you are asked before anything is copied: **Fix in Game files** (skips that port; nothing is copied), **Move anyway**, or **Cancel** (stops the import there). A problem found after the copy always stops that port and removes the copy. A port imported from a folder with a different name (for example `dusk-old` imported as `dusklight`) can still have its old copy removed from the question: the app remembers the name it was imported as. B on an old-copy question keeps that old copy and the ones still to be asked, and the import still ends with its summary. A folder that is a link, or that holds your home folder, the app's folder, the ports folder or a scan folder, is not imported; a program found directly under your home folder is never ticked for you.
-
-If a port does not fit (not enough free space: its size plus 64 MB; the same check the move itself makes), nothing is copied for it and the
-summary offers to **link it where it stands** instead: `Library/<port>` becomes a link and the port
-gets an entry in `ports.local.json` (backed up first). A linked port is not checked for updates and the
-app refuses to install or update into it. To undo a link, in this order: remove the port's entry from
-`ports.local.json`, then delete the link in `Library/` (your folder stays).
+If a port does not fit (not enough free space: its size plus 64 MB), nothing is copied for it and you are offered
+to **link it where it stands** instead: `Library/<port>` becomes a link and the port gets an entry in
+`ports.local.json` (backed up first). A linked port is not checked for updates and the app refuses to install or
+update into it. To undo a link, in this order: remove the port's entry from `ports.local.json`, then delete the
+link in `Library/` (your folder stays).
 
 ## Deck-ready list
 
@@ -530,8 +537,8 @@ to your device, never uploads or shares them, and the credits are in the screen'
 |---|---|
 | Installer | Download, double-click in Dolphin, Execute, Continue (first time only), progress window, the app opens; "Deck Ports Manager" menu entry and desktop icon appear |
 | Installer again | Only the Open/Execute question; says "updated" (or "reinstalled"), the app reopens, ports and saves are still there, `.previous/` holds the old program |
-| First launch | The setup wizard opens by itself (Welcome page); Skip setup asks first; after finishing or skipping the catalog fills and typing filters it |
-| Setup wizard again | Settings > Setup wizard... opens it at Welcome; Back and Next walk the steps with the controller; quitting half-way brings it back at the next start |
+| First launch | The setup wizard opens by itself ("Where should ports go?"); B on it asks "Skip setup?"; after finishing or skipping the catalog fills and typing filters it |
+| Setup wizard again | Settings > Setup wizard... opens it at the first page; A chooses and B goes back with the controller; quitting half-way brings it back at the next start |
 | Install a port | Progress, then installed, with a Linux build under `Library/` |
 | Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |
 | Controller | D-pad moves, A activates, B closes, X opens Info, Y opens Settings |
@@ -547,7 +554,7 @@ to your device, never uploads or shares them, and the credits are in the screen'
 | Force update in Game Mode | The app comes back in Game Mode and Steam still shows it running |
 | Add to Steam, Steam open | Settings > Add to Steam > Review shows the close-Steam message (no Apply button) and changes nothing |
 | Add to Steam, Steam closed | "Added N", a `shortcuts.vdf.bak-...` next to `shortcuts.vdf`, shortcuts appear after Steam restarts |
-| Import ports | Settings > Import ports... lists the outside install with size and match; Show what importing will do... lists its steps; Import copies it into the ports folder and repoints its Steam shortcut |
+| Import ports | Settings > Import ports... shows what it found as covers, one card per port; Move copies each into the ports folder, repoints its Steam shortcut and asks once about the old copies |
 | Game files scan | Settings > Game files > pick the ROM folder: progress with Cancel, then results by system; a second scan is quick |
 | Game files connect | Connect a port: Link adds a pointer in its folder, Copy asks first with the size; your ROM folder is unchanged |
 | Update offered | After a newer build is published and 12 h past the last check (relaunch, or leave it open), the footer says Update |
