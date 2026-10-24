@@ -13,6 +13,12 @@ use std::time::Duration;
 /// other files are not needed. `elapsed` is the time since the scan started; the estimate appears once enough has
 /// been read to judge the speed. (Lists that show two lines show the first two.)
 pub fn progress_text(p: &Progress<'_>, elapsed: Duration) -> String {
+    if p.walking {
+        return format!("Looking through {} {} ({} game files so far)\n{}", p.folders, if p.folders == 1 { "folder" } else { "folders" }, p.seen, file_name(p.current));
+    }
+    if p.to_read == 0 {
+        return format!("Nothing needs reading: {} game files looked at, none new that your ports could need.", p.seen);
+    }
     let n = (p.files_read + 1).min(p.to_read.max(1));
     let mut line = format!("Looking at {n} of {} {}: {} of {}", p.to_read, if p.to_read == 1 { "file" } else { "files" }, human_bytes(p.bytes_hashed), human_bytes(p.bytes_to_read));
     let secs = elapsed.as_secs_f64();
@@ -73,13 +79,17 @@ mod progress_tests {
 
     #[test]
     fn the_progress_says_how_far_how_many_are_skipped_and_how_long_is_left() {
-        let p = Progress { current: Path::new("/r/n64/Zelda.z64"), files_done: 0, bytes_hashed: 1_000_000_000, to_read: 3, files_read: 1, bytes_to_read: 4_000_000_000, seen: 63 };
+        let p = Progress { current: Path::new("/r/n64/Zelda.z64"), files_done: 0, bytes_hashed: 1_000_000_000, to_read: 3, files_read: 1, bytes_to_read: 4_000_000_000, seen: 63, walking: false, folders: 0 };
         let t = progress_text(&p, Duration::from_secs(10));
         assert_eq!(t, "Looking at 2 of 3 files: 1.0 GB of 4.0 GB, under a minute left\nZelda.z64\n60 other game files are not needed, so not read.");
         let slow = progress_text(&p, Duration::from_secs(100));
         assert!(slow.starts_with("Looking at 2 of 3 files: 1.0 GB of 4.0 GB, about 5 min left"), "{slow}");
         let early = progress_text(&Progress { seen: 1, to_read: 1, files_read: 0, ..p }, Duration::from_secs(1));
         assert_eq!(early, "Looking at 1 of 1 file: 1.0 GB of 4.0 GB\nZelda.z64");
+        let walking = progress_text(&Progress { walking: true, folders: 12, seen: 340, current: Path::new("/r/psx"), ..p }, Duration::from_secs(1));
+        assert_eq!(walking, "Looking through 12 folders (340 game files so far)\npsx");
+        let nothing = progress_text(&Progress { to_read: 0, ..p }, Duration::from_secs(1));
+        assert_eq!(nothing, "Nothing needs reading: 63 game files looked at, none new that your ports could need.");
     }
 }
 

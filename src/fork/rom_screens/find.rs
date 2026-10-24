@@ -632,7 +632,7 @@ mod tests {
         // Nothing changed: the saved scan is used as it is and not rewritten; no file is read.
         let mut reads = 0u64;
         let again = find_game_files_for_port(&w.store, &r, &AtomicBool::new(false), &mut |p| {
-            if !p.contains(", 0 B read") {
+            if p.starts_with("Looking at ") {
                 reads += 1;
             }
         })

@@ -68,6 +68,15 @@ struct WantedAlt {
     exts: Vec<String>,
     /// A checksum is known, so a file of the right kind can be confirmed by reading it.
     checkable: bool,
+    crc32: Vec<u32>,
+    sha1: Vec<[u8; 20]>,
+}
+
+impl WantedAlt {
+    /// The file is this one by its checksum (as stored, or converted to big-endian for an N64 image).
+    fn matched_by(&self, f: &RomFile) -> bool {
+        [Some(&f.raw), f.normalized.as_ref()].into_iter().flatten().any(|d| self.crc32.contains(&d.crc32) || d.sha1.is_some_and(|s| self.sha1.contains(&s)))
+    }
 }
 
 /// What a set of ports needs, to decide which files are worth reading.
@@ -97,6 +106,8 @@ impl Wanted {
                     words: words(title),
                     exts,
                     checkable: !alt.crc32.is_empty() || !alt.sha1.is_empty(),
+                    crc32: alt.crc32.clone(),
+                    sha1: alt.sha1.clone(),
                 });
             }
         }
@@ -274,6 +285,9 @@ pub struct Progress<'a> {
     pub bytes_to_read: u64,
     /// ROM files the walk saw.
     pub seen: usize,
+    /// The walk is still going (nothing is read yet): how many folders it went through so far.
+    pub walking: bool,
+    pub folders: usize,
 }
 
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
@@ -350,6 +364,63 @@ pub fn hash_file(
     Ok(Some(FileHashes { size, byte_order, raw: raw.finish(), normalized: normalized.map(|h| h.finish()) }))
 }
 
+/// A game file the walk found: what it is, without opening it.
+struct Seen {
+    path: PathBuf,
+    rel_path: PathBuf,
+    system: System,
+    size: u64,
+    modified: u64,
+    ext: String,
+}
+
+#[derive(Default)]
+struct ReadState {
+    bytes_hashed: u64,
+    files_read: usize,
+    to_read: usize,
+    bytes_to_read: u64,
+    total_seen: usize,
+}
+
+/// Reads (hashes) the files at `batch`, filling their slots. True when cancelled.
+#[allow(clippy::too_many_arguments)]
+fn read_batch(batch: &[usize], seen: &[Seen], slots: &mut [Option<RomFile>], tried: &mut [bool], issues: &mut Vec<ScanIssue>, st: &mut ReadState, sha1: bool, cancel: &AtomicBool, progress: &mut dyn FnMut(Progress<'_>)) -> bool {
+    for &i in batch {
+        let s = &seen[i];
+        tried[i] = true;
+        let files_done = slots.iter().flatten().count();
+        progress(Progress { current: &s.path, files_done, bytes_hashed: st.bytes_hashed, to_read: st.to_read, files_read: st.files_read, bytes_to_read: st.bytes_to_read, seen: st.total_seen, walking: false, folders: 0 });
+        let is_n64 = s.system == System::N64 || matches!(s.ext.as_str(), "z64" | "v64" | "n64");
+        let mut counted = 0u64;
+        let (base, to_read, files_read, bytes_to_read, total_seen) = (st.bytes_hashed, st.to_read, st.files_read, st.bytes_to_read, st.total_seen);
+        let hashed = hash_file(&s.path, is_n64, sha1, cancel, &mut |n| {
+            counted += n;
+            progress(Progress { current: &s.path, files_done, bytes_hashed: base + counted, to_read, files_read, bytes_to_read, seen: total_seen, walking: false, folders: 0 });
+        });
+        st.files_read += 1;
+        match hashed {
+            Ok(Some(h)) => {
+                st.bytes_hashed += counted;
+                slots[i] = Some(RomFile {
+                    path: s.path.clone(),
+                    rel_path: s.rel_path.clone(),
+                    system: s.system,
+                    size: h.size,
+                    mtime_ms: s.modified,
+                    ext: s.ext.clone(),
+                    byte_order: h.byte_order,
+                    raw: h.raw,
+                    normalized: h.normalized,
+                });
+            }
+            Ok(None) => return true,
+            Err(e) => issues.push(ScanIssue { path: s.path.clone(), message: format!("could not read: {e}") }),
+        }
+    }
+    false
+}
+
 fn is_hidden(name: &str) -> bool {
     name.starts_with('.')
 }
@@ -374,20 +445,15 @@ pub fn scan(
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
 
     // 1. The walk: names, sizes and times only, nothing is opened.
-    struct Seen {
-        path: PathBuf,
-        rel_path: PathBuf,
-        system: System,
-        size: u64,
-        modified: u64,
-        ext: String,
-    }
     let mut seen: Vec<Seen> = Vec::new();
+    let mut folders = 0usize;
     while let Some((dir, depth)) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
             return Ok(result);
         }
+        folders += 1;
+        progress(Progress { current: &dir, files_done: 0, bytes_hashed: 0, to_read: 0, files_read: 0, bytes_to_read: 0, seen: seen.len(), walking: true, folders });
         match fs::canonicalize(&dir) {
             Ok(real) => {
                 if !seen_dirs.insert(real) {
@@ -448,84 +514,47 @@ pub fn scan(
     }
     result.rom_files_seen = seen.len();
 
-    // 2. What to read: everything (no `wanted`), else the files a wanted one could be. A file the saved scan
-    // has unchanged is kept as it is either way.
-    let unchanged = |s: &Seen| known.get(s.path.as_path()).filter(|old| old.size == s.size && old.mtime_ms == s.modified && (old.raw.sha1.is_some() || !options.sha1)).copied();
-    let read: Vec<bool> = match options.wanted.as_ref().filter(|w| !w.is_empty()) {
-        None => seen.iter().map(|s| unchanged(s).is_none()).collect(),
-        Some(wanted) => {
-            let mut answered = vec![false; wanted.alts.len()];
-            let mut pick: Vec<bool> = seen
-                .iter()
-                .map(|s| {
-                    let hits = wanted.named(&s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-                    for h in &hits {
-                        answered[*h] = true;
-                    }
-                    !hits.is_empty()
-                })
-                .collect();
-            // A needed file no name answered (a renamed dump): the files of its kind, confirmed by their checksum.
-            for alt in wanted.alts.iter().enumerate().filter(|(i, a)| !answered[*i] && a.checkable && !a.exts.is_empty()).map(|(_, a)| a) {
-                for (n, s) in seen.iter().enumerate() {
-                    if alt.exts.contains(&s.ext) {
-                        pick[n] = true;
-                    }
-                }
-            }
-            seen.iter().zip(pick).map(|(s, p)| p && unchanged(s).is_none()).collect()
-        }
-    };
-    let to_read = read.iter().filter(|r| **r).count();
-    let bytes_to_read: u64 = seen.iter().zip(&read).filter(|(_, r)| **r).map(|(s, _)| s.size).sum();
-
-    // 3. Read the candidates; keep what the saved scan has; leave the rest.
-    let mut bytes_hashed = 0u64;
-    let mut files_read = 0usize;
-    let total_seen = seen.len();
-    for (s, must_read) in seen.into_iter().zip(read) {
-        if let Some(old) = unchanged(&s) {
-            let mut kept = old.clone();
-            kept.rel_path = s.rel_path;
-            kept.system = s.system;
-            result.files.push(kept);
-            continue;
-        }
-        if !must_read {
-            result.not_read += 1;
-            continue;
-        }
-        progress(Progress { current: &s.path, files_done: result.files.len(), bytes_hashed, to_read, files_read, bytes_to_read, seen: total_seen });
-        let is_n64 = s.system == System::N64 || matches!(s.ext.as_str(), "z64" | "v64" | "n64");
-        let mut counted = 0u64;
-        let files_done = result.files.len();
-        let hashed = hash_file(&s.path, is_n64, options.sha1, cancel, &mut |n| {
-            counted += n;
-            progress(Progress { current: &s.path, files_done, bytes_hashed: bytes_hashed + counted, to_read, files_read, bytes_to_read, seen: total_seen });
-        });
-        files_read += 1;
-        match hashed {
-            Ok(Some(h)) => {
-                bytes_hashed += counted;
-                result.files.push(RomFile {
-                    path: s.path,
-                    rel_path: s.rel_path,
-                    system: s.system,
-                    size: h.size,
-                    mtime_ms: s.modified,
-                    ext: s.ext,
-                    byte_order: h.byte_order,
-                    raw: h.raw,
-                    normalized: h.normalized,
-                });
-            }
-            Ok(None) => {
-                result.cancelled = true;
-                break;
-            }
-            Err(e) => result.issues.push(ScanIssue { path: s.path.clone(), message: format!("could not read: {e}") }),
-        }
+    // 2. Read: every game file (no `wanted`), else first the files whose name answers a wanted one, then, for any
+    // wanted file with a checksum that nothing read so far matches (a wrong-region dump can carry the right name),
+    // the files of its kind. A file the saved scan has unchanged is kept as it is and never read.
+    let unchanged: Vec<Option<RomFile>> = seen
+        .iter()
+        .map(|s| known.get(s.path.as_path()).filter(|old| old.size == s.size && old.mtime_ms == s.modified && (old.raw.sha1.is_some() || !options.sha1)).map(|old| (*old).clone()))
+        .collect();
+    let mut slots: Vec<Option<RomFile>> = unchanged
+        .into_iter()
+        .zip(&seen)
+        .map(|(old, s)| {
+            old.map(|mut kept| {
+                kept.rel_path = s.rel_path.clone();
+                kept.system = s.system;
+                kept
+            })
+        })
+        .collect();
+    let mut tried = vec![false; seen.len()];
+    let wanted = options.wanted.as_ref().filter(|w| !w.is_empty());
+    let first: Vec<usize> = (0..seen.len())
+        .filter(|i| slots[*i].is_none())
+        .filter(|i| wanted.is_none_or(|w| !w.named(&seen[*i].path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).is_empty()))
+        .collect();
+    let mut st = ReadState { to_read: first.len(), bytes_to_read: first.iter().map(|i| seen[*i].size).sum(), total_seen: seen.len(), ..ReadState::default() };
+    if st.to_read == 0 {
+        progress(Progress { current: root, files_done: 0, bytes_hashed: 0, to_read: 0, files_read: 0, bytes_to_read: 0, seen: seen.len(), walking: false, folders });
     }
+    let mut cancelled = read_batch(&first, &seen, &mut slots, &mut tried, &mut result.issues, &mut st, options.sha1, cancel, progress);
+    if let (Some(w), false) = (wanted, cancelled) {
+        let unmatched: Vec<&WantedAlt> = w.alts.iter().filter(|a| a.checkable && !a.exts.is_empty() && !slots.iter().flatten().any(|f| a.matched_by(f))).collect();
+        let second: Vec<usize> = (0..seen.len()).filter(|i| slots[*i].is_none() && !tried[*i] && unmatched.iter().any(|a| a.exts.contains(&seen[*i].ext))).collect();
+        st.to_read += second.len();
+        st.bytes_to_read += second.iter().map(|i| seen[*i].size).sum::<u64>();
+        cancelled = read_batch(&second, &seen, &mut slots, &mut tried, &mut result.issues, &mut st, options.sha1, cancel, progress);
+    }
+    result.cancelled = cancelled;
+    if !cancelled {
+        result.not_read = (0..seen.len()).filter(|i| slots[*i].is_none() && !tried[*i]).count();
+    }
+    result.files = slots.into_iter().flatten().collect();
     result.files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(result)
 }
@@ -876,6 +905,44 @@ mod tests {
         // Without needs (Settings > Game files), every game file is read: the unreadable ones are reported.
         let full = scan(&root, &ScanOptions::default(), Some(&res), &AtomicBool::new(false), &mut |_| {}).unwrap();
         assert_eq!(full.issues.len(), 81);
+    }
+
+    #[test]
+    fn a_wrong_dump_with_the_right_name_does_not_hide_the_right_dump_under_another_name() {
+        let tmp = temp_dir();
+        let root = tmp.path().join("roms");
+        let usa = n64_rom(7, 20_000);
+        write(&root.join("n64/Legend of Zelda, The - Ocarina of Time (Europe).z64"), &n64_rom(8, 20_000));
+        write(&root.join("n64/oot_dump.z64"), &usa);
+        let s = spec(&format!("Required files: Legend of Zelda, The - Ocarina of Time (USA).z64 (CRC32: {:08X})", digests_of(&usa).crc32));
+        let options = ScanOptions { wanted: Some(Wanted::from_specs([&s])), ..ScanOptions::default() };
+        let res = scan(&root, &options, None, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let names: Vec<String> = res.files.iter().map(RomFile::file_name).collect();
+        assert_eq!(names, ["Legend of Zelda, The - Ocarina of Time (Europe).z64", "oot_dump.z64"], "the named one first, then the rest of its kind since its checksum was wrong");
+        let m = super::super::matching::match_slots(&s, &res.files);
+        assert!(matches!(&m[0].status, super::super::matching::SlotStatus::Found(f) if f.path.ends_with("oot_dump.z64")), "{:?}", m[0].status);
+        // With the right dump named right, the others of its kind are not read.
+        let tmp2 = temp_dir();
+        let root2 = tmp2.path().join("roms");
+        write(&root2.join("n64/Legend of Zelda, The - Ocarina of Time (USA).z64"), &usa);
+        write(&root2.join("n64/Something Else (USA).z64"), &n64_rom(9, 20_000));
+        let res2 = scan(&root2, &options, None, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!((res2.files.len(), res2.not_read), (1, 1));
+    }
+
+    #[test]
+    fn files_the_saved_scan_knows_stay_in_the_result_even_when_no_port_needs_them() {
+        let tmp = temp_dir();
+        let root = tmp.path().join("roms");
+        write(&root.join("snes/Other (USA).sfc"), &random_bytes(4, 3_000));
+        write(&root.join("n64/Wanted (USA).z64"), &n64_rom(5, 3_000));
+        let full = scan(&root, &ScanOptions::default(), None, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let s = spec("Required files: Wanted (USA).z64 (CRC32: 12345678)");
+        let options = ScanOptions { wanted: Some(Wanted::from_specs([&s])), ..ScanOptions::default() };
+        let mut walked = 0usize;
+        let again = scan(&root, &options, Some(&full), &AtomicBool::new(false), &mut |p| if p.walking { walked = walked.max(p.folders) }).unwrap();
+        assert_eq!(again.files.len(), 2, "the saved hashes are kept, so the saved scan does not shrink");
+        assert!(walked >= 3, "the walk reports the folders it goes through ({walked})");
     }
 
     #[test]
