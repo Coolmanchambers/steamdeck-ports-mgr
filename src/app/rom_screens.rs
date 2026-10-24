@@ -445,7 +445,8 @@ pub(crate) fn take_wizard_result() -> Option<crate::fork::setup_wizard::game_fil
 
 fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
     let folder = match store.rom_dir() {
-        Some(dir) => format!("Game files folder: {}", ellipsize(&dir.to_string_lossy(), 56)),
+        // By place ("SD card > Emulation > roms"), never by a card's ID.
+        Some(dir) => format!("Game files folder: {}", ellipsize(&crate::fork::folder_picker::mounts::folder_label(dir, &browse::system_drives(), home_dir().as_deref()), 56)),
         None => "Game files folder: not set yet (choose one)".to_string(),
     };
     let scanned = scan_time(&store).map(|t| format!("scanned {}", local_date(t))).unwrap_or_else(|| "not scanned yet".into());

@@ -480,16 +480,27 @@ saves there.
 Settings > **Game files...** is where the app finds your ROMs and connects them to the ports that need them. It only reads
 your game folder: nothing in it is ever moved, renamed, changed or deleted.
 
-1. **Game files folder** > choose your ROM folder in the folder picker (the same one as Settings > Ports folder): the usual
-   places (SD card, `~/Emulation/roms`...) are at the top, then you walk down folder by folder and **Use this folder** saves it
-   and scans. The scan shows its progress and has Cancel (or B).
-   A big folder takes a while the first time; later scans only read new or changed files.
+1. **Game files folder** > choose your ROM folder in the folder picker (the same one as Settings > Ports folder). It opens in
+   your EmuDeck folder when there is one, listed first as "SD card: Emulation/roms (Recommended)", so **Use this folder** is
+   one press; other usual places follow ("SD card: ROMs", "Home: Emulation/roms"...), and the folder you are in reads as
+   "SD card > Emulation > roms" (a card is never named by its ID). **Use this folder** saves it and scans. The scan shows its
+   progress and has Cancel (or B). This full scan reads every game file, since its lists show everything; a big folder takes
+   a while the first time, and later scans only read new or changed files.
 2. **Results by system** lists, per console, which ports have their files (Found, Several matches, Wrong version, Missing...).
    "(check this)" means a file was matched by name only. Open a port to see exactly what was found and what it wants.
 3. **Connect game files...** (from the port's row under Results by system, or right after it installs, see below): pick how each file reaches the port.
    **Use original** writes nothing, **Link** puts a pointer in the port's folder (no extra space), **Copy** makes a second
    copy and asks first, showing its size. Then **Connect now**.
 4. **Connected ports** shows what is connected and whether it still holds. **Forget** removes only the record.
+
+**The search for a port's files** (after an install or an import, from the setup wizard, Info > Game files...) reads only
+files that could be the ones the ports need: a file whose name matches (the full name, a disc serial, or most of the title's
+words), and, for a needed file no name matches, the files of its kind (for an N64 game, any `.z64`, `.v64` or `.n64`), each
+confirmed by its checksum. Everything else is only listed, so a 100 GB folder takes moments, not hours, and a file read once is
+not read again. The progress says "Looking at 3 of 12 files (1.2 GB of 4.0 GB)", how many others are not needed, and about
+how long is left. In the setup wizard **Skip for now** stops it and keeps the folder. A port whose file is already in its own
+folder, or that already made its game archive from it (Ship of Harkinian's `oot.o2r`, 2 Ship 2 Harkinian's `mm.o2r`), counts
+as having its game without any search.
 
 **After you install a port that needs game files**, the app looks for them in your game files folder by itself (once per
 port). If the file is there, the Connect step opens (with a pick list first when several files match). If not, it says so plainly:
@@ -505,8 +516,9 @@ found for Ship of Harkinian. It needs: oot.z64 (CRC32 ...). Looked in: /run/medi
 - **Later** closes it. The port's **Info** (X) > **Game files...** and Settings > Game files > **Find game files for a port...**
   run the same search whenever you like.
 
-If no game files folder is set yet, the prompt offers **Choose ROM folder...**. Adopting installed ports does the same for
-every adopted port that needs files and lists the results under the adopt summary. The search also runs, once, after an update of a port
+If no game files folder is set yet, the prompt offers **Choose ROM folder...**. After Import ports moves ports in, its card page
+"N ports moved" comes first, with **Find their game files** when any of them still needs a file; the search is its own page
+after it. The search also runs, once, after an update of a port
 that was never searched (for example one installed before this version). If the folder suddenly looks empty (a card that is
 not mounted), the app says so and keeps what it knew about the folder instead of reporting the files missing.
 
