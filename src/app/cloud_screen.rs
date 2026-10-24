@@ -137,7 +137,7 @@ fn poll_pass(app: &Rc<AppState>) {
     PASS_TIMER.with(slint::Timer::stop);
     RUNTIME.with(|r| r.borrow_mut().running = None);
     let outcome = result.unwrap_or_else(|panic| {
-        cloud::log::note(format!("a pass stopped because of an error inside the app ({panic})"));
+        cloud::log::note(format!("a pass stopped because of an error inside the app ({})", cloud::log::scrub(&panic)));
         PassOutcome { reports: vec![(SERVICE, Summary { deferred: 0, error: Some((ErrorKind::Other, None)) })] }
     });
     after_pass(app, &outcome);
@@ -162,15 +162,18 @@ fn after_pass(app: &Rc<AppState>, outcome: &PassOutcome) {
 fn pass_job(config_dir: &Path, saves: &Path, why: Why, ctl: &Ctl) -> PassOutcome {
     let Some(setup) = endpoints::current() else { return PassOutcome { reports: Vec::new() } };
     let (tokens_file, record_file) = (tokens_path(config_dir), record_path(config_dir));
-    let ids: Vec<ServiceId> = store::signed_in(&tokens_file).into_iter().map(|(id, _)| id).collect();
-    let mut services: Vec<_> = ids.iter().map(|id| endpoints::service(&setup, &tokens_file, *id)).collect();
+    // Each service is taken together with the name of the sign-in the pass starts under: if the person signs out
+    // (or in again, as someone else) while it runs, it may not write into the record any more.
+    let signed: Vec<(ServiceId, String)> = store::signed_in(&tokens_file).into_iter().filter_map(|(id, _)| Some((id, store::signin_name(&tokens_file, id)?))).collect();
+    let mut services: Vec<_> = signed.iter().map(|(id, _)| endpoints::service(&setup, &tokens_file, *id)).collect();
     let device = cloud::device_name();
     let input = PassInput { saves_backup_dir: saves, device: &device, now: unix_now(), min_age: why.min_age_secs() };
     let reports = sync::run_services(
         &mut services,
         &|id| store::record_of(&record_file, id),
         &mut |id, part| {
-            if let Err(e) = store::persist_service(&record_file, &tokens_file, id, part) {
+            let Some((_, signin)) = signed.iter().find(|(s, _)| *s == id) else { return };
+            if let Err(e) = store::persist_service(&record_file, &tokens_file, id, signin, part) {
                 cloud::log::note(format!("{}: could not save the upload record ({})", id.key(), e.kind()));
             }
         },
@@ -325,9 +328,9 @@ fn notice(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, title: &str, par
 /// A failure told in plain words, with what to do about it.
 fn notice_for(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, title: &str, error: &ServiceError) {
     cloud::log::note(format!("screen: {title}: {error}"));
-    let mut lines = vec![view::problem_text(SERVICE, error.kind)];
+    let mut lines = vec![view::one_off_text(SERVICE, error.kind)];
     if error.kind == ErrorKind::Other && !error.detail.is_empty() {
-        lines.push(format!("Details: {}.", error.detail));
+        lines.push(format!("Details: {}.", cloud::log::scrub(&error.detail)));
     }
     notice(app, router, s, title, lines);
 }
@@ -385,9 +388,7 @@ fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
         },
         Act::Back => match s.stage.get() {
             Stage::Intro | Stage::NotSetUp | Stage::Status => leave(app, router, s),
-            Stage::GettingCode | Stage::SigningIn | Stage::Listing => act_on(app, router, s, Act::Cancel),
-            // The copy is a few seconds; B waits for it rather than leaving it half done.
-            Stage::Copying => {}
+            Stage::GettingCode | Stage::SigningIn | Stage::Listing | Stage::Copying => act_on(app, router, s, Act::Cancel),
             Stage::Signed | Stage::Notice => show_home(app, router, s),
             Stage::List | Stage::Copied | Stage::SignOutAsk => show_status(app, router, s),
         },
@@ -395,7 +396,8 @@ fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             trigger(app, Why::Manual);
             show_status(app, router, s);
         }
-        Act::NotNow | Act::Done | Act::KeepSignedIn => show_status(app, router, s),
+        Act::NotNow | Act::KeepSignedIn => show_status(app, router, s),
+        Act::ForgetAccount => forget_account(app, router, s),
         Act::GetBackups => start_listing(app, router, s),
         Act::Pick(i) => {
             let file = s.remote.borrow().get(i).cloned();
@@ -481,14 +483,14 @@ fn tick_getting_code(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     match result {
         Ok(Ok(code)) => show_code(app, router, s, code),
         Ok(Err(e)) => notice_for(app, router, s, "Could not start the sign-in", &e),
-        Err(panic) => notice(app, router, s, "Could not start the sign-in", vec![panic]),
+        Err(panic) => notice(app, router, s, "Could not start the sign-in", vec![cloud::log::scrub(&panic)]),
     }
 }
 
 fn code_page(s: &Session, code: &DeviceCode, now: u64) -> Page<Act> {
     let minutes = (code.expires_at.saturating_sub(now) + 59) / 60;
     let desktop = !crate::fork::steam_queue::game_mode_from_env();
-    view::signing_in_page(SERVICE, &code.user_code, &code.verification_url, QrMatrix::encode(&code.verification_url), minutes.max(1), desktop, &s.waiting.borrow())
+    view::signing_in_page(SERVICE, &code.user_code, QrMatrix::encode(&code.verification_url), minutes.max(1), desktop, &s.waiting.borrow())
 }
 
 fn show_code(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, code: DeviceCode) {
@@ -548,7 +550,7 @@ fn on_poll(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, result: Result<
             }
         }
         Ok(Poll::Failed(e)) => notice_for(app, router, s, "The sign-in did not work", &e),
-        Err(panic) => notice(app, router, s, "The sign-in did not work", vec![panic]),
+        Err(panic) => notice(app, router, s, "The sign-in did not work", vec![cloud::log::scrub(&panic)]),
     }
 }
 
@@ -560,6 +562,14 @@ fn finish_sign_in(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, tokens: 
             cloud::log::note(format!("could not save the sign-in ({})", e.kind()));
             notice(app, router, s, "Could not save the sign-in", vec![format!("This Deck could not store it ({}). You are not signed in; nothing was copied.", e.kind())]);
         }
+    }
+}
+
+/// A revoked sign-in the person does not want to renew: the remembered account goes, back to the first page.
+fn forget_account(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
+    match store::sign_out(&tokens_path(&app.paths.config_dir), &record_path(&app.paths.config_dir), SERVICE) {
+        Ok(()) => show_home(app, router, s),
+        Err(e) => notice(app, router, s, "Could not forget the account", vec![format!("This Deck could not remove it ({}).", e.kind())]),
     }
 }
 
@@ -590,12 +600,12 @@ fn tick_listing(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     match result {
         Ok(Ok(files)) => {
             let mut files: Vec<RemoteFile> = files.into_iter().filter(|f| Place::parse(&f.path).is_some()).collect();
-            files.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| b.path.cmp(&a.path)));
+            view::newest_first(&mut files);
             *s.remote.borrow_mut() = files;
             show_list(app, router, s);
         }
         Ok(Err(e)) => notice_for(app, router, s, "Could not look at your backups", &e),
-        Err(panic) => notice(app, router, s, "Could not look at your backups", vec![panic]),
+        Err(panic) => notice(app, router, s, "Could not look at your backups", vec![cloud::log::scrub(&panic)]),
     }
 }
 
@@ -615,7 +625,10 @@ fn show_list(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let rows: Vec<(String, String)> = remote.iter().take(shown).map(|f| (label_of(app, s, f), human_size(f.size))).collect();
     let missing = restore::missing_locally(&remote, &app.paths.saves_backup_dir);
     let copy_all = (!missing.is_empty()).then(|| (missing.len(), missing.iter().map(|f| f.size).sum()));
-    show(app, router, s, Stage::List, view::restore_list_page(SERVICE, &rows, copy_all, remote.len() > shown));
+    // "Copy all" is the recommended choice only on a Deck with no backups of its own (a new Deck).
+    let scan = cloud::local::scan(&app.paths.saves_backup_dir, unix_now(), 0, &|_, _, _| false);
+    let new_deck = scan.zips.is_empty() && scan.deferred == 0 && scan.broken == 0;
+    show(app, router, s, Stage::List, view::restore_list_page(SERVICE, &rows, copy_all, new_deck, remote.len() > shown));
 }
 
 fn start_copy(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, files: Vec<RemoteFile>, label: String) {
@@ -624,16 +637,18 @@ fn start_copy(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, files: Vec<R
     }
     let Some(setup) = endpoints::current() else { return show(app, router, s, Stage::NotSetUp, view::not_set_up_page()) };
     let (config_dir, saves) = (app.paths.config_dir.clone(), app.paths.saves_backup_dir.clone());
+    let Some(signin) = store::signin_name(&tokens_path(&config_dir), SERVICE) else {
+        return notice_for(app, router, s, "Could not copy that backup", &ServiceError::new(ErrorKind::SignedOut, "not signed in"));
+    };
     *s.copying_label.borrow_mut() = label.clone();
     *s.copied_folder.borrow_mut() = None;
-    *s.copy_job.borrow_mut() = Some(Rc::new(Background::spawn(move |ctl| copy_job(&setup, &config_dir, &saves, files, ctl))));
+    *s.copy_job.borrow_mut() = Some(Rc::new(Background::spawn(move |ctl| copy_job(&setup, &config_dir, &saves, &signin, files, ctl))));
     show(app, router, s, Stage::Copying, view::copying_back_page(&label, ""));
 }
 
-fn copy_job(setup: &Setup, config_dir: &Path, saves: &Path, files: Vec<RemoteFile>, ctl: &Ctl) -> CopyOutcome {
+fn copy_job(setup: &Setup, config_dir: &Path, saves: &Path, signin: &str, files: Vec<RemoteFile>, ctl: &Ctl) -> CopyOutcome {
     let (tokens_file, record_file) = (tokens_path(config_dir), record_path(config_dir));
     let mut service = endpoints::service(setup, &tokens_file, SERVICE);
-    let mut part = store::record_of(&record_file, SERVICE);
     let total = files.len();
     let mut results = Vec::new();
     for (i, file) in files.into_iter().enumerate() {
@@ -641,10 +656,15 @@ fn copy_job(setup: &Setup, config_dir: &Path, saves: &Path, files: Vec<RemoteFil
             break;
         }
         ctl.set_progress(if total > 1 { format!("{} of {total}", i + 1) } else { String::new() });
-        let result = restore::download_one(service.as_mut(), &file, saves, &mut part, unix_now(), &mut |_, _| {});
+        // What the download learns goes into the record as entries added to it (under the store's lock), never as the
+        // whole part: an upload pass may be writing the same file.
+        let mut added = cloud::record::ServiceRecord::default();
+        let result = restore::download_one(service.as_mut(), &file, saves, &mut added, unix_now(), &mut |_, _| {});
         let stop = matches!(&result, Err(DownloadError::Service(e)) if !e.kind.retries_by_itself() || e.kind == ErrorKind::Offline);
         if result.is_ok() {
-            let _ = store::persist_service(&record_file, &tokens_file, SERVICE, &part);
+            if let Err(e) = store::add_uploaded(&record_file, &tokens_file, SERVICE, signin, added.uploaded) {
+                cloud::log::note(format!("could not note the copied backup in the record ({})", e.kind()));
+            }
         }
         results.push((file, result));
         if stop {
@@ -668,7 +688,7 @@ fn tick_copying(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     s.copy_job.borrow_mut().take();
     match result {
         Ok(outcome) => on_copied(app, router, s, outcome),
-        Err(panic) => notice(app, router, s, "The copy stopped", vec![panic, "Nothing on this Deck was replaced.".into()]),
+        Err(panic) => notice(app, router, s, "The copy stopped", vec![cloud::log::scrub(&panic), "Nothing on this Deck was replaced.".into()]),
     }
 }
 

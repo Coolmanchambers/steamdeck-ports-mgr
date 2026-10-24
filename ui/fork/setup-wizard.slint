@@ -599,7 +599,8 @@ export component SetupWizardDialog inherits Window {
                         }
                     }
                     if root.has-card: CardBox {
-                        height: root.large ? root.height * 0.34 : root.row-height * 4.2;
+                        // A QR code (a square card) gets the room to be scanned from across a room.
+                        height: root.large ? root.height * (root.card.square ? 0.47 : 0.34) : root.row-height * 4.2;
                         card: root.card;
                         font-size: root.body-font;
                         border-px: root.border-px;

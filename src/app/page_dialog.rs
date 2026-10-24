@@ -71,9 +71,10 @@ fn to_image(thumb: &crate::fork::art::thumbs::Thumb) -> slint::Image {
     slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&thumb.rgba, thumb.width, thumb.height))
 }
 
-/// The QR code of a card as a picture: 6 pixels a square and a white border of 4 squares around it.
+/// The QR code of a card as a picture: 10 pixels a square (it is shown at about 300 pixels, so it is only ever
+/// scaled down) and a white border of 4 squares around it.
 fn qr_image(qr: &crate::fork::cloud::qr::QrMatrix) -> slint::Image {
-    let (width, height, rgba) = qr.rgba(6, 4);
+    let (width, height, rgba) = qr.rgba(10, 4);
     slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, width, height))
 }
 
