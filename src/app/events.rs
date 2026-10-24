@@ -87,7 +87,8 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 }
                 // Fork: a release named with its version replaced the old file; launch target, favorite and
                 // Steam follow the new one and the old one goes to .previous/ (fork::versioned).
-                let versioned = super::versioned_update::after_install(app, &key, tag.as_deref());
+                let launching = app.install_runtime.pending_launch_after_install.borrow().contains(&key);
+                let versioned = super::versioned_update::after_install(app, &key, tag.as_deref(), launching);
                 app.refresh_current_view();
                 if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
                     if let Some(port) = port {

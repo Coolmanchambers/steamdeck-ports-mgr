@@ -340,6 +340,10 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
     if super::ports_folder_screen::startup_dialog_pending() || dialog_is_open(app) || !app.install_runtime.running_processes.borrow().is_empty() || window_away(app) {
         return;
     }
+    // A versioned update started by Play left a note (fork::versioned): it comes before the offer.
+    if super::versioned_update::show_saved_note(app, router, true) {
+        return;
+    }
     let path = queue_path(app);
     if !path.exists() {
         watch.offered.set(false);
