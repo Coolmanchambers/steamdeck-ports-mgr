@@ -217,8 +217,8 @@ fn steam_page(w: &Wizard, ctx: &Context) -> Page {
         // Queued (now, or by the move of ports into the ports folder): Steam has to close to take them.
         p.title = "Update Steam now?".to_string();
         p.paragraphs = vec![
-            format!("{} waiting for Steam to close.", changes_word(waiting)),
-            "This app closes Steam the normal way, backs up your shortcut list, updates it, then can start Steam again.".to_string(),
+            if info.immediate { format!("{} waiting. Steam is closed, so they can be made now.", changes_word(waiting)) } else { format!("{} waiting for Steam to close.", changes_word(waiting)) },
+            "Only Steam's shortcut list changes; your games and saves are not touched.".to_string(),
         ];
         let label = if info.immediate { "Update Steam shortcuts now" } else { crate::fork::steam_close::CLOSE_LABEL };
         p.options = vec![recommended(label, "Takes a few seconds", Action::CloseSteam), option("Continue", "They keep waiting until Steam is closed", Action::Next)];
@@ -261,10 +261,12 @@ fn add_all_options(p: &mut Page, info: &super::steam::Info) {
 fn steam_line(w: &Wizard, ctx: &Context) -> String {
     let s = &w.summary;
     match &s.steam {
-        Some(SteamOutcome::Added(n)) => format!("{} added to Steam.", ports_word(*n)),
         Some(SteamOutcome::Queued { count, game_mode: true }) => format!("{} queued for Desktop Mode.", ports_word(*count)),
         Some(SteamOutcome::Queued { count, game_mode: false }) => format!("{} queued until Steam is closed.", ports_word(*count)),
-        Some(SteamOutcome::Applied(n)) => format!("Steam: {} made.", if *n == 1 { "1 change".to_string() } else { format!("{n} changes") }),
+        Some(SteamOutcome::Applied(n)) => format!("Steam: {} made.{}", if *n == 1 { "1 change".to_string() } else { format!("{n} changes") }, if s.steam_started { " Steam is starting again." } else { "" }),
+        // Added now, while other changes still wait for Steam to close.
+        Some(SteamOutcome::Added(n)) if ctx.steam.as_ref().is_some_and(|i| i.waiting > 0) => format!("{} added to Steam; {} waiting for Steam to close.", ports_word(*n), ctx.steam.as_ref().map_or(0, |i| i.waiting)),
+        Some(SteamOutcome::Added(n)) => format!("{} added to Steam.", ports_word(*n)),
         _ if s.skipped.contains(&Step::Steam) => "Steam: skipped.".to_string(),
         _ if ctx.steam.as_ref().is_some_and(|i| i.waiting > 0) => format!("Steam: {} waiting for Steam to close.", ctx.steam.as_ref().map_or(0, |i| i.waiting)),
         _ if ctx.steam.as_ref().is_some_and(|i| i.to_add == 0) => "Steam: nothing to add.".to_string(),
@@ -1032,6 +1034,10 @@ mod tests {
         assert_eq!(page_for(&w, &steam_ctx(Info { waiting: 4, ..Default::default() })).facts[3], "Steam: 4 waiting for Steam to close.");
         w.summary.steam = Some(SteamOutcome::Applied(4));
         assert_eq!(page_for(&w, &steam_ctx(Info::default())).facts[3], "Steam: 4 changes made.");
+        w.summary.steam_started = true;
+        assert_eq!(page_for(&w, &steam_ctx(Info::default())).facts[3], "Steam: 4 changes made. Steam is starting again.");
+        w.summary.steam = Some(SteamOutcome::Added(2));
+        assert_eq!(page_for(&w, &steam_ctx(Info { waiting: 4, ..Default::default() })).facts[3], "2 ports added to Steam; 4 waiting for Steam to close.");
     }
 
     #[test]

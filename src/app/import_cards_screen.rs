@@ -48,6 +48,11 @@ type Screen = Rc<RefCell<ImportScreen>>;
 /// A step that shows a page again: what OK and B on a Details text go back to.
 type Again = Step;
 
+thread_local! {
+    /// The Steam close flow started Steam again: the finished page it returns to says so, once.
+    static STEAM_STARTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Leaves Import ports: the page closes and the setup wizard, if it waits, is told.
 fn leave(app: &Rc<AppState>, router: &Router, ctx: &Ctx) {
     close_current_dialog(app, router);
@@ -711,7 +716,8 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
         (n, true) => SteamWaiting::GameMode(n),
         (n, false) => SteamWaiting::Desktop(n),
     };
-    let page = finished_page(outcome.moved, &ports_now, &outcome.lines, ctx.from_wizard, steam);
+    let starting = STEAM_STARTING.with(|s| s.replace(false));
+    let page = finished_page(outcome.moved, &ports_now, &outcome.lines, ctx.from_wizard, steam, starting);
     let full = text.to_string();
     let this: Again = {
         let (ctx, keys, outcome, full) = (ctx.clone(), keys.to_vec(), outcome.clone(), full.clone());
@@ -725,7 +731,10 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
             // The shared flow; this page comes back after it, saying what is left.
             CardAction::CloseSteam => {
                 let again = this.clone();
-                let then: super::steam_close_screen::Then = Rc::new(move |app, router, _| again(app, router));
+                let then: super::steam_close_screen::Then = Rc::new(move |app, router, done| {
+                    STEAM_STARTING.with(|s| s.set(done.steam_started));
+                    again(app, router)
+                });
                 super::steam_close_screen::open(app, router, super::steam_close_screen::Opts::default(), then);
             }
             _ => {}

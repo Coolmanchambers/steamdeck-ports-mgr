@@ -129,6 +129,33 @@ pub fn steam_processes_in(proc_root: &Path) -> io::Result<Vec<String>> {
     Ok(found)
 }
 
+/// Games Steam started: its `reaper` processes (the launcher every Steam game and non-Steam shortcut runs
+/// under), as `pid name`, the name being the program after `--` in its command line when it can be read.
+/// Not part of the write check (`steam_processes_in`): a game does not write `shortcuts.vdf`. Used before
+/// asking Steam to close, since closing Steam would also close the game.
+pub fn steam_game_processes_in(proc_root: &Path) -> io::Result<Vec<String>> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(proc_root)? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())) else {
+            continue;
+        };
+        let Ok(comm) = fs::read_to_string(entry.path().join("comm")) else { continue };
+        if comm.trim_end_matches('\n') != "reaper" {
+            continue;
+        }
+        let game = fs::read(entry.path().join("cmdline")).ok().and_then(|raw| {
+            let args: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+            let after = args.iter().position(|a| a == "--")?;
+            args.get(after + 1).map(|p| Path::new(p).file_name().map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned()))
+        });
+        found.push(format!("{pid} {}", game.unwrap_or_else(|| "a game".to_string())));
+    }
+    found.sort();
+    Ok(found)
+}
+
 /// Local time as it appears in backup names (upstream's save backups use local time too).
 pub fn backup_stamp() -> String {
     chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
@@ -613,6 +640,17 @@ mod tests {
         fs::write(dir.join("meminfo"), "x").unwrap();
         fs::create_dir_all(dir.join("500")).unwrap();
         assert_eq!(steam_processes_in(&dir).unwrap(), ["200 steam", "201 steamwebhelper", "202 steam.sh"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn games_steam_started_are_found_by_their_reaper_and_named_from_its_command_line() {
+        let dir = temp_dir("reapers");
+        fake_proc(&dir, &[("10", "steam"), ("20", "reaper"), ("21", "reaper"), ("30", "soh.appimage")]);
+        fs::write(dir.join("20").join("cmdline"), b"/home/deck/.steam/root/ubuntu12_32/reaper\0SteamLaunch\0AppId=123\0--\0/run/media/deck/SD/Ports/SoH/soh.appimage\0").unwrap();
+        assert_eq!(steam_game_processes_in(&dir).unwrap(), ["20 soh.appimage", "21 a game"]);
+        assert_eq!(steam_processes_in(&dir).unwrap(), ["10 steam"], "a game is not part of the write check");
+        assert!(steam_game_processes_in(&dir.join("nope")).is_err());
         let _ = fs::remove_dir_all(dir);
     }
 

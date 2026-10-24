@@ -19,6 +19,7 @@ struct FakeSteam {
     shutdowns: Cell<usize>,
     starts: Cell<usize>,
     shutdown_error: Option<String>,
+    games: Vec<String>,
 }
 
 impl FakeSteam {
@@ -30,6 +31,7 @@ impl FakeSteam {
             shutdowns: Cell::new(0),
             starts: Cell::new(0),
             shutdown_error: None,
+            games: Vec::new(),
         }
     }
 
@@ -50,6 +52,9 @@ impl SteamControl for FakeSteam {
             Some(Err(e)) => Err(e),
             None => self.last.borrow().clone().ok_or_else(|| io::Error::other("no answer")),
         }
+    }
+    fn games_running(&self) -> io::Result<Vec<String>> {
+        Ok(self.games.clone())
     }
     fn request_shutdown(&self) -> Result<(), String> {
         self.shutdowns.set(self.shutdowns.get() + 1);
@@ -82,9 +87,9 @@ fn steam_is_found_on_path_then_in_the_usual_places_then_as_a_flatpak() {
     let have = |files: &'static [&'static str]| move |p: &Path| files.iter().any(|f| Path::new(f) == p);
     let path = std::ffi::OsString::from("/home/deck/bin:/usr/local/bin:relative");
     let c = find_steam(Some(path.as_os_str()), None, &have(&["/usr/local/bin/steam", "/usr/bin/steam"])).unwrap();
-    assert_eq!((c.program.as_path(), c.shutdown_args(), c.start_args()), (Path::new("/usr/local/bin/steam"), vec!["-shutdown".to_string()], vec![]));
-    let c = find_steam(Some(path.as_os_str()), None, &have(&["/usr/bin/steam"])).unwrap();
-    assert_eq!(c.program, PathBuf::from("/usr/bin/steam"), "SteamOS keeps it in /usr/bin even with a PATH that misses it");
+    assert_eq!((c.program.as_path(), c.shutdown_args(), c.start_args()), (Path::new("/usr/bin/steam"), vec!["-shutdown".to_string()], vec![]), "the system's own Steam wins over one on PATH");
+    let c = find_steam(Some(path.as_os_str()), None, &have(&["/usr/local/bin/steam"])).unwrap();
+    assert_eq!(c.program, PathBuf::from("/usr/local/bin/steam"), "else the one on PATH");
     assert_eq!(find_steam(None, None, &have(&["/usr/games/steam"])).unwrap().program, PathBuf::from("/usr/games/steam"));
     // Flatpak, per user or system wide, only with flatpak itself on PATH.
     let home = Path::new("/home/deck");
@@ -156,6 +161,17 @@ fn nothing_is_asked_of_steam_without_a_queue_when_started_by_steam_or_when_steam
         Start::Blocked(Blocked::ShutdownFailed(e)) => assert!(e.contains("not found")),
         other => panic!("{other:?}"),
     }
+    // A game Steam started is running: Steam is not asked to close it from under the player.
+    let mut playing = FakeSteam::up();
+    playing.games = vec!["4400 soh.appimage".into()];
+    match begin(3, false, false, &playing, secs(0.0)) {
+        Start::Blocked(Blocked::GameRunning(g)) => assert_eq!(g, ["4400 soh.appimage"]),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(playing.shutdowns.get(), 0);
+    let g = blocked_page(&Blocked::GameRunning(vec!["4400 soh.appimage".into()]), 3);
+    assert!(g.paragraphs[0].contains("(soh.appimage)") && g.paragraphs[0].contains("Close it first"), "{:?}", g.paragraphs);
+    assert_eq!(g.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::TryAgain, CloseAction::NotNow]);
     let p = blocked_page(&Blocked::StartedBySteam, 3);
     assert!(p.paragraphs[0].contains("started from Steam") && p.paragraphs[1].contains("3 Steam changes are still waiting"), "{:?}", p.paragraphs);
 }
@@ -277,7 +293,8 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
     assert!(matches!(closer.poll(gone(), secs(2.0)), Poll::Waiting { .. }));
     let Poll::Closed(closed) = closer.poll(gone(), secs(5.0)) else { panic!("closed") };
     let out = f.apply(closed, &|| gone());
-    assert!(out.wrote && !out.refused && out.done == 1 && out.dropped == 0, "{out:?}");
+    assert!(out.wrote && !out.refused && out.done == 1 && out.already == 0 && out.dropped == 0, "{out:?}");
+    assert!(out.text.contains("1 shortcut now points at"), "{}", out.text);
     assert!(!f.queue.exists(), "the queue is empty once applied");
     let list = backups::list_backups(&f.vdf).unwrap();
     assert_eq!(list.len(), 1);
@@ -287,11 +304,37 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
     assert_eq!(saved[0].app_id, Some(0xAAAA_0001), "same shortcut, same app ID (play time and art kept)");
     let noted = crate::fork::port_mover::old_copies::load(&app_dir).unwrap()[0].steam_at.expect("the switch time is noted on the old copy");
     assert!((chrono::Utc::now().timestamp() - noted).abs() < 60, "{noted}");
-    let p = result_page(&out, true);
+    let p = result_page(&out, true, false);
     assert_eq!(p.title, "Steam shortcuts updated");
     assert_eq!(p.facts[..2], ["1 Steam change made.", "Your old shortcut list was backed up first."]);
+    assert_eq!(p.paragraphs, ["Steam will start these ports from their new place when it runs again."]);
     assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::StartSteam, CloseAction::Done]);
     assert!(p.options[0].recommended && p.initial == Focus::Option(0));
+    let b = back_action(&p);
+    assert_eq!(p.options.iter().find(|o| o.action == b).map(|o| o.title.as_str()), Some("Leave Steam closed"), "B leaves Steam closed");
+    // Applying the same again (the queue file came back, say): nothing to write, said as such.
+    steam_queue::save(&f.queue, &{
+        let mut q = SteamQueue::default();
+        q.upsert(QueuedChange {
+            account_id: 1234,
+            account_label: String::new(),
+            port_key: "a/soh".into(),
+            name: "Ship of Harkinian".into(),
+            kind: QueuedKind::Repoint,
+            repoint_by_name: false,
+            art: ArtChoice::None,
+            from_game_mode: false,
+            queued_at: String::new(),
+            repoint: Some(("/old/SoH".into(), f.library.join("SoH").to_string_lossy().into_owned())),
+        });
+        q
+    })
+    .unwrap();
+    let again = f.apply(SteamClosed(()), &|| gone());
+    assert!(!again.wrote && again.done == 0 && again.already == 1, "{again:?}");
+    let p = result_page(&again, false, false);
+    assert_eq!(p.facts, ["0 Steam changes made.", "1 was already up to date."]);
+    assert!(p.paragraphs.is_empty());
     assert_eq!(steam.starts.get(), 0, "Steam is started only when the user picks it");
 }
 
@@ -330,23 +373,28 @@ fn steam_starting_again_before_the_write_is_refused_and_the_page_offers_try_agai
     assert!(out.refused && !out.wrote && out.done == 0, "{out:?}");
     assert_eq!(fs::read(&f.vdf).unwrap(), before);
     assert!(f.queue.exists());
-    let p = result_page(&out, false);
+    let p = result_page(&out, false, true);
     assert_eq!(p.title, "Nothing was changed");
     assert!(p.paragraphs[0].starts_with("1 Steam change is still waiting"), "{:?}", p.paragraphs);
     assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::TryAgain, CloseAction::NotNow]);
-    // Closed by this flow: Steam can still be started again from the failure page.
-    let p = result_page(&out, true);
+    // Closed by this flow but running again (it came back before the write): no "Start Steam again".
+    let p = result_page(&out, true, true);
+    assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::TryAgain, CloseAction::NotNow]);
+    // Closed by this flow and still closed (refused for another reason): Steam can be started again.
+    let p = result_page(&out, true, false);
     assert!(p.options.iter().any(|o| o.action == CloseAction::StartSteam && !o.recommended));
 }
 
 // -- pages ------------------------------------------------------------------------------------------------
 
 fn all_pages() -> Vec<ClosePage> {
-    let ok = QueueApplyOutcome { text: "Ship of Harkinian: 1 shortcut(s) now point at /x.".into(), remaining: SteamQueue::default(), wrote: true, refused: false, done: 4, dropped: 1 };
-    let refused = QueueApplyOutcome { refused: true, wrote: false, done: 0, dropped: 0, ..ok.clone_for_test() };
+    let ok = QueueApplyOutcome { text: "Ship of Harkinian: 1 shortcut now points at /x.".into(), remaining: SteamQueue::default(), wrote: true, refused: false, done: 4, already: 1, dropped: 1 };
+    let refused = QueueApplyOutcome { refused: true, wrote: false, done: 0, already: 0, dropped: 0, ..ok.clone_for_test() };
     vec![
-        ask_page(4, None, false),
-        ask_page(1, Some("Queued 1 change."), true),
+        ask_page(4, None, false, false),
+        ask_page(1, Some("Queued 1 change."), true, false),
+        ask_page(2, None, true, true),
+        blocked_page(&Blocked::GameRunning(vec!["1 x".into()]), 4),
         game_mode_page(4),
         closing_page(12),
         timed_out_page(4),
@@ -354,10 +402,11 @@ fn all_pages() -> Vec<ClosePage> {
         blocked_page(&Blocked::StartedBySteam, 4),
         blocked_page(&Blocked::CheckFailed("x".into()), 4),
         blocked_page(&Blocked::ShutdownFailed("y".into()), 4),
-        result_page(&ok, true),
-        result_page(&ok, false),
-        result_page(&refused, true),
-        result_page(&refused, false),
+        result_page(&ok, true, false),
+        result_page(&ok, false, false),
+        result_page(&refused, true, false),
+        result_page(&refused, true, true),
+        result_page(&refused, false, false),
         start_failed_page("sh exited with 1"),
         details_page("a\n\nb"),
     ]
@@ -365,7 +414,7 @@ fn all_pages() -> Vec<ClosePage> {
 
 impl QueueApplyOutcome {
     fn clone_for_test(&self) -> QueueApplyOutcome {
-        QueueApplyOutcome { text: self.text.clone(), remaining: self.remaining.clone(), wrote: self.wrote, refused: self.refused, done: self.done, dropped: self.dropped }
+        QueueApplyOutcome { text: self.text.clone(), remaining: self.remaining.clone(), wrote: self.wrote, refused: self.refused, done: self.done, already: self.already, dropped: self.dropped }
     }
 }
 
@@ -392,12 +441,17 @@ fn no_page_but_details_shows_a_path() {
 
 #[test]
 fn the_ask_page_starts_on_close_unless_it_came_up_by_itself() {
-    let p = ask_page(4, None, false);
+    let p = ask_page(4, None, false, false);
     assert_eq!(p.options[0].title, CLOSE_LABEL);
     assert!(p.options[0].recommended);
     assert_eq!(p.initial, Focus::Option(0));
     assert!(p.paragraphs[0].starts_with("4 Steam changes are waiting"));
-    let p = ask_page(1, Some("Queued 1 change."), true);
+    assert!(p.paragraphs[1].starts_with("Only Steam's shortcut list changes; your games, saves and play time are not touched."));
+    // Steam closed already: nothing to close, the choice says so.
+    let c = ask_page(2, None, true, true);
+    assert_eq!((c.options[0].title.as_str(), c.initial), (UPDATE_NOW_LABEL, Focus::Option(1)));
+    assert!(c.paragraphs[0].contains("Steam is closed, so they can be made now"), "{:?}", c.paragraphs);
+    let p = ask_page(1, Some("Queued 1 change."), true, false);
     assert_eq!(p.initial, Focus::Option(1), "a stray A on a page that popped up does not close Steam");
     assert_eq!((p.paragraphs[0].as_str(), p.paragraphs[1].as_str()), ("Queued 1 change.", "1 Steam change is waiting. Steam has to be closed to make it."));
 }
@@ -406,14 +460,16 @@ fn the_ask_page_starts_on_close_unless_it_came_up_by_itself() {
 fn the_closing_page_counts_the_wait_and_offers_only_stop_waiting() {
     let p = closing_page(12);
     assert_eq!(p.facts, [format!("Waited 12 s of up to {} s.", TIMEOUT.as_secs())]);
+    assert_eq!(p.options[0].detail, "Steam still closes on its own. Nothing is written; the app asks again once Steam is gone.");
+    assert!(timed_out_page(1).paragraphs[1].contains("tray icon > Exit Steam"));
     assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::StopWaiting]);
     assert_eq!(back_action(&p), CloseAction::StopWaiting);
 }
 
 #[test]
 fn dropped_changes_are_told_and_the_details_hold_the_full_text() {
-    let out = QueueApplyOutcome { text: "first\n\nsecond".into(), remaining: SteamQueue::default(), wrote: false, refused: false, done: 0, dropped: 2 };
-    let p = result_page(&out, false);
+    let out = QueueApplyOutcome { text: "first\n\nsecond".into(), remaining: SteamQueue::default(), wrote: false, refused: false, done: 0, already: 0, dropped: 2 };
+    let p = result_page(&out, false, false);
     assert_eq!(p.facts, ["0 Steam changes made.", "2 changes could not be made any more: Details says why."]);
     assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::Done]);
     assert_eq!(details_page(&out.text).paragraphs, ["first", "second"]);

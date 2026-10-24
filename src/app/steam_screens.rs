@@ -202,6 +202,12 @@ fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::
     });
 }
 
+/// A line for the question when covers for queued adds are not downloaded yet.
+fn missing_art_lead(app: &AppState, queue: &steam_queue::SteamQueue) -> Option<String> {
+    let missing = steam_queue::missing_art(queue, &app.catalog.borrow(), &app.paths.cache_dir);
+    (!missing.is_empty()).then(|| format!("Artwork for {} is not downloaded yet: choose Not now and wait a minute to add it with the artwork.", missing.join(", ")))
+}
+
 /// The shared "Close Steam and update shortcuts" flow (`steam_close_screen`); `back_to_screen` reopens Add to
 /// Steam when it ends.
 fn close_steam_flow(app: &Rc<AppState>, router: &Router, opts: steam_close_screen::Opts, back_to_screen: bool) {
@@ -224,25 +230,8 @@ fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessChec
         return close_steam_flow(app, router, steam_close_screen::Opts::default(), true);
     }
     match steam.running_steam_processes() {
-        Ok(p) if p.is_empty() => open_apply_offer(app, router, &loaded.queue, false),
-        Ok(_) => close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, ..Default::default() }, true),
+        Ok(_) => close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, lead: missing_art_lead(app, &loaded.queue), ..Default::default() }, true),
         Err(_) => open_message_dialog(app, router, QUEUE_TITLE, "Could not tell whether Steam is running, so nothing will be written."),
-    }
-}
-
-/// `from_timer`: the offer popped up on its own, so Cancel is preselected and a stray A press from
-/// whatever the user was doing does not write.
-fn open_apply_offer(app: &Rc<AppState>, router: &Router, queue: &steam_queue::SteamQueue, from_timer: bool) {
-    let device_accounts = home_dir().map_or(0, |home| steam_queue::device_account_count(&home));
-    let missing = steam_queue::missing_art(queue, &app.catalog.borrow(), &app.paths.cache_dir);
-    let text = padded(&steam_queue::offer_text(queue, queue.show_accounts(device_accounts), &missing));
-    // Apply goes through the shared flow, which checks Steam again, applies with a backup and says what it did.
-    open_confirm_dialog(app, router, QUEUE_TITLE.into(), text.into(), "Apply".into(), move |app, router| close_steam_flow(app, router, steam_close_screen::Opts::default(), !from_timer));
-    if from_timer {
-        if let DialogSlot::Confirm(dialog) = &*app.dialog_nav.dialogs.borrow() {
-            dialog.set_selected_index(1);
-            app.dialog_nav.confirm_nav_index.set(1);
-        }
     }
 }
 
@@ -361,7 +350,7 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
         WatchAction::Offer => {
             eprintln!("steam queue: offering {}", loaded.queue.len());
             prefetch_art(app);
-            open_apply_offer(app, router, &loaded.queue, true);
+            close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, stray_safe: true, lead: missing_art_lead(app, &loaded.queue), ..Default::default() }, false);
         }
         WatchAction::OfferClose => {
             eprintln!("steam queue: offering to close Steam for {}", loaded.queue.len());

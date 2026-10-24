@@ -632,8 +632,10 @@ pub struct QueueApplyOutcome {
     pub wrote: bool,
     /// The write was refused or failed (Game Mode, Steam came back, no Steam folder, unreadable files).
     pub refused: bool,
-    /// Entries that are done: written now, or found already in Steam.
+    /// Entries written now.
     pub done: usize,
+    /// Entries that needed nothing: already in Steam as queued, or no shortcut pointed at the old place.
+    pub already: usize,
     /// Entries dropped because they cannot be applied any more (reasons in `text`).
     pub dropped: usize,
 }
@@ -646,7 +648,7 @@ pub struct QueueApplyOutcome {
 /// at all, nothing is touched and everything stays queued.
 pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamProcessCheck, now: SystemTime) -> QueueApplyOutcome {
     if inputs.game_mode {
-        return QueueApplyOutcome { text: when_applied_text(true, queue.len()), remaining: queue.clone(), wrote: false, refused: true, done: 0, dropped: 0 };
+        return QueueApplyOutcome { text: when_applied_text(true, queue.len()), remaining: queue.clone(), wrote: false, refused: true, done: 0, already: 0, dropped: 0 };
     }
     let mut remaining = SteamQueue::default();
     let mut sections: Vec<String> = Vec::new();
@@ -655,6 +657,7 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
     let mut wrote = false;
     let mut refused = false;
     let mut done = 0usize;
+    let mut already_count = 0usize;
 
     // Moves first, in the order they were queued, so a later add or update plans from the new paths.
     let (repoints, rest): (Vec<&QueuedChange>, Vec<&QueuedChange>) = queue.entries.iter().partition(|e| e.kind == QueuedKind::Repoint);
@@ -679,8 +682,13 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
             match super::port_mover::steam::write_repoint(&account.shortcuts, Path::new(from), Path::new(to), steam, inputs.settings, now) {
                 Ok((result, backup)) => {
                     wrote |= !result.changed.is_empty();
-                    done += 1;
-                    let mut text = format!("{}: {} shortcut(s) now point at {to}.", entry.name, result.changed.len());
+                    if result.changed.is_empty() {
+                        already_count += 1;
+                    } else {
+                        done += 1;
+                    }
+                    let n = result.changed.len();
+                    let mut text = format!("{}: {n} shortcut{} now {} at {to}.", entry.name, if n == 1 { "" } else { "s" }, if n == 1 { "points" } else { "point" });
                     for (name, why) in &result.skipped {
                         text.push_str(&format!("\n  {name} was left alone: {why}"));
                     }
@@ -776,7 +784,11 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
         match screens::apply_selected_with(&screen, steam, inputs.settings, now, &no_art) {
             Ok(applied) => {
                 wrote |= applied.wrote;
-                done += to_write.len();
+                if applied.wrote {
+                    done += to_write.len();
+                } else {
+                    already_count += to_write.len();
+                }
                 sections.push(applied.text);
             }
             Err(message) => {
@@ -802,8 +814,8 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
     if text.is_empty() {
         text.push_str("Nothing was queued.");
     }
-    done += already.len();
-    QueueApplyOutcome { text, remaining, wrote, refused, done, dropped: skipped.len() }
+    already_count += already.len();
+    QueueApplyOutcome { text, remaining, wrote, refused, done, already: already_count, dropped: skipped.len() }
 }
 
 fn push_block(text: &mut String, block: &str) {
@@ -818,7 +830,7 @@ pub fn apply_queue_file(path: &Path, inputs: &ApplyInputs, steam: &dyn SteamProc
     let loaded = load(path);
     if loaded.unreadable {
         let text = loaded.problem.unwrap_or_default();
-        return QueueApplyOutcome { text, remaining: SteamQueue::default(), wrote: false, refused: true, done: 0, dropped: 0 };
+        return QueueApplyOutcome { text, remaining: SteamQueue::default(), wrote: false, refused: true, done: 0, already: 0, dropped: 0 };
     }
     let mut outcome = apply_queue(&loaded.queue, inputs, steam, now);
     // The old copies of the ports whose shortcuts were just switched note when: a start from Steam after this is

@@ -158,6 +158,8 @@ pub struct Summary {
     pub steam: Option<SteamOutcome>,
     /// The account was asked about (several accounts), so it is not asked again this run.
     pub steam_account_asked: bool,
+    /// The Steam close flow started Steam again at its end.
+    pub steam_started: bool,
     pub art_opened: bool,
     /// What the old copy question did: how many copies were removed and how many stay; `None` = not asked.
     pub old_copies: Option<OldCopiesResult>,
@@ -195,6 +197,8 @@ pub struct SteamCloseResult {
     pub applied: usize,
     /// Steam changes still waiting afterwards.
     pub waiting: usize,
+    /// "Start Steam again" was chosen.
+    pub steam_started: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +262,8 @@ pub trait Adapters {
     fn steam_close_step(&mut self);
     /// What that flow did; once per run of it (`None` when it could not run).
     fn steam_close_result(&mut self) -> Option<SteamCloseResult>;
+    /// Steam changes waiting in the queue now (adds and repoints).
+    fn steam_waiting(&mut self) -> usize;
     /// Open Artwork sources.
     fn art_sources_step(&mut self);
     /// Old copies this run kept (the ones in the list that were not there when the wizard opened).
@@ -340,7 +346,17 @@ fn add_to_steam(w: &mut Wizard, a: &mut dyn Adapters) {
             w.summary.steam = Some(done);
             show_step(w, a);
         }
-        done @ (SteamOutcome::Added(_) | SteamOutcome::Queued { .. } | SteamOutcome::Applied(_)) => {
+        done @ SteamOutcome::Added(_) => {
+            w.summary.steam = Some(done);
+            // Added with Steam closed, but other changes (repoints of moved ports) still wait: the page now offers
+            // to make them, instead of leaving them waiting unseen.
+            if a.steam_waiting() > 0 {
+                show_step(w, a);
+            } else {
+                advance(w, a);
+            }
+        }
+        done @ (SteamOutcome::Queued { .. } | SteamOutcome::Applied(_)) => {
             w.summary.steam = Some(done);
             advance(w, a);
         }
@@ -558,12 +574,16 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
         }
         HandOff::SteamClose => match a.steam_close_result() {
             Some(r) => {
+                w.summary.steam_started |= r.steam_started;
                 if r.applied > 0 {
                     let before = match w.summary.steam {
                         Some(SteamOutcome::Applied(n)) => n,
                         _ => 0,
                     };
                     w.summary.steam = Some(SteamOutcome::Applied(before + r.applied));
+                } else if r.waiting == 0 && !matches!(w.summary.steam, Some(SteamOutcome::Applied(_) | SteamOutcome::Added(_))) {
+                    // Every change was dropped or already done: nothing waits, nothing was made.
+                    w.summary.steam = Some(SteamOutcome::Nothing);
                 }
                 // Everything made: on to the next step. Something still waits: the page says so again.
                 if r.waiting == 0 {
@@ -631,11 +651,12 @@ pub(crate) mod fake {
         pub accounts: Vec<String>,
         pub steam_result: SteamOutcome,
         pub close_result: Option<SteamCloseResult>,
+        pub waiting: usize,
     }
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None, waiting: 0 }
         }
     }
 
@@ -686,6 +707,9 @@ pub(crate) mod fake {
         }
         fn steam_close_result(&mut self) -> Option<SteamCloseResult> {
             self.close_result.take()
+        }
+        fn steam_waiting(&mut self) -> usize {
+            self.waiting
         }
         fn kept_old_copies(&mut self) -> usize {
             self.kept
@@ -875,19 +899,19 @@ mod tests {
         assert_eq!(a.calls, ["steam_close"]);
         assert_eq!(w.handoff, Some(HandOff::SteamClose));
         // Not now, a timeout, or Game Mode: nothing applied, same page.
-        a.close_result = Some(SteamCloseResult { applied: 0, waiting: 4 });
+        a.close_result = Some(SteamCloseResult { applied: 0, waiting: 4, steam_started: false });
         resume_steam_close(&mut w, &mut a);
         assert_eq!((w.step, w.summary.steam.clone()), (Step::Steam, None));
         assert_eq!(a.calls.last().unwrap(), "show Steam Step");
         // Applied, all of it: on to the last page, which says so.
         press(&mut w, Action::CloseSteam, &mut a);
-        a.close_result = Some(SteamCloseResult { applied: 4, waiting: 0 });
+        a.close_result = Some(SteamCloseResult { applied: 4, waiting: 0, steam_started: true });
         resume_steam_close(&mut w, &mut a);
-        assert_eq!((w.step, w.summary.steam.clone()), (Step::Done, Some(SteamOutcome::Applied(4))));
+        assert_eq!((w.step, w.summary.steam.clone(), w.summary.steam_started), (Step::Done, Some(SteamOutcome::Applied(4)), true));
         // Part of it: counted, and the page comes back.
         let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
         press(&mut w, Action::CloseSteam, &mut a);
-        a.close_result = Some(SteamCloseResult { applied: 3, waiting: 1 });
+        a.close_result = Some(SteamCloseResult { applied: 3, waiting: 1, steam_started: false });
         resume_steam_close(&mut w, &mut a);
         assert_eq!((w.step, w.summary.steam.clone()), (Step::Steam, Some(SteamOutcome::Applied(3))));
         // The flow could not run at all: the page again.
@@ -903,6 +927,20 @@ mod tests {
         let (mut w, mut a) = (at(Step::GameFiles, Mode::FirstRun), Fake::default());
         press(&mut w, Action::CloseSteam, &mut a);
         assert!(a.calls.is_empty() && w.handoff.is_none());
+    }
+
+    #[test]
+    fn added_with_steam_closed_but_repoints_still_waiting_stays_to_offer_them() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { waiting: 4, ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!((w.step, w.summary.steam.clone()), (Step::Steam, Some(SteamOutcome::Added(2))));
+        assert_eq!(a.calls.last().unwrap(), "show Steam Step");
+        // Everything dropped by the close flow: nothing waits, nothing was made.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::CloseSteam, &mut a);
+        a.close_result = Some(SteamCloseResult { applied: 0, waiting: 0, steam_started: false });
+        resume_steam_close(&mut w, &mut a);
+        assert_eq!((w.step, w.summary.steam.clone()), (Step::Done, Some(SteamOutcome::Nothing)));
     }
 
     #[test]

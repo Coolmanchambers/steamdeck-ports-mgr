@@ -28,6 +28,8 @@ pub(crate) struct Finished {
     pub applied: usize,
     /// Changes still waiting when the flow ended.
     pub waiting: usize,
+    /// "Start Steam again" was chosen (the caller's page can say Steam is starting).
+    pub steam_started: bool,
 }
 
 pub(crate) type Then = Rc<dyn Fn(&Rc<AppState>, &Router, Finished)>;
@@ -51,6 +53,7 @@ struct Run {
     then: Then,
     started: Instant,
     applied: Cell<usize>,
+    steam_started: Cell<bool>,
     /// This flow asked Steam to close (so it offers to start it again).
     closed_by_us: Cell<bool>,
     /// The page on screen, so B and the X can do what it says.
@@ -87,6 +90,7 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router, opts: Opts, then: Then) 
         then,
         started: Instant::now(),
         applied: Cell::new(0),
+        steam_started: Cell::new(false),
         closed_by_us: Cell::new(false),
         current: RefCell::new(ClosePage::default()),
         details: RefCell::new(String::new()),
@@ -98,7 +102,8 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router, opts: Opts, then: Then) 
         return show(app, router, &run, steam_close::game_mode_page(loaded.queue.len()));
     }
     if run.opts.ask_first && loaded.problem.is_none() && !loaded.queue.is_empty() {
-        let page = steam_close::ask_page(loaded.queue.len(), run.opts.lead.as_deref(), run.opts.stray_safe);
+        let steam_closed = SystemSteamCheck::new().running_steam_processes().is_ok_and(|p| p.is_empty());
+        let page = steam_close::ask_page(loaded.queue.len(), run.opts.lead.as_deref(), run.opts.stray_safe, steam_closed);
         return show(app, router, &run, page);
     }
     start_close(app, router, &run);
@@ -107,7 +112,7 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router, opts: Opts, then: Then) 
 fn finish(app: &Rc<AppState>, router: &Router, run: &Rc<Run>) {
     TIMER.with(|t| t.stop());
     close_current_dialog(app, router);
-    let done = Finished { applied: run.applied.get(), waiting: waiting_now(app) };
+    let done = Finished { applied: run.applied.get(), waiting: waiting_now(app), steam_started: run.steam_started.get() };
     (run.then)(app, router, done);
 }
 
@@ -152,6 +157,7 @@ fn act(app: &Rc<AppState>, router: &Router, run: &Rc<Run>, action: CloseAction) 
         CloseAction::StartSteam => match SystemSteam::new().start() {
             Ok(()) => {
                 eprintln!("steam close: Steam started again");
+                run.steam_started.set(true);
                 finish(app, router, run)
             }
             Err(e) => show(app, router, run, steam_close::start_failed_page(&e)),
@@ -260,5 +266,7 @@ fn apply_now(app: &Rc<AppState>, router: &Router, run: &Rc<Run>, closed: SteamCl
     eprintln!("steam close: applied {} (dropped {}, still waiting {}, refused {})", outcome.done, outcome.dropped, outcome.remaining.len(), outcome.refused);
     run.applied.set(run.applied.get() + outcome.done);
     *run.details.borrow_mut() = outcome.text.clone();
-    show(app, router, run, steam_close::result_page(&outcome, run.closed_by_us.get()));
+    // Steam back up (it came back before the write): no "Start Steam again".
+    let steam_up = SystemSteamCheck::new().running_steam_processes().map_or(true, |p| !p.is_empty());
+    show(app, router, run, steam_close::result_page(&outcome, run.closed_by_us.get(), steam_up));
 }

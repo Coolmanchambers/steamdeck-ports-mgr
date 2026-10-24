@@ -697,8 +697,22 @@ pub fn confirm_page(cards: &Cards, free: Option<u64>, blocked: &[(String, String
 /// and one button (Continue setup in the wizard, Done in Settings). The paths and the long text are behind
 /// Details. `ports` are the ports now in the ports folder (name and cover); `moved` how many of them were copied
 /// (the rest were linked where they stand).
+/// The import's Steam line as it reads now: "will follow in Desktop Mode" is replaced by what is true when the
+/// page is drawn (updated, or still the old copies until the shortcuts are updated).
+fn steam_line_now(line: &str, steam: SteamWaiting) -> String {
+    if !(line.starts_with("Steam shortcuts:") && line.contains("will follow in Desktop Mode")) {
+        return line.to_string();
+    }
+    match steam {
+        SteamWaiting::Nothing => "Steam shortcuts: updated.".to_string(),
+        SteamWaiting::Desktop(_) => "Steam still starts the old copies until you update shortcuts.".to_string(),
+        SteamWaiting::GameMode(_) => "Steam still starts the old copies until you finish in Desktop Mode.".to_string(),
+    }
+}
+
 /// In the setup wizard the Steam changes are left to its Steam step, so `steam` only shows outside it.
-pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool, steam: SteamWaiting) -> Page<CardAction> {
+/// `steam_starting`: the close flow just started Steam again.
+pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool, steam: SteamWaiting, steam_starting: bool) -> Page<CardAction> {
     let title = if moved > 0 {
         format!("{} moved", ports(moved))
     } else if !ports_now.is_empty() {
@@ -707,7 +721,10 @@ pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines
         "Nothing was moved".to_string()
     };
     let mut p = base("finished", "", &title);
-    p.paragraphs = lines.to_vec();
+    p.paragraphs = lines.iter().map(|l| steam_line_now(l, steam)).collect();
+    if steam_starting {
+        p.paragraphs.push("Steam is starting...".to_string());
+    }
     p.tiles = ports_now.iter().map(|(name, art)| Tile::shown(art.clone(), name.clone())).collect();
     p.options = vec![option(if wizard { "Continue setup" } else { "Done" }, "", CardAction::Leave, true)];
     match steam {
@@ -1344,7 +1361,7 @@ mod tests {
     fn the_closing_page_says_how_many_moved_shows_their_covers_and_has_one_button() {
         let art = |f: &str| Some(ArtRef { folder: f.into(), url: None });
         let ports = vec![("Dusklight".to_string(), art("dusklight")), ("SoH".to_string(), art("soh"))];
-        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing);
+        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false);
         assert_eq!(p.title, "2 ports moved");
         assert_eq!(p.window_title, "Import ports: finished");
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH"]);
@@ -1352,11 +1369,11 @@ mod tests {
         assert_eq!(p.options.len(), 1, "no Cancel");
         assert_eq!((p.options[0].title.as_str(), p.options[0].action.clone(), p.options[0].recommended), ("Done", CardAction::Leave, true));
         assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Details);
-        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing).options[0].title, "Continue setup");
-        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing).title, "1 port moved");
-        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false, SteamWaiting::Nothing).title, "2 ports linked");
-        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false, SteamWaiting::Nothing).title, "Nothing was moved");
-        for page in [&p, &finished_page(0, &[], &[], true, SteamWaiting::Nothing)] {
+        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false).options[0].title, "Continue setup");
+        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false).title, "1 port moved");
+        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false, SteamWaiting::Nothing, false).title, "2 ports linked");
+        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false, SteamWaiting::Nothing, false).title, "Nothing was moved");
+        for page in [&p, &finished_page(0, &[], &[], true, SteamWaiting::Nothing, false)] {
             let t = all_text(page);
             assert!(!t.contains('/') && !t.contains("~/") && !t.to_lowercase().contains("json"), "{t}");
         }
@@ -1364,17 +1381,24 @@ mod tests {
     #[test]
     fn the_finished_page_offers_to_close_steam_when_the_move_queued_steam_changes() {
         let ports = vec![("Dusklight".to_string(), None)];
-        let p = finished_page(1, &ports, &[], false, SteamWaiting::Desktop(4));
+        let p = finished_page(1, &ports, &[], false, SteamWaiting::Desktop(4), false);
         assert_eq!(p.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::CloseSteam, CardAction::Leave]);
         assert!(p.options[0].recommended && !p.options[1].recommended);
         assert_eq!(p.options[0].title, crate::fork::steam_close::CLOSE_LABEL);
         assert_eq!(p.initial, Focus::Option(0));
         // In the wizard its Steam step does it; in Game Mode one plain sentence and no close choice.
-        let w = finished_page(1, &ports, &[], true, SteamWaiting::Desktop(4));
+        let w = finished_page(1, &ports, &[], true, SteamWaiting::Desktop(4), false);
         assert_eq!(w.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
-        let g = finished_page(1, &ports, &[], false, SteamWaiting::GameMode(4));
+        let g = finished_page(1, &ports, &[], false, SteamWaiting::GameMode(4), false);
         assert_eq!(g.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
         assert_eq!(g.paragraphs.last().unwrap(), crate::fork::steam_close::GAME_MODE_TEXT);
+        // The import's Steam line says what is true when the page is drawn.
+        let line = vec!["Steam shortcuts: 1 will follow in Desktop Mode.".to_string(), "Moved 1 of 1 port.".to_string()];
+        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::Desktop(1), false).paragraphs[0], "Steam still starts the old copies until you update shortcuts.");
+        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::GameMode(1), false).paragraphs[0], "Steam still starts the old copies until you finish in Desktop Mode.");
+        let after = finished_page(1, &ports, &line, false, SteamWaiting::Nothing, true);
+        assert_eq!(after.paragraphs, ["Steam shortcuts: updated.", "Moved 1 of 1 port.", "Steam is starting..."]);
+        assert_eq!(finished_page(1, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false).paragraphs[0], "Steam shortcuts: 1 followed the move.", "a line that is still true stays");
     }
 
     #[test]

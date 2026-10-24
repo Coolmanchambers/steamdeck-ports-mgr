@@ -215,14 +215,14 @@ somehow finds no Steam). Instead:
    (port, Steam account and its name, whether a same-name shortcut may be repointed, artwork).
 2. In Desktop Mode, close Steam (Steam menu > Exit) and open the app. Within a couple of seconds of
    starting, or within 30 seconds if the app was already open when Steam closed (or if another message
-   was showing), it asks **"N Steam changes queued from Game Mode: apply now?"**. If a port's artwork
-   has not been downloaded yet, the question says so: Cancel and wait a minute to get the artwork, or
-   Apply without it. **Apply** writes them the same way as the screen does (backup first, Steam
-   checked again just before the write) and lists what happened. When this question pops up by itself,
-   Cancel is preselected.
+   was showing), the page **"Update your Steam shortcuts?"** says "N Steam changes are waiting. Steam is
+   closed, so they can be made now." If a port's artwork has not been downloaded yet, the page says so:
+   Not now and wait a minute to get the artwork, or update without it. **Update Steam shortcuts now**
+   writes them the same way as the screen does (backup first, Steam checked again just before the write)
+   and says what happened. When this page pops up by itself, the cursor is on Not now.
 3. Start Steam again: the shortcuts are under Non-Steam games.
 
-Cancel keeps them queued: apply them later from Settings > Add to Steam, or the question comes back
+Not now keeps them queued: apply them later from Settings > Add to Steam, or the question comes back
 after Steam has run and been closed again (or at the next start). It never pops up while another dialog
 is open, while a game started from the app is running, or while the window is hidden to the tray, or
 minimized on X11 (on Wayland the app cannot tell it is minimized, so the question can still appear).
@@ -263,19 +263,23 @@ per run of the app by itself at start or within 30 seconds ("Update your Steam s
 on Not now so a stray A changes nothing).
 
 1. The app asks Steam to shut down the normal way (`steam -shutdown`, the same as Steam menu > Exit; the
-   flatpak build of Steam is used through `flatpak run com.valvesoftware.Steam` when that is the one
-   installed). It never kills Steam.
+   system's own `/usr/bin/steam` first, then `steam` on PATH, then the flatpak build through
+   `flatpak run com.valvesoftware.Steam`). It never kills Steam. If a game Steam started is running (seen by
+   Steam's game launcher, `reaper`), it does not ask: "Close the game first", with Try again.
 2. **Closing Steam...** counts the seconds. Steam counts as closed once no Steam process has been seen for
-   3 seconds. **Stop waiting** (or B) leaves without writing anything; Steam may still finish closing, and
-   the usual offer comes when it has.
+   3 seconds. **Stop waiting** (or B) leaves without writing anything: Steam still closes on its own, and the
+   app asks again once Steam is gone (the same "Update your Steam shortcuts?" page).
 3. Then the queue is applied the usual way (Steam checked again just before the write, `shortcuts.vdf`
-   backed up first) and **Steam shortcuts updated** says how many changes were made. Details has the full
-   text (paths, the backup's name).
-4. **Start Steam again** starts Steam detached from the app; **Leave Steam closed** does not.
+   backed up first) and **Steam shortcuts updated** says how many changes were made (and how many were
+   already up to date), and that Steam starts the ports from their new place when it runs again. Details has
+   the full text (paths, the backup's name).
+4. **Start Steam again** starts Steam detached from the app (the page you came from then says "Steam is
+   starting..."); **Leave Steam closed** (also B) does not. If Steam came back by itself before the write,
+   the page offers only Try again and Not now.
 
 If Steam is still running after 90 seconds, **Steam did not close** says nothing was changed (the queue
 and `shortcuts.vdf` are exactly as they were): finish whatever Steam is showing (a question, a download),
-then Try again. If the app itself was started from Steam (a Steam shortcut, even in Desktop Mode), closing
+or close Steam yourself (tray icon > Exit Steam), then Try again. If the app itself was started from Steam (a Steam shortcut, even in Desktop Mode), closing
 Steam would close the app too, so it says to open the app from the desktop's app menu instead. In Game
 Mode nothing is closed: the page says "Switch to Desktop Mode and open Deck Ports Manager to finish
 updating Steam."

@@ -304,7 +304,7 @@ impl Adapters for Ui {
         close_current_dialog(&self.app, &self.router);
         let opts = super::steam_close_screen::Opts { wizard: true, ..Default::default() };
         let then: super::steam_close_screen::Then = Rc::new(|app, router, done| {
-            STEAM_CLOSE.with(|r| r.set(Some(flow::SteamCloseResult { applied: done.applied, waiting: done.waiting })));
+            STEAM_CLOSE.with(|r| r.set(Some(flow::SteamCloseResult { applied: done.applied, waiting: done.waiting, steam_started: done.steam_started })));
             with_wizard(app, router, |w, ui| flow::resume_steam_close(w, ui));
         });
         super::steam_close_screen::open(&self.app, &self.router, opts, then);
@@ -312,6 +312,10 @@ impl Adapters for Ui {
 
     fn steam_close_result(&mut self) -> Option<flow::SteamCloseResult> {
         STEAM_CLOSE.with(|r| r.take())
+    }
+
+    fn steam_waiting(&mut self) -> usize {
+        crate::fork::steam_queue::load(&crate::fork::steam_queue::queue_path(&self.app.paths.config_dir)).queue.len()
     }
 
     fn art_sources_step(&mut self) {

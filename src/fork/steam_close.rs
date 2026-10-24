@@ -54,12 +54,13 @@ impl SteamCommand {
     }
 }
 
-/// Finds Steam: `steam` on `PATH` (SteamOS has `/usr/bin/steam`), then the usual places, then the flatpak
-/// build when it is installed and `flatpak` is on `PATH`. `is_file` is injectable for tests.
+/// Finds Steam: the system's own (`/usr/bin/steam` on SteamOS, `/usr/games/steam` on Debian-style systems)
+/// first, so a `steam` earlier on `PATH` cannot stand in for it; then `steam` on `PATH`; then the flatpak build
+/// when it is installed and `flatpak` is on `PATH`. `is_file` is injectable for tests.
 pub fn find_steam(path_var: Option<&OsStr>, home: Option<&Path>, is_file: &dyn Fn(&Path) -> bool) -> Option<SteamCommand> {
     let dirs: Vec<PathBuf> = path_var.map(|p| std::env::split_paths(p).filter(|d| d.is_absolute()).collect()).unwrap_or_default();
     let on_path = |name: &str| dirs.iter().map(|d| d.join(name)).find(|p| is_file(p));
-    if let Some(program) = on_path("steam").or_else(|| ["/usr/bin/steam", "/usr/games/steam"].iter().map(PathBuf::from).find(|p| is_file(p))) {
+    if let Some(program) = ["/usr/bin/steam", "/usr/games/steam"].iter().map(PathBuf::from).find(|p| is_file(p)).or_else(|| on_path("steam")) {
         return Some(SteamCommand { program, prefix: Vec::new() });
     }
     let mut installs = vec![PathBuf::from("/var/lib/flatpak/app").join(FLATPAK_ID).join("current")];
@@ -100,6 +101,8 @@ pub fn started_by_steam(proc_root: &Path, pid: u32) -> bool {
 pub trait SteamControl {
     /// `pid name` of every Steam process (empty: Steam is closed).
     fn running(&self) -> io::Result<Vec<String>>;
+    /// Games Steam started that are running now (`pid name`): closing Steam would close them too.
+    fn games_running(&self) -> io::Result<Vec<String>>;
     /// Ask Steam to shut down the normal way. Returns at once; Steam closes on its own time.
     fn request_shutdown(&self) -> Result<(), String>;
     /// Start Steam, detached from this app.
@@ -127,7 +130,9 @@ impl Default for SystemSteam {
 }
 
 /// Runs `program args` in a new session with no terminal and its output thrown away, and returns once the
-/// small shell that started it has gone (it does not wait for the program).
+/// small shell that started it has gone (it does not wait for the program). While `steam -shutdown` itself runs
+/// (a second or two) it is a process named `steam` too, so the process check sees "Steam" a little longer; the
+/// settle time in [`Closer`] covers that.
 fn spawn_detached(program: &Path, args: &[String]) -> Result<(), String> {
     let script = "if command -v setsid >/dev/null 2>&1; then setsid \"$0\" \"$@\" </dev/null >/dev/null 2>&1 & else nohup \"$0\" \"$@\" </dev/null >/dev/null 2>&1 & fi";
     let status = std::process::Command::new("sh").arg("-c").arg(script).arg(program).args(args).status().map_err(|e| format!("could not run sh: {e}"))?;
@@ -137,6 +142,10 @@ fn spawn_detached(program: &Path, args: &[String]) -> Result<(), String> {
 impl SteamControl for SystemSteam {
     fn running(&self) -> io::Result<Vec<String>> {
         self.check.running_steam_processes()
+    }
+
+    fn games_running(&self) -> io::Result<Vec<String>> {
+        super::store::steam_game_processes_in(Path::new("/proc"))
     }
 
     fn request_shutdown(&self) -> Result<(), String> {
@@ -162,6 +171,8 @@ pub enum Blocked {
     NothingQueued,
     /// This app was started by Steam, so closing Steam would close it too.
     StartedBySteam,
+    /// A game Steam started is running (closing Steam would close it): its names.
+    GameRunning(Vec<String>),
     /// Whether Steam runs could not be told (no `/proc`).
     CheckFailed(String),
     /// Steam could not be asked to close (no `steam` program found, say).
@@ -191,9 +202,13 @@ pub fn begin(queue_len: usize, game_mode: bool, started_by_steam: bool, steam: &
         Err(e) => Start::Blocked(Blocked::CheckFailed(e.to_string())),
         Ok(procs) if procs.is_empty() => Start::ApplyNow(SteamClosed(())),
         Ok(_) if started_by_steam => Start::Blocked(Blocked::StartedBySteam),
-        Ok(_) => match steam.request_shutdown() {
-            Ok(()) => Start::Closing(Closer::new(now)),
-            Err(e) => Start::Blocked(Blocked::ShutdownFailed(e)),
+        Ok(_) => match steam.games_running() {
+            Ok(games) if !games.is_empty() => Start::Blocked(Blocked::GameRunning(games)),
+            Err(e) => Start::Blocked(Blocked::CheckFailed(e.to_string())),
+            Ok(_) => match steam.request_shutdown() {
+                Ok(()) => Start::Closing(Closer::new(now)),
+                Err(e) => Start::Blocked(Blocked::ShutdownFailed(e)),
+            },
         },
     }
 }
@@ -293,15 +308,24 @@ fn are(n: usize) -> &'static str {
 pub const CLOSE_LABEL: &str = "Close Steam and update shortcuts";
 pub const GAME_MODE_TEXT: &str = "Switch to Desktop Mode and open Deck Ports Manager to finish updating Steam.";
 
+pub const UPDATE_NOW_LABEL: &str = "Update Steam shortcuts now";
+const ONLY_THE_LIST: &str = "Only Steam's shortcut list changes; your games, saves and play time are not touched. Steam has to be closed because it only reads that list when it starts.";
+
 /// "Update your Steam shortcuts?" `lead` comes first (what just happened, "Queued 2 changes."). `stray_safe`:
 /// the page came up by itself, so the cursor starts on Not now and a stray A does not close Steam.
-pub fn ask_page(waiting: usize, lead: Option<&str>, stray_safe: bool) -> ClosePage {
-    let mut p = base("close Steam?", "Update your Steam shortcuts?");
+/// `steam_closed`: Steam is closed already, so nothing has to be closed.
+pub fn ask_page(waiting: usize, lead: Option<&str>, stray_safe: bool, steam_closed: bool) -> ClosePage {
+    let mut p = base(if steam_closed { "update now?" } else { "close Steam?" }, "Update your Steam shortcuts?");
     p.paragraphs = lead.map(str::to_string).into_iter().collect();
-    p.paragraphs.push(format!("{} {} waiting. Steam has to be closed to make {}.", changes(waiting), are(waiting), if waiting == 1 { "it" } else { "them" }));
-    p.paragraphs.push("This app closes Steam the normal way, backs up your shortcut list, updates it, then can start Steam again.".to_string());
+    if steam_closed {
+        p.paragraphs.push(format!("{} {} waiting. Steam is closed, so {} can be made now.", changes(waiting), are(waiting), if waiting == 1 { "it" } else { "they" }));
+    } else {
+        p.paragraphs.push(format!("{} {} waiting. Steam has to be closed to make {}.", changes(waiting), are(waiting), if waiting == 1 { "it" } else { "them" }));
+    }
+    p.paragraphs.push(ONLY_THE_LIST.to_string());
+    let (label, detail) = if steam_closed { (UPDATE_NOW_LABEL, "Your shortcut list is backed up first") } else { (CLOSE_LABEL, "Takes a few seconds; Steam can start again after") };
     p.options = vec![
-        option(CLOSE_LABEL, "Takes a few seconds", CloseAction::CloseSteam, true),
+        option(label, detail, CloseAction::CloseSteam, true),
         option("Not now", "They keep waiting. Settings > Add to Steam has them.", CloseAction::NotNow, false),
     ];
     p.initial = Focus::Option(if stray_safe { 1 } else { 0 });
@@ -322,7 +346,7 @@ pub fn closing_page(seconds: u64) -> ClosePage {
     let mut p = base("closing Steam", "Closing Steam...");
     p.paragraphs = vec!["Waiting for Steam to close. This usually takes a few seconds.".to_string()];
     p.facts = vec![format!("Waited {seconds} s of up to {} s.", TIMEOUT.as_secs())];
-    p.options = vec![option("Stop waiting", "Nothing is changed now. Your changes keep waiting.", CloseAction::StopWaiting, false)];
+    p.options = vec![option("Stop waiting", "Steam still closes on its own. Nothing is written; the app asks again once Steam is gone.", CloseAction::StopWaiting, false)];
     p.initial = Focus::Option(0);
     p
 }
@@ -332,7 +356,7 @@ pub fn timed_out_page(waiting: usize) -> ClosePage {
     let mut p = base("Steam did not close", "Steam did not close");
     p.paragraphs = vec![
         format!("Steam is still running after {} seconds, so nothing was changed. {} {} still waiting.", TIMEOUT.as_secs(), changes(waiting), are(waiting)),
-        "If Steam shows a question or is downloading, finish that first, then try again.".to_string(),
+        "If Steam shows a question or is downloading, finish that first, or close Steam yourself (tray icon > Exit Steam), then try again.".to_string(),
     ];
     p.options = vec![option("Try again", "", CloseAction::TryAgain, true), option("Not now", "They keep waiting", CloseAction::NotNow, false)];
     p.buttons[LEFT] = Some(PageButton { label: "Details".to_string(), action: CloseAction::Details });
@@ -355,6 +379,11 @@ pub fn blocked_page(blocked: &Blocked, waiting: usize) -> ClosePage {
         Blocked::CheckFailed(e) => ("could not check", "Steam was not closed", format!("This app could not tell whether Steam is running ({e}), so nothing was changed.")),
         Blocked::ShutdownFailed(e) => ("could not close", "Steam was not closed", format!("Steam could not be asked to close ({e}). Close it from the Steam menu (Exit), then try again.")),
         Blocked::QueueProblem(e) => ("could not read", "The Steam changes could not be read", e.clone()),
+        Blocked::GameRunning(games) => (
+            "game running",
+            "Close the game first",
+            format!("A game started from Steam is running ({}). Closing Steam would close it too. Close it first, then try again.", games.iter().map(|g| g.split_once(' ').map_or(g.as_str(), |(_, name)| name)).collect::<Vec<_>>().join(", ")),
+        ),
         Blocked::GameMode => unreachable!("handled above"),
     };
     let mut p = base(window, title);
@@ -362,14 +391,19 @@ pub fn blocked_page(blocked: &Blocked, waiting: usize) -> ClosePage {
     if waiting > 0 && *blocked != Blocked::NothingQueued {
         p.paragraphs.push(format!("{} {} still waiting.", changes(waiting), are(waiting)));
     }
-    p.options = vec![option("OK", "", CloseAction::Done, true)];
+    p.options = if matches!(blocked, Blocked::GameRunning(_)) {
+        vec![option("Try again", "After closing the game", CloseAction::TryAgain, true), option("Not now", "They keep waiting", CloseAction::NotNow, false)]
+    } else {
+        vec![option("OK", "", CloseAction::Done, true)]
+    };
     p.initial = Focus::Option(0);
     p
 }
 
 /// What applying did, in a few plain lines. `closed_by_us`: this flow closed Steam, so it offers to start it
-/// again (Desktop Mode only, which is the only place it runs).
-pub fn result_page(outcome: &QueueApplyOutcome, closed_by_us: bool) -> ClosePage {
+/// again (Desktop Mode only, which is the only place it runs), unless `steam_up` says it is running again
+/// (it came back before the write, say).
+pub fn result_page(outcome: &QueueApplyOutcome, closed_by_us: bool, steam_up: bool) -> ClosePage {
     let mut p;
     if outcome.refused {
         p = base("not finished", if outcome.done == 0 { "Nothing was changed" } else { "Some changes are still waiting" });
@@ -385,14 +419,20 @@ pub fn result_page(outcome: &QueueApplyOutcome, closed_by_us: bool) -> ClosePage
     } else {
         p = base("done", "Steam shortcuts updated");
         p.facts = vec![if outcome.done == 1 { "1 Steam change made.".to_string() } else { format!("{} Steam changes made.", outcome.done) }];
+        if outcome.already > 0 {
+            p.facts.push(format!("{} already up to date.", if outcome.already == 1 { "1 was".to_string() } else { format!("{} were", outcome.already) }));
+        }
         if outcome.wrote {
             p.facts.push("Your old shortcut list was backed up first.".to_string());
+        }
+        if outcome.done > 0 {
+            p.paragraphs = vec!["Steam will start these ports from their new place when it runs again.".to_string()];
         }
         if outcome.dropped > 0 {
             p.facts.push(format!("{} could not be made any more: Details says why.", if outcome.dropped == 1 { "1 change".to_string() } else { format!("{} changes", outcome.dropped) }));
         }
     }
-    if closed_by_us {
+    if closed_by_us && !steam_up {
         p.options.push(option("Start Steam again", "", CloseAction::StartSteam, !outcome.refused));
         p.options.push(option("Leave Steam closed", "", CloseAction::Done, false));
     } else if !outcome.refused {
