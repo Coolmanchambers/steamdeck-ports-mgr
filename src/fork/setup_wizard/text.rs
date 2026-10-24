@@ -259,22 +259,18 @@ fn steam_page(w: &Wizard, ctx: &Context) -> Page {
         p.paragraphs = vec![problem.clone()];
         // Sign in to Steam once, then look again; or go on and do it later.
         p.options = vec![recommended("Try again", "After starting Steam once and signing in", Action::TryAgain), option("Continue", "Do this later from Settings", Action::Next)];
+    } else if waiting > 0 && !info.game_mode {
+        // Changes wait (repoints of moved ports, or adds queued while Steam ran): they are made first. Adding now,
+        // with Steam closed, would add a second shortcut for a port whose own shortcut is still waiting to follow it.
+        update_now_options(&mut p, &info, waiting);
     } else if info.to_add > info.queued {
+        // In Game Mode the adds are queued behind the waiting changes, which apply first, so this is safe.
         add_all_options(&mut p, &info);
     } else if waiting > 0 && info.game_mode {
         // Waiting for Desktop Mode: nothing more can be done here.
         p.title = "Finish in Desktop Mode".to_string();
         p.paragraphs = vec![crate::fork::steam_close::GAME_MODE_TEXT.to_string(), format!("{} waiting.", changes_word(waiting))];
         p.options = vec![recommended("Continue", "", Action::Next)];
-    } else if waiting > 0 {
-        // Queued (now, or by the move of ports into the ports folder): Steam has to close to take them.
-        p.title = "Update Steam now?".to_string();
-        p.paragraphs = vec![
-            if info.immediate { format!("{} waiting. Steam is closed, so they can be made now.", changes_word(waiting)) } else { format!("{} waiting for Steam to close.", changes_word(waiting)) },
-            "Only Steam's shortcut list changes; your games and saves are not touched.".to_string(),
-        ];
-        let label = if info.immediate { "Update Steam shortcuts now" } else { crate::fork::steam_close::CLOSE_LABEL };
-        p.options = vec![recommended(label, "Takes a few seconds", Action::CloseSteam), option("Continue", "They keep waiting until Steam is closed", Action::Next)];
     } else {
         p.paragraphs = paras(&["Nothing to add: no ports are installed yet, or they are already in Steam."]);
         p.options = vec![recommended("Continue", "", Action::Next)];
@@ -282,6 +278,18 @@ fn steam_page(w: &Wizard, ctx: &Context) -> Page {
     nav(&mut p, w);
     start_on_the_recommended(&mut p);
     p
+}
+
+/// "Update Steam now?": the waiting changes (queued now, or by the move of ports into the ports folder) are made
+/// once Steam is closed.
+fn update_now_options(p: &mut Page, info: &super::steam::Info, waiting: usize) {
+    p.title = "Update Steam now?".to_string();
+    p.paragraphs = vec![
+        if info.immediate { format!("{} waiting. Steam is closed, so they can be made now.", changes_word(waiting)) } else { format!("{} waiting for Steam to close.", changes_word(waiting)) },
+        "Only Steam's shortcut list changes; your games and saves are not touched.".to_string(),
+    ];
+    let label = if info.immediate { "Update Steam shortcuts now" } else { crate::fork::steam_close::CLOSE_LABEL };
+    p.options = vec![recommended(label, "Takes a few seconds", Action::CloseSteam), option("Continue", "They keep waiting until Steam is closed", Action::Next)];
 }
 
 /// "4 Steam changes are" for the Steam page.
@@ -1078,7 +1086,14 @@ mod tests {
         assert_eq!(p.options[0].title, crate::fork::steam_close::CLOSE_LABEL);
         assert_eq!(start(&p), Focus::Option(0));
         let part = page_for(&at(Step::Steam), &steam_ctx(Info { to_add: 3, queued: 1, waiting: 1, ..Default::default() }));
-        assert_eq!(part.options[0].title, "Add all 3", "ports not queued yet are added first");
+        assert_eq!(option_actions(&part), [Action::CloseSteam, Action::Next], "what waits is made first; the rest is added after");
+        // Repoints of moved ports waiting and ports to add, Steam closed: never Add all before the repoints (it would
+        // add a second shortcut for a port whose own shortcut still points at the old copy).
+        let both = page_for(&at(Step::Steam), &steam_ctx(Info { to_add: 2, waiting: 4, immediate: true, ..Default::default() }));
+        assert_eq!(both.options[0].title, "Update Steam shortcuts now");
+        // In Game Mode adds are queued behind them (the queue applies repoints first), so Add all is offered.
+        let gm = page_for(&at(Step::Steam), &steam_ctx(Info { to_add: 2, waiting: 4, game_mode: true, ..Default::default() }));
+        assert_eq!(gm.options[0].title, "Add all 2");
         // Steam already closed: the same choice, worded for what happens.
         let closed = page_for(&at(Step::Steam), &steam_ctx(Info { to_add: 0, waiting: 2, immediate: true, ..Default::default() }));
         assert_eq!(closed.options[0].title, "Update Steam shortcuts now");

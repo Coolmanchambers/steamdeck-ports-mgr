@@ -56,6 +56,11 @@ pub fn add_all(screen: &mut SteamScreen, steam: &dyn SteamProcessCheck, settings
     if count == 0 {
         return SteamOutcome::Nothing;
     }
+    // Writing now while other changes wait (a moved port's shortcut that still points at its old copy) would add a
+    // second shortcut for that port: those are made first, through the close-Steam flow.
+    if !screen.can_queue(steam) && !screen.queue.is_empty() {
+        return SteamOutcome::Problem("Some Steam changes are still waiting. Update those first; then the rest can be added.".to_string());
+    }
     if screen.can_queue(steam) {
         let changes = changes_from_screen(screen, stamp);
         return match queue_changes(queue_path, changes, screen.game_mode) {
@@ -277,6 +282,20 @@ mod tests {
         assert_eq!(dusk.exe_path(), "/old/dusk", "left for the user to repoint in Add to Steam");
         let _ = fs::remove_dir_all(home);
     }
+    #[test]
+    fn with_changes_waiting_and_steam_closed_nothing_is_added_before_them() {
+        let (home, library, path) = fake_home("waiting_first", &[1234]);
+        let queue = home.join("steam-queue.json");
+        let mut first = screen(&home, &library, false);
+        assert!(matches!(add_all(&mut first, &running, &settings(&home), &queue, SystemTime::now(), "20261023-100000"), SteamOutcome::Queued { .. }));
+        let before = fs::read(&path).unwrap();
+        let mut now_closed = screen(&home, &library, false);
+        let out = add_all(&mut now_closed, &closed, &settings(&home), &queue, SystemTime::now(), "20261023-100100");
+        assert!(matches!(&out, SteamOutcome::Problem(t) if t.contains("still waiting")), "{out:?}");
+        assert_eq!(fs::read(&path).unwrap(), before, "shortcuts.vdf untouched");
+        let _ = fs::remove_dir_all(home);
+    }
+
     #[test]
     fn ports_already_queued_are_counted_so_the_page_can_say_so() {
         let (home, library, _) = fake_home("alreadyqueued", &[1234]);

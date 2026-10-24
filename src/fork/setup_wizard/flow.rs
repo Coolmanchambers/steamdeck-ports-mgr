@@ -282,6 +282,8 @@ pub trait Adapters {
     fn steam_close_result(&mut self) -> Option<SteamCloseResult>;
     /// Steam changes waiting in the queue now (adds and repoints).
     fn steam_waiting(&mut self) -> usize;
+    /// Installed ports that are not in Steam and not queued either.
+    fn steam_missing(&mut self) -> usize;
     /// Open Artwork sources.
     fn art_sources_step(&mut self);
     /// Old copies kept after moves (all of them, from this run or an earlier one).
@@ -679,8 +681,9 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
                     // Every change was dropped or already done: nothing waits, nothing was made.
                     w.summary.steam = Some(SteamOutcome::Nothing);
                 }
-                // Everything made: on to the next step. Something still waits: the page says so again.
-                if r.waiting == 0 {
+                // Everything made and nothing left to add: on to the next step. Something still waits, or ports are
+                // still to be added (the waiting changes had to go first): the page again.
+                if r.waiting == 0 && a.steam_missing() == 0 {
                     w.view = View::Step;
                     advance(w, a);
                 } else {
@@ -750,11 +753,12 @@ pub(crate) mod fake {
         pub steam_result: SteamOutcome,
         pub close_result: Option<SteamCloseResult>,
         pub waiting: usize,
+        pub missing: usize,
     }
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, ready: None, pending: Vec::new(), finished: Vec::new(), accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None, waiting: 0 }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, ready: None, pending: Vec::new(), finished: Vec::new(), accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None, waiting: 0, missing: 0 }
         }
     }
 
@@ -808,6 +812,9 @@ pub(crate) mod fake {
         }
         fn steam_waiting(&mut self) -> usize {
             self.waiting
+        }
+        fn steam_missing(&mut self) -> usize {
+            self.missing
         }
         fn kept_old_copies(&mut self) -> usize {
             self.kept
@@ -1022,6 +1029,12 @@ mod tests {
         a.close_result = Some(SteamCloseResult { applied: 3, waiting: 1, steam_started: false });
         resume_steam_close(&mut w, &mut a);
         assert_eq!((w.step, w.summary.steam.clone()), (Step::Steam, Some(SteamOutcome::Applied(3))));
+        // All made, but ports are still to add (they waited behind the repoints): the page again, for Add all.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { missing: 2, ..Fake::default() });
+        press(&mut w, Action::CloseSteam, &mut a);
+        a.close_result = Some(SteamCloseResult { applied: 4, waiting: 0, steam_started: false });
+        resume_steam_close(&mut w, &mut a);
+        assert_eq!(w.step, Step::Steam);
         // The flow could not run at all: the page again.
         press(&mut w, Action::CloseSteam, &mut a);
         resume_steam_close(&mut w, &mut a);

@@ -170,6 +170,11 @@ fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<
     if let Some((changes, game_mode, show_accounts)) = queued {
         return confirm_queue(app, router, changes, game_mode, show_accounts);
     }
+    // Steam is closed but changes still wait (a moved port's shortcut that still points at its old copy): writing
+    // adds now could add a second shortcut for that port, so the waiting ones go first (the first row).
+    if !screen.borrow().queue.is_empty() {
+        return open_message_dialog(app, router, STEAM_TITLE, &padded("Some Steam changes are still waiting. Update those first (the first row), then review the rest."));
+    }
     let problem = screen.borrow().review_problem(&steam);
     if let Some(message) = problem {
         return open_message_dialog(app, router, STEAM_TITLE, &padded(&message));

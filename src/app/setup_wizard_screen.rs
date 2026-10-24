@@ -350,6 +350,11 @@ impl Adapters for Ui {
         STEAM_CLOSE.with(|r| r.take())
     }
 
+    fn steam_missing(&mut self) -> usize {
+        let info = steam_info(&self.app);
+        if info.problem.is_some() { 0 } else { info.to_add.saturating_sub(info.queued) }
+    }
+
     fn steam_waiting(&mut self) -> usize {
         crate::fork::steam_queue::load(&crate::fork::steam_queue::queue_path(&self.app.paths.config_dir)).queue.len()
     }
