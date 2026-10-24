@@ -35,6 +35,7 @@ pub mod secrets;
 pub mod settings;
 pub mod setup_wizard;
 pub mod shortcuts;
+pub mod steam_close;
 pub mod steam_queue;
 pub mod steam_sync;
 pub mod steam_user;

@@ -5,8 +5,9 @@
 //! updates to `steam-queue.json` next to the app instead. When the app sees Steam closed outside Game
 //! Mode with a non-empty queue it offers to apply it, through the same safe path as the screen
 //! (`screens::apply_selected_with`: refuse while Steam runs, re-checked before the rename, verified
-//! backup, atomic write, read-back). In Game Mode nothing is ever offered or written, whatever the
-//! process check says.
+//! backup, atomic write, read-back). With Steam running in Desktop Mode (where it normally stays in the
+//! tray) it offers instead to close Steam and apply (`fork::steam_close`). In Game Mode nothing is ever
+//! offered or written, whatever the process check says.
 //!
 //! The queue stores what the user chose, not the plan: the port key, the Steam account, whether a
 //! shortcut found by name only may be repointed, and whether catalog artwork is placed. The plan is made
@@ -631,6 +632,10 @@ pub struct QueueApplyOutcome {
     pub wrote: bool,
     /// The write was refused or failed (Game Mode, Steam came back, no Steam folder, unreadable files).
     pub refused: bool,
+    /// Entries that are done: written now, or found already in Steam.
+    pub done: usize,
+    /// Entries dropped because they cannot be applied any more (reasons in `text`).
+    pub dropped: usize,
 }
 
 /// Applies every queued change, one write per Steam account. An entry that is already in Steam counts as
@@ -641,7 +646,7 @@ pub struct QueueApplyOutcome {
 /// at all, nothing is touched and everything stays queued.
 pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamProcessCheck, now: SystemTime) -> QueueApplyOutcome {
     if inputs.game_mode {
-        return QueueApplyOutcome { text: when_applied_text(true, queue.len()), remaining: queue.clone(), wrote: false, refused: true };
+        return QueueApplyOutcome { text: when_applied_text(true, queue.len()), remaining: queue.clone(), wrote: false, refused: true, done: 0, dropped: 0 };
     }
     let mut remaining = SteamQueue::default();
     let mut sections: Vec<String> = Vec::new();
@@ -649,6 +654,7 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
     let mut already: Vec<String> = Vec::new();
     let mut wrote = false;
     let mut refused = false;
+    let mut done = 0usize;
 
     // Moves first, in the order they were queued, so a later add or update plans from the new paths.
     let (repoints, rest): (Vec<&QueuedChange>, Vec<&QueuedChange>) = queue.entries.iter().partition(|e| e.kind == QueuedKind::Repoint);
@@ -673,6 +679,7 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
             match super::port_mover::steam::write_repoint(&account.shortcuts, Path::new(from), Path::new(to), steam, inputs.settings, now) {
                 Ok((result, backup)) => {
                     wrote |= !result.changed.is_empty();
+                    done += 1;
                     let mut text = format!("{}: {} shortcut(s) now point at {to}.", entry.name, result.changed.len());
                     for (name, why) in &result.skipped {
                         text.push_str(&format!("\n  {name} was left alone: {why}"));
@@ -767,9 +774,10 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
             continue;
         }
         match screens::apply_selected_with(&screen, steam, inputs.settings, now, &no_art) {
-            Ok(done) => {
-                wrote |= done.wrote;
-                sections.push(done.text);
+            Ok(applied) => {
+                wrote |= applied.wrote;
+                done += to_write.len();
+                sections.push(applied.text);
             }
             Err(message) => {
                 sections.push(message);
@@ -794,7 +802,8 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
     if text.is_empty() {
         text.push_str("Nothing was queued.");
     }
-    QueueApplyOutcome { text, remaining, wrote, refused }
+    done += already.len();
+    QueueApplyOutcome { text, remaining, wrote, refused, done, dropped: skipped.len() }
 }
 
 fn push_block(text: &mut String, block: &str) {
@@ -809,7 +818,7 @@ pub fn apply_queue_file(path: &Path, inputs: &ApplyInputs, steam: &dyn SteamProc
     let loaded = load(path);
     if loaded.unreadable {
         let text = loaded.problem.unwrap_or_default();
-        return QueueApplyOutcome { text, remaining: SteamQueue::default(), wrote: false, refused: true };
+        return QueueApplyOutcome { text, remaining: SteamQueue::default(), wrote: false, refused: true, done: 0, dropped: 0 };
     }
     let mut outcome = apply_queue(&loaded.queue, inputs, steam, now);
     // An unchanged queue is not rewritten, so a refusal leaves the file exactly as it was.
@@ -831,34 +840,54 @@ pub fn apply_queue_file(path: &Path, inputs: &ApplyInputs, steam: &dyn SteamProc
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchAction {
     Nothing,
+    /// Steam is closed: offer to apply the queue now.
     Offer,
+    /// Steam is running in Desktop Mode: offer to close it and apply the queue (`fork::steam_close`).
+    OfferClose,
 }
 
-/// One look by the startup/30-second check. `offered` remembers that the offer was made during this
+/// What the startup/30-second check remembers between looks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WatchMemory {
+    /// The apply offer was made during this stretch of Steam being closed.
+    pub offered: bool,
+    /// The close-Steam offer was made in this run of the app. It comes once per run, so "Not now" is not
+    /// asked again every 30 seconds; it comes back when the queue empties and refills.
+    pub offered_close: bool,
+}
+
+/// One look by the startup/30-second check. `memory.offered` remembers that the offer was made during this
 /// stretch of Steam being closed, so a declined offer is not repeated every 30 seconds; it comes back
 /// once Steam has been seen running and then closed again (or when the queue empties and refills).
-/// In Game Mode it never offers and leaves `offered` alone, whatever the process check says. The caller
+/// With Steam running in Desktop Mode it offers, once per run of the app, to close Steam and apply: Steam
+/// normally keeps running there (in the tray), so waiting for the user to close it could wait forever.
+/// In Game Mode it never offers and leaves the memory alone, whatever the process check says. The caller
 /// skips the look entirely while another dialog is open or the window is hidden or minimized.
-pub fn watch_step(queue_len: usize, steam: &io::Result<Vec<String>>, offered: &mut bool, game_mode: bool) -> WatchAction {
+pub fn watch_step(queue_len: usize, steam: &io::Result<Vec<String>>, memory: &mut WatchMemory, game_mode: bool) -> WatchAction {
     if game_mode {
         return WatchAction::Nothing;
     }
     if queue_len == 0 {
-        *offered = false;
+        *memory = WatchMemory::default();
         return WatchAction::Nothing;
     }
     match steam {
         Ok(procs) if procs.is_empty() => {
-            if *offered {
+            if memory.offered {
                 WatchAction::Nothing
             } else {
-                *offered = true;
+                memory.offered = true;
                 WatchAction::Offer
             }
         }
         Ok(_) => {
-            *offered = false;
-            WatchAction::Nothing
+            memory.offered = false;
+            if memory.offered_close {
+                WatchAction::Nothing
+            } else {
+                memory.offered_close = true;
+                WatchAction::OfferClose
+            }
         }
         Err(_) => WatchAction::Nothing,
     }
@@ -1350,19 +1379,35 @@ mod tests {
 
     #[test]
     fn the_offer_comes_once_per_stretch_of_steam_being_closed() {
-        let mut offered = false;
+        let mut m = WatchMemory::default();
         let closed: io::Result<Vec<String>> = Ok(Vec::new());
         let up: io::Result<Vec<String>> = Ok(vec!["1 steam".into()]);
         let broken: io::Result<Vec<String>> = Err(io::Error::other("no /proc"));
-        assert_eq!(watch_step(0, &closed, &mut offered, false), WatchAction::Nothing, "empty queue");
-        assert_eq!(watch_step(2, &up, &mut offered, false), WatchAction::Nothing, "Game Mode: Steam up");
-        assert_eq!(watch_step(2, &broken, &mut offered, false), WatchAction::Nothing, "cannot tell");
-        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Offer, "Steam closed");
-        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Nothing, "declined: not every 30 s");
-        assert_eq!(watch_step(2, &up, &mut offered, false), WatchAction::Nothing);
-        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Offer, "closed again");
-        assert_eq!(watch_step(0, &closed, &mut offered, false), WatchAction::Nothing);
-        assert_eq!(watch_step(1, &closed, &mut offered, false), WatchAction::Offer, "queue refilled");
+        assert_eq!(watch_step(0, &closed, &mut m, false), WatchAction::Nothing, "empty queue");
+        assert_eq!(watch_step(2, &broken, &mut m, false), WatchAction::Nothing, "cannot tell");
+        assert_eq!(watch_step(2, &closed, &mut m, false), WatchAction::Offer, "Steam closed");
+        assert_eq!(watch_step(2, &closed, &mut m, false), WatchAction::Nothing, "declined: not every 30 s");
+        assert_eq!(watch_step(2, &up, &mut m, false), WatchAction::OfferClose, "Steam running in Desktop Mode: offer to close it");
+        assert_eq!(watch_step(2, &closed, &mut m, false), WatchAction::Offer, "closed again");
+        assert_eq!(watch_step(0, &closed, &mut m, false), WatchAction::Nothing);
+        assert_eq!(watch_step(1, &closed, &mut m, false), WatchAction::Offer, "queue refilled");
+    }
+
+    #[test]
+    fn the_close_steam_offer_comes_once_per_run_while_steam_stays_up() {
+        let mut m = WatchMemory::default();
+        let up: io::Result<Vec<String>> = Ok(vec!["1 steam".into()]);
+        let closed: io::Result<Vec<String>> = Ok(Vec::new());
+        assert_eq!(watch_step(4, &up, &mut m, false), WatchAction::OfferClose);
+        for _ in 0..5 {
+            assert_eq!(watch_step(4, &up, &mut m, false), WatchAction::Nothing, "Not now is not asked again every 30 s");
+        }
+        // Closed by hand and opened again: the apply offer comes, the close offer does not repeat.
+        assert_eq!(watch_step(4, &closed, &mut m, false), WatchAction::Offer);
+        assert_eq!(watch_step(4, &up, &mut m, false), WatchAction::Nothing);
+        // The queue emptied and refilled: the new changes are offered again.
+        assert_eq!(watch_step(0, &up, &mut m, false), WatchAction::Nothing);
+        assert_eq!(watch_step(1, &up, &mut m, false), WatchAction::OfferClose);
     }
 
     #[test]
@@ -1382,15 +1427,15 @@ mod tests {
 
     #[test]
     fn in_game_mode_the_watch_never_offers_whatever_the_process_check_says() {
-        let mut offered = false;
+        let mut m = WatchMemory::default();
         let closed: io::Result<Vec<String>> = Ok(Vec::new());
         let up: io::Result<Vec<String>> = Ok(vec!["1 steam".into()]);
-        assert_eq!(watch_step(2, &closed, &mut offered, true), WatchAction::Nothing);
-        assert!(!offered, "offered stays false in Game Mode");
-        assert_eq!(watch_step(2, &up, &mut offered, true), WatchAction::Nothing);
-        assert!(!offered);
+        assert_eq!(watch_step(2, &closed, &mut m, true), WatchAction::Nothing);
+        assert_eq!(m, WatchMemory::default(), "nothing is remembered in Game Mode");
+        assert_eq!(watch_step(2, &up, &mut m, true), WatchAction::Nothing, "never offers to close Steam in Game Mode");
+        assert_eq!(m, WatchMemory::default());
         // Leaving Game Mode (a restart in Desktop Mode) offers at once.
-        assert_eq!(watch_step(2, &closed, &mut offered, false), WatchAction::Offer);
+        assert_eq!(watch_step(2, &closed, &mut m, false), WatchAction::Offer);
     }
 
     #[test]

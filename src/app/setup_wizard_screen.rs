@@ -57,6 +57,8 @@ thread_local! {
     /// The covers for Steam were asked for in this wizard run.
     static PREFETCHED: Cell<bool> = const { Cell::new(false) };
     static OLD_AT_START: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+    /// What the "Close Steam and update shortcuts" flow did, read once by the wizard when it comes back.
+    static STEAM_CLOSE: Cell<Option<flow::SteamCloseResult>> = const { Cell::new(None) };
 }
 
 fn settings_path(app: &AppState) -> PathBuf {
@@ -295,6 +297,21 @@ impl Adapters for Ui {
         let settings = ForkSettings::load(&settings_path(&self.app));
         let queue = crate::fork::steam_queue::queue_path(&self.app.paths.config_dir);
         crate::fork::setup_wizard::steam::add_all(&mut screen, &crate::fork::store::SystemSteamCheck::new(), &settings, &queue, std::time::SystemTime::now(), &crate::fork::store::backup_stamp())
+    }
+
+    fn steam_close_step(&mut self) {
+        STEAM_CLOSE.with(|r| r.set(None));
+        close_current_dialog(&self.app, &self.router);
+        let opts = super::steam_close_screen::Opts { wizard: true, ..Default::default() };
+        let then: super::steam_close_screen::Then = Rc::new(|app, router, done| {
+            STEAM_CLOSE.with(|r| r.set(Some(flow::SteamCloseResult { applied: done.applied, waiting: done.waiting })));
+            with_wizard(app, router, |w, ui| flow::resume_steam_close(w, ui));
+        });
+        super::steam_close_screen::open(&self.app, &self.router, opts, then);
+    }
+
+    fn steam_close_result(&mut self) -> Option<flow::SteamCloseResult> {
+        STEAM_CLOSE.with(|r| r.take())
     }
 
     fn art_sources_step(&mut self) {

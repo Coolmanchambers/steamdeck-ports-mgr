@@ -8,13 +8,16 @@
 //!
 //! With Steam running (always, in Game Mode) the review row turns into "Queue for Desktop Mode": the
 //! chosen changes go to `steam-queue.json` and `start_queue_watch` offers to apply them once Steam is
-//! seen closed (at startup, then every 30 seconds). The decisions live in `crate::fork::steam_queue`.
+//! seen closed (at startup, then every 30 seconds). With Steam running in Desktop Mode, queuing, the
+//! "apply now" row and the watch (once per run) offer "Close Steam and update shortcuts"
+//! (`steam_close_screen`). The decisions live in `crate::fork::steam_queue` and `crate::fork::steam_close`.
 
 use super::dialogs::{build_picker_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, set_picker_items, DialogSlot};
 use super::state::AppState;
 use crate::fork::screens::{self, SteamLine, SteamScreen};
 use crate::fork::settings::{ForkSettings, FILE_NAME};
-use crate::fork::steam_queue::{self, ApplyInputs, ManageLine, WatchAction};
+use super::steam_close_screen;
+use crate::fork::steam_queue::{self, ManageLine, WatchAction, WatchMemory};
 use crate::fork::steam_user::SteamAccount;
 use crate::fork::store::{backup_stamp, SteamProcessCheck, SystemSteamCheck};
 use crate::ui::gamepad_router::GamepadRouter;
@@ -187,14 +190,27 @@ fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::
     let (title, text) = steam_queue::queue_confirm(&changes, game_mode, show_accounts);
     open_confirm_dialog(app, router, title.into(), padded(&text).into(), "Queue".into(), move |app, router| {
         match steam_queue::queue_changes(&queue_path(app), changes.clone(), game_mode) {
+            // Desktop Mode: Steam can be closed from here, so the next question is whether to do that now.
+            Ok(_) if !game_mode => {
+                let n = changes.len();
+                let lead = format!("Queued {n} change{}.", if n == 1 { "" } else { "s" });
+                close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, lead: Some(lead), ..Default::default() }, true);
+            }
             Ok(text) => open_message_dialog(app, router, QUEUE_TITLE, &padded(&text)),
             Err(text) => open_message_dialog(app, router, STEAM_TITLE, &padded(&text)),
         }
     });
 }
 
-/// The screen's "apply now" row: asks first when Steam is closed (outside Game Mode), otherwise says
-/// why it has to wait.
+/// The shared "Close Steam and update shortcuts" flow (`steam_close_screen`); `back_to_screen` reopens Add to
+/// Steam when it ends.
+fn close_steam_flow(app: &Rc<AppState>, router: &Router, opts: steam_close_screen::Opts, back_to_screen: bool) {
+    let then: steam_close_screen::Then = if back_to_screen { Rc::new(|app, router, _| open_steam_screen(app, router)) } else { Rc::new(|_, _, _| {}) };
+    steam_close_screen::open(app, router, opts, then);
+}
+
+/// The screen's "apply now" row: asks first when Steam is closed (outside Game Mode); with Steam running it
+/// offers to close Steam and apply (the shared flow).
 fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessCheck) {
     let loaded = steam_queue::load(&queue_path(app));
     if let Some(problem) = loaded.problem {
@@ -203,16 +219,13 @@ fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessChec
     if loaded.queue.is_empty() {
         return open_message_dialog(app, router, QUEUE_TITLE, "Nothing is queued.");
     }
+    // Game Mode: the shared flow's page says to finish in Desktop Mode.
     if steam_queue::game_mode_from_env() {
-        return open_message_dialog(app, router, QUEUE_TITLE, &padded(&steam_queue::when_applied_text(true, loaded.queue.len())));
+        return close_steam_flow(app, router, steam_close_screen::Opts::default(), true);
     }
     match steam.running_steam_processes() {
         Ok(p) if p.is_empty() => open_apply_offer(app, router, &loaded.queue, false),
-        Ok(p) => {
-            let when = steam_queue::when_applied_text(false, loaded.queue.len());
-            let text = format!("{when}\n\nStill running: {}", p.join(", "));
-            open_message_dialog(app, router, QUEUE_TITLE, &padded(&text));
-        }
+        Ok(_) => close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, ..Default::default() }, true),
         Err(_) => open_message_dialog(app, router, QUEUE_TITLE, "Could not tell whether Steam is running, so nothing will be written."),
     }
 }
@@ -223,34 +236,14 @@ fn open_apply_offer(app: &Rc<AppState>, router: &Router, queue: &steam_queue::St
     let device_accounts = home_dir().map_or(0, |home| steam_queue::device_account_count(&home));
     let missing = steam_queue::missing_art(queue, &app.catalog.borrow(), &app.paths.cache_dir);
     let text = padded(&steam_queue::offer_text(queue, queue.show_accounts(device_accounts), &missing));
-    open_confirm_dialog(app, router, QUEUE_TITLE.into(), text.into(), "Apply".into(), |app, router| apply_queue_now(app, router));
+    // Apply goes through the shared flow, which checks Steam again, applies with a backup and says what it did.
+    open_confirm_dialog(app, router, QUEUE_TITLE.into(), text.into(), "Apply".into(), move |app, router| close_steam_flow(app, router, steam_close_screen::Opts::default(), !from_timer));
     if from_timer {
         if let DialogSlot::Confirm(dialog) = &*app.dialog_nav.dialogs.borrow() {
             dialog.set_selected_index(1);
             app.dialog_nav.confirm_nav_index.set(1);
         }
     }
-}
-
-fn apply_queue_now(app: &Rc<AppState>, router: &Router) {
-    let Some(home) = home_dir() else { return no_home(app, router, QUEUE_TITLE) };
-    let settings = ForkSettings::load(&settings_path(app));
-    let outcome = {
-        let catalog = app.catalog.borrow();
-        let state = app.state.borrow();
-        let favorite = |key: &str| state.get(key).and_then(|i| i.favorite_exe.clone());
-        let inputs = ApplyInputs {
-            home: &home,
-            library_dir: &app.paths.library_dir(),
-            catalog: &catalog,
-            favorite_exe: &favorite,
-            cache_dir: Some(app.paths.cache_dir.clone()),
-            settings: &settings,
-            game_mode: steam_queue::game_mode_from_env(),
-        };
-        steam_queue::apply_queue_file(&queue_path(app), &inputs, &SystemSteamCheck::new(), SystemTime::now())
-    };
-    open_message_dialog(app, router, QUEUE_TITLE, &padded(&outcome.text));
 }
 
 /// `select_back`: after a removal the list reopens with Back selected, so a second A press cannot
@@ -303,8 +296,8 @@ fn show_manage_queue(app: &Rc<AppState>, router: &Router, select_back: bool) {
 
 #[derive(Default)]
 struct QueueWatch {
-    /// The offer was made during this stretch of Steam being closed (see `steam_queue::watch_step`).
-    offered: Cell<bool>,
+    /// What the offers so far were (see `steam_queue::watch_step`).
+    memory: Cell<WatchMemory>,
     /// Queue-file problems already shown, so one that moving the file cannot fix is shown once.
     shown_problems: RefCell<Vec<String>>,
 }
@@ -337,7 +330,9 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
     // Never on top of another dialog, while a game started from here runs, or while the window is away;
     // `offered` is left alone so a later look still offers.
     // Fork (ports folder): the "ports folder not available" message comes first.
-    if super::ports_folder_screen::startup_dialog_pending() || dialog_is_open(app) || !app.install_runtime.running_processes.borrow().is_empty() || window_away(app) {
+    // Not during the setup wizard either: it has its own Steam step, and the gaps between its pages are not
+    // a moment to pop up a question.
+    if super::ports_folder_screen::startup_dialog_pending() || dialog_is_open(app) || super::setup_wizard_screen::active() || !app.install_runtime.running_processes.borrow().is_empty() || window_away(app) {
         return;
     }
     // A versioned update started by Play left a note (fork::versioned): it comes before the offer.
@@ -346,7 +341,7 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
     }
     let path = queue_path(app);
     if !path.exists() {
-        watch.offered.set(false);
+        watch.memory.set(WatchMemory::default());
         return;
     }
     let loaded = steam_queue::load(&path);
@@ -358,13 +353,20 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
         }
         return;
     }
-    let mut offered = watch.offered.get();
+    let mut memory = watch.memory.get();
     let steam = SystemSteamCheck::new().running_steam_processes();
-    let action = steam_queue::watch_step(loaded.queue.len(), &steam, &mut offered, steam_queue::game_mode_from_env());
-    watch.offered.set(offered);
-    if action == WatchAction::Offer {
-        eprintln!("steam queue: offering {}", loaded.queue.len());
-        prefetch_art(app);
-        open_apply_offer(app, router, &loaded.queue, true);
+    let action = steam_queue::watch_step(loaded.queue.len(), &steam, &mut memory, steam_queue::game_mode_from_env());
+    watch.memory.set(memory);
+    match action {
+        WatchAction::Offer => {
+            eprintln!("steam queue: offering {}", loaded.queue.len());
+            prefetch_art(app);
+            open_apply_offer(app, router, &loaded.queue, true);
+        }
+        WatchAction::OfferClose => {
+            eprintln!("steam queue: offering to close Steam for {}", loaded.queue.len());
+            close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, stray_safe: true, ..Default::default() }, false);
+        }
+        WatchAction::Nothing => {}
     }
 }

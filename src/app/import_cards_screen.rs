@@ -29,7 +29,7 @@ use crate::fork::custom_repo::entry as repo_entry;
 use crate::fork::custom_repo::parse::parse_link;
 use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::import::cards::{self, card_page, confirm_page, details_page, finished_page, found_page, scan_notes, steps_page, which_page, CardAction, Item, Match, Verdict};
+use crate::fork::import::cards::{self, card_page, confirm_page, details_page, finished_page, found_page, scan_notes, steps_page, which_page, CardAction, Item, Match, SteamWaiting, Verdict};
 use crate::fork::import::folders::AddOutcome;
 use crate::fork::import::link::{self, LinkRow};
 use crate::fork::import::plan::PortPlan;
@@ -705,7 +705,13 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
         let catalog = app.catalog.borrow();
         keys.iter().filter_map(|k| catalog.iter().find(|p| p.key() == k)).map(|p| (p.display_name().to_string(), Some(ArtRef::of_port(p)))).collect()
     };
-    let page = finished_page(outcome.moved, &ports_now, &outcome.lines, ctx.from_wizard);
+    let waiting = crate::fork::steam_queue::load(&crate::fork::steam_queue::queue_path(&app.paths.config_dir)).queue.len();
+    let steam = match (waiting, crate::fork::steam_queue::game_mode_from_env()) {
+        (0, _) => SteamWaiting::Nothing,
+        (n, true) => SteamWaiting::GameMode(n),
+        (n, false) => SteamWaiting::Desktop(n),
+    };
+    let page = finished_page(outcome.moved, &ports_now, &outcome.lines, ctx.from_wizard, steam);
     let full = text.to_string();
     let this: Again = {
         let (ctx, keys, outcome, full) = (ctx.clone(), keys.to_vec(), outcome.clone(), full.clone());
@@ -716,6 +722,12 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
         move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
             CardAction::Leave => leave(app, router, &ctx),
             CardAction::Details => details_text(app, router, "Import ports", &format!("{full}\n"), this.clone()),
+            // The shared flow; this page comes back after it, saying what is left.
+            CardAction::CloseSteam => {
+                let again = this.clone();
+                let then: super::steam_close_screen::Then = Rc::new(move |app, router, _| again(app, router));
+                super::steam_close_screen::open(app, router, super::steam_close_screen::Opts::default(), then);
+            }
             _ => {}
         }
     };

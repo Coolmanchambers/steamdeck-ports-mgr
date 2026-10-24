@@ -110,6 +110,8 @@ pub enum Action {
     SkipGameFileCopies,
     /// Add every port that is not in Steam yet (or queue them while Steam runs).
     AddToSteam,
+    /// Close Steam and make the queued Steam changes (Desktop Mode; the shared flow of `fork::steam_close`).
+    CloseSteam,
     /// Look at Steam again (after signing in once).
     TryAgain,
     /// This account (by position in the names the page showed) gets the ports.
@@ -133,6 +135,8 @@ pub enum HandOff {
     /// The game files are being connected (links, or copies after approval).
     GameFilesConnect,
     Art,
+    /// The "Close Steam and update shortcuts" flow.
+    SteamClose,
     /// `before` is how many old copies this run had kept when their question was opened.
     OldCopies { before: usize },
 }
@@ -181,6 +185,16 @@ pub enum SteamOutcome {
     Nothing,
     /// Nothing was done, and why, in plain words.
     Problem(String),
+    /// Queued changes were made after closing Steam (adds, and shortcuts that now start a moved port).
+    Applied(usize),
+}
+
+/// What the "Close Steam and update shortcuts" flow did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SteamCloseResult {
+    pub applied: usize,
+    /// Steam changes still waiting afterwards.
+    pub waiting: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +254,10 @@ pub trait Adapters {
     fn steam_choose_account(&mut self, index: usize) -> Result<(), String>;
     /// Add every port that is not in Steam yet, or queue them while Steam runs.
     fn steam_add_all(&mut self) -> SteamOutcome;
+    /// Close Steam and make the queued changes (the shared flow); `resume` runs when it is left.
+    fn steam_close_step(&mut self);
+    /// What that flow did; once per run of it (`None` when it could not run).
+    fn steam_close_result(&mut self) -> Option<SteamCloseResult>;
     /// Open Artwork sources.
     fn art_sources_step(&mut self);
     /// Old copies this run kept (the ones in the list that were not there when the wizard opened).
@@ -314,10 +332,15 @@ fn start_import(w: &mut Wizard, a: &mut dyn Adapters) {
     a.import_step();
 }
 
-/// Adds the ports to Steam (or queues them), then goes on; a problem is told and the page stays.
+/// Adds the ports to Steam (or queues them), then goes on; a problem is told and the page stays. Queued in
+/// Desktop Mode, the page stays too: it now offers to close Steam and make the changes.
 fn add_to_steam(w: &mut Wizard, a: &mut dyn Adapters) {
     match a.steam_add_all() {
-        done @ (SteamOutcome::Added(_) | SteamOutcome::Queued { .. }) => {
+        done @ SteamOutcome::Queued { game_mode: false, .. } => {
+            w.summary.steam = Some(done);
+            show_step(w, a);
+        }
+        done @ (SteamOutcome::Added(_) | SteamOutcome::Queued { .. } | SteamOutcome::Applied(_)) => {
             w.summary.steam = Some(done);
             advance(w, a);
         }
@@ -440,6 +463,10 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
             }
             add_to_steam(w, a);
         }
+        Action::CloseSteam if w.step == Step::Steam => {
+            w.handoff = Some(HandOff::SteamClose);
+            a.steam_close_step();
+        }
         Action::OpenArtSources if w.step == Step::Steam => {
             w.handoff = Some(HandOff::Art);
             a.art_sources_step();
@@ -529,6 +556,25 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
             w.summary.art_opened = true;
             show_step(w, a);
         }
+        HandOff::SteamClose => match a.steam_close_result() {
+            Some(r) => {
+                if r.applied > 0 {
+                    let before = match w.summary.steam {
+                        Some(SteamOutcome::Applied(n)) => n,
+                        _ => 0,
+                    };
+                    w.summary.steam = Some(SteamOutcome::Applied(before + r.applied));
+                }
+                // Everything made: on to the next step. Something still waits: the page says so again.
+                if r.waiting == 0 {
+                    w.view = View::Step;
+                    advance(w, a);
+                } else {
+                    show_step(w, a);
+                }
+            }
+            None => show_step(w, a),
+        },
         HandOff::OldCopies { before } => {
             let kept = a.kept_old_copies();
             w.summary.old_copies = Some(OldCopiesResult { removed: before.saturating_sub(kept), kept });
@@ -547,6 +593,13 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
 /// finish (the wizard already came back, or moved on to another hand-off) changes nothing.
 pub fn resume_import(w: &mut Wizard, a: &mut dyn Adapters) {
     if matches!(w.handoff, Some(HandOff::Import { .. })) {
+        resume(w, a);
+    }
+}
+
+/// The Steam close flow is done: resume only when it is the pending hand-off.
+pub fn resume_steam_close(w: &mut Wizard, a: &mut dyn Adapters) {
+    if matches!(w.handoff, Some(HandOff::SteamClose)) {
         resume(w, a);
     }
 }
@@ -577,11 +630,12 @@ pub(crate) mod fake {
         pub kept: usize,
         pub accounts: Vec<String>,
         pub steam_result: SteamOutcome,
+        pub close_result: Option<SteamCloseResult>,
     }
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2) }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None }
         }
     }
 
@@ -626,6 +680,12 @@ pub(crate) mod fake {
         }
         fn art_sources_step(&mut self) {
             self.calls.push("art".into());
+        }
+        fn steam_close_step(&mut self) {
+            self.calls.push("steam_close".into());
+        }
+        fn steam_close_result(&mut self) -> Option<SteamCloseResult> {
+            self.close_result.take()
         }
         fn kept_old_copies(&mut self) -> usize {
             self.kept
@@ -797,6 +857,52 @@ mod tests {
         press(&mut w, Action::AddToSteam, &mut a);
         assert_eq!(w.summary.steam, Some(SteamOutcome::Queued { count: 3, game_mode: true }));
         assert_eq!(w.step, Step::Done);
+    }
+
+    #[test]
+    fn queued_in_desktop_mode_stays_on_the_steam_page_to_offer_closing_steam() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { steam_result: SteamOutcome::Queued { count: 4, game_mode: false }, ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!((w.step, w.view.clone()), (Step::Steam, View::Step));
+        assert_eq!(a.calls.last().unwrap(), "show Steam Step");
+        assert_eq!(w.summary.steam, Some(SteamOutcome::Queued { count: 4, game_mode: false }));
+    }
+
+    #[test]
+    fn closing_steam_hands_over_and_goes_on_only_when_nothing_is_left_waiting() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::CloseSteam, &mut a);
+        assert_eq!(a.calls, ["steam_close"]);
+        assert_eq!(w.handoff, Some(HandOff::SteamClose));
+        // Not now, a timeout, or Game Mode: nothing applied, same page.
+        a.close_result = Some(SteamCloseResult { applied: 0, waiting: 4 });
+        resume_steam_close(&mut w, &mut a);
+        assert_eq!((w.step, w.summary.steam.clone()), (Step::Steam, None));
+        assert_eq!(a.calls.last().unwrap(), "show Steam Step");
+        // Applied, all of it: on to the last page, which says so.
+        press(&mut w, Action::CloseSteam, &mut a);
+        a.close_result = Some(SteamCloseResult { applied: 4, waiting: 0 });
+        resume_steam_close(&mut w, &mut a);
+        assert_eq!((w.step, w.summary.steam.clone()), (Step::Done, Some(SteamOutcome::Applied(4))));
+        // Part of it: counted, and the page comes back.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::CloseSteam, &mut a);
+        a.close_result = Some(SteamCloseResult { applied: 3, waiting: 1 });
+        resume_steam_close(&mut w, &mut a);
+        assert_eq!((w.step, w.summary.steam.clone()), (Step::Steam, Some(SteamOutcome::Applied(3))));
+        // The flow could not run at all: the page again.
+        press(&mut w, Action::CloseSteam, &mut a);
+        resume_steam_close(&mut w, &mut a);
+        assert_eq!(w.step, Step::Steam);
+        // A late resume with another hand-off pending changes nothing.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::OpenArtSources, &mut a);
+        resume_steam_close(&mut w, &mut a);
+        assert_eq!(w.handoff, Some(HandOff::Art));
+        // Close Steam belongs to the Steam step only.
+        let (mut w, mut a) = (at(Step::GameFiles, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::CloseSteam, &mut a);
+        assert!(a.calls.is_empty() && w.handoff.is_none());
     }
 
     #[test]
@@ -1005,6 +1111,7 @@ mod tests {
             Action::CopyGameFiles,
             Action::SkipGameFileCopies,
             Action::AddToSteam,
+            Action::CloseSteam,
             Action::TryAgain,
             Action::ChooseAccount(0),
             Action::OpenArtSources,
@@ -1175,6 +1282,7 @@ mod tests {
             HandOff::RomFolder,
             HandOff::GameFilesConnect,
             HandOff::Art,
+            HandOff::SteamClose,
             HandOff::OldCopies { before: 1 },
         ];
         for h in all {

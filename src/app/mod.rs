@@ -19,6 +19,7 @@ pub mod save_finder_screen;
 pub mod save_restore_screen;
 pub mod setup_wizard_screen;
 pub mod state;
+pub mod steam_close_screen;
 pub mod steam_screens;
 pub mod sync;
 pub mod versioned_update;

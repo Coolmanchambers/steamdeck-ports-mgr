@@ -448,6 +448,18 @@ pub enum CardAction {
     ListPort(usize),
     /// Ask Steam for its on-screen keyboard.
     ShowKeyboard,
+    /// Close Steam and make the Steam changes the move queued (`fork::steam_close`).
+    CloseSteam,
+}
+
+/// Steam changes waiting when the finished page is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SteamWaiting {
+    Nothing,
+    /// Desktop Mode: this app can close Steam and make them.
+    Desktop(usize),
+    /// Game Mode: they wait for Desktop Mode.
+    GameMode(usize),
 }
 
 fn base(window: &str, step_text: &str, title: &str) -> Page<CardAction> {
@@ -685,7 +697,8 @@ pub fn confirm_page(cards: &Cards, free: Option<u64>, blocked: &[(String, String
 /// and one button (Continue setup in the wizard, Done in Settings). The paths and the long text are behind
 /// Details. `ports` are the ports now in the ports folder (name and cover); `moved` how many of them were copied
 /// (the rest were linked where they stand).
-pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool) -> Page<CardAction> {
+/// In the setup wizard the Steam changes are left to its Steam step, so `steam` only shows outside it.
+pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool, steam: SteamWaiting) -> Page<CardAction> {
     let title = if moved > 0 {
         format!("{} moved", ports(moved))
     } else if !ports_now.is_empty() {
@@ -697,6 +710,15 @@ pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines
     p.paragraphs = lines.to_vec();
     p.tiles = ports_now.iter().map(|(name, art)| Tile::shown(art.clone(), name.clone())).collect();
     p.options = vec![option(if wizard { "Continue setup" } else { "Done" }, "", CardAction::Leave, true)];
+    match steam {
+        SteamWaiting::Desktop(n) if !wizard && n > 0 => {
+            // Steam still starts the old copies until it takes the changes: that is the next thing to do.
+            p.options[0].recommended = false;
+            p.options.insert(0, option(crate::fork::steam_close::CLOSE_LABEL, "Then Steam starts the ports from their new place", CardAction::CloseSteam, true));
+        }
+        SteamWaiting::GameMode(n) if !wizard && n > 0 => p.paragraphs.push(crate::fork::steam_close::GAME_MODE_TEXT.to_string()),
+        _ => {}
+    }
     p.buttons[LEFT] = details_button();
     p.initial = Focus::Option(0);
     p
@@ -1322,7 +1344,7 @@ mod tests {
     fn the_closing_page_says_how_many_moved_shows_their_covers_and_has_one_button() {
         let art = |f: &str| Some(ArtRef { folder: f.into(), url: None });
         let ports = vec![("Dusklight".to_string(), art("dusklight")), ("SoH".to_string(), art("soh"))];
-        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false);
+        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing);
         assert_eq!(p.title, "2 ports moved");
         assert_eq!(p.window_title, "Import ports: finished");
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH"]);
@@ -1330,15 +1352,31 @@ mod tests {
         assert_eq!(p.options.len(), 1, "no Cancel");
         assert_eq!((p.options[0].title.as_str(), p.options[0].action.clone(), p.options[0].recommended), ("Done", CardAction::Leave, true));
         assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Details);
-        assert_eq!(finished_page(1, &ports[..1], &[], true).options[0].title, "Continue setup");
-        assert_eq!(finished_page(1, &ports[..1], &[], true).title, "1 port moved");
-        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false).title, "2 ports linked");
-        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false).title, "Nothing was moved");
-        for page in [&p, &finished_page(0, &[], &[], true)] {
+        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing).options[0].title, "Continue setup");
+        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing).title, "1 port moved");
+        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false, SteamWaiting::Nothing).title, "2 ports linked");
+        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false, SteamWaiting::Nothing).title, "Nothing was moved");
+        for page in [&p, &finished_page(0, &[], &[], true, SteamWaiting::Nothing)] {
             let t = all_text(page);
             assert!(!t.contains('/') && !t.contains("~/") && !t.to_lowercase().contains("json"), "{t}");
         }
     }
+    #[test]
+    fn the_finished_page_offers_to_close_steam_when_the_move_queued_steam_changes() {
+        let ports = vec![("Dusklight".to_string(), None)];
+        let p = finished_page(1, &ports, &[], false, SteamWaiting::Desktop(4));
+        assert_eq!(p.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::CloseSteam, CardAction::Leave]);
+        assert!(p.options[0].recommended && !p.options[1].recommended);
+        assert_eq!(p.options[0].title, crate::fork::steam_close::CLOSE_LABEL);
+        assert_eq!(p.initial, Focus::Option(0));
+        // In the wizard its Steam step does it; in Game Mode one plain sentence and no close choice.
+        let w = finished_page(1, &ports, &[], true, SteamWaiting::Desktop(4));
+        assert_eq!(w.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
+        let g = finished_page(1, &ports, &[], false, SteamWaiting::GameMode(4));
+        assert_eq!(g.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
+        assert_eq!(g.paragraphs.last().unwrap(), crate::fork::steam_close::GAME_MODE_TEXT);
+    }
+
     #[test]
     fn the_port_list_page_has_a_box_the_ports_and_the_link_beside_back() {
         let rows: Vec<(usize, String)> = (0..3).map(|i| (i * 2, format!("Port {i}"))).collect();

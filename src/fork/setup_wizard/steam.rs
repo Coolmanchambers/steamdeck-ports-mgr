@@ -27,6 +27,9 @@ pub struct Info {
     pub problem: Option<String>,
     /// Steam is closed outside Game Mode, so the ports are added now; otherwise they are queued.
     pub immediate: bool,
+    /// Every Steam change waiting in the queue (adds, and shortcuts to point at moved ports).
+    pub waiting: usize,
+    pub game_mode: bool,
 }
 
 pub fn info(screen: &SteamScreen, steam: &dyn SteamProcessCheck) -> Info {
@@ -37,7 +40,7 @@ pub fn info(screen: &SteamScreen, steam: &dyn SteamProcessCheck) -> Info {
         Some(a) if problem.is_none() => screen.rows.iter().filter(|r| r.can_change() && !r.by_name() && screen.queue.contains(a.account_id, &r.key)).count(),
         _ => 0,
     };
-    Info { to_add: if problem.is_some() { 0 } else { screen.missing_count() }, queued, accounts, problem, immediate }
+    Info { to_add: if problem.is_some() { 0 } else { screen.missing_count() }, queued, accounts, problem, immediate, waiting: screen.queue.len(), game_mode: screen.game_mode }
 }
 
 /// Adds every missing port to the shortcut list, or queues them while Steam runs.
@@ -282,7 +285,7 @@ mod tests {
         assert_eq!(add_all(&mut s, &running, &settings(&home), &queue, SystemTime::now(), "20261023-100000"), SteamOutcome::Queued { count: 2, game_mode: false });
         let again = screen(&home, &library, false);
         let i = info(&again, &running);
-        assert_eq!((i.to_add, i.queued), (2, 2));
+        assert_eq!((i.to_add, i.queued, i.waiting, i.game_mode), (2, 2, 2, false));
         let _ = fs::remove_dir_all(home);
     }
 

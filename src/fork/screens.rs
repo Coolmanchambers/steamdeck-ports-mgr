@@ -212,7 +212,7 @@ impl SteamScreen {
                 }
                 match steam.running_steam_processes() {
                     Ok(p) if p.is_empty() => format!("{changes} queued {}: apply now...", self.queue.origin()),
-                    Ok(_) => format!("{changes} queued: applied once Steam is closed"),
+                    Ok(_) => format!("{changes} waiting: close Steam and update {} now...", if n == 1 { "it" } else { "them" }),
                     Err(_) => format!("{changes} queued: could not tell if Steam is running"),
                 }
             }
@@ -1055,7 +1055,7 @@ mod tests {
         });
         assert_eq!(screen.lines()[..3], [SteamLine::ApplyQueue, SteamLine::ManageQueue, SteamLine::Account]);
         assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued while Steam was running: apply now...");
-        assert_eq!(screen.label(SteamLine::ApplyQueue, &running), "1 Steam change queued: applied once Steam is closed");
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &running), "1 Steam change waiting: close Steam and update it now...");
         let labels = screen.labels(&running);
         assert!(labels.contains(&"[x] Dusklight: will add (queued)".to_string()), "{labels:?}");
         screen.queue_note = Some("kept aside".into());

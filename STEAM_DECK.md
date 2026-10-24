@@ -117,9 +117,11 @@ anything and run setup again later.
    changed or deleted). With nothing needing a file this step is not shown.
 4. **Add your ports to Steam?** "Add all N" adds every port that is not in Steam yet (Desktop Mode, Steam closed:
    written now, with the old shortcut list backed up) or queues them (Steam running, and always in Game Mode: the
-   shortcut file is not touched and the app offers to apply the queue next time in Desktop Mode with Steam
-   closed). A Steam account is asked about only when the Deck has several. "Artwork sources (optional)" is the
-   free SteamGridDB key.
+   shortcut file is not touched). A Steam account is asked about only when the Deck has several. "Artwork
+   sources (optional)" is the free SteamGridDB key. When Steam changes are waiting (just queued, or queued by
+   moving ports into the ports folder), the page becomes **Update Steam now?** with **Close Steam and update
+   shortcuts** (see "Close Steam and update shortcuts" below) and Continue (they keep waiting). In Game Mode it
+   says "Switch to Desktop Mode and open Deck Ports Manager to finish updating Steam."
 5. **You're set up.** Where the ports go, how many moved in, game files, Steam and old copies, then Finish.
    Before it, if this run kept old copies, one page asks "Remove the N old copies?" (Keep them is the default
    and B). Finish (or a confirmed skip) is what marks setup as done; if you quit half-way the wizard opens again
@@ -180,8 +182,8 @@ the result message; reopen the screen to see the new state.
 - **Close Steam first.** Steam rewrites its shortcut list when it exits, so the app only writes while
   Steam is closed. If Steam is running, the last row reads **Queue N changes until Steam is closed...**
   (in Game Mode: **Queue N changes for Desktop Mode...**) instead of Review (see the next section), and
-  nothing is written. Steam cannot be closed in Game Mode; in Desktop Mode, Steam menu > Exit, wait a
-  few seconds, then reopen the screen to write now.
+  nothing is written. Steam cannot be closed in Game Mode; in Desktop Mode, choosing Queue goes on to
+  "Update your Steam shortcuts?", which can close Steam for you and write them (see "Close Steam and update shortcuts" below).
 - **Backup:** every write first copies `shortcuts.vdf` to `shortcuts.vdf.bak-<date>-<time>` in the
   same folder (`userdata/<id>/config/`). The newest 10 are kept (set `steam_backups_keep` in
   `fork-settings.json`); anything from the last hour is never removed.
@@ -226,9 +228,12 @@ is open, while a game started from the app is running, or while the window is hi
 minimized on X11 (on Wayland the app cannot tell it is minimized, so the question can still appear).
 
 In Desktop Mode with Steam running, the same screen offers **Queue N changes until Steam is closed...**;
-those are offered as "queued while Steam was running" once Steam is closed.
+those are offered as "queued while Steam was running" once Steam is closed, or straight away through
+"Close Steam and update shortcuts" below.
 
-The Add to Steam screen shows the queue too: the first row applies it now (or says why it has to wait),
+The Add to Steam screen shows the queue too: the first row applies it now (with Steam running in Desktop
+Mode it reads "N Steam changes waiting: close Steam and update them now..."; in Game Mode it says to finish
+in Desktop Mode),
 **View or remove queued changes...** lists each one (choose a row to remove it, or clear them all), and
 ports already queued are marked `(queued)`. After a removal the list reopens with Back selected; after
 clearing you are back on the Add to Steam screen. Queuing the same port again replaces its entry. When
@@ -247,6 +252,39 @@ place), it is left alone and nothing can be queued or applied until you fix or r
 
 The app's log has a line `game mode: yes` or `game mode: no` at startup with the two values it went by,
 and `steam queue: offering N` whenever it asks.
+
+### Close Steam and update shortcuts (Desktop Mode)
+
+In Desktop Mode Steam normally keeps running in the tray, so waiting for it to be closed by hand could
+wait forever (this is why a Deck test saw "the Steam shortcuts didn't update"). Wherever changes are
+waiting, the app offers **Close Steam and update shortcuts**: the Import ports finished page (outside the
+wizard), the wizard's Steam step, Settings > Add to Steam (the first row, and right after Queue), and once
+per run of the app by itself at start or within 30 seconds ("Update your Steam shortcuts?", with the cursor
+on Not now so a stray A changes nothing).
+
+1. The app asks Steam to shut down the normal way (`steam -shutdown`, the same as Steam menu > Exit; the
+   flatpak build of Steam is used through `flatpak run com.valvesoftware.Steam` when that is the one
+   installed). It never kills Steam.
+2. **Closing Steam...** counts the seconds. Steam counts as closed once no Steam process has been seen for
+   3 seconds. **Stop waiting** (or B) leaves without writing anything; Steam may still finish closing, and
+   the usual offer comes when it has.
+3. Then the queue is applied the usual way (Steam checked again just before the write, `shortcuts.vdf`
+   backed up first) and **Steam shortcuts updated** says how many changes were made. Details has the full
+   text (paths, the backup's name).
+4. **Start Steam again** starts Steam detached from the app; **Leave Steam closed** does not.
+
+If Steam is still running after 90 seconds, **Steam did not close** says nothing was changed (the queue
+and `shortcuts.vdf` are exactly as they were): finish whatever Steam is showing (a question, a download),
+then Try again. If the app itself was started from Steam (a Steam shortcut, even in Desktop Mode), closing
+Steam would close the app too, so it says to open the app from the desktop's app menu instead. In Game
+Mode nothing is closed: the page says "Switch to Desktop Mode and open Deck Ports Manager to finish
+updating Steam."
+
+The log has `steam close:` lines: the steam command found, whether the app was started by Steam, the
+shutdown request, "Steam is closed", what was applied, a timeout with what was still running.
+
+Not yet proven on a Deck: that `steam -shutdown` from Desktop Mode closes the client cleanly within the
+90 seconds, and that **Start Steam again** brings it back the way the desktop's own Steam icon does.
 
 ## Choose where ports are installed (the ports folder)
 
