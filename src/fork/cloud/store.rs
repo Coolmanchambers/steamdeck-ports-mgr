@@ -86,12 +86,18 @@ pub fn sign_out(tokens_path: &Path, record_path: &Path, id: ServiceId) -> io::Re
 /// service is asked (without the lock held) and the answer is stored only if the person is still signed in
 /// with the same refresh token. A refresh token the service has revoked marks the sign-in as signed out.
 pub fn access_token(net: &super::net::Net, cfg: &OAuthConfig, tokens_path: &Path, id: ServiceId, now: u64) -> Result<String, ServiceError> {
+    access_token_with(net, cfg, tokens_path, id, now, false)
+}
+
+/// [`access_token`], and with `force` the stored token is not trusted even if it looks fresh (Google answered 401
+/// to it): a new one is asked for.
+pub fn access_token_with(net: &super::net::Net, cfg: &OAuthConfig, tokens_path: &Path, id: ServiceId, now: u64, force: bool) -> Result<String, ServiceError> {
     let current = {
         let _g = lock();
         CloudTokens::load(tokens_path).get(id).filter(|t| t.signed_in()).cloned()
     };
     let Some(current) = current else { return Err(ServiceError::new(ErrorKind::SignedOut, "not signed in")) };
-    if let Some(token) = current.fresh_access_token(now) {
+    if let Some(token) = current.fresh_access_token(now).filter(|_| !force) {
         return Ok(token.to_string());
     }
     let refresh_token = current.refresh_token.clone().unwrap_or_default();

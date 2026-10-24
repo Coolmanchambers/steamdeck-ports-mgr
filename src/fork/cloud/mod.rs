@@ -20,6 +20,7 @@ pub mod build;
 #[cfg(any(test, debug_assertions))]
 pub mod demo;
 pub mod endpoints;
+pub mod google;
 pub mod hooks;
 pub mod local;
 pub mod log;
@@ -38,6 +39,8 @@ pub mod view;
 
 #[cfg(test)]
 pub mod fake;
+#[cfg(test)]
+mod google_tests;
 #[cfg(test)]
 mod mock_http;
 #[cfg(test)]

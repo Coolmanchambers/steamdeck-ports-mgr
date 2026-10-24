@@ -46,15 +46,21 @@ pub struct Answer {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// Close the connection without answering (a lost reply).
+    pub hang_up: bool,
 }
 
 impl Answer {
     pub fn json(status: u16, body: &str) -> Answer {
-        Answer { status, headers: vec![("Content-Type".into(), "application/json".into())], body: body.as_bytes().to_vec() }
+        Answer { status, headers: vec![("Content-Type".into(), "application/json".into())], body: body.as_bytes().to_vec(), hang_up: false }
     }
 
     pub fn bytes(status: u16, body: Vec<u8>) -> Answer {
-        Answer { status, headers: Vec::new(), body }
+        Answer { status, headers: Vec::new(), body, hang_up: false }
+    }
+
+    pub fn hang_up() -> Answer {
+        Answer { status: 0, headers: Vec::new(), body: Vec::new(), hang_up: true }
     }
 
     pub fn with_header(mut self, name: &str, value: &str) -> Answer {
@@ -139,6 +145,9 @@ impl Mock {
                 let Some(request) = read_request(&mut stream) else { continue };
                 let answer = handler(&request);
                 seen_t.lock().unwrap().push(request);
+                if answer.hang_up {
+                    continue;
+                }
                 let mut out = format!("HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n", answer.status, reason(answer.status), answer.body.len());
                 for (k, v) in &answer.headers {
                     out.push_str(&format!("{k}: {v}\r\n"));

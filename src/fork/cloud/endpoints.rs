@@ -6,8 +6,8 @@
 use super::build::{google_client, GoogleClient};
 use super::net::Net;
 use super::oauth::OAuthConfig;
-use super::service::{CloudService, Progress, RemoteFile, ServiceError, ServiceId};
-use std::path::Path;
+use super::google::{GoogleDrive, TokenSource};
+use super::service::{CloudService, ServiceId};
 
 /// Sign-in asks for these and nothing else: the Drive files this app makes, and the account email to show.
 pub const GOOGLE_SCOPE: &str = "openid email https://www.googleapis.com/auth/drive.file";
@@ -67,26 +67,8 @@ pub fn service(setup: &Setup, tokens_path: &std::path::Path, id: ServiceId) -> B
         };
         return Box::new(super::demo::FolderService::new(dir).with_auth(Box::new(check)));
     }
-    let _ = (setup, tokens_path);
-    Box::new(NotBuilt(id))
-}
-
-/// Google Drive itself arrives in the next stage; until then a build without the demo folder says so.
-struct NotBuilt(ServiceId);
-
-impl CloudService for NotBuilt {
-    fn id(&self) -> ServiceId {
-        self.0
-    }
-    fn list_all(&mut self) -> Result<Vec<RemoteFile>, ServiceError> {
-        Err(ServiceError::other("this version cannot reach the cloud yet"))
-    }
-    fn upload(&mut self, _: &str, _: &str, _: &Path, _: u64, _: Progress) -> Result<RemoteFile, ServiceError> {
-        Err(ServiceError::other("this version cannot reach the cloud yet"))
-    }
-    fn download(&mut self, _: &RemoteFile, _: &Path, _: Progress) -> Result<(), ServiceError> {
-        Err(ServiceError::other("this version cannot reach the cloud yet"))
-    }
+    let auth = TokenSource { net: setup.net.clone(), cfg: setup.oauth(), tokens_path: tokens_path.to_path_buf(), id };
+    Box::new(GoogleDrive::new(setup.net.clone(), setup.urls.clone(), auth))
 }
 
 #[cfg(any(test, debug_assertions))]
