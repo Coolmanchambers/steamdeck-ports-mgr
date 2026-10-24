@@ -80,9 +80,9 @@ impl GoogleDrive {
         self
     }
 
-    /// One call with a good access token: a 401 refreshes the token once and tries again; a 401 after that is
-    /// "signed out". Any other failure status is classified.
-    fn call(&self, build: &dyn Fn(&str) -> Request) -> Result<Reply, ServiceError> {
+    /// One request with a good access token, whatever the answer: a 401 refreshes the token once and sends it
+    /// again. A second 401 is handed back like any other answer (`failure` calls it signed out).
+    fn exchange(&self, build: &dyn Fn(&str) -> Request) -> Result<Reply, ServiceError> {
         let mut force = false;
         loop {
             let token = self.auth.token(force)?;
@@ -91,10 +91,17 @@ impl GoogleDrive {
                 force = true;
                 continue;
             }
-            if reply.ok() {
-                return Ok(reply);
-            }
-            return Err(failure(&reply));
+            return Ok(reply);
+        }
+    }
+
+    /// [`exchange`], and any failure status is an error.
+    fn call(&self, build: &dyn Fn(&str) -> Request) -> Result<Reply, ServiceError> {
+        let reply = self.exchange(build)?;
+        if reply.ok() {
+            Ok(reply)
+        } else {
+            Err(failure(&reply))
         }
     }
 
@@ -121,7 +128,12 @@ impl GoogleDrive {
         let url = self.files_url(&q, "files(id,name,createdTime)", None) + "&orderBy=createdTime";
         let reply = self.call(&|t| Request::get(url.clone()).bearer(t))?;
         let json = GoogleDrive::json_of(&reply)?;
-        Ok(json.get("files").and_then(Value::as_array).and_then(|f| f.first()).and_then(|f| f.get("id")).and_then(Value::as_str).map(str::to_string))
+        let found = json.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
+        if found.len() > 1 && parent == "root" && name == ROOT_FOLDER {
+            // After access was revoked and given again, Drive may hold an older folder this sign-in cannot see.
+            super::log::note(format!("more than one \"{ROOT_FOLDER}\" folder is visible; using the oldest"));
+        }
+        Ok(found.first().and_then(|f| f.get("id")).and_then(Value::as_str).map(str::to_string))
     }
 
     fn create_folder(&self, name: &str, parent: &str) -> Result<String, ServiceError> {
@@ -232,7 +244,7 @@ impl GoogleDrive {
     /// Asks the session how much it has: `Ok(None)` when it has everything (the answer is the finished file),
     /// `Ok(Some(next))` with the next byte it wants, or an error.
     fn session_status(&self, session: &str, size: u64) -> Result<Result<u64, RemoteFile>, ServiceError> {
-        let reply = self.net.send(Request::new("PUT", session).header("Content-Range", format!("bytes */{size}")).bytes(Vec::new()))?;
+        let reply = self.exchange(&|t| Request::new("PUT", session).bearer(t).header("Content-Range", format!("bytes */{size}")).bytes(Vec::new()))?;
         match reply.status {
             308 => Ok(Ok(next_byte(&reply))),
             200 | 201 => Ok(Err(GoogleDrive::uploaded(&reply)?)),
@@ -254,7 +266,7 @@ impl GoogleDrive {
             input.seek(SeekFrom::Start(at)).and_then(|_| input.read_exact(&mut piece)).map_err(|e| ServiceError::other(format!("could not read the file ({})", e.kind())))?;
             let before = at;
             let mut retry = false;
-            match self.net.send(Request::new("PUT", session.clone()).header("Content-Range", format!("bytes {at}-{end}/{size}")).bytes(piece)) {
+            match self.exchange(&|t| Request::new("PUT", session.clone()).bearer(t).header("Content-Range", format!("bytes {at}-{end}/{size}")).bytes(piece.clone())) {
                 Ok(reply) if reply.status == 308 && end + 1 < size => at = next_byte(&reply).max(at),
                 Ok(reply) if (reply.status == 200 || reply.status == 201) && end + 1 == size => return GoogleDrive::uploaded(&reply),
                 // The session is gone (it lasts a week): start the whole upload again, once.
@@ -377,7 +389,7 @@ impl CloudService for GoogleDrive {
             let token = self.auth.token(forced)?;
             let mut out = fs::OpenOptions::new().write(true).create_new(true).open(dest).map_err(|e| ServiceError::other(format!("could not write the file ({})", e.kind())))?;
             // Drive says how big the file is: more bytes than that are never written.
-            let outcome = self.net.download(Request::get(url.clone()).bearer(&token), &mut out, progress, Some(file.size).filter(|s| *s > 0));
+            let outcome = self.net.download(Request::get(url.clone()).bearer(&token), &mut out, progress, Some(file.size));
             drop(out);
             match outcome {
                 Ok(Ok(())) => return Ok(()),

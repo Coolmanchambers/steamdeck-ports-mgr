@@ -49,6 +49,8 @@ struct Drive {
     faults: VecDeque<Fault>,
     /// The next API calls answer 401 this many times.
     unauthorized: usize,
+    /// The next resumable pieces and status questions answer 401 this many times.
+    unauthorized_pieces: usize,
     /// The next resumable session lookup answers 404 once.
     expire_session: bool,
     /// Answer every call with this status and reason (a Drive error).
@@ -143,15 +145,19 @@ impl Drive {
             return Answer::json(200, &format!(r#"{{"access_token":"{GOOD}","expires_in":3600,"token_type":"Bearer"}}"#));
         }
         let is_session = path.starts_with("/upload/session/");
-        if !is_session {
-            if self.unauthorized > 0 {
+        if is_session && self.unauthorized_pieces > 0 {
+            self.unauthorized_pieces -= 1;
+            return Answer::json(401, r#"{"error":{"code":401,"errors":[{"reason":"authError"}]}}"#);
+        }
+        {
+            if !is_session && self.unauthorized > 0 {
                 self.unauthorized -= 1;
                 return Answer::json(401, r#"{"error":{"code":401,"message":"Invalid Credentials","errors":[{"reason":"authError"}]}}"#);
             }
             if r.header("authorization") != Some(&format!("Bearer {GOOD}")) {
                 return Answer::json(401, r#"{"error":{"code":401,"errors":[{"reason":"authError"}]}}"#);
             }
-            if let Some((status, reason)) = self.refuse {
+            if let (false, Some((status, reason))) = (is_session, self.refuse) {
                 return Answer::json(status, &format!(r#"{{"error":{{"code":{status},"errors":[{{"reason":"{reason}"}}]}}}}"#)).with_header("Retry-After", "12");
             }
         }
@@ -382,7 +388,7 @@ fn listing_an_empty_drive_makes_nothing() {
 }
 
 #[test]
-fn a_big_file_goes_up_in_pieces_by_a_resumable_session_without_the_token_on_the_pieces() {
+fn a_big_file_goes_up_in_pieces_by_a_resumable_session_with_the_token_on_every_piece() {
     let mut r = rig("resumable", 256 * 1024, 512 * 1024);
     let (path, bytes) = file(&r.dir, "big.zip", 1_300_000);
     let mut progress = Vec::new();
@@ -395,7 +401,7 @@ fn a_big_file_goes_up_in_pieces_by_a_resumable_session_without_the_token_on_the_
     let pieces: Vec<&Seen> = seen.iter().filter(|s| s.method == "PUT").collect();
     let ranges: Vec<&str> = pieces.iter().map(|s| s.header("content-range").unwrap()).collect();
     assert_eq!(ranges, ["bytes 0-524287/1300000", "bytes 524288-1048575/1300000", "bytes 1048576-1299999/1300000"]);
-    assert!(pieces.iter().all(|s| s.header("authorization").is_none()), "the session address is the credential");
+    assert!(pieces.iter().all(|s| s.header("authorization") == Some(format!("Bearer {GOOD}").as_str())), "every piece and status question carries the token too");
     assert!(progress.windows(2).all(|w| w[0].0 <= w[1].0) && progress.last() == Some(&(1_300_000, 1_300_000)), "{progress:?}");
     assert_eq!(requests_to(&r, "POST", "/upload/drive/v3/files"), 1);
 }
@@ -451,6 +457,39 @@ fn a_401_makes_one_forced_refresh_and_one_more_try() {
     assert_eq!(r.state.lock().unwrap().refreshes, 1, "one forced refresh, though the stored token looked fresh");
     let gets: Vec<Seen> = r.mock.seen().into_iter().filter(|s| s.path() == "/drive/v3/files").collect();
     assert_eq!(gets.len(), 2);
+}
+
+#[test]
+fn a_401_on_a_piece_goes_through_the_one_refresh_rule_too() {
+    let mut r = rig("401piece", 256 * 1024, 512 * 1024);
+    r.state.lock().unwrap().unauthorized_pieces = 1;
+    let (path, bytes) = file(&r.dir, "big.zip", 900_000);
+    r.drive.upload("deck", "Global Backups/big.zip", &path, 900_000, &mut |_, _| {}).unwrap();
+    assert_eq!(r.state.lock().unwrap().files_of("deck")[0].1, bytes);
+    assert_eq!(r.state.lock().unwrap().refreshes, 1, "one forced refresh for the piece's 401");
+    // Two 401s in a row on pieces: signed out, and no file.
+    let mut r = rig("401piece2", 256 * 1024, 512 * 1024);
+    r.state.lock().unwrap().unauthorized_pieces = 5;
+    let (path, _) = file(&r.dir, "big.zip", 900_000);
+    let err = r.drive.upload("deck", "Global Backups/big.zip", &path, 900_000, &mut |_, _| {}).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::SignedOut, "{err}");
+    assert!(r.state.lock().unwrap().files_of("deck").is_empty());
+    assert_eq!(r.state.lock().unwrap().refreshes, 1);
+}
+
+#[test]
+fn two_roots_in_drive_are_noticed_and_the_oldest_is_used() {
+    let mut r = rig("tworoots", 256 * 1024, 256 * 1024);
+    {
+        let mut s = r.state.lock().unwrap();
+        s.seed("deck", "Global Backups/old.zip", b"old");
+        s.add(ROOT_FOLDER, "root", true, Vec::new());
+    }
+    super::log::take_captured();
+    let all = r.drive.list_all().unwrap();
+    assert_eq!(all.len(), 1, "the oldest root's files");
+    let logged = super::log::take_captured().join("\n");
+    assert!(logged.contains("more than one \"Deck Ports Manager\" folder"), "{logged}");
 }
 
 #[test]
