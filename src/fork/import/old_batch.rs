@@ -154,6 +154,8 @@ mod tests {
             link_only,
             switched: true,
             import_folder: None,
+            started: None,
+            steam_at: None,
         }
     }
 

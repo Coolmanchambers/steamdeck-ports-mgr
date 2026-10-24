@@ -18,6 +18,11 @@
 //!   than the new copy's (a game started from Steam before a queued repoint applied saves there).
 //! The saves in the old copy are zipped first by the caller's hook (the app uses the same zip as
 //! before an update), so even an old save is never lost without a backup.
+//!
+//! On top of those checks, [`remove`] only removes an old copy that is [`Readiness::Ready`]: Steam
+//! starts the new copy (no repoint queued, no shortcut into the old copy), and the port has been started
+//! from its new place (from this app for at least [`MIN_RUN_SECONDS`], or from Steam after its shortcut
+//! was switched) or the user confirmed "Yes, it starts and my saves are there".
 
 use super::copy::{absolute_target, remove_copy, tree_size};
 use crate::core::files::write_atomic;
@@ -48,7 +53,52 @@ pub struct OldCopy {
     /// named differently (`dusk-old` imported as `dusklight`), which is the one rule it relaxes (the name
     /// equality in `removal_check` and `finish_check`); the new copy must then be named exactly that.
     pub import_folder: Option<String>,
+    /// The port was shown to work from its new place (see [`Readiness`]); recorded once, never cleared.
+    pub started: Option<Started>,
+    /// When the queued Steam shortcut change for this port was applied (seconds since 1970, UTC). A change
+    /// written at move time (Steam was closed) leaves it empty: the move time counts then.
+    pub steam_at: Option<i64>,
 }
+
+/// How a port was shown to start from its new place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartedBy {
+    /// Played from this app for at least [`MIN_RUN_SECONDS`].
+    App,
+    /// Started from its Steam shortcut after the shortcut was switched to the new copy.
+    Steam,
+    /// The user said "Yes, it starts and my saves are there".
+    User,
+}
+
+impl StartedBy {
+    fn as_str(self) -> &'static str {
+        match self {
+            StartedBy::App => "app",
+            StartedBy::Steam => "steam",
+            StartedBy::User => "user",
+        }
+    }
+
+    fn parse(text: &str) -> Option<StartedBy> {
+        match text {
+            "app" => Some(StartedBy::App),
+            "steam" => Some(StartedBy::Steam),
+            "user" => Some(StartedBy::User),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Started {
+    pub by: StartedBy,
+    /// Seconds since 1970, UTC.
+    pub at: i64,
+}
+
+/// A run from this app shorter than this does not count (it may have crashed at start).
+pub const MIN_RUN_SECONDS: u64 = 30;
 
 impl OldCopy {
     /// Whether the old and new folder names agree, or this is an import whose new copy carries the
@@ -76,6 +126,9 @@ impl OldCopy {
             "link_only": self.link_only,
             "switched": self.switched,
             "import_folder": self.import_folder,
+            "started_by": self.started.map(|s| s.by.as_str()),
+            "started_at": self.started.map(|s| s.at),
+            "steam_at": self.steam_at,
         })
     }
 
@@ -91,6 +144,11 @@ impl OldCopy {
             link_only: v.get("link_only").and_then(Value::as_bool).unwrap_or(false),
             switched: v.get("switched").and_then(Value::as_bool).unwrap_or(true),
             import_folder: text("import_folder").filter(|f| !f.is_empty()),
+            started: match (text("started_by").as_deref().and_then(StartedBy::parse), v.get("started_at").and_then(Value::as_i64)) {
+                (Some(by), Some(at)) => Some(Started { by, at }),
+                _ => None,
+            },
+            steam_at: v.get("steam_at").and_then(Value::as_i64),
         })
     }
 }
@@ -131,6 +189,145 @@ pub fn record(config_dir: &Path, entry: OldCopy) -> io::Result<()> {
     list.retain(|e| e.old_path != entry.old_path);
     list.push(entry);
     save(config_dir, &list)
+}
+
+/// Changes the records `pick` chooses with `change`; saves only when something changed. Returns how many changed.
+fn update(config_dir: &Path, pick: impl Fn(&OldCopy) -> bool, change: impl Fn(&mut OldCopy) -> bool) -> io::Result<usize> {
+    let mut list = load(config_dir).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut changed = 0;
+    for entry in list.iter_mut().filter(|e| pick(e)) {
+        if change(entry) {
+            changed += 1;
+        }
+    }
+    if changed > 0 {
+        save(config_dir, &list)?;
+    }
+    Ok(changed)
+}
+
+/// Records that the port of the old copy at `old_path` was shown to start from its new place. A record that
+/// already says so keeps its first reason.
+pub fn mark_started(config_dir: &Path, old_path: &Path, by: StartedBy, at: i64) -> io::Result<usize> {
+    update(config_dir, |e| e.old_path == old_path, |e| e.started.is_none() && { e.started = Some(Started { by, at }); true })
+}
+
+/// A queued Steam repoint for `port_key` from `from` was just written: the records it concerns note when.
+pub fn mark_steam_switched(config_dir: &Path, port_key: &str, from: &Path, at: i64) -> io::Result<usize> {
+    update(config_dir, |e| e.port_key == port_key || is_within(&e.old_path, from) || e.old_path == from, |e| {
+        let was = e.steam_at;
+        e.steam_at = Some(at);
+        was != e.steam_at
+    })
+}
+
+/// The app's own launch of `port_key` from `running_from` ended after `ran_seconds`: a run long enough counts
+/// as "started from its new place" for the old copies of that port whose new copy is where it ran.
+pub fn note_launch(config_dir: &Path, port_key: &str, running_from: &Path, ran_seconds: u64, at: i64) -> io::Result<usize> {
+    if ran_seconds < MIN_RUN_SECONDS {
+        return Ok(0);
+    }
+    update(config_dir, |e| e.port_key == port_key && e.switched && same(&e.new_path, running_from), |e| e.started.is_none() && { e.started = Some(Started { by: StartedBy::App, at }); true })
+}
+
+/// What a moved port's old copy waits for before it can be removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Readiness {
+    /// A Steam shortcut still starts the old copy, or its change is still queued.
+    WaitingForSteam,
+    /// Steam is switched; the port has not been started from its new place yet.
+    StartOnce,
+    Ready(StartedBy),
+}
+
+impl Readiness {
+    /// The one status line the old copy pages show.
+    pub fn line(self) -> &'static str {
+        match self {
+            Readiness::WaitingForSteam => "Waiting for Steam to update",
+            Readiness::StartOnce => "Start it once from its new place",
+            Readiness::Ready(_) => "Ready to remove",
+        }
+    }
+
+    pub fn is_ready(self) -> bool {
+        matches!(self, Readiness::Ready(_))
+    }
+}
+
+/// What Steam says about one old copy.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SteamView {
+    /// A repoint for the port is queued, a shortcut points into the old copy, or Steam's files could not be read.
+    pub waiting: bool,
+    /// The newest time Steam started a shortcut that points into the new copy (seconds since 1970, UTC).
+    pub played_new_at: Option<i64>,
+}
+
+/// Reads the queue and every account's shortcuts for one old copy.
+pub fn steam_view(entry: &OldCopy, home: &Path, config_dir: &Path) -> SteamView {
+    let queue = super::super::steam_queue::load(&super::super::steam_queue::queue_path(config_dir));
+    let queued = queue.unreadable
+        || queue.queue.entries.iter().any(|e| {
+            e.kind == super::super::steam_queue::QueuedKind::Repoint
+                && (e.port_key == entry.port_key || e.repoint.as_ref().is_some_and(|(from, _)| is_within(Path::new(from), &entry.old_path) || Path::new(from) == entry.old_path))
+        });
+    let pointing = super::steam::shortcuts_pointing_into(home, &entry.old_path).map_or(true, |names| !names.is_empty());
+    let mut played: Option<i64> = None;
+    for account in super::steam::device_accounts(home) {
+        let Ok(file) = crate::fork::store::ShortcutsFile::load(&account.shortcuts) else { continue };
+        for s in crate::fork::shortcuts::list(&file.doc) {
+            if s.last_play_time > 0 && super::steam::moved_path(s.exe_path(), &entry.new_path, &entry.new_path).is_some() {
+                played = Some(played.map_or(i64::from(s.last_play_time), |p| p.max(i64::from(s.last_play_time))));
+            }
+        }
+    }
+    SteamView { waiting: queued || pointing, played_new_at: played }
+}
+
+/// Since when a Steam start counts as a start of the new copy: the time its shortcut was switched, else the
+/// move (the shortcut was switched with it). `None` when neither is known: only the app or the user can tell.
+pub fn steam_since(entry: &OldCopy) -> Option<i64> {
+    entry.steam_at.or_else(|| {
+        chrono::NaiveDateTime::parse_from_str(&entry.moved_at, "%Y%m%d-%H%M%S").ok().and_then(|t| t.and_local_timezone(chrono::Local).single()).map(|t| t.timestamp())
+    })
+}
+
+pub fn readiness(entry: &OldCopy, steam: &SteamView) -> Readiness {
+    if steam.waiting {
+        return Readiness::WaitingForSteam;
+    }
+    if let Some(started) = entry.started {
+        return Readiness::Ready(started.by);
+    }
+    match (steam.played_new_at, steam_since(entry)) {
+        (Some(played), Some(since)) if played > since => Readiness::Ready(StartedBy::Steam),
+        _ => Readiness::StartOnce,
+    }
+}
+
+/// Why an old copy that is not ready is kept, in plain words.
+pub fn not_ready_reason(entry: &OldCopy, readiness: Readiness) -> Option<String> {
+    match readiness {
+        Readiness::Ready(_) => None,
+        Readiness::WaitingForSteam => Some(format!("Steam still starts the old copy of {} (or its change is waiting): close Steam and update the shortcuts first, so the old copy is kept.", entry.name)),
+        Readiness::StartOnce => Some(format!("Start {} once from its new place (or say it starts and your saves are there), then the old copy can go. Until then it is kept.", entry.name)),
+    }
+}
+
+/// The latest record for the same old copy (a confirm or a launch may have been recorded since `entry` was read).
+fn current(entry: &OldCopy, config_dir: &Path) -> OldCopy {
+    load(config_dir).ok().and_then(|list| list.into_iter().find(|e| e.old_path == entry.old_path)).unwrap_or_else(|| entry.clone())
+}
+
+/// [`removal_check`] for an old copy that must also be [`Readiness::Ready`]: what every removal goes through.
+pub fn ready_removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
+    let entry = current(entry, ctx.config_dir);
+    let readiness = readiness(&entry, &steam_view(&entry, ctx.home, ctx.config_dir));
+    if let Some(why) = not_ready_reason(&entry, readiness) {
+        return Err(why);
+    }
+    removal_check(&entry, ctx)
 }
 
 /// Drops a record (the files are not touched).
@@ -368,10 +565,10 @@ pub struct Removed {
     pub saves_zip: Option<PathBuf>,
 }
 
-/// Removes the old copy after the checks pass again. `backup_saves` zips the saves found in the old
-/// copy first (a failure stops the removal). The record is dropped afterwards.
+/// Removes the old copy after the checks pass again, readiness included. `backup_saves` zips the saves found
+/// in the old copy first (a failure stops the removal). The record is dropped afterwards.
 pub fn remove(entry: &OldCopy, ctx: &RemovalCtx, backup_saves: &dyn Fn(&OldCopy) -> Result<Option<PathBuf>, String>) -> Result<Removed, String> {
-    let bytes = removal_check(entry, ctx)?;
+    let bytes = ready_removal_check(entry, ctx)?;
     let saves_zip = if entry.link_only { None } else { backup_saves(entry).map_err(|e| format!("The saves in the old copy could not be backed up, so nothing was removed: {e}"))? };
     remove_copy(&entry.old_path).map_err(|e| format!("Could not remove {} completely: {e}. What is left stays; nothing else was touched.", entry.old_path.display()))?;
     let _ = forget(ctx.config_dir, &entry.old_path);

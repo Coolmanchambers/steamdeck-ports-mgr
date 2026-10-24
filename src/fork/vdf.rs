@@ -273,6 +273,11 @@ pub(crate) mod fixtures {
 
     /// A shortcut entry laid out the way Steam writes it.
     pub fn steam_entry(index: usize, app_id: u32, name: &str, exe: &str, start_dir: &str, tags: &[&str]) -> Vec<u8> {
+        steam_entry_played(index, app_id, name, exe, start_dir, tags, 1_700_000_000)
+    }
+
+    /// [`steam_entry`] with the time Steam last started it.
+    pub fn steam_entry_played(index: usize, app_id: u32, name: &str, exe: &str, start_dir: &str, tags: &[&str], last_play_time: u32) -> Vec<u8> {
         let tag_fields: Vec<Vec<u8>> =
             tags.iter().enumerate().map(|(i, t)| str_field(&i.to_string(), t.as_bytes())).collect();
         object(
@@ -292,7 +297,7 @@ pub(crate) mod fixtures {
                 int_field("Devkit", 0),
                 str_field("DevkitGameID", b""),
                 int_field("DevkitOverrideAppID", 0),
-                int_field("LastPlayTime", 1_700_000_000),
+                int_field("LastPlayTime", last_play_time),
                 str_field("FlatpakAppID", b""),
                 object("tags", &tag_fields),
             ],

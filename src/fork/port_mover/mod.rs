@@ -36,6 +36,8 @@ pub mod steam;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod readiness_tests;
 
 use crate::core::path_safety::is_within;
 use crate::fork::rom_library::RomLibraryStore;
@@ -340,6 +342,8 @@ fn old_copy_record(prepared: &Prepared, switched: bool) -> old_copies::OldCopy {
         link_only: prepared.link_only,
         switched,
         import_folder: prepared.import_folder.clone(),
+        started: None,
+        steam_at: None,
     }
 }
 

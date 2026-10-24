@@ -821,6 +821,16 @@ pub fn apply_queue_file(path: &Path, inputs: &ApplyInputs, steam: &dyn SteamProc
         return QueueApplyOutcome { text, remaining: SteamQueue::default(), wrote: false, refused: true, done: 0, dropped: 0 };
     }
     let mut outcome = apply_queue(&loaded.queue, inputs, steam, now);
+    // The old copies of the ports whose shortcuts were just switched note when: a start from Steam after this is
+    // a start of the new copy (`port_mover::old_copies::readiness`).
+    if let Some(config_dir) = path.parent() {
+        let at = now.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        for e in loaded.queue.entries.iter().filter(|e| e.kind == QueuedKind::Repoint && !outcome.remaining.entries.contains(e)) {
+            if let Some((from, _)) = &e.repoint {
+                let _ = super::port_mover::old_copies::mark_steam_switched(config_dir, &e.port_key, Path::new(from), at);
+            }
+        }
+    }
     // An unchanged queue is not rewritten, so a refusal leaves the file exactly as it was.
     if outcome.remaining != loaded.queue {
         if let Err(e) = save(path, &outcome.remaining) {

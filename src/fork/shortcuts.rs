@@ -53,6 +53,8 @@ pub struct Shortcut {
     pub launch_options: String,
     pub shortcut_path: String,
     pub tags: Vec<String>,
+    /// When Steam last started it (seconds since 1970, UTC); 0 = never, or not recorded.
+    pub last_play_time: u32,
 }
 
 impl Shortcut {
@@ -199,6 +201,10 @@ fn read_shortcut(entry: &Entry) -> Option<Shortcut> {
         launch_options: text(fields, "LaunchOptions"),
         shortcut_path: text(fields, "ShortcutPath"),
         tags,
+        last_play_time: match field(fields, "LastPlayTime").map(|e| &e.value) {
+            Some(Value::Int(v)) => *v,
+            _ => 0,
+        },
     })
 }
 

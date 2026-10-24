@@ -558,6 +558,7 @@ pub(crate) mod tests {
             launch_options: String::new(),
             shortcut_path: String::new(),
             tags: vec![],
+            last_play_time: 0,
         };
         let list = [shortcut("/usr/bin/env", "/home/d/Applications/SoH/"), shortcut("/home/d/Applications/SoHX/run", "/home/d/Applications/SoHX/")];
         let refs = steam_refs(&list, Path::new("/home/d/Applications/SoH"));

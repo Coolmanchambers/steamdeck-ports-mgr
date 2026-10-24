@@ -399,6 +399,10 @@ fn the_old_copy_is_removed_only_on_request_after_the_switch_with_saves_zipped_fi
     assert!(refused.contains("does not use the new copy"), "{refused}");
     // Not when the saves cannot be backed up.
     let active = vec![p.to.clone()];
+    // Not before the port was started from its new place (or the user said it starts): nothing is touched.
+    let not_yet = old_copies::remove(&entry, &w.removal_ctx(&active), &|_| panic!("no zip before it is ready")).unwrap_err();
+    assert!(not_yet.contains("once from its new place") && p.from.is_dir(), "{not_yet}");
+    old_copies::mark_started(&w.app, &entry.old_path, old_copies::StartedBy::User, 1).unwrap();
     let err = old_copies::remove(&entry, &w.removal_ctx(&active), &|_| Err("disk full".into())).unwrap_err();
     assert!(err.contains("nothing was removed") && p.from.is_dir(), "{err}");
     // A running program blocks it too.
@@ -429,7 +433,7 @@ fn protected_folders_are_never_removed_as_old_copies() {
         let new_copy = w.root.join("elsewhere").join(old.file_name().unwrap());
         fs::create_dir_all(&new_copy).unwrap();
         let active = vec![new_copy.clone()];
-        let entry = old_copies::OldCopy { port_key: "k".into(), name: "n".into(), old_path: old.clone(), new_path: new_copy.clone(), bytes: 0, moved_at: String::new(), link_only: false, switched: true, import_folder: None };
+        let entry = old_copies::OldCopy { port_key: "k".into(), name: "n".into(), old_path: old.clone(), new_path: new_copy.clone(), bytes: 0, moved_at: String::new(), link_only: false, switched: true, import_folder: None, started: None, steam_at: None };
         assert!(old_copies::removal_check(&entry, &w.removal_ctx(&active)).unwrap_err().contains("never removed"), "{}", old.display());
     }
 }
@@ -453,6 +457,7 @@ fn an_adopted_port_moves_as_a_link_to_the_same_folder() {
     switch_over(&p, &env);
     let entry = old_copies::load(&w.app).unwrap().remove(0);
     let active = vec![to.clone()];
+    old_copies::mark_started(&w.app, &entry.old_path, old_copies::StartedBy::App, 1).unwrap();
     old_copies::remove(&entry, &w.removal_ctx(&active), &|_| panic!("a link has no saves of its own")).unwrap();
     assert!(fs::symlink_metadata(&link).is_err() && install.join("2s2h.appimage").is_file(), "only the link went");
 }
@@ -857,6 +862,8 @@ fn kept_copy(w: &World, stale: &Path, current: &Path) -> old_copies::OldCopy {
         link_only: false,
         switched: true,
         import_folder: None,
+        started: None,
+        steam_at: None,
     };
     old_copies::record(&w.app, entry.clone()).unwrap();
     entry

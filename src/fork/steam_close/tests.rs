@@ -253,6 +253,22 @@ impl Fixture {
 fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backup() {
     let f = fixture();
     let before = fs::read(&f.vdf).unwrap();
+    // The move's record of the old copy, to see the switch noted on it.
+    let app_dir = f.queue.parent().unwrap().to_path_buf();
+    crate::fork::port_mover::old_copies::record(&app_dir, crate::fork::port_mover::old_copies::OldCopy {
+        port_key: "a/soh".into(),
+        name: "Ship of Harkinian".into(),
+        old_path: PathBuf::from("/old/SoH"),
+        new_path: f.library.join("SoH"),
+        bytes: 1,
+        moved_at: "20261024-100000".into(),
+        link_only: false,
+        switched: true,
+        import_folder: None,
+        started: None,
+        steam_at: None,
+    })
+    .unwrap();
     let steam = FakeSteam::up();
     let Start::Closing(mut closer) = begin(1, false, false, &steam, secs(0.0)) else { panic!() };
     assert_eq!(steam.shutdowns.get(), 1);
@@ -269,6 +285,8 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
     let saved = shortcuts::list(&ShortcutsFile::load(&f.vdf).unwrap().doc);
     assert_eq!(saved[0].exe_path(), f.library.join("SoH").join("soh.appimage").to_str().unwrap(), "the shortcut starts the new copy");
     assert_eq!(saved[0].app_id, Some(0xAAAA_0001), "same shortcut, same app ID (play time and art kept)");
+    let noted = crate::fork::port_mover::old_copies::load(&app_dir).unwrap()[0].steam_at.expect("the switch time is noted on the old copy");
+    assert!((chrono::Utc::now().timestamp() - noted).abs() < 60, "{noted}");
     let p = result_page(&out, true);
     assert_eq!(p.title, "Steam shortcuts updated");
     assert_eq!(p.facts[..2], ["1 Steam change made.", "Your old shortcut list was backed up first."]);
