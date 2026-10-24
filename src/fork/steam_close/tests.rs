@@ -216,8 +216,8 @@ fn fixture() -> Fixture {
     fs::create_dir_all(&user).unwrap();
     let vdf = user.join("shortcuts.vdf");
     fs::write(&vdf, file_of(&[steam_entry(0, 0xAAAA_0001, "Ship of Harkinian", "\"/old/SoH/soh.appimage\"", "\"/old/SoH/\"", &[])])).unwrap();
-    let library = dir.path().join("sd/Ports");
-    let exe = library.join("SoH/soh.appimage");
+    let library = dir.path().join("sd").join("Ports");
+    let exe = library.join("SoH").join("soh.appimage");
     fs::create_dir_all(exe.parent().unwrap()).unwrap();
     fs::write(&exe, b"x").unwrap();
     let queue = dir.path().join("app/steam-queue.json");
@@ -267,7 +267,7 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
     assert_eq!(list.len(), 1);
     assert_eq!(fs::read(&list[0].path).unwrap(), before, "the old list is backed up byte for byte");
     let saved = shortcuts::list(&ShortcutsFile::load(&f.vdf).unwrap().doc);
-    assert_eq!(saved[0].exe_path(), f.library.join("SoH/soh.appimage").to_str().unwrap(), "the shortcut starts the new copy");
+    assert_eq!(saved[0].exe_path(), f.library.join("SoH").join("soh.appimage").to_str().unwrap(), "the shortcut starts the new copy");
     assert_eq!(saved[0].app_id, Some(0xAAAA_0001), "same shortcut, same app ID (play time and art kept)");
     let p = result_page(&out, true);
     assert_eq!(p.title, "Steam shortcuts updated");
