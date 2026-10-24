@@ -437,7 +437,9 @@ export component AppWindow inherits Window {
                                     // Fork: the small "Saves not found" badge sits left of the buttons.
                                     property <length> saves-w: saves-btn.text-preferred-width + button-padding * 2;
                                     property <length> saves-x: self.leftmost-x - row-spacing - self.saves-w;
-                                    property <length> name-right-x: item.saves-warning ? self.saves-x : self.leftmost-x;
+                                    // The badge is dropped when the row is too narrow to leave the name some room (Info still says it).
+                                    property <bool> saves-fits: item.saves-warning && self.saves-x > text-margin + 80px;
+                                    property <length> name-right-x: self.saves-fits ? self.saves-x : self.leftmost-x;
 
                                     TouchArea {
                                         property <length> drag-start-cursor-y;
@@ -482,14 +484,14 @@ export component AppWindow inherits Window {
                                     }
 
                                     saves-btn := ActionButton {
-                                        visible: item.saves-warning;
-                                        text: @tr("Saves not found");
+                                        visible: row.saves-fits;
+                                        text: @tr("! Saves");
                                         fill-color: SemanticColors.warning;
                                         fill-hover-color: SemanticColors.warning-hover;
                                         font-size: item-font-px * 0.85;
                                         x: row.saves-x;
                                         y: row-spacing;
-                                        width: item.saves-warning ? row.saves-w : 0px;
+                                        width: row.saves-fits ? row.saves-w : 0px;
                                         height: action-button-height;
                                         clicked => { root.list-row-saves-requested(index); }
                                     }

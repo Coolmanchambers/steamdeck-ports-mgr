@@ -781,7 +781,7 @@ find the saves.
   card); an empty or missing known folder shows it only once the game was played (a game that never ran has nothing to
   save). No popups. A mouse or touch click on the badge opens the wizard; a controller uses Info. A port's state is
   worked out at most every 8 seconds and forgotten when an answer is stored or cleared.
-- **Info:** a line ("Saves not found: location unknown on Linux, not backed up", "...the save folder is empty",
+- **Info:** a line ("Saves not found: unknown on Linux", "Saves not found: folder is empty",
   "Saves: using the folder you chose", "Saves: you said this game has none") and a button **Find saves...**, shown when
   the saves are not found or an answer is stored.
 - **Wizard** (the page framework `fork::page`, same window as the setup wizard): (1) "Where does X keep its saves?":

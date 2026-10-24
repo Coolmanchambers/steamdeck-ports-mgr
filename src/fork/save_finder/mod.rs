@@ -222,9 +222,9 @@ pub fn info_line(state: SaveState, choice: Option<&Override>) -> Option<String> 
     Some(
         match (state, choice) {
             (SaveState::NoSaves, _) => "Saves: you said this game has none",
-            (SaveState::Unknown, _) => "Saves not found: location unknown on Linux, not backed up",
-            (SaveState::Empty, _) => "Saves not found: the save folder is empty",
-            (SaveState::Missing, _) => "Saves not found: the save folder is missing",
+            (SaveState::Unknown, _) => "Saves not found: unknown on Linux",
+            (SaveState::Empty, _) => "Saves not found: folder is empty",
+            (SaveState::Missing, _) => "Saves not found: folder is missing",
             (SaveState::Found, Some(Override::Folder(_))) => "Saves: using the folder you chose",
             (SaveState::Found, _) => return None,
         }

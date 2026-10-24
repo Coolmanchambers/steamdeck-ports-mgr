@@ -278,7 +278,7 @@ fn pick_folder(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     open_folder_picker(
         app,
         router,
-        PickerRequest::new(&format!("Choose the folder with {}'s saves", name_of(s)), &start, Purpose::ScanFolder),
+        PickerRequest::new("Choose the folder with the game's saves", &start, Purpose::ScanFolder),
         move |app, router, path| store_folder(app, router, &chosen, &path),
         move |app, router| show_first(app, router, &cancelled),
     );
