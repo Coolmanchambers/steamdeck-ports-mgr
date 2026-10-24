@@ -79,6 +79,8 @@ pub enum View {
     Notice(String),
     /// `setup_done` could not be saved: the page offers "Close anyway" as well as OK.
     SaveFailed(String),
+    /// Which Steam account the ports go to (only asked when there are several): their names.
+    PickAccount(Vec<String>),
 }
 
 /// What an option or button does.
@@ -97,7 +99,10 @@ pub enum Action {
     /// Look for the ports already on the device (Import ports).
     FindPorts,
     ChooseRomFolder,
-    OpenSteam,
+    /// Add every port that is not in Steam yet (or queue them while Steam runs).
+    AddToSteam,
+    /// This account (by position in the names the page showed) gets the ports.
+    ChooseAccount(usize),
     OpenArtSources,
     Finish,
     Yes,
@@ -114,7 +119,6 @@ pub enum HandOff {
     PortsFolder { before: PathBuf },
     Import { installed_before: usize },
     RomFolder,
-    Steam,
     Art,
     /// `before` is how many old copies this run had kept when their question was opened.
     OldCopies { before: usize },
@@ -127,11 +131,27 @@ pub struct Summary {
     /// How many ports the import screen moved in, summed over the times it was opened; `None` = not opened.
     pub imported: Option<usize>,
     pub rom_folder_opened: bool,
-    pub steam_opened: bool,
+    /// What adding to Steam did: `Added` or `Queued`; `None` = not done.
+    pub steam: Option<SteamOutcome>,
+    /// The account was asked about (several accounts), so it is not asked again this run.
+    pub steam_account_asked: bool,
     pub art_opened: bool,
     /// What the old copy question did: how many copies were removed and how many stay; `None` = not asked.
     pub old_copies: Option<OldCopiesResult>,
     pub skipped: Vec<Step>,
+}
+
+/// What "Add all to Steam" did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SteamOutcome {
+    /// Written to Steam's shortcut list (which was backed up first).
+    Added(usize),
+    /// Steam is running (always in Game Mode): queued for Desktop Mode, nothing written.
+    Queued { count: usize, game_mode: bool },
+    /// Nothing needed adding.
+    Nothing,
+    /// Nothing was done, and why, in plain words.
+    Problem(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,8 +196,12 @@ pub trait Adapters {
     fn rom_folder_step(&mut self);
     /// A game files folder is set.
     fn rom_folder_set(&mut self) -> bool;
-    /// Open Add to Steam.
-    fn steam_step(&mut self);
+    /// The names of the Steam accounts when there are several (else none).
+    fn steam_accounts(&mut self) -> Vec<String>;
+    /// Remember which account gets the ports (by position in `steam_accounts`).
+    fn steam_choose_account(&mut self, index: usize) -> Result<(), String>;
+    /// Add every port that is not in Steam yet, or queue them while Steam runs.
+    fn steam_add_all(&mut self) -> SteamOutcome;
     /// Open Artwork sources.
     fn art_sources_step(&mut self);
     /// Old copies this run kept (the ones in the list that were not there when the wizard opened).
@@ -197,6 +221,7 @@ pub fn back_action(wizard: &Wizard) -> Action {
     match &wizard.view {
         View::Notice(_) | View::SaveFailed(_) => Action::Ok,
         View::ConfirmSkipSetup => Action::No,
+        View::PickAccount(_) => Action::Back,
         View::Step if wizard.step == Step::PortsFolder => Action::SkipSetup,
         View::Step => Action::Back,
     }
@@ -240,6 +265,21 @@ fn start_import(w: &mut Wizard, a: &mut dyn Adapters) {
     a.import_step();
 }
 
+/// Adds the ports to Steam (or queues them), then goes on; a problem is told and the page stays.
+fn add_to_steam(w: &mut Wizard, a: &mut dyn Adapters) {
+    match a.steam_add_all() {
+        done @ (SteamOutcome::Added(_) | SteamOutcome::Queued { .. }) => {
+            w.summary.steam = Some(done);
+            advance(w, a);
+        }
+        SteamOutcome::Nothing => advance(w, a),
+        SteamOutcome::Problem(text) => {
+            w.view = View::Notice(text);
+            a.show(w);
+        }
+    }
+}
+
 fn finish(w: &mut Wizard, a: &mut dyn Adapters) {
     match a.mark_done() {
         Ok(()) => a.close(),
@@ -257,6 +297,20 @@ pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
         (View::SaveFailed(_), Action::CloseAnyway) => a.close(),
         (View::ConfirmSkipSetup, Action::Yes) => finish(w, a),
         (View::ConfirmSkipSetup, Action::No) => show_step(w, a),
+        (View::PickAccount(_), Action::Back) => show_step(w, a),
+        (View::PickAccount(names), Action::ChooseAccount(i)) if i < names.len() => match a.steam_choose_account(i) {
+            Ok(()) => {
+                w.summary.steam_account_asked = true;
+                w.view = View::Step;
+                add_to_steam(w, a);
+            }
+            Err(e) => {
+                w.view = View::Notice(format!("The Steam account could not be remembered.
+
+{e}"));
+                a.show(w);
+            }
+        },
         (View::Step, action) => press_in_step(w, action, a),
         // A press that does not belong to this view (a stale item) changes nothing.
         _ => {}
@@ -265,7 +319,7 @@ pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
 
 fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     match action {
-        Action::Next if matches!(w.step, Step::PortsFolder | Step::GameFiles | Step::OldCopies) => advance(w, a),
+        Action::Next if matches!(w.step, Step::PortsFolder | Step::GameFiles | Step::Steam | Step::OldCopies) => advance(w, a),
         Action::Back => {
             if let Some(prev) = w.step.prev() {
                 // Going back shows the page again; it never starts the import over.
@@ -301,9 +355,15 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
             w.handoff = Some(HandOff::RomFolder);
             a.rom_folder_step();
         }
-        Action::OpenSteam if w.step == Step::Steam => {
-            w.handoff = Some(HandOff::Steam);
-            a.steam_step();
+        Action::AddToSteam if w.step == Step::Steam => {
+            if !w.summary.steam_account_asked {
+                let accounts = a.steam_accounts();
+                if accounts.len() > 1 {
+                    w.view = View::PickAccount(accounts);
+                    return a.show(w);
+                }
+            }
+            add_to_steam(w, a);
         }
         Action::OpenArtSources if w.step == Step::Steam => {
             w.handoff = Some(HandOff::Art);
@@ -372,11 +432,6 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
                 show_step(w, a);
             }
         }
-        HandOff::Steam => {
-            w.summary.steam_opened = true;
-            w.view = View::Step;
-            advance(w, a);
-        }
         HandOff::Art => {
             w.summary.art_opened = true;
             show_step(w, a);
@@ -418,11 +473,13 @@ pub(crate) mod fake {
         pub went_back: bool,
         pub rom_set: bool,
         pub kept: usize,
+        pub accounts: Vec<String>,
+        pub steam_result: SteamOutcome,
     }
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, rom_set: false, kept: 0 }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, rom_set: false, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2) }
         }
     }
 
@@ -451,8 +508,16 @@ pub(crate) mod fake {
         fn rom_folder_set(&mut self) -> bool {
             self.rom_set
         }
-        fn steam_step(&mut self) {
-            self.calls.push("steam".into());
+        fn steam_accounts(&mut self) -> Vec<String> {
+            self.accounts.clone()
+        }
+        fn steam_choose_account(&mut self, index: usize) -> Result<(), String> {
+            self.calls.push(format!("account {index}"));
+            Ok(())
+        }
+        fn steam_add_all(&mut self) -> SteamOutcome {
+            self.calls.push("steam_add_all".into());
+            self.steam_result.clone()
         }
         fn art_sources_step(&mut self) {
             self.calls.push("art".into());
@@ -571,16 +636,70 @@ mod tests {
     }
 
     #[test]
-    fn steam_goes_on_after_add_to_steam_and_stays_after_artwork_sources() {
+    fn adding_to_steam_goes_on_and_remembers_what_it_did_and_artwork_sources_stay_on_the_page() {
         let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
         press(&mut w, Action::OpenArtSources, &mut a);
         resume(&mut w, &mut a);
         assert_eq!((w.step, w.summary.art_opened), (Step::Steam, true));
-        press(&mut w, Action::OpenSteam, &mut a);
-        resume(&mut w, &mut a);
-        assert!(w.summary.steam_opened);
-        assert_eq!(w.step, Step::Done, "nothing was kept, so no old copy question");
-        assert!(!a.calls.contains(&"old_copies".to_string()));
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!(a.calls.last().unwrap(), "show Done Step", "{:?}", a.calls);
+        assert_eq!((w.step, w.summary.steam.clone()), (Step::Done, Some(SteamOutcome::Added(2))));
+        assert!(!a.calls.contains(&"old_copies".to_string()), "nothing was kept, so no old copy question");
+    }
+
+    #[test]
+    fn queued_ports_are_remembered_as_queued() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { steam_result: SteamOutcome::Queued { count: 3, game_mode: true }, ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!(w.summary.steam, Some(SteamOutcome::Queued { count: 3, game_mode: true }));
+        assert_eq!(w.step, Step::Done);
+    }
+
+    #[test]
+    fn a_problem_adding_is_told_on_the_page_and_the_wizard_does_not_go_on() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { steam_result: SteamOutcome::Problem("Steam could not be read.".into()), ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!(w.step, Step::Steam);
+        assert_eq!(w.view, View::Notice("Steam could not be read.".into()));
+        assert_eq!(w.summary.steam, None);
+        press(&mut w, Action::Ok, &mut a);
+        assert_eq!(w.view, View::Step);
+    }
+
+    #[test]
+    fn nothing_to_add_goes_on_without_a_note() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { steam_result: SteamOutcome::Nothing, ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!((w.step, w.summary.steam.clone()), (Step::Done, None));
+        // The page offers Continue when there is nothing to add: Next goes on from Steam too.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::Next, &mut a);
+        assert_eq!(w.step, Step::Done);
+    }
+
+    #[test]
+    fn several_accounts_are_asked_about_once_before_adding_and_back_returns_to_the_page() {
+        let names = vec!["Tim".to_string(), "Kid".to_string()];
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { accounts: names.clone(), ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!(w.view, View::PickAccount(names.clone()));
+        assert!(!a.calls.contains(&"steam_add_all".to_string()), "nothing is added before the account is chosen");
+        assert_eq!(back_action(&w), Action::Back);
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!((w.view.clone(), w.step), (View::Step, Step::Steam));
+        press(&mut w, Action::AddToSteam, &mut a);
+        press(&mut w, Action::ChooseAccount(1), &mut a);
+        assert_eq!(&a.calls[a.calls.len() - 3..], ["account 1", "steam_add_all", "show Done Step"]);
+        assert!(w.summary.steam_account_asked);
+        // A stale choice past the end does nothing.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { accounts: names, ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        press(&mut w, Action::ChooseAccount(5), &mut a);
+        assert_eq!(w.view, View::PickAccount(vec!["Tim".into(), "Kid".into()]));
+        // One account is never asked about.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { accounts: vec!["Tim".into()], ..Fake::default() });
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!(w.step, Step::Done);
     }
 
     #[test]
@@ -608,9 +727,9 @@ mod tests {
         resume_old_copies(&mut w, &mut a);
         assert!(a.calls.is_empty());
         let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake::default());
-        press(&mut w, Action::OpenSteam, &mut a);
+        press(&mut w, Action::OpenArtSources, &mut a);
         resume_old_copies(&mut w, &mut a);
-        assert_eq!(w.handoff, Some(HandOff::Steam));
+        assert_eq!(w.handoff, Some(HandOff::Art));
     }
 
     #[test]
@@ -738,7 +857,8 @@ mod tests {
             Action::ChooseFolder,
             Action::FindPorts,
             Action::ChooseRomFolder,
-            Action::OpenSteam,
+            Action::AddToSteam,
+            Action::ChooseAccount(0),
             Action::OpenArtSources,
             Action::Finish,
             Action::Yes,
@@ -746,7 +866,7 @@ mod tests {
             Action::Ok,
             Action::CloseAnyway,
         ];
-        let views = [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into())];
+        let views = [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into()), View::PickAccount(vec!["a".into(), "b".into()])];
         for mode in [Mode::FirstRun, Mode::Rerun] {
             for step in Step::ALL {
                 for view in &views {
@@ -769,8 +889,8 @@ mod tests {
         press(&mut w, Action::Next, &mut a);
         resume_import(&mut w, &mut a);
         press(&mut w, Action::Next, &mut a);
-        press(&mut w, Action::OpenSteam, &mut a);
-        resume(&mut w, &mut a);
+        press(&mut w, Action::AddToSteam, &mut a);
+        assert_eq!(w.step, Step::OldCopies, "the old copy question is open");
         resume_old_copies(&mut w, &mut a);
         assert_eq!(w.step, Step::Done);
         assert!(!a.calls.iter().any(|c| c == "mark_done" || c == "close"), "{:?}", a.calls);
@@ -870,13 +990,10 @@ mod tests {
     #[test]
     fn a_hand_off_action_from_the_wrong_step_does_nothing() {
         let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
-        for action in [Action::FindPorts, Action::ChooseRomFolder, Action::OpenSteam, Action::OpenArtSources] {
+        for action in [Action::FindPorts, Action::ChooseRomFolder, Action::AddToSteam, Action::OpenArtSources] {
             press(&mut w, action, &mut a);
         }
         assert!(a.calls.is_empty() && w.handoff.is_none());
-        let mut w = at(Step::Steam, Mode::FirstRun);
-        press(&mut w, Action::Next, &mut a);
-        assert_eq!(w.step, Step::Steam, "Steam has no Keep, only its own questions");
     }
 
     #[test]
@@ -901,7 +1018,6 @@ mod tests {
             HandOff::PortsFolder { before: "/a".into() },
             HandOff::Import { installed_before: 0 },
             HandOff::RomFolder,
-            HandOff::Steam,
             HandOff::Art,
             HandOff::OldCopies { before: 1 },
         ];

@@ -13,6 +13,7 @@
 
 pub mod flow;
 pub mod places;
+pub mod steam;
 pub mod text;
 
 use crate::fork::settings::ForkSettings;

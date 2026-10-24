@@ -175,7 +175,7 @@ fn tick(app: &Rc<AppState>, router: &Router) {
 
 // -- Drawing ---------------------------------------------------------------------------------------
 
-fn context(app: &AppState) -> Context {
+fn context(app: &AppState, step: crate::fork::setup_wizard::flow::Step) -> Context {
     let current = app.paths.library_dir();
     let internal_default = crate::fork::ports_folder::default_dir(&app.paths.config_dir);
     let drives = removable_drives(&system_mounts(), &default_media_roots());
@@ -185,11 +185,12 @@ fn context(app: &AppState) -> Context {
         current_is_default: current == internal_default,
         ports_folder: current,
         rom_folder_set: rom_folder(app).is_some(),
+        steam: (step == crate::fork::setup_wizard::flow::Step::Steam).then(|| steam_info(app)),
     }
 }
 
 fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
-    let ctx = context(app);
+    let ctx = context(app, w.step);
     let page = text::page_for(w, &ctx);
     let handlers = Handlers {
         on_action: Rc::new(|app, router, action| with_wizard(app, router, |w, ui| flow::press(w, action, ui))),
@@ -245,9 +246,22 @@ impl Adapters for Ui {
         rom_folder(&self.app).is_some()
     }
 
-    fn steam_step(&mut self) {
-        close_current_dialog(&self.app, &self.router);
-        super::steam_screens::open_steam_screen(&self.app, &self.router);
+    fn steam_accounts(&mut self) -> Vec<String> {
+        steam_info(&self.app).accounts
+    }
+
+    fn steam_choose_account(&mut self, index: usize) -> Result<(), String> {
+        let screen = steam_screen(&self.app);
+        let account = screen.accounts.get(index).ok_or("That account is not there any more.")?;
+        let mut settings = ForkSettings::load(&settings_path(&self.app));
+        settings.set_steam_account(account.account_id).map_err(|e| e.to_string())
+    }
+
+    fn steam_add_all(&mut self) -> flow::SteamOutcome {
+        let mut screen = steam_screen(&self.app);
+        let settings = ForkSettings::load(&settings_path(&self.app));
+        let queue = crate::fork::steam_queue::queue_path(&self.app.paths.config_dir);
+        crate::fork::setup_wizard::steam::add_all(&mut screen, &crate::fork::store::SystemSteamCheck::new(), &settings, &queue, std::time::SystemTime::now(), &crate::fork::store::backup_stamp())
     }
 
     fn art_sources_step(&mut self) {
@@ -282,6 +296,32 @@ fn installed_count(app: &AppState) -> usize {
 
 fn rom_folder(app: &AppState) -> Option<PathBuf> {
     RomLibraryStore::load(&app.paths.config_dir.join("rom_library.json")).ok().and_then(|s| s.rom_dir().map(Path::to_path_buf))
+}
+
+// -- Steam ---------------------------------------------------------------------------------------------
+
+/// The Add to Steam screen's own load, for the wizard's one-button version.
+fn steam_screen(app: &AppState) -> crate::fork::screens::SteamScreen {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let settings = ForkSettings::load(&settings_path(app));
+    let catalog = app.catalog.borrow();
+    let state = app.state.borrow();
+    crate::fork::setup_wizard::steam::load_screen(
+        &home,
+        &app.paths.library_dir(),
+        &catalog,
+        &settings,
+        &|key| state.get(key).and_then(|i| i.favorite_exe.clone()),
+        &app.paths.cache_dir,
+        &crate::fork::steam_queue::queue_path(&app.paths.config_dir),
+        crate::fork::steam_queue::game_mode_from_env(),
+    )
+}
+
+fn steam_info(app: &AppState) -> crate::fork::setup_wizard::steam::Info {
+    // Covers are fetched in the background while the page is up, so "Add all" finds them cached.
+    super::steam_screens::prefetch_art(app);
+    crate::fork::setup_wizard::steam::info(&steam_screen(app), &crate::fork::store::SystemSteamCheck::new())
 }
 
 // -- Old copies ---------------------------------------------------------------------------------------

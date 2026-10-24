@@ -5,7 +5,7 @@
 //! question and choosing an answer moves on, so there is no Next button. Plain words for someone who has
 //! never used the app, no file paths, English only, not part of upstream's translation tables.
 
-use super::flow::{Action, Mode, Step, View, Wizard};
+use super::flow::{Action, Mode, SteamOutcome, Step, View, Wizard};
 use super::places::{Kind, QuickChoice};
 pub use crate::fork::page::{Focus, EXTRA, LEFT, RIGHT};
 #[cfg(test)]
@@ -30,6 +30,8 @@ pub struct Context {
     pub quick: Vec<QuickChoice>,
     /// A game files folder is set.
     pub rom_folder_set: bool,
+    /// Where Steam stands; read only while the Steam page is up (`None` before that).
+    pub steam: Option<super::steam::Info>,
 }
 
 fn btn(label: impl Into<String>, action: Action) -> Option<PageButton> {
@@ -57,6 +59,7 @@ pub fn title(w: &Wizard) -> String {
     match &w.view {
         View::ConfirmSkipSetup => "Setup wizard: skip setup?".into(),
         View::Notice(_) | View::SaveFailed(_) => "Setup wizard".into(),
+        View::PickAccount(_) => "Setup wizard: Steam account".into(),
         View::Step => match w.step {
             Step::Done => "Setup wizard: all done".into(),
             step => format!("Setup wizard: {}", step_name(step)),
@@ -111,6 +114,14 @@ fn page_inside(w: &Wizard, ctx: &Context) -> Page {
             p.buttons[LEFT] = btn("Close anyway", Action::CloseAnyway);
             p.buttons[RIGHT] = btn("OK", Action::Ok);
             p.primary = Some(RIGHT);
+            p
+        }
+        View::PickAccount(names) => {
+            let mut p = page(w, "Which Steam account?");
+            p.paragraphs = paras(&["Your ports are added to one account."]);
+            p.options = names.iter().enumerate().map(|(i, name)| option(name, "", Action::ChooseAccount(i))).collect();
+            p.buttons[LEFT] = btn("Back", Action::Back);
+            p.initial = Focus::Option(0);
             p
         }
         View::Step => step_page(w, ctx),
@@ -172,18 +183,7 @@ fn step_page(w: &Wizard, ctx: &Context) -> Page {
             start_on_the_recommended(&mut p);
             p
         }
-        Step::Steam => {
-            let mut p = page(w, "Add your ports to Steam?");
-            p.paragraphs = paras(&["They start from Game Mode, with cover art.", "Steam has to be closed. In Game Mode the change waits for your next Desktop Mode visit."]);
-            p.options = vec![
-                recommended("Add them to Steam", "", Action::OpenSteam),
-                option("Artwork sources (optional)", "A free SteamGridDB key finds more art", Action::OpenArtSources),
-                option("Skip", "Do this later from Settings", Action::Skip),
-            ];
-            nav(&mut p, w);
-            start_on_the_recommended(&mut p);
-            p
-        }
+        Step::Steam => steam_page(w, ctx),
         // Normally this step opens the "Remove the old copies?" page and has none of its own.
         Step::OldCopies => {
             let mut p = page(w, "Old copies");
@@ -195,6 +195,52 @@ fn step_page(w: &Wizard, ctx: &Context) -> Page {
         }
         Step::Done => done_page(w, ctx),
     }
+}
+
+fn steam_page(w: &Wizard, ctx: &Context) -> Page {
+    let info = ctx.steam.clone().unwrap_or_default();
+    let mut p = page(w, "Add your ports to Steam?");
+    if let Some(problem) = &info.problem {
+        p.paragraphs = vec![problem.clone()];
+        p.options = vec![recommended("Continue", "Do this later from Settings", Action::Next)];
+    } else if info.to_add == 0 {
+        p.paragraphs = paras(&["Nothing to add: no ports are installed yet, or they are already in Steam."]);
+        p.options = vec![recommended("Continue", "", Action::Next)];
+    } else {
+        let n = info.to_add;
+        p.paragraphs = vec![
+            format!("{} can be added. They start from Game Mode, with cover art.", if n == 1 { "1 port".to_string() } else { format!("{n} ports") }),
+            if info.immediate {
+                "Steam is closed, so they are added now. Your Steam shortcut list is backed up first.".to_string()
+            } else {
+                "Steam is running, so they are queued and added next time you are in Desktop Mode with Steam closed.".to_string()
+            },
+        ];
+        p.options = vec![
+            recommended(&format!("Add all {n}"), "", Action::AddToSteam),
+            option("Artwork sources (optional)", "A free SteamGridDB key finds more art", Action::OpenArtSources),
+            option("Skip", "Do this later from Settings", Action::Skip),
+        ];
+    }
+    nav(&mut p, w);
+    start_on_the_recommended(&mut p);
+    p
+}
+
+fn steam_line(w: &Wizard, ctx: &Context) -> String {
+    let s = &w.summary;
+    match &s.steam {
+        Some(SteamOutcome::Added(n)) => format!("{} added to Steam.", ports_word(*n)),
+        Some(SteamOutcome::Queued { count, game_mode: true }) => format!("{} queued for Desktop Mode.", ports_word(*count)),
+        Some(SteamOutcome::Queued { count, game_mode: false }) => format!("{} queued until Steam is closed.", ports_word(*count)),
+        _ if s.skipped.contains(&Step::Steam) => "Steam: skipped.".to_string(),
+        _ if ctx.steam.as_ref().is_some_and(|i| i.to_add == 0) => "Steam: nothing to add.".to_string(),
+        _ => "Steam: not set up yet.".to_string(),
+    }
+}
+
+fn ports_word(n: usize) -> String {
+    if n == 1 { "1 port".to_string() } else { format!("{n} ports") }
 }
 
 fn moved_line(n: usize) -> String {
@@ -274,13 +320,7 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
         } else {
             "No game files folder yet.".to_string()
         },
-        if s.steam_opened {
-            "Add to Steam was opened.".to_string()
-        } else if s.skipped.contains(&Step::Steam) {
-            "Steam: skipped.".to_string()
-        } else {
-            "Steam: not set up yet.".to_string()
-        },
+        steam_line(w, ctx),
     ];
     if let Some(r) = s.old_copies {
         p.facts.push(match (r.removed, r.kept) {
@@ -320,6 +360,7 @@ mod tests {
                 quick("Internal storage", "94 GB free", "/home/deck/Apps/dpm/Library", Kind::Internal, true),
             ],
             rom_folder_set: false,
+            steam: Some(crate::fork::setup_wizard::steam::Info { to_add: 2, immediate: true, ..Default::default() }),
         }
     }
 
@@ -407,7 +448,7 @@ mod tests {
         c.rom_folder_set = true;
         let mut w = at(Step::Done);
         w.summary.imported = Some(2);
-        w.summary.steam_opened = true;
+        w.summary.steam = Some(SteamOutcome::Added(2));
         w.summary.old_copies = Some(OldCopiesResult { removed: 1, kept: 2 });
         for step in Step::ALL {
             w.step = step;
@@ -522,17 +563,80 @@ mod tests {
         assert!(!all_text(&p).contains('/'), "no path");
     }
 
+    fn info(to_add: usize, immediate: bool) -> crate::fork::setup_wizard::steam::Info {
+        crate::fork::setup_wizard::steam::Info { to_add, immediate, ..Default::default() }
+    }
+
+    fn steam_ctx(i: crate::fork::setup_wizard::steam::Info) -> Context {
+        Context { steam: Some(i), ..ctx() }
+    }
+
     #[test]
-    fn the_steam_page_asks_one_question_with_add_artwork_and_skip() {
+    fn the_steam_page_offers_add_all_with_the_count_artwork_and_skip() {
         let p = pg(Step::Steam);
         assert_eq!(p.title, "Add your ports to Steam?");
-        assert_eq!(option_actions(&p), [Action::OpenSteam, Action::OpenArtSources, Action::Skip]);
+        assert_eq!(option_actions(&p), [Action::AddToSteam, Action::OpenArtSources, Action::Skip]);
+        assert_eq!(p.options[0].title, "Add all 2");
         assert!(p.options[0].recommended);
         let t = all_text(&p);
-        for must in ["Game Mode", "cover art", "Steam has to be closed", "Desktop Mode", "SteamGridDB"] {
-            assert!(t.contains(must), "missing {must:?}");
+        for must in ["2 ports can be added", "Game Mode", "cover art", "Steam is closed, so they are added now", "backed up first", "SteamGridDB"] {
+            assert!(t.contains(must), "missing {must:?} in {t}");
         }
+        assert!(!t.contains("shortcuts.vdf"), "no file name");
         assert_eq!(start(&p), Focus::Option(0));
+        let one = page_for(&at(Step::Steam), &steam_ctx(info(1, true)));
+        assert_eq!(one.options[0].title, "Add all 1");
+        assert!(all_text(&one).contains("1 port can be added"));
+    }
+
+    #[test]
+    fn with_steam_running_the_page_says_the_ports_are_queued() {
+        let p = page_for(&at(Step::Steam), &steam_ctx(info(3, false)));
+        let t = all_text(&p);
+        assert!(t.contains("Steam is running, so they are queued") && t.contains("Desktop Mode with Steam closed"), "{t}");
+        assert!(!t.contains("added now"));
+    }
+
+    #[test]
+    fn nothing_to_add_or_no_steam_account_is_one_continue_and_no_dead_end() {
+        let p = page_for(&at(Step::Steam), &steam_ctx(info(0, true)));
+        assert_eq!(option_actions(&p), [Action::Next]);
+        assert!(all_text(&p).contains("Nothing to add"));
+        let problem = crate::fork::setup_wizard::steam::Info { problem: Some("No Steam account folder was found. Start Steam once and sign in, then try again.".into()), ..Default::default() };
+        let p = page_for(&at(Step::Steam), &steam_ctx(problem));
+        assert_eq!(option_actions(&p), [Action::Next]);
+        assert!(all_text(&p).contains("Start Steam once"));
+        assert_eq!(start(&p), Focus::Option(0));
+    }
+
+    #[test]
+    fn the_account_page_lists_the_accounts_and_back_returns() {
+        let mut w = at(Step::Steam);
+        w.view = View::PickAccount(vec!["Tim".into(), "Kid (kid42)".into()]);
+        let p = page_for(&w, &ctx());
+        assert_eq!((p.title.as_str(), p.window_title.as_str()), ("Which Steam account?", "Setup wizard: Steam account"));
+        assert_eq!(option_actions(&p), [Action::ChooseAccount(0), Action::ChooseAccount(1)]);
+        assert_eq!(button_actions(&p), [Action::Back]);
+        assert_eq!(step_text(&p), "Step 4 of 5");
+    }
+
+    #[test]
+    fn the_last_page_says_what_adding_to_steam_did() {
+        let say = |steam: Option<SteamOutcome>, skipped: bool, to_add: usize| {
+            let mut w = at(Step::Done);
+            w.summary.steam = steam;
+            if skipped {
+                w.summary.skipped.push(Step::Steam);
+            }
+            page_for(&w, &steam_ctx(info(to_add, true))).facts[3].clone()
+        };
+        assert_eq!(say(Some(SteamOutcome::Added(4)), false, 4), "4 ports added to Steam.");
+        assert_eq!(say(Some(SteamOutcome::Added(1)), false, 1), "1 port added to Steam.");
+        assert_eq!(say(Some(SteamOutcome::Queued { count: 3, game_mode: true }), false, 3), "3 ports queued for Desktop Mode.");
+        assert_eq!(say(Some(SteamOutcome::Queued { count: 2, game_mode: false }), false, 2), "2 ports queued until Steam is closed.");
+        assert_eq!(say(None, true, 2), "Steam: skipped.");
+        assert_eq!(say(None, false, 0), "Steam: nothing to add.");
+        assert_eq!(say(None, false, 2), "Steam: not set up yet.");
     }
 
     #[test]
@@ -541,7 +645,7 @@ mod tests {
         let mut c = ctx();
         c.rom_folder_set = true;
         w.summary.imported = Some(3);
-        w.summary.steam_opened = true;
+        w.summary.steam = Some(SteamOutcome::Added(2));
         w.summary.old_copies = Some(OldCopiesResult { removed: 2, kept: 1 });
         let p = page_for(&w, &c);
         assert_eq!((p.title.as_str(), p.window_title.as_str()), ("You're set up", "Setup wizard: all done"));
@@ -551,7 +655,7 @@ mod tests {
                 "Ports go to internal storage.",
                 "3 ports were moved into your ports folder.",
                 "A game files folder is set.",
-                "Add to Steam was opened.",
+                "2 ports added to Steam.",
                 "2 old copies removed, 1 kept."
             ]
         );

@@ -271,6 +271,19 @@ impl SteamScreen {
         self.lines().into_iter().map(|l| self.label(l, steam)).collect()
     }
 
+    /// Ports that are not in Steam yet (or whose shortcut is out of date): the rows that would change the file,
+    /// except a shortcut found by name only, which points at some other program and is left to the user.
+    pub fn missing_count(&self) -> usize {
+        self.rows.iter().filter(|r| r.can_change() && !r.by_name()).count()
+    }
+
+    /// Selects exactly those ports (the setup wizard's "Add all").
+    pub fn select_all_missing(&mut self) {
+        for row in &mut self.rows {
+            row.selected = row.can_change() && !row.by_name();
+        }
+    }
+
     /// Switches a row on or off. Only rows that would change the file can be selected.
     pub fn toggle(&mut self, index: usize) {
         if let Some(row) = self.rows.get_mut(index) {

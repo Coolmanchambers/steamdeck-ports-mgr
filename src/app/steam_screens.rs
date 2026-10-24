@@ -33,7 +33,7 @@ fn home_dir() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v)).map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
-fn settings_path(app: &AppState) -> PathBuf {
+pub(crate) fn settings_path(app: &AppState) -> PathBuf {
     app.paths.config_dir.join(FILE_NAME)
 }
 
@@ -76,7 +76,7 @@ pub(crate) fn open_steam_screen(app: &Rc<AppState>, router: &Router) {
 /// Fetches the catalog portrait and icon of every installed port in the background, so Apply finds
 /// them in the cache (`<folder>.png`, `<folder>_icon.png`). Ones already cached are not fetched again,
 /// and a failed fetch is silent: Apply says "no cached artwork yet" for that port.
-fn prefetch_art(app: &AppState) {
+pub(crate) fn prefetch_art(app: &AppState) {
     let wanted: Vec<(String, Option<String>, Option<String>)> = app
         .catalog
         .borrow()
