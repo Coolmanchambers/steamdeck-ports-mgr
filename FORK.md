@@ -232,6 +232,33 @@ Files added by this fork:
 | 2026-10-24 | `README.md` | One line in the note at the top linking `PRIVACY.md` (new file, the fork's own) |
 | 2026-10-24 | `src/fork/cloud/` | Cloud backup of the save backups to Google Drive (branch `cloud-backup`): `tokens` (`cloud-tokens.json`, mode 0600), `record` (`cloud-backup.json`), `local`/`plan`/`sync` (what to upload and one pass), `service` (the trait and failure kinds; no delete), `net`/`oauth` (HTTPS client, device-code sign-in and refresh), `build` (the Google client compiled in from CI secrets), `sha256`, `log` |
 | 2026-10-24 | `src/app/cloud_screen.rs` | Settings > Cloud backup: the pages, the sign-in, the status card, the restore list and the passes the hooks start |
+| 2026-10-25 | `src/app/dialogs.rs` | Polish (branch `polish`): `close_current_dialog` hands the guided page window to `page_dialog::park` (4 lines) instead of hiding it at once, so the next page can be drawn in the same window; anything else closes as before |
+| 2026-10-25 | `tools/smoke-test.sh` | Polish: two checks that the first Import ports page and the page B returns to are the wizard's own window (same X window id) |
+
+## Guided pages: one window (`src/app/page_dialog.rs`)
+
+Every guided page (setup wizard, Import ports cards and progress, old copies, cloud backup, save finder, Close Steam
+and update shortcuts, ports-folder pages) is drawn by `page_dialog::show_page`. The first page opens the window;
+each later page is drawn in that same window: its texts are refilled and the page's handlers are swapped in behind
+callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of any owner can take the window over.
+
+- **Hand-offs that close first.** Page owners close the dialog before handing over (`close_current_dialog`). For the
+  page window that call parks it (`park`): the slot empties and the controller target is popped at once, but the
+  window stays up for 40 ms. A page shown in that time takes it back (no new window); otherwise it is hidden and the
+  main window gets the focus as a normal close gives it (not when another dialog has opened meanwhile). A key that
+  reaches a parked window does nothing.
+- **The hand-off watcher** (`setup_wizard_screen::tick`) sees the slot exactly as before: a page swap happens
+  inside one callback, so the slot is never empty between two pages.
+- **Progress pages.** A `PageHandle` is tied to a generation that every page shown and every park bumps, so a
+  handle whose page was replaced (by another page in the same window, or by any dialog) reports `is_open() == false`
+  and `update` does nothing, as when its window used to close.
+- **Window close.** The window system's close button runs the page's `on_exit`; when that shows another page in the
+  same window, the window stays.
+- **B returns to where you were.** The cursor position on each page shown in the window is remembered by page
+  (window title + question, last 24 pages); when B leads to a page seen before, the cursor starts where it was,
+  if that place still exists. Pages reached forwards start where the page says.
+- **A new page** scrolls the body to the top, re-arms the "resting pointer" guard and gives the keyboard to the page
+  (or to its text box when the cursor starts there) (`page-shown()` in `ui/fork/setup-wizard.slint`).
 
 ## Add to Steam (Settings menu)
 

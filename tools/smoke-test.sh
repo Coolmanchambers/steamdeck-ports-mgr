@@ -186,7 +186,8 @@ if [ "$walked" = yes ]; then
     press_keys "$w" Escape
     back=$(find_window '^Setup wizard: Steam$') || back=""
     check "B on the last page goes back one page" '[ -n "$back" ]'
-    [ -n "$back" ] && { press_keys "$back" Down Return; w=$(find_window '^Setup wizard: all done$') || walked="no (never came back to the last page)"; }
+    # B returns the cursor to where it was on that page (Continue, chosen on the way forward), so Return alone goes on.
+    [ -n "$back" ] && { press_keys "$back" Return; w=$(find_window '^Setup wizard: all done$') || walked="no (never came back to the last page: B did not return the cursor to Continue)"; }
 fi
 check "walking every page reaches the last page ($walked)" '[ "$walked" = yes ]'
 [ "$walked" = yes ] && press_keys "$w" Return                      # Finish

@@ -98,7 +98,9 @@ The first time the app starts (and on an install from before the wizard existed)
 on top of the list instead of leaving you in it. It takes a few minutes. Every page asks one question with a
 few big choices: A chooses (and moves on), the D-pad moves, B goes back one page. On the first page B asks
 "Skip setup?" and the cursor starts on "Keep going with setup". The header shows "Step N of 5". You can skip
-anything and run setup again later.
+anything and run setup again later. All the pages, Import ports and the old copies page included, stay in one
+window that changes its content; B usually lands on the choice you were on. Other screens it hands over to (the
+folder picker, Settings > Game files) open on their own and the wizard window comes back after them.
 
 1. **Where should ports go?** With an SD card in, it is offered first ("Recommended", a `Ports` folder on it),
    then internal storage, then "Pick a folder..." (the same folder picker as Settings > Ports folder). The place
