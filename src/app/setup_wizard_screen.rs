@@ -267,6 +267,18 @@ impl Adapters for Ui {
         super::rom_screens::take_wizard_result()
     }
 
+    fn game_files_plan(&mut self) -> Result<flow::GamePlan, String> {
+        super::rom_screens::wizard_plan(&self.app)
+    }
+
+    fn game_files_connect_step(&mut self, copies: bool) {
+        super::rom_screens::wizard_connect(&self.app, &self.router, copies);
+    }
+
+    fn game_files_connect_result(&mut self) -> Option<Result<usize, String>> {
+        super::rom_screens::take_wizard_connect()
+    }
+
     fn steam_accounts(&mut self) -> Vec<String> {
         steam_info(&self.app).accounts
     }

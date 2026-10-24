@@ -81,6 +81,8 @@ pub enum View {
     SaveFailed(String),
     /// Which Steam account the ports go to (only asked when there are several): their names.
     PickAccount(Vec<String>),
+    /// "Connect them now" needs copies of game files in the ports' own folders: how many ports and how many bytes.
+    ConfirmCopies { ports: usize, bytes: u64 },
 }
 
 /// What an option or button does.
@@ -99,6 +101,13 @@ pub enum Action {
     /// Look for the ports already on the device (Import ports).
     FindPorts,
     ChooseRomFolder,
+    /// Connect the game files found in the game files folder to their ports (links or in place where the port allows,
+    /// the same rules as Settings > Game files).
+    ConnectGameFiles,
+    /// Copy them too (the size was shown).
+    CopyGameFiles,
+    /// Connect only the ones that need no copy.
+    SkipGameFileCopies,
     /// Add every port that is not in Steam yet (or queue them while Steam runs).
     AddToSteam,
     /// This account (by position in the names the page showed) gets the ports.
@@ -119,6 +128,8 @@ pub enum HandOff {
     PortsFolder { before: PathBuf },
     Import { installed_before: usize },
     RomFolder,
+    /// The game files are being connected (links, or copies after approval).
+    GameFilesConnect,
     Art,
     /// `before` is how many old copies this run had kept when their question was opened.
     OldCopies { before: usize },
@@ -135,6 +146,8 @@ pub struct Summary {
     pub game_files_needed: Option<usize>,
     /// What the last scan of the game files folder found for them.
     pub game_files: Option<super::game_files::Results>,
+    /// How many ports "Connect them now" connected; `None` = not done.
+    pub game_files_connected: Option<usize>,
     /// What adding to Steam did: `Added` or `Queued`; `None` = not done.
     pub steam: Option<SteamOutcome>,
     /// The account was asked about (several accounts), so it is not asked again this run.
@@ -143,6 +156,16 @@ pub struct Summary {
     /// What the old copy question did: how many copies were removed and how many stay; `None` = not asked.
     pub old_copies: Option<OldCopiesResult>,
     pub skipped: Vec<Step>,
+}
+
+/// What connecting the game files would do, before anything is written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GamePlan {
+    /// Ports that would get a file connected.
+    pub ports: usize,
+    /// Of those, the ones that need a copy of a game file in their own folder, and how big those copies are.
+    pub copy_ports: usize,
+    pub copy_bytes: u64,
 }
 
 /// What "Add all to Steam" did.
@@ -202,6 +225,13 @@ pub trait Adapters {
     fn ports_needing_game_files(&mut self) -> usize;
     /// What the scan the game files hand-off ran found for those ports; once per scan.
     fn game_files_result(&mut self) -> Option<super::game_files::Results>;
+    /// What connecting the files found by the last scan would do (reads the disk, writes nothing).
+    fn game_files_plan(&mut self) -> Result<GamePlan, String>;
+    /// Connect them (`copies`: with the copies too, else only what needs none). Runs in the background;
+    /// `resume` runs when it is done.
+    fn game_files_connect_step(&mut self, copies: bool);
+    /// How many ports that connected, or why it failed; once per run.
+    fn game_files_connect_result(&mut self) -> Option<Result<usize, String>>;
     /// The names of the Steam accounts when there are several (else none).
     fn steam_accounts(&mut self) -> Vec<String>;
     /// Remember which account gets the ports (by position in `steam_accounts`).
@@ -229,7 +259,7 @@ pub fn back_action(wizard: &Wizard) -> Action {
     match &wizard.view {
         View::Notice(_) | View::SaveFailed(_) => Action::Ok,
         View::ConfirmSkipSetup => Action::No,
-        View::PickAccount(_) => Action::Back,
+        View::PickAccount(_) | View::ConfirmCopies { .. } => Action::Back,
         View::Step if wizard.step == Step::PortsFolder => Action::SkipSetup,
         View::Step => Action::Back,
     }
@@ -297,6 +327,13 @@ fn add_to_steam(w: &mut Wizard, a: &mut dyn Adapters) {
     }
 }
 
+/// Connects the game files in the background; `resume` reads how it went.
+fn start_connect(w: &mut Wizard, a: &mut dyn Adapters, copies: bool) {
+    w.handoff = Some(HandOff::GameFilesConnect);
+    w.view = View::Step;
+    a.game_files_connect_step(copies);
+}
+
 fn finish(w: &mut Wizard, a: &mut dyn Adapters) {
     match a.mark_done() {
         Ok(()) => a.close(),
@@ -315,6 +352,9 @@ pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
         (View::ConfirmSkipSetup, Action::Yes) => finish(w, a),
         (View::ConfirmSkipSetup, Action::No) => show_step(w, a),
         (View::PickAccount(_), Action::Back) => show_step(w, a),
+        (View::ConfirmCopies { .. }, Action::Back) => show_step(w, a),
+        (View::ConfirmCopies { .. }, Action::CopyGameFiles) => start_connect(w, a, true),
+        (View::ConfirmCopies { .. }, Action::SkipGameFileCopies) => start_connect(w, a, false),
         (View::PickAccount(names), Action::ChooseAccount(i)) if i < names.len() => match a.steam_choose_account(i) {
             Ok(()) => {
                 w.summary.steam_account_asked = true;
@@ -372,6 +412,17 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
             a.ports_folder_step(None);
         }
         Action::FindPorts if w.step == Step::YourPorts => start_import(w, a),
+        Action::ConnectGameFiles if w.step == Step::GameFiles && w.summary.game_files.as_ref().is_some_and(|r| r.connectable > 0) => match a.game_files_plan() {
+            Err(text) => {
+                w.view = View::Notice(text);
+                a.show(w);
+            }
+            Ok(plan) if plan.copy_ports == 0 => start_connect(w, a, false),
+            Ok(plan) => {
+                w.view = View::ConfirmCopies { ports: plan.copy_ports, bytes: plan.copy_bytes };
+                a.show(w);
+            }
+        },
         Action::ChooseRomFolder if w.step == Step::GameFiles => {
             w.handoff = Some(HandOff::RomFolder);
             a.rom_folder_step();
@@ -457,6 +508,20 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
             }
             show_step(w, a);
         }
+        HandOff::GameFilesConnect => match a.game_files_connect_result() {
+            Some(Ok(n)) => {
+                w.summary.game_files_connected = Some(w.summary.game_files_connected.unwrap_or(0) + n);
+                if let Some(r) = w.summary.game_files.as_mut() {
+                    r.connectable = 0;
+                }
+                show_step(w, a);
+            }
+            Some(Err(text)) => {
+                w.view = View::Notice(format!("Nothing was connected: {text}"));
+                a.show(w);
+            }
+            None => show_step(w, a),
+        },
         HandOff::Art => {
             w.summary.art_opened = true;
             show_step(w, a);
@@ -503,6 +568,8 @@ pub(crate) mod fake {
         pub went_back: bool,
         pub needing: usize,
         pub note: Option<String>,
+        pub plan: Result<GamePlan, String>,
+        pub connected: Option<Result<usize, String>>,
         pub result: Option<super::super::game_files::Results>,
         pub kept: usize,
         pub accounts: Vec<String>,
@@ -511,7 +578,7 @@ pub(crate) mod fake {
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2) }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2) }
         }
     }
 
@@ -562,6 +629,15 @@ pub(crate) mod fake {
         }
         fn old_copies_step(&mut self) {
             self.calls.push("old_copies".into());
+        }
+        fn game_files_plan(&mut self) -> Result<GamePlan, String> {
+            self.plan.clone()
+        }
+        fn game_files_connect_step(&mut self, copies: bool) {
+            self.calls.push(format!("connect copies={copies}"));
+        }
+        fn game_files_connect_result(&mut self) -> Option<Result<usize, String>> {
+            self.connected.take()
         }
         fn old_copies_note(&mut self) -> Option<String> {
             self.note.take()
@@ -667,7 +743,7 @@ mod tests {
         assert!(w.summary.rom_folder_opened);
         // A scan came back: the results page is the same step, shown again.
         press(&mut w, Action::ChooseRomFolder, &mut a);
-        a.result = Some(GameFilesResults { total: 4, found: 3, missing: vec![("Zelda".into(), "Ocarina".into())] });
+        a.result = Some(GameFilesResults { total: 4, found: 3, missing: vec![("Zelda".into(), "Ocarina".into())], ..Default::default() });
         resume(&mut w, &mut a);
         assert_eq!(w.step, Step::GameFiles, "the results are read before going on");
         assert_eq!(w.summary.game_files.as_ref().map(|r| (r.found, r.total)), Some((3, 4)));
@@ -922,6 +998,9 @@ mod tests {
             Action::ChooseFolder,
             Action::FindPorts,
             Action::ChooseRomFolder,
+            Action::ConnectGameFiles,
+            Action::CopyGameFiles,
+            Action::SkipGameFileCopies,
             Action::AddToSteam,
             Action::ChooseAccount(0),
             Action::OpenArtSources,
@@ -931,7 +1010,7 @@ mod tests {
             Action::Ok,
             Action::CloseAnyway,
         ];
-        let views = [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into()), View::PickAccount(vec!["a".into(), "b".into()])];
+        let views = [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into()), View::PickAccount(vec!["a".into(), "b".into()]), View::ConfirmCopies { ports: 1, bytes: 1 }];
         for mode in [Mode::FirstRun, Mode::Rerun] {
             for step in Step::ALL {
                 for view in &views {
@@ -1090,6 +1169,7 @@ mod tests {
             HandOff::PortsFolder { before: "/a".into() },
             HandOff::Import { installed_before: 0 },
             HandOff::RomFolder,
+            HandOff::GameFilesConnect,
             HandOff::Art,
             HandOff::OldCopies { before: 1 },
         ];
@@ -1125,6 +1205,69 @@ mod tests {
         press(&mut w, Action::Skip, &mut a);
         resume_old_copies(&mut w, &mut a);
         assert_eq!(w.view, View::Step);
+    }
+
+    fn scanned(connectable: usize) -> Wizard {
+        let mut w = at(Step::GameFiles, Mode::FirstRun);
+        w.summary.game_files = Some(GameFilesResults { total: 3, in_folder: 0, found: 2, connectable, missing: vec![] });
+        w
+    }
+
+    #[test]
+    fn connecting_without_copies_runs_at_once_and_is_counted_when_it_comes_back() {
+        let (mut w, mut a) = (scanned(2), Fake::default());
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        assert_eq!(a.calls, ["connect copies=false"]);
+        assert_eq!(w.handoff, Some(HandOff::GameFilesConnect));
+        resume(&mut w, &mut a);
+        assert_eq!(w.summary.game_files_connected, Some(2));
+        assert_eq!(w.summary.game_files.as_ref().map(|r| r.connectable), Some(0), "nothing is left to connect");
+        assert_eq!((w.step, w.view.clone()), (Step::GameFiles, View::Step), "the page is shown again, Continue goes on");
+    }
+
+    #[test]
+    fn copies_are_asked_about_with_their_size_and_only_made_after_a_yes() {
+        let (mut w, mut a) = (scanned(2), Fake { plan: Ok(GamePlan { ports: 2, copy_ports: 1, copy_bytes: 800_000_000 }), ..Fake::default() });
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        assert_eq!(w.view, View::ConfirmCopies { ports: 1, bytes: 800_000_000 });
+        assert!(a.calls.iter().all(|c| !c.starts_with("connect")), "nothing is written before the answer");
+        assert_eq!(back_action(&w), Action::Back);
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!(w.view, View::Step);
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        press(&mut w, Action::CopyGameFiles, &mut a);
+        assert_eq!(a.calls.last().unwrap(), "connect copies=true");
+        let (mut w, mut a) = (scanned(2), Fake { plan: Ok(GamePlan { ports: 2, copy_ports: 1, copy_bytes: 5 }), ..Fake::default() });
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        press(&mut w, Action::SkipGameFileCopies, &mut a);
+        assert_eq!(a.calls.last().unwrap(), "connect copies=false");
+    }
+
+    #[test]
+    fn a_plan_that_fails_or_a_failed_connect_is_told_and_nothing_is_counted() {
+        let (mut w, mut a) = (scanned(1), Fake { plan: Err("Not enough free space.".into()), ..Fake::default() });
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        assert_eq!(w.view, View::Notice("Not enough free space.".into()));
+        let (mut w, mut a) = (scanned(1), Fake { connected: Some(Err("the original changed".into())), ..Fake::default() });
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        resume(&mut w, &mut a);
+        assert_eq!(w.view, View::Notice("Nothing was connected: the original changed".into()));
+        assert_eq!(w.summary.game_files_connected, None);
+        assert_eq!(w.summary.game_files.as_ref().map(|r| r.connectable), Some(1), "still offered");
+    }
+
+    #[test]
+    fn connect_belongs_to_a_scan_with_something_to_connect() {
+        let (mut w, mut a) = (scanned(0), Fake::default());
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        assert!(a.calls.is_empty());
+        let (mut w, mut a) = (at(Step::GameFiles, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        assert!(a.calls.is_empty(), "no scan yet");
+        let (mut w, mut a) = (scanned(2), Fake::default());
+        w.step = Step::Steam;
+        press(&mut w, Action::ConnectGameFiles, &mut a);
+        assert!(a.calls.is_empty());
     }
 
 }

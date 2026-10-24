@@ -323,6 +323,101 @@ thread_local! {
     static WIZARD_RESULT: RefCell<Option<crate::fork::setup_wizard::game_files::Results>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    /// The report of the last wizard scan, for "Connect them now".
+    static WIZARD_REPORT: RefCell<Option<Rc<Report>>> = const { RefCell::new(None) };
+    /// What connecting would do, planned and waiting for the answer about copies.
+    static WIZARD_PLAN: RefCell<Option<Rc<PlanOutput>>> = const { RefCell::new(None) };
+    /// How the last connect went: how many ports got a file, or why not.
+    static WIZARD_CONNECT: RefCell<Option<Result<usize, String>>> = const { RefCell::new(None) };
+}
+
+/// The requests for every installed port in the scan whose files were found in the game files folder, are not
+/// connected yet and are not already inside the port's own folder: the same requests Settings > Game files builds for
+/// one port (each port's own rules: use in place, link or copy), for every port at once. A port that needs a choice
+/// between several files is left to Settings > Game files. Returns the requests and the ports they are for.
+fn wizard_requests(app: &AppState, report: &Report) -> (Vec<crate::fork::rom_library::ConnectRequest>, Vec<String>) {
+    let Some(store) = RomLibraryStore::load(&store_path(app)).ok() else { return (Vec::new(), Vec::new()) };
+    let library = app.paths.library_dir();
+    let mut requests = Vec::new();
+    let mut ports = Vec::new();
+    for row in report.groups.iter().flat_map(|g| g.ports.iter()).filter(|r| r.installed && r.can_connect() && !r.connected) {
+        let Ok(port_dir) = safe_join(&library, &row.port.folder) else { continue };
+        let own = crate::fork::setup_wizard::game_files::in_folder_keys(std::iter::once((&row.port, port_dir.clone())), &app.paths.config_dir);
+        if own.contains(row.port.key()) {
+            continue;
+        }
+        if let Ok(mut r) = ConnectScreen::new(row, port_dir, store.mappings()).requests() {
+            ports.push(row.port.key().to_string());
+            requests.append(&mut r);
+        }
+    }
+    (requests, ports)
+}
+
+/// A wizard scan finished: what it found for the ports that need files is read out and kept for the wizard page.
+fn wizard_scan_done(app: &AppState, report: Report) {
+    let library = app.paths.library_dir();
+    let rows: Vec<&crate::fork::rom_screens::report::PortRow> = report.groups.iter().flat_map(|g| g.ports.iter()).filter(|r| r.installed).collect();
+    let dirs = rows.iter().filter_map(|r| safe_join(&library, &r.port.folder).ok().map(|d| (&r.port, d)));
+    let in_folder = crate::fork::setup_wizard::game_files::in_folder_keys(dirs, &app.paths.config_dir);
+    let connectable: std::collections::HashSet<String> = wizard_requests(app, &report).1.into_iter().collect();
+    WIZARD_RESULT.with(|r| *r.borrow_mut() = Some(crate::fork::setup_wizard::game_files::Results::from_report(&report, &in_folder, &connectable)));
+    WIZARD_PLAN.with(|p| *p.borrow_mut() = None);
+    WIZARD_REPORT.with(|r| *r.borrow_mut() = Some(Rc::new(report)));
+}
+
+/// What "Connect them now" would do (reads the disk, writes nothing). A copy is refused when the drive is too full.
+pub(crate) fn wizard_plan(app: &AppState) -> Result<crate::fork::setup_wizard::flow::GamePlan, String> {
+    let report = WIZARD_REPORT.with(|r| r.borrow().clone()).ok_or("Look in the game files folder first.")?;
+    let (requests, _) = wizard_requests(app, &report);
+    if requests.is_empty() {
+        return Err("There is nothing to connect: every file that was found is already connected or needs a choice that Settings > Game files asks you for.".to_string());
+    }
+    let ports: std::collections::BTreeSet<String> = requests.iter().map(|r| r.port_key.clone()).collect();
+    let plan = connect_screen::make_plan(requests)?;
+    let copy_ports: std::collections::BTreeSet<&str> = plan.plans.iter().filter(|p| p.needs_confirmation).map(|p| p.request.port_key.as_str()).collect();
+    let info = crate::fork::setup_wizard::flow::GamePlan { ports: ports.len(), copy_ports: copy_ports.len(), copy_bytes: plan.extra_bytes };
+    WIZARD_PLAN.with(|p| *p.borrow_mut() = Some(Rc::new(plan)));
+    Ok(info)
+}
+
+/// Connects the planned files in the background: links and in-place use always; the copies only when `copies` (the
+/// user saw their size). The result waits for the wizard (`take_wizard_connect`).
+pub(crate) fn wizard_connect(app: &Rc<AppState>, router: &Router, copies: bool) {
+    let Some(plan) = WIZARD_PLAN.with(|p| p.borrow_mut().take()) else {
+        WIZARD_CONNECT.with(|c| *c.borrow_mut() = Some(Err("The plan is gone; try again.".to_string())));
+        return super::setup_wizard_screen::resume_after_scan(app, router);
+    };
+    let plans: Vec<_> = plan.plans.iter().filter(|p| copies || !p.needs_confirmation).cloned().collect();
+    let approval = if copies && plans.iter().any(|p| p.needs_confirmation) { Approval::CopyAllowed } else { Approval::None };
+    if plans.is_empty() {
+        WIZARD_CONNECT.with(|c| *c.borrow_mut() = Some(Ok(0)));
+        return super::setup_wizard_screen::resume_after_scan(app, router);
+    }
+    let status = if approval == Approval::CopyAllowed { "Copying game files. This can take a while and cannot be cancelled." } else { "Connecting game files..." };
+    let path = store_path(app);
+    run_job(
+        app,
+        router,
+        JobUi::Progress { title: TITLE, status: status.into() },
+        move |_| connect_screen::apply_plans(&path, &plans, approval),
+        move |app, router, result| {
+            let outcome = match result.and_then(|r| r) {
+                Ok(mappings) => Ok(mappings.iter().map(|m| m.port_key.as_str()).collect::<std::collections::BTreeSet<_>>().len()),
+                Err(e) => Err(e),
+            };
+            WIZARD_CONNECT.with(|c| *c.borrow_mut() = Some(outcome));
+            super::setup_wizard_screen::resume_after_scan(app, router);
+        },
+    );
+}
+
+/// How the last wizard connect went (once).
+pub(crate) fn take_wizard_connect() -> Option<Result<usize, String>> {
+    WIZARD_CONNECT.with(|c| c.borrow_mut().take())
+}
+
 /// Takes what the last wizard scan found (once).
 pub(crate) fn take_wizard_result() -> Option<crate::fork::setup_wizard::game_files::Results> {
     WIZARD_RESULT.with(|r| r.borrow_mut().take())
@@ -404,7 +499,7 @@ fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
             Ok(None) => open_game_files(app, router),
             // The wizard reports what the scan found for the ports that need files; no lists.
             Ok(Some(out)) if for_wizard => {
-                WIZARD_RESULT.with(|r| *r.borrow_mut() = Some(crate::fork::setup_wizard::game_files::Results::from_report(&out.report)));
+                wizard_scan_done(app, out.report);
                 super::setup_wizard_screen::resume_after_scan(app, router);
             }
             Ok(Some(out)) => after_scan(app, router, out),

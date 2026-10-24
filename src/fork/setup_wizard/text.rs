@@ -60,6 +60,7 @@ pub fn title(w: &Wizard) -> String {
         View::ConfirmSkipSetup => "Setup wizard: skip setup?".into(),
         View::Notice(_) | View::SaveFailed(_) => "Setup wizard".into(),
         View::PickAccount(_) => "Setup wizard: Steam account".into(),
+        View::ConfirmCopies { .. } => "Setup wizard: Game files: copy".into(),
         View::Step => match w.step {
             Step::Done => "Setup wizard: all done".into(),
             step => format!("Setup wizard: {}", step_name(step)),
@@ -114,6 +115,18 @@ fn page_inside(w: &Wizard, ctx: &Context) -> Page {
             p.buttons[LEFT] = btn("Close anyway", Action::CloseAnyway);
             p.buttons[RIGHT] = btn("OK", Action::Ok);
             p.primary = Some(RIGHT);
+            p
+        }
+        View::ConfirmCopies { ports, bytes } => {
+            let mut p = page(w, "Copy game files?");
+            p.paragraphs = vec![
+                format!("{} to be copied into {} own folder.", if *ports == 1 { "1 port needs a game file".to_string() } else { format!("{ports} ports need game files") }, if *ports == 1 { "its" } else { "their" }),
+                format!("That uses {} of disk space. Your own files are never moved, changed or deleted.", crate::fork::rom_screens::util::human_bytes(*bytes)),
+            ];
+            // A copy of a big file takes a while and cannot be cancelled: the default is not to copy.
+            p.options = vec![recommended("Skip the copies", "Connect only what needs none", Action::SkipGameFileCopies), option("Copy them", "Takes a while and cannot be cancelled once it starts", Action::CopyGameFiles)];
+            p.buttons[LEFT] = btn("Back", Action::Back);
+            p.initial = Focus::Option(0);
             p
         }
         View::PickAccount(names) => {
@@ -240,11 +253,24 @@ fn game_files_page(w: &Wizard, ctx: &Context) -> Page {
     if let Some(r) = &w.summary.game_files {
         // A scan was done: what it found is the page, and Continue goes on.
         p = page(w, &r.headline());
-        p.facts = r.missing_lines();
-        if r.found > 0 {
-            p.footnote = "Connect them to each port from Settings > Game files.".to_string();
+        let connected = w.summary.game_files_connected;
+        if let Some(n) = connected.filter(|n| *n > 0) {
+            p.facts.push(format!("Connected for {}.", ports_word(n)));
+        }
+        if r.in_folder > 0 {
+            p.facts.push(if r.in_folder == 1 { "1 port already has its game file in its own folder.".to_string() } else { format!("{} ports already have their game files in their own folders.", r.in_folder) });
+        }
+        p.facts.extend(r.missing_lines());
+        if r.connectable == 0 && r.found > connected.unwrap_or(0) {
+            p.footnote = "Connect the rest from Settings > Game files.".to_string();
         }
         p.options = vec![recommended("Continue", "", Action::Next), option("Pick another folder...", "Look in a different folder", Action::ChooseRomFolder)];
+        if r.connectable > 0 && connected.is_none() {
+            // The files were found; they work for the port once they are connected. Links and in-place use first;
+            // a copy is asked about with its size.
+            p.options.insert(0, recommended("Connect them now", "Your files are never moved or changed", Action::ConnectGameFiles));
+            p.options[1].recommended = false;
+        }
     } else {
         p = page(w, "Where are your game files?");
         let needing = w.summary.game_files_needed.unwrap_or(0);
@@ -270,7 +296,14 @@ fn game_files_line(w: &Wizard, ctx: &Context) -> String {
         return "Game files: none of your ports need any.".to_string();
     }
     match &s.game_files {
-        Some(r) if r.total > 0 => format!("Game files found for {} of {}.", r.found, if r.total == 1 { "1 port".to_string() } else { format!("{} ports", r.total) }),
+        Some(r) if r.total > 0 => {
+            let base = format!("Game files found for {} of {}", r.have(), ports_word(r.total));
+            match (s.game_files_connected.filter(|n| *n > 0), r.connectable) {
+                (Some(n), _) => format!("{base}; connected for {}.", ports_word(n)),
+                (None, c) if c > 0 => format!("{base}; not connected yet."),
+                _ => format!("{base}."),
+            }
+        }
         _ if ctx.rom_folder_set => "A game files folder is set.".to_string(),
         _ if s.skipped.contains(&Step::GameFiles) => "Game files folder: skipped.".to_string(),
         _ => "No game files folder yet.".to_string(),
@@ -609,7 +642,7 @@ mod tests {
         use crate::fork::setup_wizard::game_files::Results;
         let mut w = at(Step::GameFiles);
         w.summary.game_files_needed = Some(4);
-        w.summary.game_files = Some(Results { total: 4, found: 3, missing: vec![("Zelda".into(), "Ocarina of Time (USA).z64".into())] });
+        w.summary.game_files = Some(Results { total: 4, found: 3, missing: vec![("Zelda".into(), "Ocarina of Time (USA).z64".into())], ..Default::default() });
         let p = page_for(&w, &ctx());
         assert_eq!(p.title, "Found game files for 3 of 4 ports.");
         assert_eq!(p.facts, ["Zelda needs Ocarina of Time (USA).z64."]);
@@ -617,7 +650,7 @@ mod tests {
         assert!(p.footnote.contains("Settings > Game files"));
         assert_eq!(start(&p), Focus::Option(0));
         // Nothing found: no pointer to connecting anything.
-        w.summary.game_files = Some(Results { total: 2, found: 0, missing: vec![("A".into(), "x".into()), ("B".into(), "y".into())] });
+        w.summary.game_files = Some(Results { total: 2, found: 0, missing: vec![("A".into(), "x".into()), ("B".into(), "y".into())], ..Default::default() });
         let p = page_for(&w, &ctx());
         assert_eq!(p.title, "No game files were found for your 2 ports.");
         assert!(p.footnote.is_empty());
@@ -648,8 +681,8 @@ mod tests {
             page_for(&w, &c).facts[2].clone()
         };
         assert_eq!(line(Some(0), None, false, false), "Game files: none of your ports need any.");
-        assert_eq!(line(Some(4), Some(Results { total: 4, found: 3, missing: vec![] }), true, false), "Game files found for 3 of 4 ports.");
-        assert_eq!(line(Some(1), Some(Results { total: 1, found: 1, missing: vec![] }), true, false), "Game files found for 1 of 1 port.");
+        assert_eq!(line(Some(4), Some(Results { total: 4, found: 3, ..Default::default() }), true, false), "Game files found for 3 of 4 ports.");
+        assert_eq!(line(Some(1), Some(Results { total: 1, found: 1, ..Default::default() }), true, false), "Game files found for 1 of 1 port.");
         assert_eq!(line(Some(2), None, true, false), "A game files folder is set.");
         assert_eq!(line(Some(2), None, false, true), "Game files folder: skipped.");
         assert_eq!(line(Some(2), None, false, false), "No game files folder yet.");
@@ -943,6 +976,54 @@ mod tests {
         assert_eq!(option_actions(&p), [Action::Next]);
         let part = page_for(&at(Step::Steam), &steam_ctx(crate::fork::setup_wizard::steam::Info { to_add: 3, queued: 1, ..Default::default() }));
         assert_eq!(part.options[0].title, "Add all 3");
+    }
+
+    #[test]
+    fn found_files_can_be_connected_now_and_the_page_says_what_happened() {
+        use crate::fork::setup_wizard::game_files::Results;
+        let mut w = at(Step::GameFiles);
+        w.summary.game_files_needed = Some(4);
+        w.summary.game_files = Some(Results { total: 4, in_folder: 1, found: 2, connectable: 2, missing: vec![("Crash".into(), "Crash Bandicoot (USA).bin".into())] });
+        let p = page_for(&w, &ctx());
+        assert_eq!(p.title, "Found game files for 3 of 4 ports.");
+        assert_eq!(option_actions(&p), [Action::ConnectGameFiles, Action::Next, Action::ChooseRomFolder]);
+        assert!(p.options[0].recommended && !p.options[1].recommended);
+        assert!(p.options[0].detail.contains("never moved or changed"));
+        assert!(p.facts.iter().any(|f| f == "1 port already has its game file in its own folder."), "{:?}", p.facts);
+        assert!(p.facts.iter().any(|f| f == "Crash needs Crash Bandicoot (USA).bin."));
+        // After connecting: no second offer, the count is told.
+        w.summary.game_files_connected = Some(2);
+        w.summary.game_files.as_mut().unwrap().connectable = 0;
+        let p = page_for(&w, &ctx());
+        assert_eq!(option_actions(&p), [Action::Next, Action::ChooseRomFolder]);
+        assert!(p.facts.iter().any(|f| f == "Connected for 2 ports."), "{:?}", p.facts);
+    }
+
+    #[test]
+    fn the_copy_question_shows_the_size_and_starts_on_not_copying() {
+        let mut w = at(Step::GameFiles);
+        w.view = View::ConfirmCopies { ports: 2, bytes: 2_500_000_000 };
+        let p = page_for(&w, &ctx());
+        assert_eq!((p.title.as_str(), p.window_title.as_str()), ("Copy game files?", "Setup wizard: Game files: copy"));
+        assert!(all_text(&p).contains("2 ports need game files") && all_text(&p).contains("2.5 GB") && all_text(&p).contains("never moved, changed or deleted"), "{}", all_text(&p));
+        assert_eq!(option_actions(&p), [Action::SkipGameFileCopies, Action::CopyGameFiles]);
+        assert_eq!(start(&p), Focus::Option(0));
+        assert_eq!(button_actions(&p), [Action::Back]);
+    }
+
+    #[test]
+    fn the_last_page_matches_what_happened_to_the_game_files() {
+        use crate::fork::setup_wizard::game_files::Results;
+        let line = |connected: Option<usize>, connectable: usize| {
+            let mut w = at(Step::Done);
+            w.summary.game_files_needed = Some(3);
+            w.summary.game_files = Some(Results { total: 3, in_folder: 1, found: 2, connectable, missing: vec![] });
+            w.summary.game_files_connected = connected;
+            page_for(&w, &ctx()).facts[2].clone()
+        };
+        assert_eq!(line(Some(2), 0), "Game files found for 3 of 3 ports; connected for 2 ports.");
+        assert_eq!(line(None, 2), "Game files found for 3 of 3 ports; not connected yet.");
+        assert_eq!(line(None, 0), "Game files found for 3 of 3 ports.");
     }
 
 }
