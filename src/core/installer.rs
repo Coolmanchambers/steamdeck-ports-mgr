@@ -970,6 +970,8 @@ mod tests {
         assert!(dest_dir.join("Game-v1.0-linux-x86_64.AppImage").is_file(), "nothing moves inside the installer");
         let pending = crate::fork::versioned::take_installed(&dest_dir).expect("the update is waiting to be finished");
         assert_eq!(pending.before.entries, ["Game-v1.0-linux-x86_64.AppImage"]);
+        // An AppImage is a launch candidate on Linux only (upstream's Windows list is exe/lnk/bat/url).
+        #[cfg(target_os = "linux")]
         assert_eq!(pending.before.target.as_deref(), Some("Game-v1.0-linux-x86_64.AppImage"));
         assert_eq!(pending.release, ["Game-v1.1-linux-x86_64.AppImage"]);
     }
