@@ -119,7 +119,7 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
             .map(|why| format!("{} {why}; nothing was backed up", src.display()))
             .or_else(|| crate::fork::save_restore::link_problem(src, game_dir, saves_backup_dir, home.as_deref()).map(|why| why.replace("nothing was changed", "nothing was backed up")));
         if let Some(problem) = problem {
-            return Err(format!("The save folder of {} cannot be backed up: {problem}", port.name));
+            return Err(format!("The save folder of {} cannot be backed up: {problem}. Open Info > Find saves... and choose the game's own save folder, then update again.", port.name));
         }
     }
     // Fork (save finder): a save folder outside the game folder (one the user chose) can be big; check the room first.

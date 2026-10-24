@@ -151,8 +151,13 @@ pub fn folder_problem(path: &Path, game_dir: &Path, library: Option<&Path>, save
     if home.is_some_and(|h| is_within(h, path)) {
         return Some("is your whole home folder".into());
     }
-    if let Some(why) = broad::container_reason(path, game_dir, library) {
-        return Some(why.into());
+    // Nothing inside the game's own folder is a container (a save folder there may be called `users` or
+    // `Documents`), and a ports library that is the home folder says nothing about "another port's" folder.
+    let library = library.filter(|l| !home.is_some_and(|h| is_within(l, h) && is_within(h, l)));
+    if !is_within(path, game_dir) {
+        if let Some(why) = broad::container_reason(path, game_dir, library) {
+            return Some(why.into());
+        }
     }
     if path.components().filter(|c| matches!(c, Component::Normal(_))).count() < 2 {
         return Some("is too close to the top of the drive".into());

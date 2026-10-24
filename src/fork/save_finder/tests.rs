@@ -612,6 +612,42 @@ mod guards {
     }
 
     #[test]
+    fn the_refused_backup_says_what_to_do() {
+        let (fx, gd) = setup();
+        fs::create_dir_all(fx.home.join(".config")).unwrap();
+        let p = port("Dusklight", "dusklight", Some(json!(fx.home.join(".config").to_string_lossy())));
+        let err = backup_before_update(&p, &fx.saves_backup, &gd, "s0", &mut |_| {}).unwrap_err();
+        assert!(err.ends_with("Open Info > Find saves... and choose the game's own save folder, then update again."), "{err}");
+    }
+
+    #[test]
+    fn a_save_folder_named_like_a_container_inside_the_game_folder_is_fine() {
+        let (fx, gd) = setup();
+        for name in ["userdata", "users", "Documents", "Saved Games", "AppData", "config"] {
+            let dir = gd.join(name);
+            put(&dir.join("slot1.sav"), b"x");
+            let p = port("Dusklight", "dusklight", Some(json!(name)));
+            assert!(crate::fork::save_restore::folder_problem(&dir, &gd, gd.parent(), &fx.saves_backup, Some(&fx.home)).is_none(), "{name}");
+            assert!(backup_before_update(&p, &fx.saves_backup, &gd, &format!("in-{name}"), &mut |_| {}).unwrap().is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn when_the_ports_folder_is_the_home_folder_a_home_save_is_not_another_ports() {
+        let fx = Fx::new();
+        let gd = fx.home.join("dusklight");
+        fs::create_dir_all(&gd).unwrap();
+        let save = fx.home.join(".dusklight");
+        put(&save.join("slot1.sav"), b"x");
+        let check = |library: Option<&Path>| crate::fork::save_restore::folder_problem(&save, &gd, library, &fx.saves_backup, Some(&fx.home));
+        assert!(check(Some(&fx.home)).is_none(), "library == home: the rule is off");
+        assert!(check(Some(&fx.library)).is_none(), "a library elsewhere does not hold it");
+        let soh = fx.library.join("soh");
+        let in_lib = crate::fork::save_restore::folder_problem(&soh, &fx.library.join("dusklight"), Some(&fx.library), &fx.saves_backup, Some(&fx.home));
+        assert!(in_lib.is_some_and(|w| w.contains("holds many apps")), "a real library still refuses other ports' folders");
+    }
+
+    #[test]
     fn the_update_backup_still_follows_a_link_to_a_real_save_folder() {
         let (fx, gd) = setup();
         let real = fx.root.join("sdcard/DuskSaves");
