@@ -297,6 +297,7 @@ fn a_versioned_update_moves_the_old_file_and_points_favorite_and_steam_at_the_ne
     w.install(&p, NEW, &elf("new")).unwrap();
     let out = w.finish(&p, Some(OLD), &no_steam, false);
 
+    assert_eq!(out.older_bytes, 0, "a first update has no older versions to mention");
     assert_eq!(fs::read(w.previous("v1.0", OLD)).unwrap(), elf("old"), "moved, never deleted");
     assert!(!w.game.join(OLD).exists());
     assert_eq!(fs::read(w.game.join(NEW)).unwrap(), elf("new"));
@@ -489,8 +490,8 @@ fn a_launcher_script_naming_the_old_file_is_updated_and_its_original_kept() {
 }
 
 #[test]
-fn one_previous_version_is_kept_and_older_ones_go_only_when_they_hold_programs_alone() {
-    let w = World::new("e2e_prune");
+fn every_previous_version_is_kept_and_the_summary_says_how_much_room_the_older_ones_use() {
+    let w = World::new("e2e_keep_all");
     let p = port(None);
     put(&w.game.join(OLD), &elf("v1.0"));
     put(&w.previous("v0.9", "Game-v0.9-linux-x86_64.AppImage"), &elf("v0.9"));
@@ -501,9 +502,13 @@ fn one_previous_version_is_kept_and_older_ones_go_only_when_they_hold_programs_a
     let out = w.finish(&p, None, &no_steam, false);
 
     assert!(w.previous("v1.0", OLD).is_file());
-    assert!(!w.game.join(PREVIOUS).join("v0.9").exists(), "program files alone: removed");
-    assert_eq!(fs::read(w.previous("v0.8", "settings.ini")).unwrap(), b"[mine]", "anything else is kept");
-    assert_eq!(out.pruned, ["v0.9"]);
+    assert_eq!(fs::read(w.previous("v0.9", "Game-v0.9-linux-x86_64.AppImage")).unwrap(), elf("v0.9"), "nothing is ever deleted");
+    assert_eq!(fs::read(w.previous("v0.8", "Game-v0.8-linux-x86_64.AppImage")).unwrap(), elf("v0.8"));
+    assert_eq!(fs::read(w.previous("v0.8", "settings.ini")).unwrap(), b"[mine]");
+    let older = (elf("v0.9").len() + elf("v0.8").len() + b"[mine]".len()) as u64;
+    assert_eq!(out.older_bytes, older, "v0.9 and v0.8, not the v1.0 this update kept");
+    let text = out.summary("Game", Some("v1.1")).unwrap();
+    assert!(text.contains("Older versions in .previous use 1 MB; remove them from the port's folder if you need the room."), "{text}");
 }
 
 #[test]
@@ -525,7 +530,8 @@ fn going_back_with_select_version_keeps_the_newer_one_in_previous() {
     assert_eq!(back.new_favorite.as_deref(), Some(OLD));
     assert_eq!(w.shortcuts()[0].exe_path(), w.game.join(OLD).to_str().unwrap());
     assert_eq!(w.shortcuts()[0].app_id, Some(APP_ID));
-    assert_eq!(back.pruned, ["v1.0"], "the copy of v1.0 in .previous is the release now running again");
+    assert_eq!(fs::read(w.previous("v1.0", OLD)).unwrap(), elf("v1.0"), "the earlier copy of v1.0 stays too");
+    assert!(back.older_bytes > 0);
 }
 
 #[test]

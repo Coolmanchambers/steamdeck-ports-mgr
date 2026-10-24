@@ -201,7 +201,7 @@ Files added by this fork:
 | 2026-10-22 | `src/fork/port_mover/` | The move engine: copy with permission bits, links and times, verify (list, sizes, bits, links, hashes), game file check before and after, Steam repoint (written or queued, app IDs kept), ROM records follow, old copies recorded in `port-moves.json` and removed only on request |
 | 2026-10-22 | `src/app/ports_folder_screen.rs` | Settings > Ports folder, the "not available" message at startup, the move with progress and Cancel, and the "Remove the old copy now?" prompts |
 | 2026-10-22 | `src/fork/ports_folder_view.rs` | The lists of the ports folder screens (labels, row actions, preselected row), tested without UI |
-| 2026-10-24 | `src/fork/versioned/` | Versioned program files: family and version from a name (reuses `adopt::release_tokens`), the plan of what a new release supersedes, the finish step (launch target, favorite, Steam repoint or queue, move to `.previous/<version>/`, launcher scripts, pruning) and `after_queued_repoint` |
+| 2026-10-24 | `src/fork/versioned/` | Versioned program files: family and version from a name (reuses `adopt::release_tokens`), the plan of what a new release supersedes, the finish step (launch target, favorite, Steam repoint or queue, move to `.previous/<version>/`, launcher scripts, size of the older versions) and `after_queued_repoint` |
 | 2026-10-24 | `src/app/versioned_update.rs` | Runs the finish step on the UI thread after an install and sets the favorite |
 
 ## Add to Steam (Settings menu)
@@ -788,9 +788,11 @@ AppImages and left the Steam shortcut pointing at a missing file. Now, for any p
   stays where it is; when the queued change is applied, `after_queued_repoint` moves it. Then each entry
   goes to `.previous/<old version>/` (`-2`, `-3` when the name is taken; moved, never deleted).
 - **After:** top-level `.sh` launchers that are not part of the release and name a moved file get the
-  new name; the original is kept as `.previous/<version>/<script>.before-update`. Other versions in
-  `.previous/` are removed only when they hold program files alone. The favorite follows the new file;
-  one is set when the app would not find the new program on its own.
+  new name; the original is kept as `.previous/<version>/<script>.before-update`. Nothing is ever
+  deleted: every superseded version stays in `.previous/`, and when older versions are there the
+  summary adds "Older versions in .previous use N MB; remove them from the port's folder if you need
+  the room." There is no delete button. The favorite follows the new file; one is set when the app
+  would not find the new program on its own.
 - **Going back:** Info > Select version installs an older release; the same steps keep the newer one in
   `.previous/`. Offline, by hand: in Desktop Mode move the file out of `.previous/<version>/` into the
   port folder and pick it in Info > Favorite executable (`.previous` is never searched otherwise).

@@ -16,8 +16,8 @@
 //! - Nothing moves until the update is installed and the new launch target exists; a Steam shortcut
 //!   that still points at an old file (change queued, or not writable) keeps that file in place until
 //!   the shortcut is updated (`after_queued_repoint`).
-//! - One previous version is kept; an older one in `.previous/` is removed only when it holds program
-//!   files alone.
+//! - Nothing is ever deleted: every superseded version stays in `.previous/`; the summary says how much
+//!   room the older ones take.
 //!
 //! The installer (worker thread) calls `before_update` and `record_installed`; the app (UI thread) calls
 //! `finish_update` when the install is done.
@@ -320,8 +320,8 @@ pub struct Outcome {
     pub kept: Vec<(String, String)>,
     /// Launcher scripts now naming the new file.
     pub scripts: Vec<String>,
-    /// Older versions removed from `.previous/`.
-    pub pruned: Vec<String>,
+    /// Bytes held by the versions in `.previous/` other than the ones this update put there.
+    pub older_bytes: u64,
     pub notes: Vec<String>,
 }
 
@@ -364,8 +364,8 @@ impl Outcome {
         for (name, why) in &self.kept {
             lines.push(format!("{name} was left where it is: {why}."));
         }
-        if !self.pruned.is_empty() {
-            lines.push(format!("Removed from .previous (older program files only): {}.", self.pruned.join(", ")));
+        if self.older_bytes > 0 {
+            lines.push(format!("Older versions in .previous use {}; remove them from the port's folder if you need the room.", megabytes(self.older_bytes)));
         }
         lines.extend(self.notes.iter().cloned());
         Some(lines.join("\n"))
@@ -391,41 +391,23 @@ fn unique_dir(parent: &Path, name: &str) -> PathBuf {
     candidate
 }
 
-/// Every file under `dir` is a plain program file (no links, nothing else).
-fn holds_program_files_only(dir: &Path) -> bool {
-    let mut stack = vec![dir.to_path_buf()];
-    let mut any = false;
-    while let Some(d) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&d) else { return false };
-        for e in entries.flatten() {
-            let Ok(meta) = fs::symlink_metadata(e.path()) else { return false };
-            if meta.is_dir() {
-                stack.push(e.path());
-            } else if is_program_file(&e.path()) {
-                any = true;
-            } else {
-                return false;
-            }
-        }
+/// Size of the files under `path` (links not followed).
+fn tree_bytes(path: &Path) -> u64 {
+    let Ok(meta) = fs::symlink_metadata(path) else { return 0 };
+    if !meta.is_dir() {
+        return if meta.is_file() { meta.len() } else { 0 };
     }
-    any
+    fs::read_dir(path).into_iter().flatten().flatten().map(|e| tree_bytes(&e.path())).sum()
 }
 
-/// Removes versions in `.previous/` other than `keep` that hold program files alone.
-fn prune(game_dir: &Path, keep: &[PathBuf], saves: &[PathBuf]) -> Vec<String> {
-    let previous = game_dir.join(PREVIOUS);
-    let mut pruned = Vec::new();
-    for e in fs::read_dir(&previous).into_iter().flatten().flatten() {
-        let path = e.path();
-        let is_dir = fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
-        if !is_dir || keep.contains(&path) || touches_saves(&path, true, saves) || !holds_program_files_only(&path) {
-            continue;
-        }
-        if fs::remove_dir_all(&path).is_ok() {
-            pruned.push(e.file_name().to_string_lossy().into_owned());
-        }
-    }
-    pruned
+/// Bytes held by the versions in `.previous/` other than `skip`.
+fn older_versions_bytes(game_dir: &Path, skip: &[PathBuf]) -> u64 {
+    fs::read_dir(game_dir.join(PREVIOUS)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| !skip.contains(p)).map(|p| tree_bytes(&p)).sum()
+}
+
+/// `3 MB`, rounded up so a small file never reads as `0 MB`.
+fn megabytes(bytes: u64) -> String {
+    format!("{} MB", bytes.div_ceil(1_000_000))
 }
 
 /// Moves `entry` (a top-level name of `game_dir`) into `.previous/<version>/`, reusing `folder` when
@@ -562,8 +544,8 @@ pub fn finish_with(input: &FinishInput, pending: &Pending) -> Outcome {
     }
     if !out.moved.is_empty() {
         out.scripts = rewrite_scripts(game_dir, &pending.release, &out.moved, &mut out.notes);
-        let keep: Vec<PathBuf> = folders.iter().map(|(_, f)| f.clone()).collect();
-        out.pruned = prune(game_dir, &keep, &saves);
+        let this_update: Vec<PathBuf> = folders.iter().map(|(_, f)| f.clone()).collect();
+        out.older_bytes = older_versions_bytes(game_dir, &this_update);
     }
 
     // The app starts the new program: a favorite follows it, and one is set when the app would not
@@ -599,8 +581,6 @@ pub fn after_queued_repoint(from: &Path, to: &Path, library_dir: &Path, catalog:
         return None;
     }
     let folder = move_to_previous(game_dir, &m.old, &m.version, None).ok()?;
-    let saves = save_folders(port, game_dir);
-    prune(game_dir, std::slice::from_ref(&folder), &saves);
     let name = folder.file_name()?.to_string_lossy().into_owned();
     Some(format!("{}: the old version ({old}) is now kept in .previous/{name}.", port.display_name()))
 }
