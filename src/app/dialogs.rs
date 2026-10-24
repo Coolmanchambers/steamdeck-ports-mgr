@@ -486,10 +486,11 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     if let Some(dir) = installed_dir.as_deref() {
         let (save_unknown, save2_unknown) = crate::core::save_backup::unknown_on_linux_fields(port, dir);
         // Fork (save finder): its line (not found, or the answer the user gave) comes first.
-        if let Some(note) = super::save_finder_screen::info_line(app, port).or_else(|| crate::fork::save_notes::info_note(save_unknown, save2_unknown)) {
+        let (finder_line, find_button) = super::save_finder_screen::info_parts(app, port);
+        if let Some(note) = finder_line.or_else(|| crate::fork::save_notes::info_note(save_unknown, save2_unknown)) {
             dialog.set_save_note_text(note.into());
         }
-        dialog.set_find_saves_enabled(super::save_finder_screen::info_button(app, port));
+        dialog.set_find_saves_enabled(find_button);
     }
     dialog.set_mods_enabled(mods.is_some());
     dialog.set_website_enabled(website.is_some());

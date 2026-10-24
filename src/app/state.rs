@@ -182,12 +182,15 @@ impl AppState {
                 .displayed_windowed
                 .borrow()
                 .iter()
-                .map(|p| PortItem {
-                    name: p.name.clone().into(),
-                    auto_update_off: state.get(p.key()).is_some_and(|i| !i.update),
-                    installed: self.is_installed(p),
-                    is_local: p.user_managed,
-                    saves_warning: self.is_installed(p) && super::save_finder_screen::saves_warning(self, p),
+                .map(|p| {
+                    let installed = self.is_installed(p);
+                    PortItem {
+                        name: p.name.clone().into(),
+                        auto_update_off: state.get(p.key()).is_some_and(|i| !i.update),
+                        installed,
+                        is_local: p.user_managed,
+                        saves_warning: installed && super::save_finder_screen::saves_warning(self, p),
+                    }
                 })
                 .collect()
         };

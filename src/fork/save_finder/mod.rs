@@ -218,7 +218,10 @@ pub fn state_of(port: &Port, game_dir: &Path, choice: Option<&Override>) -> Save
 }
 
 /// The line under the Info dialog's status lines, or `None` when there is nothing to say.
-pub fn info_line(state: SaveState, choice: Option<&Override>) -> Option<String> {
+pub fn info_line(state: SaveState, choice: Option<&Override>, played: bool) -> Option<String> {
+    if !state.warns(played) && !matches!(state, SaveState::NoSaves) && choice.is_none() {
+        return None;
+    }
     Some(
         match (state, choice) {
             (SaveState::NoSaves, _) => "Saves: you said this game has none",
@@ -239,27 +242,44 @@ fn plain(rel: &Path) -> String {
 }
 
 /// The form a chosen folder is stored in: relative to the game folder when inside it, `%HOME%/...` when inside
-/// the home folder, else absolute. A name holding `%` cannot be stored (the resolver would read it as a
-/// variable).
+/// the home folder, else absolute. A name holding `%` in the stored part cannot be stored (the resolver would
+/// read it as a variable).
 pub fn portable_form(chosen: &Path, game_dir: &Path, home: Option<&Path>) -> Result<String, String> {
-    if chosen.to_string_lossy().contains('%') {
+    let stored = if chosen == game_dir {
+        ".".to_string()
+    } else if chosen.starts_with(game_dir) {
+        plain(chosen.strip_prefix(game_dir).map_err(|e| e.to_string())?)
+    } else if let Some(home) = home.filter(|h| chosen.starts_with(h) && chosen != *h) {
+        format!("%HOME%/{}", plain(chosen.strip_prefix(home).map_err(|e| e.to_string())?))
+    } else if chosen.is_absolute() {
+        chosen.to_string_lossy().into_owned()
+    } else {
+        return Err("That is not a full folder path.".into());
+    };
+    let variable_part = stored.strip_prefix("%HOME%").unwrap_or(&stored);
+    if variable_part.contains('%') {
         return Err("That folder has a % in its name, which the app cannot store. Rename it, or pick another folder.".into());
     }
-    if chosen == game_dir {
-        return Ok(".".into());
+    Ok(stored)
+}
+
+/// The most a save folder may hold before the finder refuses it as "very large for saves".
+pub const MAX_SAVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_SIZE_ENTRIES: usize = 200_000;
+
+/// The size of a folder's files, and whether it was cut short because it is past [`MAX_SAVE_BYTES`] or huge.
+pub fn folder_size(dir: &Path) -> (u64, bool) {
+    crate::fork::save_restore::tree_size_capped(dir, MAX_SAVE_BYTES, MAX_SIZE_ENTRIES)
+}
+
+const BROAD_MESSAGE: &str = "That folder holds many apps' files, not this game's. Open the game's own folder inside it.";
+
+fn refusal(why: &str) -> String {
+    if why == crate::fork::save_restore::broad::BROAD_REASON {
+        BROAD_MESSAGE.to_string()
+    } else {
+        format!("That folder cannot be used for saves: it {why}.")
     }
-    if chosen.starts_with(game_dir) {
-        let rel = chosen.strip_prefix(game_dir).map_err(|e| e.to_string())?;
-        return Ok(plain(rel));
-    }
-    if let Some(home) = home.filter(|h| chosen.starts_with(h) && chosen != *h) {
-        let rel = chosen.strip_prefix(home).map_err(|e| e.to_string())?;
-        return Ok(format!("%HOME%/{}", plain(rel)));
-    }
-    if !chosen.is_absolute() {
-        return Err("That is not a full folder path.".into());
-    }
-    Ok(chosen.to_string_lossy().into_owned())
 }
 
 /// Checks a folder the user chose and gives the override to store, or the reason it cannot be used. The same
@@ -271,13 +291,29 @@ pub fn check_choice(port: &Port, chosen: &Path, game_dir: &Path, saves_backup_di
     }
     let stored = portable_form(chosen, game_dir, home)?;
     let mut probe = port.clone();
-    probe.save = Some(Value::String(stored.clone()));
+    // The folder is judged as an absolute path (what the stored form resolves to), whatever HOME is.
+    probe.save = Some(Value::String(chosen.to_string_lossy().into_owned()));
     probe.save2 = None;
     match save_targets(&probe, game_dir, saves_backup_dir, home).into_iter().next().map(|t| t.target) {
-        Some(Target::Folder(_)) => Ok(Override::Folder(stored)),
-        Some(Target::Refused(why)) => Err(format!("That folder cannot be used for saves: it {why}.")),
-        _ => Err("That folder cannot be used for saves.".into()),
+        Some(Target::Folder(_)) => {}
+        Some(Target::Refused(why)) => return Err(refusal(&why)),
+        _ => return Err("That folder cannot be used for saves.".into()),
     }
+    // A link is judged by where it leads, as a restore would.
+    if let Ok(real) = fs::canonicalize(chosen) {
+        if real != chosen {
+            let game_real = fs::canonicalize(game_dir).unwrap_or_else(|_| game_dir.to_path_buf());
+            let home_real = home.map(|h| fs::canonicalize(h).unwrap_or_else(|_| h.to_path_buf()));
+            let why = crate::fork::save_restore::folder_problem(&real, &game_real, saves_backup_dir, home_real.as_deref()).or_else(|| crate::fork::save_restore::folder_problem(&real, game_dir, saves_backup_dir, home));
+            if let Some(why) = why {
+                return Err(refusal(&why));
+            }
+        }
+    }
+    if folder_size(chosen).1 {
+        return Err("That folder is very large for saves. Open the game's own save folder inside it.".into());
+    }
+    Ok(Override::Folder(stored))
 }
 
 /// The folder an override points at, for showing it and for the folder picker to start in.

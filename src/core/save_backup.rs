@@ -111,6 +111,14 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
     if sources.is_empty() {
         return Ok(None);
     }
+    // Fork (save finder): a save folder outside the game folder (one the user chose) can be big; check the room first.
+    let outside: u64 = sources.iter().filter(|(src, _)| !is_within(src, game_dir)).map(|(src, _)| crate::fork::save_restore::tree_size_capped(src, u64::MAX / 2, 2_000_000).0).sum();
+    if outside > 0 {
+        let place = saves_backup_dir.ancestors().find(|a| a.exists()).unwrap_or(saves_backup_dir);
+        if let Some(problem) = crate::fork::save_restore::space_problem(outside.saturating_mul(2), crate::fork::save_restore::free_bytes(place), place) {
+            return Err(problem);
+        }
+    }
     let backups_dir = safe_join(&saves_backup_dir.join(UPDATE_BACKUPS_DIR), &port.folder)?;
     on_progress("Backing up saves...");
     fs::create_dir_all(saves_backup_dir).map_err(|e| e.to_string())?;

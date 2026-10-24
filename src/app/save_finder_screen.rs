@@ -26,7 +26,7 @@ use crate::fork::screens::short_path;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::ui::gamepad_router::GamepadRouter;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
@@ -49,12 +49,28 @@ const STATE_TTL: Duration = Duration::from_secs(8);
 
 thread_local! {
     static STATES: RefCell<HashMap<String, (Instant, bool)>> = RefCell::new(HashMap::new());
+    static OVERRIDES: RefCell<Option<(Instant, BTreeMap<String, Override>)>> = const { RefCell::new(None) };
     static FIND_TIMER: slint::Timer = slint::Timer::default();
+    /// The backup has its own timer: leaving the search must not stop the one waiting for a backup's result.
+    static BACKUP_TIMER: slint::Timer = slint::Timer::default();
 }
 
 /// Forget what was worked out, so the next redraw looks again (an answer was stored or cleared).
 pub(crate) fn forget_states() {
     STATES.with(|s| s.borrow_mut().clear());
+    OVERRIDES.with(|o| *o.borrow_mut() = None);
+}
+
+/// The stored answer for a port, from the settings file read at most once per `STATE_TTL` (a redraw asks for every
+/// installed port).
+fn stored_choice(app: &AppState, folder: &str) -> Option<Override> {
+    OVERRIDES.with(|o| {
+        let mut o = o.borrow_mut();
+        if o.as_ref().is_none_or(|(at, _)| at.elapsed() >= STATE_TTL) {
+            *o = Some((Instant::now(), finder::overrides(&ForkSettings::load(&settings_path(app)))));
+        }
+        o.as_ref().and_then(|(_, map)| map.get(folder).cloned())
+    })
 }
 
 fn played(app: &AppState, port: &Port) -> bool {
@@ -63,7 +79,7 @@ fn played(app: &AppState, port: &Port) -> bool {
 
 fn state_for(app: &AppState, port: &Port) -> Option<(SaveState, Option<Override>)> {
     let game_dir = safe_join(&app.paths.library_dir(), &port.folder).ok().filter(|d| d.is_dir())?;
-    let choice = finder::overrides(&ForkSettings::load(&settings_path(app))).remove(&port.folder);
+    let choice = stored_choice(app, &port.folder);
     Some((finder::state_of(port, &game_dir, choice.as_ref()), choice))
 }
 
@@ -79,16 +95,12 @@ pub(crate) fn saves_warning(app: &AppState, port: &Port) -> bool {
     warns
 }
 
-/// The Info dialog's line about the port's saves, when there is one.
-pub(crate) fn info_line(app: &AppState, port: &Port) -> Option<String> {
-    let (state, choice) = state_for(app, port)?;
-    finder::info_line(state, choice.as_ref())
-}
-
-/// Info's "Find saves..." is there when there is something to find or change: the saves are not found, or an
-/// answer was stored.
-pub(crate) fn info_button(app: &AppState, port: &Port) -> bool {
-    state_for(app, port).is_some_and(|(state, choice)| choice.is_some() || !matches!(state, SaveState::Found))
+/// For the Info dialog, in one look: the line about the port's saves (when there is one) and whether "Find saves..."
+/// is there (the saves are not found, or an answer is stored).
+pub(crate) fn info_parts(app: &AppState, port: &Port) -> (Option<String>, bool) {
+    let Some((state, choice)) = state_for(app, port) else { return (None, false) };
+    let played = played(app, port);
+    (finder::info_line(state, choice.as_ref(), played), choice.is_some() || state.warns(played))
 }
 
 /// Puts the stored answers into a catalog just loaded or changed.
@@ -101,15 +113,22 @@ pub(crate) fn reapply(app: &AppState) {
 /// brings back the catalog's own) and the lists are redrawn. Returns the entry as it is now.
 fn refresh_port(app: &Rc<AppState>, port: &Port) -> Port {
     forget_states();
-    let fresh = finder::fresh_entry(&app.paths.config_dir, &port.folder);
-    if let Some(fresh) = &fresh {
+    // When the catalog files cannot be read (a damaged ports.json), the answer is put into the entry in memory, so
+    // the badge and "Back up now" are right without a restart.
+    let fresh = finder::fresh_entry(&app.paths.config_dir, &port.folder).unwrap_or_else(|| {
+        let mut one = [port.clone()];
+        finder::apply_from_file(&mut one, &settings_path(app));
+        let [entry] = one;
+        entry
+    });
+    {
         let mut catalog = app.catalog.borrow_mut();
         if let Some(slot) = catalog.iter_mut().find(|p| p.folder == port.folder) {
             *slot = fresh.clone();
         }
     }
     app.refresh_current_view();
-    fresh.unwrap_or_else(|| port.clone())
+    fresh
 }
 
 // -- The wizard -----------------------------------------------------------------------------------------
@@ -124,6 +143,8 @@ enum Stage {
     Notice,
     /// A message that ends the finder.
     Last,
+    /// The backup runs; B and the X wait until it reports.
+    Backing,
 }
 
 struct Session {
@@ -189,6 +210,9 @@ fn show(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, stage: Stage, page
 }
 
 fn leave(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
+    if s.stage.get() == Stage::Backing {
+        return;
+    }
     if let Some(job) = s.job.borrow_mut().take() {
         job.cancel();
     }
@@ -223,6 +247,9 @@ fn notice(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, title: &str, par
 }
 
 fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
+    if s.stage.get() == Stage::Backing {
+        return;
+    }
     match act {
         Act::Search => start_search(app, router, s),
         Act::Pick | Act::NoneOfThese => pick_folder(app, router, s),
@@ -244,7 +271,7 @@ fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             _ => leave(app, router, s),
         },
         Act::Back => match s.stage.get() {
-            Stage::First | Stage::Saved | Stage::Last => leave(app, router, s),
+            Stage::First | Stage::Saved | Stage::Last | Stage::Backing => leave(app, router, s),
             Stage::Searching => act_on(app, router, s, Act::Cancel),
             Stage::Results | Stage::Notice => show_first(app, router, s),
         },
@@ -278,7 +305,7 @@ fn pick_folder(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     open_folder_picker(
         app,
         router,
-        PickerRequest::new("Choose the folder with the game's saves", &start, Purpose::ScanFolder),
+        PickerRequest { cursor_off_use_this: true, ..PickerRequest::new("Choose the folder with the game's saves", &start, Purpose::ScanFolder) },
         move |app, router, path| store_folder(app, router, &chosen, &path),
         move |app, router| show_first(app, router, &cancelled),
     );
@@ -301,8 +328,10 @@ fn store(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, choice: Override)
     let fresh = refresh_port(app, &s.port.borrow());
     *s.port.borrow_mut() = fresh;
     let what = describe(&choice, &s.game_dir);
-    let can_back_up = finder::folder_of(&choice, &s.game_dir).is_some_and(|f| finder::has_files(&f));
-    show(app, router, s, Stage::Saved, view::saved_page(&name_of(s), &what, can_back_up));
+    let folder = finder::folder_of(&choice, &s.game_dir);
+    let can_back_up = folder.as_deref().is_some_and(finder::has_files);
+    let size = folder.as_deref().filter(|_| can_back_up).map(|f| finder::folder_size(f).0);
+    show(app, router, s, Stage::Saved, view::saved_page(&name_of(s), &what, size, can_back_up));
 }
 
 fn undo(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
@@ -390,23 +419,28 @@ fn back_up(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let port = s.port.borrow().clone();
     let (backups, game_dir) = (app.paths.saves_backup_dir.clone(), s.game_dir.clone());
     let stamp = crate::fork::store::backup_stamp();
+    let folder = port.folder.clone();
     let job = Rc::new(Background::spawn(move |ctl| crate::core::save_backup::backup_before_update(&port, &backups, &game_dir, &stamp, &mut |t| ctl.set_progress(t.to_string()))));
     s.stage.set(Stage::Notice);
     show_page(app, router, view::backing_up_page(&name_of(s)), handlers(s));
+    // From here B and the X wait: the result must be seen (`Stage::Backing`).
+    s.stage.set(Stage::Backing);
     let (app, router, s) = (app.clone(), router.clone(), s.clone());
-    FIND_TIMER.with(|timer| {
+    BACKUP_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
             let Some(result) = job.take() else { return };
-            FIND_TIMER.with(slint::Timer::stop);
+            BACKUP_TIMER.with(slint::Timer::stop);
+            s.stage.set(Stage::Notice);
             let (title, text) = match &result {
-                Ok(Ok(Some(_))) => ("Backup made", "Your saves are backed up. Settings > Restore saves, or Info > Restore saves, can put them back."),
-                Ok(Ok(None)) => ("Nothing to back up", "The folder holds no saves yet, so there was nothing to copy."),
+                Ok(Ok(Some(_))) => ("Backup made", format!("Backed up to Saves Backup / Update Backups / {folder}. Restore saves lists it as \"Before update\".")),
+                Ok(Ok(None)) => ("Nothing to back up", "The folder holds no saves yet, so there was nothing to copy.".to_string()),
                 Ok(Err(detail)) | Err(detail) => {
                     eprintln!("save finder backup: {detail}");
-                    ("The backup did not work", "Nothing was changed. Your saves are as they were.")
+                    let why = if detail.starts_with("not enough free space") { format!("There is {detail}.") } else { String::new() };
+                    ("The backup did not work", format!("{why} Nothing was changed. Your saves are as they were.").trim().to_string())
                 }
             };
-            notice(&app, &router, &s, title, vec![text.to_string()], true);
+            notice(&app, &router, &s, title, vec![text], true);
         });
     });
 }

@@ -223,14 +223,14 @@ fn candidate(dir: &Path, place: Place, budget: &mut Budget) -> Option<Candidate>
     })
 }
 
-/// The folders of a directory (links to folders included, only listed, never entered by the walks above beyond
-/// being judged), up to `LIST_LIMIT` entries.
+/// The real folders of a directory (a link to a folder is not followed, so the search never wanders into another
+/// place through one), up to `LIST_LIMIT` entries.
 fn child_dirs(dir: &Path, budget: &mut Budget) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else { return out };
     for entry in entries.flatten().take(LIST_LIMIT) {
         budget.entries += 1;
-        if entry.path().is_dir() {
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
             out.push(entry.path());
         }
     }

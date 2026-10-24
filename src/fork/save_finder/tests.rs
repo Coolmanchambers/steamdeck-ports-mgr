@@ -119,10 +119,14 @@ fn has_files_looks_a_few_levels_down_and_ignores_empty_trees() {
 
 #[test]
 fn info_line_for_each_state() {
-    assert_eq!(info_line(SaveState::Found, None), None);
-    assert_eq!(info_line(SaveState::Found, Some(&Override::Folder("x".into()))).as_deref(), Some("Saves: using the folder you chose"));
-    assert!(info_line(SaveState::Unknown, None).unwrap().starts_with("Saves not found"));
-    assert!(info_line(SaveState::NoSaves, Some(&Override::NoSaves)).unwrap().contains("none"));
+    assert_eq!(info_line(SaveState::Found, None, true), None);
+    assert_eq!(info_line(SaveState::Found, Some(&Override::Folder("x".into())), false).as_deref(), Some("Saves: using the folder you chose"));
+    assert!(info_line(SaveState::Unknown, None, false).unwrap().starts_with("Saves not found"));
+    assert!(info_line(SaveState::NoSaves, Some(&Override::NoSaves), false).unwrap().contains("none"));
+    // Like the badge: a known folder that is empty or missing is only mentioned for a game that was played.
+    assert_eq!(info_line(SaveState::Empty, None, false), None);
+    assert!(info_line(SaveState::Empty, None, true).unwrap().contains("empty"));
+    assert_eq!(info_line(SaveState::Missing, None, false), None);
 }
 
 // -- Overrides: stored, applied, cleared -----------------------------------------------------------------
@@ -450,4 +454,124 @@ fn ago_reads_naturally() {
     assert_eq!(at(2 * 86_400 + 5), "2 days ago");
     assert_eq!(at(70 * 86_400), "2 months ago");
     assert_eq!(at(800 * 86_400), "2 years ago");
+}
+
+#[cfg(target_os = "linux")]
+mod refusals {
+    use super::*;
+
+    const MANY: &str = "That folder holds many apps' files, not this game's. Open the game's own folder inside it.";
+
+    fn setup() -> (Fx, Port, PathBuf) {
+        let fx = Fx::new();
+        let p = port("Dusklight", "dusklight", None);
+        let gd = fx.game_dir(&p);
+        fs::create_dir_all(&fx.saves_backup).unwrap();
+        (fx, p, gd)
+    }
+
+    fn refused(fx: &Fx, p: &Port, gd: &Path, dir: &Path) -> String {
+        fs::create_dir_all(dir).unwrap();
+        check_choice(p, dir, gd, &fx.saves_backup, Some(&fx.home)).unwrap_err()
+    }
+
+    #[test]
+    fn containers_in_the_home_folder_are_refused() {
+        let (fx, p, gd) = setup();
+        for rel in [".local", ".local/share", ".config", ".steam", ".var", ".cache", "Documents", "Desktop", "Downloads", ".local/share/Steam", ".steam/steam/steamapps"] {
+            assert_eq!(refused(&fx, &p, &gd, &fx.home.join(rel)), MANY, "{rel}");
+        }
+    }
+
+    #[test]
+    fn proton_prefix_levels_are_refused_but_the_games_own_folder_inside_is_fine() {
+        let (fx, p, gd) = setup();
+        let user = fx.home.join(".steam/steam/steamapps/compatdata/4012345/pfx/drive_c/users/steamuser");
+        for dir in [
+            fx.home.join(".steam/steam/steamapps/compatdata"),
+            fx.home.join(".steam/steam/steamapps/compatdata/4012345"),
+            fx.home.join(".steam/steam/steamapps/compatdata/4012345/pfx"),
+            fx.home.join(".steam/steam/steamapps/compatdata/4012345/pfx/drive_c"),
+            fx.home.join(".steam/steam/steamapps/compatdata/4012345/pfx/drive_c/users"),
+            user.clone(),
+            user.join("AppData"),
+            user.join("AppData/Roaming"),
+            user.join("AppData/Local"),
+            user.join("AppData/LocalLow"),
+            user.join("Saved Games"),
+            user.join("My Games"),
+        ] {
+            assert_eq!(refused(&fx, &p, &gd, &dir), MANY, "{}", dir.display());
+        }
+        let own = user.join("AppData/Roaming/Dusklight");
+        fs::create_dir_all(&own).unwrap();
+        put(&own.join("slot1.sav"), b"x");
+        assert!(check_choice(&p, &own, &gd, &fx.saves_backup, Some(&fx.home)).is_ok());
+    }
+
+    #[test]
+    fn another_ports_folder_and_the_library_are_refused() {
+        let (fx, p, gd) = setup();
+        assert_eq!(refused(&fx, &p, &gd, &fx.library.join("soh")), MANY);
+        assert_eq!(refused(&fx, &p, &gd, &fx.library.join("soh/Save")), MANY);
+        assert!(refused(&fx, &p, &gd, &fx.library).starts_with("That folder cannot be used"), "the library holds the game folder, so it is refused too");
+        let own = gd.join("Save");
+        fs::create_dir_all(&own).unwrap();
+        assert!(check_choice(&p, &own, &gd, &fx.saves_backup, Some(&fx.home)).is_ok(), "this port's own Save folder is fine");
+    }
+
+    #[test]
+    fn mount_roots_are_refused() {
+        let (fx, _p, gd) = setup();
+        // Real top-level paths cannot be made in a test, so the rule is checked on the path itself.
+        for path in ["/run/media/deck/SD", "/run/media/deck", "/media/sd", "/mnt/data"] {
+            let found = crate::fork::save_restore::folder_problem(Path::new(path), &gd, &fx.saves_backup, Some(&fx.home));
+            assert!(found.is_some_and(|w| w.contains("holds many apps")), "{path}");
+        }
+    }
+
+    #[test]
+    fn a_link_to_a_container_is_refused_by_where_it_leads() {
+        let (fx, p, gd) = setup();
+        let share = fx.home.join(".local/share");
+        fs::create_dir_all(&share).unwrap();
+        let link = fx.home.join("dusk-saves");
+        std::os::unix::fs::symlink(&share, &link).unwrap();
+        assert_eq!(check_choice(&p, &link, &gd, &fx.saves_backup, Some(&fx.home)).unwrap_err(), MANY);
+        let other = fx.library.join("soh");
+        fs::create_dir_all(&other).unwrap();
+        let link2 = fx.root.join("elsewhere-link");
+        std::os::unix::fs::symlink(&other, &link2).unwrap();
+        assert_eq!(check_choice(&p, &link2, &gd, &fx.saves_backup, Some(&fx.home)).unwrap_err(), MANY);
+    }
+
+    #[test]
+    fn a_very_large_folder_is_refused_and_a_normal_one_is_not() {
+        let (fx, p, gd) = setup();
+        let big = fx.root.join("elsewhere/Dusklight");
+        fs::create_dir_all(&big).unwrap();
+        let f = fs::File::create(big.join("huge.sav")).unwrap();
+        f.set_len(3 * 1024 * 1024 * 1024).unwrap();
+        assert!(check_choice(&p, &big, &gd, &fx.saves_backup, Some(&fx.home)).unwrap_err().contains("very large for saves"));
+        let fine = fx.root.join("elsewhere/Fine");
+        put(&fine.join("slot.sav"), b"x");
+        assert!(check_choice(&p, &fine, &gd, &fx.saves_backup, Some(&fx.home)).is_ok());
+        assert_eq!(folder_size(&fine), (1, false));
+    }
+
+    #[test]
+    fn a_percent_only_matters_in_the_stored_part() {
+        let (game, home) = (Path::new("/home/100%/Ports/dusk"), Path::new("/home/100%"));
+        assert_eq!(portable_form(&game.join("Save"), game, Some(home)).unwrap(), "Save");
+        assert!(portable_form(Path::new("/home/100%/.local/share/50%"), game, Some(home)).is_err());
+        assert_eq!(portable_form(Path::new("/home/100%/.local/share/Dusk"), game, Some(home)).unwrap(), "%HOME%/.local/share/Dusk");
+    }
+
+    #[test]
+    fn the_space_check_for_a_backup_reads_the_free_room() {
+        let place = Path::new("/x");
+        assert!(crate::fork::save_restore::space_problem(3 * 1024 * 1024 * 1024, Some(1024 * 1024 * 1024), place).is_some());
+        assert!(crate::fork::save_restore::space_problem(1024, Some(1024 * 1024 * 1024), place).is_none());
+        assert!(crate::fork::save_restore::space_problem(u64::MAX / 2, None, place).is_none(), "unknown free room does not refuse");
+    }
 }

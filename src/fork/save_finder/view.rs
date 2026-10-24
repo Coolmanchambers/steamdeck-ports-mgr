@@ -2,7 +2,7 @@
 //! short, one question per page, no file paths except on the page that confirms a folder.
 
 use super::search::{ago, Candidate};
-use crate::fork::page::{Focus, Page, PageButton, PageOption, LEFT, RIGHT};
+use crate::fork::page::{Focus, Page, PageButton, PageOption, LEFT, MIDDLE, RIGHT};
 use std::time::SystemTime;
 
 /// What the user can choose on any page of the finder.
@@ -96,17 +96,15 @@ pub fn results_page(name: &str, found: &[Candidate], stopped_early: bool, now: S
         } else {
             "None of the likely places has a folder that looks like its saves. If the game has been played, you can pick the folder yourself.".to_string()
         }];
-        page.options = vec![
-            option("Pick the folder...", "Choose it yourself.", true, Act::Pick),
-            option("This game has no saves", "The warning goes away and stays away.", false, Act::NoSaves),
-        ];
+        page.options = vec![option("Pick the folder...", "Choose it yourself.", true, Act::Pick)];
+        page.buttons[MIDDLE] = button("This game has no saves", Act::NoSaves);
     } else {
-        page = base(name, format!("Is one of these {name}'s saves?"));
+        page = base(name, format!("Is one of these where {name} keeps its saves?"));
         page.paragraphs = vec!["Newest first. Nothing is moved; the app only remembers where to look.".into()];
         for (i, c) in found.iter().enumerate() {
             let files = if c.files == 1 { "1 file".to_string() } else { format!("{} files", c.files) };
             let detail = format!("{files}, changed {}, {}", ago(now, c.newest), c.place.label());
-            page.options.push(option(&format!("Use {}", c.name), &detail, i == 0, Act::Use(i)));
+            page.options.push(option(&format!("Use {}", card_name(c)), &detail, i == 0, Act::Use(i)));
         }
         page.options.push(option("None of these", "Pick the folder yourself.", false, Act::NoneOfThese));
         if stopped_early {
@@ -117,10 +115,22 @@ pub fn results_page(name: &str, found: &[Candidate], stopped_early: bool, now: S
     page
 }
 
+/// A card's title: the folder, with its parent when it is a "Save" folder (a bare "Save" says little).
+fn card_name(c: &Candidate) -> String {
+    let parent = c.path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+    match parent {
+        Some(parent) if c.name.to_lowercase().contains("save") => format!("{parent} / {}", c.name),
+        _ => c.name.clone(),
+    }
+}
+
 /// Page 3: what was stored, and the offer to back up now.
-pub fn saved_page(name: &str, what: &str, can_back_up: bool) -> Page<Act> {
+pub fn saved_page(name: &str, what: &str, size: Option<u64>, can_back_up: bool) -> Page<Act> {
     let mut page = base(name, "Saved".to_string());
     page.facts = vec![what.to_string()];
+    if let Some(bytes) = size.filter(|b| *b > 0) {
+        page.facts.push(format!("About {} of saves.", crate::fork::save_restore::view::human_size(bytes)));
+    }
     page.paragraphs = vec!["Nothing was moved. Backups, restores and updates of this game now use that.".into()];
     if can_back_up {
         page.options = vec![option("Back up now", "Makes a backup of these saves, to restore from later.", true, Act::BackUpNow), option("Not now", "Done.", false, Act::NotNow)];
@@ -185,17 +195,30 @@ mod tests {
     }
 
     #[test]
-    fn no_results_offers_the_picker_first() {
+    fn a_save_subfolder_card_names_its_parent() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000_000);
+        let mut c = cand("Save", 2, 1, Place::LocalShare);
+        c.path = PathBuf::from("/home/deck/.local/share/SeveredChains/Save");
+        let page = results_page("Severed Chains", &[c], false, now);
+        assert_eq!(page.options[0].title, "Use SeveredChains / Save");
+        assert_eq!(page.title, "Is one of these where Severed Chains keeps its saves?");
+    }
+
+    #[test]
+    fn no_results_offers_the_picker_first_and_no_saves_in_the_footer() {
         let page = results_page("Dusklight", &[], false, SystemTime::UNIX_EPOCH);
+        assert_eq!(page.options.len(), 1);
         assert_eq!(page.options[0].action, Act::Pick);
-        assert_eq!(page.options[1].action, Act::NoSaves);
+        assert_eq!(page.buttons[MIDDLE].as_ref().map(|b| b.action.clone()), Some(Act::NoSaves));
     }
 
     #[test]
     fn saved_page_offers_backup_and_undo() {
-        let page = saved_page("X", "Using the Save folder.", true);
+        let page = saved_page("X", "Using the Save folder.", Some(3 * 1024 * 1024), true);
+        assert_eq!(page.facts.len(), 2);
+        assert!(page.facts[1].starts_with("About 3"), "{:?}", page.facts);
         assert_eq!(page.options[0].action, Act::BackUpNow);
         assert_eq!(page.buttons[LEFT].as_ref().map(|b| b.action.clone()), Some(Act::Undo));
-        assert_eq!(saved_page("X", "y", false).options.len(), 1);
+        assert_eq!(saved_page("X", "y", None, false).options.len(), 1);
     }
 }

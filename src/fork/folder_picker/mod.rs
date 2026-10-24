@@ -57,11 +57,14 @@ pub struct PickerRequest {
     pub purpose: Purpose,
     /// Extra quick places (label, folder), listed after the drives and home folders when they exist.
     pub extra_places: Vec<(String, PathBuf)>,
+    /// The cursor starts on the first sub-folder (or Cancel), never on "Use this folder": one press of A must not
+    /// choose the folder the picker happens to open in (the save finder).
+    pub cursor_off_use_this: bool,
 }
 
 impl PickerRequest {
     pub fn new(title: &str, start: &Path, purpose: Purpose) -> PickerRequest {
-        PickerRequest { title: title.to_string(), start: start.to_path_buf(), purpose, extra_places: Vec::new() }
+        PickerRequest { title: title.to_string(), start: start.to_path_buf(), purpose, extra_places: Vec::new(), cursor_off_use_this: false }
     }
 }
 

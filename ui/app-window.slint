@@ -439,7 +439,11 @@ export component AppWindow inherits Window {
                                     property <length> saves-x: self.leftmost-x - row-spacing - self.saves-w;
                                     // The badge is dropped when the row is too narrow to leave the name some room (Info still says it).
                                     property <bool> saves-fits: item.saves-warning && self.saves-x > text-margin + 80px;
-                                    property <length> name-right-x: self.saves-fits ? self.saves-x : self.leftmost-x;
+                                    // Too narrow for the words: a fixed-width amber "!" instead (it opens the finder as well).
+                                    property <length> mini-w: 26px / Theme.scale-factor;
+                                    property <length> mini-x: self.leftmost-x - row-spacing - self.mini-w;
+                                    property <bool> saves-mini: item.saves-warning && !self.saves-fits && self.mini-x > text-margin + 40px;
+                                    property <length> name-right-x: self.saves-fits ? self.saves-x : (self.saves-mini ? self.mini-x : self.leftmost-x);
 
                                     TouchArea {
                                         property <length> drag-start-cursor-y;
@@ -481,6 +485,19 @@ export component AppWindow inherits Window {
                                         vertical-alignment: center;
                                         x: text-margin;
                                         width: row.name-right-x - text-margin - row-spacing;
+                                    }
+
+                                    saves-mini-btn := ActionButton {
+                                        visible: row.saves-mini;
+                                        text: "!";
+                                        fill-color: SemanticColors.warning;
+                                        fill-hover-color: SemanticColors.warning-hover;
+                                        font-size: item-font-px;
+                                        x: row.mini-x;
+                                        y: row-spacing;
+                                        width: row.saves-mini ? row.mini-w : 0px;
+                                        height: action-button-height;
+                                        clicked => { root.list-row-saves-requested(index); }
                                     }
 
                                     saves-btn := ActionButton {

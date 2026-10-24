@@ -480,6 +480,44 @@ fn a_save_folder_that_is_a_link_keeps_the_link() {
 }
 
 #[test]
+fn a_save_folder_that_is_a_link_into_another_ports_folder_is_refused_and_untouched() {
+    #[cfg(unix)]
+    {
+        let fx = Fixture::new();
+        let game = port("MyGame", Some(json!("Save")), None);
+        let dir = fx.game_dir(&game);
+        fill_saves(&dir.join("Save"), 1);
+        fx.update_backup(&game, "2026-10-24_12-00-00");
+        let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
+        // Later the save folder becomes a link into another port's folder in the library.
+        fs::remove_dir_all(dir.join("Save")).unwrap();
+        let other = fx.library.join("OtherPort/Saves");
+        fill_saves(&other, 5);
+        let before = snapshot(&other);
+        std::os::unix::fs::symlink(&other, dir.join("Save")).unwrap();
+        let err = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap_err().to_string();
+        assert!(err.contains("holds many apps"), "{err}");
+        assert_eq!(snapshot(&other), before, "the other port's saves are untouched");
+        assert!(fs::symlink_metadata(dir.join("Save")).unwrap().file_type().is_symlink());
+    }
+}
+
+#[test]
+fn restore_refuses_a_hand_edited_container_folder() {
+    let fx = Fixture::new();
+    let home = fx.root.join("home");
+    let share = home.join(".local/share");
+    fs::create_dir_all(&share).unwrap();
+    let game = port("MyGame", Some(json!(share.to_string_lossy())), None);
+    let dir = fx.game_dir(&game);
+    let targets = save_targets(&game, &dir, &fx.saves_backup, Some(&home));
+    assert!(matches!(&targets[0].target, Target::Refused(why) if why.contains("holds many apps")), "{targets:?}");
+    let steam = port("MyGame", Some(json!(home.join(".steam/steam/steamapps/compatdata/123").to_string_lossy())), None);
+    let targets = save_targets(&steam, &dir, &fx.saves_backup, Some(&home));
+    assert!(matches!(&targets[0].target, Target::Refused(why) if why.contains("holds many apps")), "{targets:?}");
+}
+
+#[test]
 fn when_one_folder_cannot_be_prepared_no_folder_changes() {
     #[cfg(unix)]
     {

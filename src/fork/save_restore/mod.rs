@@ -20,6 +20,7 @@
 //! on another system, or a `%VARIABLE%` not set here, is "no save folder known", and nothing is offered
 //! rather than a guess. This module only adds guards against replacing something far too broad.
 
+pub mod broad;
 pub mod running;
 pub mod view;
 pub mod zip_index;
@@ -132,19 +133,58 @@ fn resolve_target(value: &Value, game_dir: &Path, saves_backup_dir: &Path, home:
     if from_game_folder && !is_within(&path, game_dir) {
         return Target::Refused("points outside the game folder".into());
     }
-    if is_within(game_dir, &path) {
-        return Target::Refused("is the whole game folder".into());
-    }
-    if is_within(saves_backup_dir, &path) || is_within(&path, saves_backup_dir) {
-        return Target::Refused("overlaps the app's Saves Backup folder".into());
-    }
-    if home.is_some_and(|h| is_within(h, &path)) {
-        return Target::Refused("is your whole home folder".into());
-    }
-    if path.components().filter(|c| matches!(c, Component::Normal(_))).count() < 2 {
-        return Target::Refused("is too close to the top of the drive".into());
+    if let Some(why) = folder_problem(&path, game_dir, saves_backup_dir, home) {
+        return Target::Refused(why);
     }
     Target::Folder(path)
+}
+
+/// Why a (normalized) folder cannot be a save folder, or `None`: the guards against replacing something far too
+/// broad. Restore, the save finder and the symlink re-check all use this one function.
+pub fn folder_problem(path: &Path, game_dir: &Path, saves_backup_dir: &Path, home: Option<&Path>) -> Option<String> {
+    if is_within(game_dir, path) {
+        return Some("is the whole game folder".into());
+    }
+    if is_within(saves_backup_dir, path) || is_within(path, saves_backup_dir) {
+        return Some("overlaps the app's Saves Backup folder".into());
+    }
+    if home.is_some_and(|h| is_within(h, path)) {
+        return Some("is your whole home folder".into());
+    }
+    if let Some(why) = broad::container_reason(path, game_dir) {
+        return Some(why.into());
+    }
+    if path.components().filter(|c| matches!(c, Component::Normal(_))).count() < 2 {
+        return Some("is too close to the top of the drive".into());
+    }
+    None
+}
+
+/// Bytes in files under `path` (links not followed), stopping once past `cap` or after `max_entries` entries;
+/// the bool is true when it stopped early (the size is then only a lower bound).
+pub fn tree_size_capped(path: &Path, cap: u64, max_entries: usize) -> (u64, bool) {
+    let (mut total, mut seen) = (0u64, 0usize);
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(read) = fs::read_dir(&dir) else { continue };
+        for e in read.flatten() {
+            seen += 1;
+            if seen > max_entries || total > cap {
+                return (total, true);
+            }
+            match e.file_type() {
+                Ok(t) if t.is_dir() => stack.push(e.path()),
+                Ok(t) if t.is_file() => {
+                    total += e.metadata().map_or(0, |m| m.len());
+                    if total > cap {
+                        return (total, true);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (total, false)
 }
 
 /// Every save field the port declares, with where it points on this system.
@@ -642,7 +682,7 @@ pub fn space_problem(need: u64, free: Option<u64>, place: &Path) -> Option<Strin
 }
 
 /// Free bytes on the drive holding `path` (Linux; `None` elsewhere or when unknown).
-fn free_bytes(path: &Path) -> Option<u64> {
+pub(crate) fn free_bytes(path: &Path) -> Option<u64> {
     crate::fork::rom_screens::util::free_bytes(path)
 }
 
@@ -741,7 +781,17 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
         let meta = fs::symlink_metadata(shown);
         let real = match &meta {
             Ok(m) if m.file_type().is_symlink() => match fs::canonicalize(shown) {
-                Ok(p) if p.is_dir() => p,
+                Ok(p) if p.is_dir() => {
+                    // The link's destination gets the same guards as a save folder written out in full.
+                    let game_real = fs::canonicalize(input.game_dir).unwrap_or_else(|_| input.game_dir.to_path_buf());
+                    let home_real = input.home.map(|h| fs::canonicalize(h).unwrap_or_else(|_| h.to_path_buf()));
+                    let problem = folder_problem(&p, &game_real, input.saves_backup_dir, home_real.as_deref()).or_else(|| folder_problem(&p, input.game_dir, input.saves_backup_dir, input.home));
+                    if let Some(why) = problem {
+                        clean_up(&prepared);
+                        return Err(RestoreError::Failed(format!("{} is a link to {}, which {why}; nothing was changed", shown.display(), p.display())));
+                    }
+                    p
+                }
                 _ => {
                     clean_up(&prepared);
                     return Err(RestoreError::Failed(format!("{} is a link that does not lead to a folder", shown.display())));

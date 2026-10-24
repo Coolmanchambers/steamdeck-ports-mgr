@@ -45,9 +45,17 @@ pub(crate) fn open_folder_picker(
     on_chosen: impl Fn(&Rc<AppState>, &Router, PathBuf) + 'static,
     on_cancel: impl Fn(&Rc<AppState>, &Router) + 'static,
 ) {
+    let off_use_this = request.cursor_off_use_this;
     let picker = Picker::open_with(&request.start, request.purpose, Env::system(), request.extra_places);
     let session = Rc::new(Session { title: request.title, picker: RefCell::new(picker), on_chosen: Rc::new(on_chosen), on_cancel: Rc::new(on_cancel) });
-    let start = session.picker.borrow().row_of(Row::UseThis).unwrap_or(0);
+    let start = {
+        let picker = session.picker.borrow();
+        if off_use_this {
+            picker.row_of(Row::Folder(0)).or_else(|| picker.row_of(Row::Cancel)).unwrap_or(0)
+        } else {
+            picker.row_of(Row::UseThis).unwrap_or(0)
+        }
+    };
     show(app, router, session, start);
 }
 
