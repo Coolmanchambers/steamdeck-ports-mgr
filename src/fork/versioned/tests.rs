@@ -111,6 +111,11 @@ impl Drop for World {
     }
 }
 
+/// Saves known on this system, outside the port folder: release folders may move.
+fn known() -> SaveInfo {
+    SaveInfo { folders: vec![PathBuf::from("/nowhere/saves")], folders_may_move: true }
+}
+
 fn pending(before: &[&str], release: &[&str]) -> Pending {
     Pending { before: Before { entries: before.iter().map(|s| s.to_string()).collect(), target: None }, release: release.iter().map(|s| s.to_string()).collect() }
 }
@@ -172,7 +177,7 @@ fn only_old_programs_of_the_same_family_are_superseded() {
     put(&dir.join("Save").join("slot1.sav"), b"save");
     put(&dir.join("mods").join("m.zip"), b"mod");
     let before = [OLD, "Game-Editor-v1.0-linux-x86_64.AppImage", "game.AppImage", "Game-v1.0-linux-x86_64 (1).AppImage", "Game-v1.0.o2r", "Game-v1.0.z64", "Game-v1.0.ini", "Save", "mods"];
-    let plan = plan(&dir, &pending(&before, &[NEW]), &[]);
+    let plan = plan(&dir, &pending(&before, &[NEW]), &known());
     assert_eq!(moved_names(&plan), [(OLD, NEW)]);
     assert!(plan.kept.is_empty(), "{:?}", plan.kept);
     assert_eq!(plan.moves[0].version, "v1.0");
@@ -184,7 +189,7 @@ fn an_entry_that_is_in_the_new_release_or_hidden_is_not_superseded() {
     let dir = temp("plan_same_name");
     put(&dir.join(NEW), &elf("new"));
     put(&dir.join(".Game-v1.0.AppImage"), &elf("hidden"));
-    let plan = plan(&dir, &pending(&[NEW, ".Game-v1.0.AppImage"], &[NEW]), &[]);
+    let plan = plan(&dir, &pending(&[NEW, ".Game-v1.0.AppImage"], &[NEW]), &known());
     assert!(plan.moves.is_empty() && plan.kept.is_empty(), "{plan:?}");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -196,7 +201,7 @@ fn several_appimages_each_go_to_their_closest_successor() {
     for n in names {
         put(&dir.join(n), &elf(n));
     }
-    let mut plan = plan(&dir, &pending(&names[..2], &names[2..]), &[]);
+    let mut plan = plan(&dir, &pending(&names[..2], &names[2..]), &known());
     plan.moves.sort_by(|a, b| a.old.cmp(&b.old));
     assert_eq!(moved_names(&plan), [(names[1], names[3]), (names[0], names[2])]);
     let _ = fs::remove_dir_all(&dir);
@@ -208,7 +213,7 @@ fn an_old_file_two_new_files_fit_equally_is_left_with_a_reason() {
     for n in ["Game-v1.0.AppImage", "Game-v1.1.AppImage", "Game-v1.2.AppImage"] {
         put(&dir.join(n), &elf(n));
     }
-    let plan = plan(&dir, &pending(&["Game-v1.0.AppImage"], &["Game-v1.1.AppImage", "Game-v1.2.AppImage"]), &[]);
+    let plan = plan(&dir, &pending(&["Game-v1.0.AppImage"], &["Game-v1.1.AppImage", "Game-v1.2.AppImage"]), &known());
     assert!(plan.moves.is_empty());
     assert_eq!(kept_names(&plan), ["Game-v1.0.AppImage"]);
     let _ = fs::remove_dir_all(&dir);
@@ -220,20 +225,86 @@ fn a_versioned_release_folder_moves_only_when_it_holds_the_release_alone() {
     put(&dir.join("Game-v1.0").join("game"), &elf("old"));
     put(&dir.join("Game-v1.0").join("lib").join("libgame.so"), b"lib");
     put(&dir.join("Game-v1.1").join("game"), &elf("new"));
-    let plan_ok = plan(&dir, &pending(&["Game-v1.0"], &["Game-v1.1"]), &[]);
+    let plan_ok = plan(&dir, &pending(&["Game-v1.0"], &["Game-v1.1"]), &known());
     assert_eq!(moved_names(&plan_ok), [("Game-v1.0", "Game-v1.1")]);
     assert!(plan_ok.moves[0].dir);
 
-    for (extra, data) in [("saves/slot.sav", b"s".as_slice()), ("config.json", b"{}".as_slice()), ("assets/game.o2r", b"PK".as_slice()), ("mods/a.zip", b"m".as_slice())] {
+    let keep_files = [
+        ("saves/slot.sav", b"s".as_slice()),
+        ("config.json", b"{}".as_slice()),
+        ("assets/game.o2r", b"PK".as_slice()),
+        ("mods/a.zip", b"m".as_slice()),
+        ("prod.keys", b"k".as_slice()),
+        ("rom.bin", b"r".as_slice()),
+        ("data/game.dat", b"d".as_slice()),
+        ("dump.zip", b"PK".as_slice()),
+        ("dump.7z", b"7z".as_slice()),
+        ("disc.img", b"i".as_slice()),
+        ("disc.iso", b"i".as_slice()),
+        ("disc.chd", b"c".as_slice()),
+        ("game.wad", b"w".as_slice()),
+        ("card.mcr", b"m".as_slice()),
+        ("state.srm", b"s".as_slice()),
+        ("user.db", b"d".as_slice()),
+    ];
+    for (extra, data) in keep_files {
         let keep = dir.join("keep");
         let _ = fs::remove_dir_all(&keep);
         put(&keep.join("Game-v1.0").join("game"), &elf("old"));
         put(&keep.join("Game-v1.0").join(extra), data);
         put(&keep.join("Game-v1.1").join("game"), &elf("new"));
-        let plan = plan(&keep, &pending(&["Game-v1.0"], &["Game-v1.1"]), &[]);
+        let plan = plan(&keep, &pending(&["Game-v1.0"], &["Game-v1.1"]), &known());
         assert!(plan.moves.is_empty(), "{extra}");
         assert_eq!(kept_names(&plan), ["Game-v1.0"], "{extra}");
     }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_versioned_folder_without_a_program_is_not_a_release_folder() {
+    let dir = temp("plan_no_program");
+    put(&dir.join("Game-v1.0").join("lib").join("libgame.so"), b"lib");
+    put(&dir.join("Game-v1.0").join("readme.txt"), b"r");
+    put(&dir.join("Game-v1.1").join("game"), &elf("new"));
+    let plan = plan(&dir, &pending(&["Game-v1.0"], &["Game-v1.1"]), &known());
+    assert!(plan.moves.is_empty());
+    assert_eq!(plan.kept, [("Game-v1.0".to_string(), "it holds no program".to_string())]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn without_a_known_save_folder_folders_stay_and_program_files_still_move() {
+    let dir = temp("plan_no_saves");
+    put(&dir.join(OLD), &elf("old"));
+    put(&dir.join(NEW), &elf("new"));
+    put(&dir.join("Game-v1.0").join("game"), &elf("old"));
+    put(&dir.join("Game-v1.1").join("game"), &elf("new"));
+    let no_save_field = save_info(&port(None), &dir);
+    assert!(!no_save_field.folders_may_move);
+    let plan = plan(&dir, &pending(&[OLD, "Game-v1.0"], &[NEW, "Game-v1.1"]), &no_save_field);
+    assert_eq!(moved_names(&plan), [(OLD, NEW)]);
+    assert_eq!(kept_names(&plan), ["Game-v1.0"]);
+    assert!(plan.kept[0].1.contains("save folder is not known"), "{:?}", plan.kept);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// Linux only: `%APPDATA%` is set on Windows, so there the same value is a known folder.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_save_folder_unknown_on_linux_keeps_folders_in_place() {
+    let dir = temp("plan_unknown_on_linux");
+    put(&dir.join(OLD), &elf("old"));
+    put(&dir.join(NEW), &elf("new"));
+    put(&dir.join("Game-v1.0").join("game"), &elf("old"));
+    put(&dir.join("Game-v1.1").join("game"), &elf("new"));
+    let mut p = port(Some("saves"));
+    p.save2 = Some(serde_json::json!("%APPDATA%\\TwilitRealm"));
+    let info = save_info(&p, &dir);
+    assert_eq!(info.folders, [dir.join("saves")], "the known one still protects its folder");
+    assert!(!info.folders_may_move, "one save field unknown here is enough to keep folders");
+    let plan = plan(&dir, &pending(&[OLD, "Game-v1.0"], &[NEW, "Game-v1.1"]), &info);
+    assert_eq!(moved_names(&plan), [(OLD, NEW)]);
+    assert_eq!(kept_names(&plan), ["Game-v1.0"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -244,7 +315,7 @@ fn a_release_folder_holding_a_link_stays() {
     put(&dir.join("Game-v1.0").join("game"), &elf("old"));
     std::os::unix::fs::symlink("/somewhere/rom.z64", dir.join("Game-v1.0").join("rom.z64")).unwrap();
     put(&dir.join("Game-v1.1").join("game"), &elf("new"));
-    let plan = plan(&dir, &pending(&["Game-v1.0"], &["Game-v1.1"]), &[]);
+    let plan = plan(&dir, &pending(&["Game-v1.0"], &["Game-v1.1"]), &known());
     assert!(plan.moves.is_empty());
     assert_eq!(kept_names(&plan), ["Game-v1.0"]);
     let _ = fs::remove_dir_all(&dir);
@@ -256,13 +327,13 @@ fn an_entry_named_by_the_save_field_or_holding_it_never_moves() {
     put(&dir.join("Game-v1.0").join("slot.sav"), b"save");
     put(&dir.join("Game-v1.1").join("game"), &elf("new"));
     let p = port(Some("Game-v1.0"));
-    let saves = save_folders(&p, &dir);
+    let saves = save_info(&p, &dir);
     let plan_a = plan(&dir, &pending(&["Game-v1.0"], &["Game-v1.1"]), &saves);
     assert!(plan_a.moves.is_empty());
     assert_eq!(kept_names(&plan_a), ["Game-v1.0"]);
 
     let p = port(Some("Game-v1.0/data/slots"));
-    let saves = save_folders(&p, &dir);
+    let saves = save_info(&p, &dir);
     fs::create_dir_all(dir.join("Game-v1.0/data/slots")).unwrap();
     let plan_b = plan(&dir, &pending(&["Game-v1.0"], &["Game-v1.1"]), &saves);
     assert!(plan_b.moves.is_empty(), "a folder holding the save folder stays");
@@ -276,7 +347,7 @@ fn when_the_saves_are_the_game_folder_program_files_still_move_but_folders_stay(
     put(&dir.join(NEW), &elf("new"));
     put(&dir.join("Game-v1.0").join("game"), &elf("old"));
     put(&dir.join("Game-v1.1").join("game"), &elf("new"));
-    let saves = save_folders(&port(Some(".")), &dir);
+    let saves = save_info(&port(Some(".")), &dir);
     let plan = plan(&dir, &pending(&[OLD, "Game-v1.0"], &[NEW, "Game-v1.1"]), &saves);
     assert_eq!(moved_names(&plan), [(OLD, NEW)]);
     assert_eq!(kept_names(&plan), ["Game-v1.0"]);
@@ -311,8 +382,11 @@ fn a_versioned_update_moves_the_old_file_and_points_favorite_and_steam_at_the_ne
     assert_eq!(s[0].start_dir_path(), w.game.to_str().unwrap());
     assert_eq!(s[1].exe_path(), "/usr/bin/chiaki", "other shortcuts untouched");
     assert_eq!(crate::fork::backups::list_backups(&w.vdf).unwrap().len(), 1, "shortcuts.vdf backed up first");
-    let text = out.summary("Game", Some("v1.1")).unwrap();
-    assert!(text.starts_with("Updated to v1.1. The old version is kept in .previous."), "{text}");
+    let text = out.summary("Game", "game", Some("v1.1")).unwrap();
+    assert!(
+        text.starts_with("Game is now v1.1. The version you had (v1.0) is kept in a hidden folder (.previous) inside the game folder; to go back, use Info > Select version."),
+        "{text}"
+    );
     assert!(text.contains("Steam shortcut now starts the new version"), "{text}");
 }
 
@@ -369,8 +443,10 @@ fn while_steam_runs_the_repoint_is_queued_and_the_old_file_moves_once_it_is_appl
     let queued = steam_queue::load(&queue_file).queue;
     assert_eq!(queued.entries.len(), 1);
     assert_eq!(queued.entries[0].kind, QueuedKind::Repoint);
-    let text = out.summary("Game", Some("v1.1")).unwrap();
-    assert!(text.contains("Steam is running"), "{text}");
+    assert_eq!(out.waiting, [OLD]);
+    let text = out.summary("Game", "game", Some("v1.1")).unwrap();
+    assert!(text.starts_with("Game is now v1.1.\nSteam is running, so the shortcut change waits. Close Steam (or come back to Desktop Mode) and this app will ask to apply it; until then Steam starts the old version, which stays in place."), "{text}");
+    assert!(!text.contains("left where it is") && !text.contains(OLD), "no duplicate line, no file names: {text}");
 
     // Desktop Mode, Steam closed: the queue is applied, the old file moves.
     let catalog = [p.clone()];
@@ -418,7 +494,7 @@ fn an_update_that_fails_halfway_leaves_everything_as_it_was() {
 #[test]
 fn when_the_new_program_is_not_where_the_old_one_was_nothing_moves() {
     let w = World::new("e2e_unverified");
-    let p = port(None);
+    let p = port(Some("saves"));
     put(&w.game.join("Game-v1.0").join("bin").join("game"), &elf("old"));
     put(&w.game.join("Game-v1.1").join("game"), &elf("new"));
     w.shortcut_to("Game-v1.0/bin/game");
@@ -432,13 +508,14 @@ fn when_the_new_program_is_not_where_the_old_one_was_nothing_moves() {
     assert!(w.game.join("Game-v1.0").join("bin").join("game").is_file());
     assert_eq!(out.new_favorite, None);
     assert_eq!(fs::read(&w.vdf).unwrap(), vdf_before);
-    assert!(out.summary("Game", None).unwrap().contains("not found where expected"));
+    let text = out.summary("Game", "game", None).unwrap();
+    assert!(text.contains("The old version (v1.0) was left where it is: the new version's program was not found where expected"), "{text}");
 }
 
 #[test]
 fn a_release_folder_update_repoints_program_and_start_folder() {
     let w = World::new("e2e_folder");
-    let p = port(None);
+    let p = port(Some("saves"));
     put(&w.game.join("Game-v1.0").join("game"), &elf("old"));
     put(&w.game.join("Game-v1.1").join("game"), &elf("new"));
     let exe = w.game.join("Game-v1.0").join("game");
@@ -507,8 +584,11 @@ fn every_previous_version_is_kept_and_the_summary_says_how_much_room_the_older_o
     assert_eq!(fs::read(w.previous("v0.8", "settings.ini")).unwrap(), b"[mine]");
     let older = (elf("v0.9").len() + elf("v0.8").len() + b"[mine]".len()) as u64;
     assert_eq!(out.older_bytes, older, "v0.9 and v0.8, not the v1.0 this update kept");
-    let text = out.summary("Game", Some("v1.1")).unwrap();
-    assert!(text.contains("Older versions in .previous use 1 MB; remove them from the port's folder if you need the room."), "{text}");
+    let text = out.summary("Game", "game", Some("v1.1")).unwrap();
+    assert!(
+        text.contains("Older versions in .previous use 1 MB (in Desktop Mode's file manager, Ctrl+H shows hidden folders); remove them from the port's folder if you need the room."),
+        "{text}"
+    );
 }
 
 #[test]
@@ -532,6 +612,8 @@ fn going_back_with_select_version_keeps_the_newer_one_in_previous() {
     assert_eq!(w.shortcuts()[0].app_id, Some(APP_ID));
     assert_eq!(fs::read(w.previous("v1.0", OLD)).unwrap(), elf("v1.0"), "the earlier copy of v1.0 stays too");
     assert!(back.older_bytes > 0);
+    let text = back.summary("Game", "game", Some("v1.0")).unwrap();
+    assert!(text.starts_with("Game is now v1.0. The version you had (v1.1) is kept in a hidden folder (.previous)"), "{text}");
 }
 
 #[test]
@@ -555,7 +637,7 @@ fn a_plain_update_with_unchanged_names_says_nothing() {
     w.install(&p, "game.AppImage", &elf("new")).unwrap();
     let out = w.finish(&p, None, &no_steam, false);
     assert!(out.is_empty());
-    assert_eq!(out.summary("Game", Some("v2")), None);
+    assert_eq!(out.summary("Game", "game", Some("v2")), None);
 }
 
 #[test]
@@ -567,4 +649,136 @@ fn a_queued_port_move_is_not_mistaken_for_a_version_change() {
     assert_eq!(after_queued_repoint(&w.game, &other, &w.library, &[port(None)], &w.home), None);
     assert_eq!(after_queued_repoint(&w.game.join(OLD), &other.join(OLD), &w.library, &[port(None)], &w.home), None);
     assert!(w.game.join(OLD).is_file());
+}
+
+#[test]
+fn sizes_read_in_megabytes_and_above_1000_mb_in_gigabytes() {
+    assert_eq!(size_text(1), "1 MB");
+    assert_eq!(size_text(999_000_000), "999 MB");
+    assert_eq!(size_text(1_000_000_000), "1000 MB");
+    assert_eq!(size_text(1_260_000_000), "1.3 GB");
+}
+
+#[test]
+fn script_names_are_replaced_only_where_they_name_an_entry_of_the_port_folder() {
+    let old = "Game-v1.0";
+    let new = "Game-v1.1";
+    for (line, want) in [
+        ("exec ./Game-v1.0/game \"$@\"", Some("exec ./Game-v1.1/game \"$@\"")),
+        ("cd Game-v1.0 && ./game", Some("cd Game-v1.1 && ./game")),
+        ("\"$HERE/Game-v1.0/game\"", Some("\"$HERE/Game-v1.1/game\"")),
+        ("\"${DIR}/Game-v1.0/game\"", Some("\"${DIR}/Game-v1.1/game\"")),
+        ("\"$(dirname \"$0\")\"/Game-v1.0/game", Some("\"$(dirname \"$0\")\"/Game-v1.1/game")),
+        ("BIN=Game-v1.0", Some("BIN=Game-v1.1")),
+        ("SAVES=./Game-v1.0-saves", None),
+        ("CONF=~/.local/share/Game-v1.0", None),
+        ("cp Game-v1.0.cfg /tmp", None),
+        ("MyGame-v1.0", None),
+        ("/Game-v1.0/game", None),
+    ] {
+        assert_eq!(replace_names(line, old, new).as_deref(), want, "{line}");
+    }
+}
+
+#[test]
+fn a_launcher_script_keeps_its_other_lines_when_its_program_moves() {
+    let w = World::new("e2e_script_bounds");
+    let p = port(None);
+    put(&w.game.join(OLD), &elf("old"));
+    let script = format!("#!/bin/sh\nCONF=~/.local/share/{OLD}\ncp ./{OLD}.cfg /tmp\nexec ./{OLD}\n");
+    put(&w.game.join("launch.sh"), script.as_bytes());
+    w.install(&p, NEW, &elf("new")).unwrap();
+    w.finish(&p, Some("launch.sh"), &no_steam, false);
+    assert_eq!(fs::read_to_string(w.game.join("launch.sh")).unwrap(), format!("#!/bin/sh\nCONF=~/.local/share/{OLD}\ncp ./{OLD}.cfg /tmp\nexec ./{NEW}\n"));
+}
+
+#[test]
+fn a_launcher_script_is_updated_when_the_queued_steam_change_moves_the_old_file() {
+    let w = World::new("e2e_script_queue");
+    let p = port(None);
+    put(&w.game.join(OLD), &elf("old"));
+    put(&w.game.join("launch.sh"), format!("#!/bin/sh\nexec ./{OLD}\n").as_bytes());
+    w.shortcut_to(OLD);
+    w.install(&p, NEW, &elf("new")).unwrap();
+
+    let out = w.finish(&p, Some("launch.sh"), &steam_up, false);
+    assert_eq!(out.waiting, [OLD]);
+    assert_eq!(fs::read_to_string(w.game.join("launch.sh")).unwrap(), format!("#!/bin/sh\nexec ./{OLD}\n"), "the old file is still there, so the script still works");
+
+    let catalog = [p.clone()];
+    let inputs = ApplyInputs { home: &w.home, library_dir: &w.library, catalog: &catalog, favorite_exe: &|_| None, cache_dir: None, settings: &w.settings, game_mode: false };
+    let applied = steam_queue::apply_queue_file(&steam_queue::queue_path(&w.app), &inputs, &no_steam, SystemTime::now());
+    assert!(w.previous("v1.0", OLD).is_file(), "{}", applied.text);
+    assert_eq!(fs::read_to_string(w.game.join("launch.sh")).unwrap(), format!("#!/bin/sh\nexec ./{NEW}\n"));
+    assert!(w.previous("v1.0", "launch.sh.before-update").is_file());
+    assert!(applied.text.contains("launch.sh now names the new version"), "{}", applied.text);
+}
+
+#[test]
+fn the_queued_repoint_hook_leaves_everything_that_is_not_a_versioned_pair_alone() {
+    let w = World::new("hook_guards");
+    let p = port(None);
+    put(&w.game.join(OLD), &elf("old"));
+    put(&w.game.join(NEW), &elf("new"));
+    put(&w.game.join(".Game-v0.9.AppImage"), &elf("hidden"));
+    put(&w.game.join("Other-v1.1.AppImage"), &elf("other"));
+    let cat = [p.clone()];
+    let hook = |from: &str, to: &str, catalog: &[Port]| after_queued_repoint(&w.game.join(from), &w.game.join(to), &w.library, catalog, &w.home);
+    assert_eq!(hook(OLD, OLD, &cat), None, "same file");
+    assert_eq!(hook(OLD, "Game-v1.2.AppImage", &cat), None, "the new file is missing");
+    assert_eq!(hook(".Game-v0.9.AppImage", NEW, &cat), None, "hidden");
+    assert_eq!(hook(OLD, "Other-v1.1.AppImage", &cat), None, "another family");
+    assert_eq!(hook(OLD, NEW, &[]), None, "a port the catalog does not know");
+    w.shortcut_to(OLD);
+    assert_eq!(hook(OLD, NEW, &cat), None, "a shortcut still points at it");
+    assert!(w.game.join(OLD).is_file());
+    fs::remove_file(&w.vdf).unwrap();
+    assert!(hook(OLD, NEW, &cat).unwrap().contains("the old version (v1.0) is now kept in .previous/v1.0"));
+    assert!(w.previous("v1.0", OLD).is_file());
+}
+
+#[test]
+fn two_updates_while_steam_runs_chain_into_one_change() {
+    let w = World::new("e2e_chain");
+    let p = port(None);
+    let v12 = "Game-v1.2-linux-x86_64.AppImage";
+    put(&w.game.join(OLD), &elf("v1.0"));
+    w.shortcut_to(OLD);
+    w.install(&p, NEW, &elf("v1.1")).unwrap();
+    let first = w.finish(&p, Some(OLD), &steam_up, false);
+    assert_eq!(first.waiting, [OLD]);
+
+    w.install(&p, v12, &elf("v1.2")).unwrap();
+    let second = w.finish(&p, Some(NEW), &steam_up, false);
+    assert!(w.previous("v1.1", NEW).is_file(), "nothing points at v1.1, so it moves at once");
+    assert_eq!(second.waiting, [OLD], "v1.0 waits for Steam");
+    assert_eq!(second.new_favorite.as_deref(), Some(v12));
+
+    let catalog = [p.clone()];
+    let inputs = ApplyInputs { home: &w.home, library_dir: &w.library, catalog: &catalog, favorite_exe: &|_| None, cache_dir: None, settings: &w.settings, game_mode: false };
+    let applied = steam_queue::apply_queue_file(&steam_queue::queue_path(&w.app), &inputs, &no_steam, SystemTime::now());
+    assert!(applied.wrote && !applied.refused, "{}", applied.text);
+    assert_eq!(w.shortcuts()[0].exe_path(), w.game.join(v12).to_str().unwrap(), "A to B, then B to C, ends at C");
+    assert_eq!(w.shortcuts()[0].app_id, Some(APP_ID));
+    assert!(w.previous("v1.0", OLD).is_file(), "{}", applied.text);
+    assert!(!steam_queue::queue_path(&w.app).exists(), "the queue is empty now");
+}
+
+#[test]
+fn a_change_that_cancels_out_in_the_queue_leaves_nothing_waiting() {
+    let w = World::new("e2e_cancel");
+    let p = port(None);
+    put(&w.game.join(OLD), &elf("v1.0"));
+    w.shortcut_to(OLD);
+    w.install(&p, NEW, &elf("v1.1")).unwrap();
+    let first = w.finish(&p, Some(OLD), &steam_up, false);
+    assert_eq!(first.waiting, [OLD]);
+    // Back to v1.0 before Steam closes: the queued v1.0 -> v1.1 change cancels out.
+    w.install(&p, OLD, &elf("v1.0 again")).unwrap();
+    let back = w.finish(&p, Some(NEW), &steam_up, false);
+    assert!(back.waiting.is_empty(), "{back:?}");
+    assert!(!back.summary("Game", "game", Some("v1.0")).unwrap().contains("shortcut change waits"));
+    assert!(w.previous("v1.1", NEW).is_file());
+    assert_eq!(w.shortcuts()[0].exe_path(), w.game.join(OLD).to_str().unwrap(), "the shortcut never left v1.0");
+    assert!(!steam_queue::queue_path(&w.app).exists(), "the queued v1.0 -> v1.1 change is gone: applied later it would point Steam into .previous");
 }

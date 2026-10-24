@@ -41,5 +41,5 @@ pub(crate) fn after_install(app: &Rc<AppState>, key: &str, tag: Option<&str>) ->
     for (name, why) in &outcome.kept {
         eprintln!("versioned update: {} kept {name} in place: {why}", port.folder);
     }
-    outcome.summary(port.display_name(), tag)
+    outcome.summary(port.display_name(), &port.folder, tag)
 }

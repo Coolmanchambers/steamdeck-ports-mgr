@@ -41,10 +41,12 @@ pub const PREVIOUS: &str = ".previous";
 
 /// Endings that make a file a program on their own (`.bin` is left out: disc images use it).
 const PROGRAM_ENDINGS: [&str; 5] = [".appimage", ".x86_64", ".x86", ".sh", ".run"];
-/// Files that mark a folder as holding more than a release: settings, packed game data, game files.
-const KEEP_EXTENSIONS: [&str; 30] = [
-    "o2r", "otr", "ini", "cfg", "conf", "json", "toml", "yaml", "yml", "xml", "sav", "srm", "z64", "n64", "v64", "iso", "cue", "chd", "gcm", "rvz",
-    "wbfs", "nds", "gba", "gbc", "gb", "sfc", "smc", "nes", "xci", "nsp",
+/// Files that mark a folder as holding more than a release: settings, saves, keys, packed game data,
+/// archives, disc images and game files.
+const KEEP_EXTENSIONS: &[&str] = &[
+    "o2r", "otr", "ini", "cfg", "conf", "json", "toml", "yaml", "yml", "xml", "sav", "srm", "mcr", "mcd", "sol", "db", "keys", "dat", "bin", "img",
+    "iso", "cue", "chd", "gcm", "rvz", "wbfs", "pbp", "pkg", "wad", "cia", "3ds", "zip", "7z", "rar", "z64", "n64", "v64", "nds", "gba", "gbc",
+    "gb", "sfc", "smc", "nes", "xci", "nsp",
 ];
 /// How many entries a folder check looks at before giving up (and keeping the folder).
 const MAX_FOLDER_ENTRIES: usize = 20_000;
@@ -115,10 +117,12 @@ pub fn is_program_file(path: &Path) -> bool {
     (read >= 4 && head == *b"\x7fELF") || (read >= 2 && head[..2] == *b"#!")
 }
 
-/// Why a versioned folder must stay where it is, if it must.
+/// Why a versioned folder must stay where it is, if it must. A folder with no program in it is not a
+/// release folder and stays too.
 fn folder_must_stay(dir: &Path) -> Option<&'static str> {
     let mut stack = vec![dir.to_path_buf()];
     let mut seen = 0usize;
+    let mut has_program = false;
     while let Some(d) = stack.pop() {
         let Ok(entries) = fs::read_dir(&d) else { return Some("it could not be read") };
         for e in entries.flatten() {
@@ -136,26 +140,40 @@ fn folder_must_stay(dir: &Path) -> Option<&'static str> {
                     return Some("it holds mods or saves");
                 }
                 stack.push(e.path());
-            } else if let Some(ext) = Path::new(&name).extension().and_then(|x| x.to_str()) {
-                if KEEP_EXTENSIONS.contains(&ext) {
-                    return Some("it holds settings or game files");
+            } else {
+                if let Some(ext) = Path::new(&name).extension().and_then(|x| x.to_str()) {
+                    if KEEP_EXTENSIONS.contains(&ext) {
+                        return Some("it holds settings, saves or game files");
+                    }
                 }
+                has_program = has_program || is_program_file(&e.path());
             }
         }
     }
-    None
+    (!has_program).then_some("it holds no program")
 }
 
-/// The port's save folders as resolved on this system (`save`, `save2`).
-pub fn save_folders(port: &Port, game_dir: &Path) -> Vec<PathBuf> {
-    [port.save.as_ref(), port.save2.as_ref()]
-        .into_iter()
-        .flatten()
-        .filter_map(|v| match save_location(v, game_dir) {
-            SaveLocation::Known(p) => Some(p),
-            _ => None,
-        })
-        .collect()
+/// Where the port keeps its saves on this system.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SaveInfo {
+    /// `save` and `save2` as resolved here.
+    pub folders: Vec<PathBuf>,
+    /// Every save field the port has resolves here (and it has one). Only then can a release folder move:
+    /// otherwise the saves may sit inside it.
+    pub folders_may_move: bool,
+}
+
+pub fn save_info(port: &Port, game_dir: &Path) -> SaveInfo {
+    let mut info = SaveInfo { folders: Vec::new(), folders_may_move: true };
+    for v in [port.save.as_ref(), port.save2.as_ref()].into_iter().flatten() {
+        match save_location(v, game_dir) {
+            SaveLocation::Known(p) => info.folders.push(p),
+            SaveLocation::UnknownOnLinux => info.folders_may_move = false,
+            SaveLocation::NotListed => {}
+        }
+    }
+    info.folders_may_move &= !info.folders.is_empty();
+    info
 }
 
 fn real(p: &Path) -> PathBuf {
@@ -242,8 +260,9 @@ pub struct Plan {
 }
 
 /// Which entries of the old release the new one supersedes. Reads the folder, changes nothing.
-pub fn plan(game_dir: &Path, pending: &Pending, saves: &[PathBuf]) -> Plan {
+pub fn plan(game_dir: &Path, pending: &Pending, save_info: &SaveInfo) -> Plan {
     let mut out = Plan::default();
+    let saves = save_info.folders.as_slice();
     let saves_hold_the_folder = saves.iter().any(|s| real(game_dir).starts_with(real(s)));
     let new_entries: Vec<(String, Name, bool)> = pending
         .release
@@ -281,6 +300,10 @@ pub fn plan(game_dir: &Path, pending: &Pending, saves: &[PathBuf]) -> Plan {
             out.kept.push((old.clone(), "it is or holds a save folder".into()));
             continue;
         }
+        if is_dir && !save_info.folders_may_move {
+            out.kept.push((old.clone(), "this game's save folder is not known on this system, so its folders stay where they are".into()));
+            continue;
+        }
         if is_dir {
             if let Some(why) = folder_must_stay(&old_path) {
                 out.kept.push((old.clone(), why.into()));
@@ -314,9 +337,13 @@ pub struct Outcome {
     pub moved: Vec<(Supersede, String)>,
     /// The new launch target (relative), when the old one was superseded and the new one exists.
     pub target: Option<String>,
+    /// The version the port had before (the old launch target's, else the first one moved or waiting).
+    pub had: Option<String>,
     /// Set the port's favorite program to this.
     pub new_favorite: Option<String>,
     pub steam: SteamReport,
+    /// Old entries that stay until their queued Steam change is applied (`after_queued_repoint`).
+    pub waiting: Vec<String>,
     pub kept: Vec<(String, String)>,
     /// Launcher scripts now naming the new file.
     pub scripts: Vec<String>,
@@ -325,32 +352,55 @@ pub struct Outcome {
     pub notes: Vec<String>,
 }
 
+/// `3 MB` (rounded up, so a small file never reads as `0 MB`), or `1.2 GB` above 1000 MB.
+pub fn size_text(bytes: u64) -> String {
+    let mb = bytes.div_ceil(1_000_000);
+    if mb > 1000 {
+        format!("{:.1} GB", bytes as f64 / 1e9)
+    } else {
+        format!("{mb} MB")
+    }
+}
+
 impl Outcome {
     pub fn is_empty(&self) -> bool {
-        self.moved.is_empty() && self.target.is_none() && self.kept.is_empty() && self.notes.is_empty() && self.scripts.is_empty()
+        self.moved.is_empty() && self.target.is_none() && self.waiting.is_empty() && self.kept.is_empty() && self.notes.is_empty() && self.scripts.is_empty()
     }
 
-    /// The text shown after the update, `None` when there is nothing to say.
-    pub fn summary(&self, port_name: &str, tag: Option<&str>) -> Option<String> {
+    /// Something the user should know even when the game started right after the update.
+    pub fn needs_attention(&self) -> bool {
+        !self.waiting.is_empty() || !self.kept.is_empty() || !self.notes.is_empty() || !self.steam.skipped.is_empty() || !self.steam.failed.is_empty()
+    }
+
+    /// The text shown after the update, `None` when there is nothing to say. `folder` is the port's
+    /// folder name, as the file manager shows it.
+    pub fn summary(&self, port_name: &str, folder: &str, tag: Option<&str>) -> Option<String> {
         if self.is_empty() {
             return None;
         }
         let mut lines = Vec::new();
-        let version = tag.map(str::to_string).or_else(|| self.target.as_deref().and_then(|t| parse(t.split('/').next().unwrap_or(t)).version));
-        let to = version.map(|v| format!("Updated to {v}.")).unwrap_or_else(|| "Updated.".to_string());
+        let now = tag
+            .map(str::to_string)
+            .or_else(|| self.target.as_deref().and_then(|t| parse(t.split('/').next().unwrap_or(t)).version))
+            .or_else(|| self.moved.first().and_then(|(m, _)| parse(&m.new).version));
+        let now_line = match &now {
+            Some(v) => format!("{port_name} is now {v}."),
+            None => format!("{port_name} was updated."),
+        };
         if !self.moved.is_empty() {
-            lines.push(format!("{to} The old version is kept in .previous."));
-        } else if self.target.is_some() {
-            lines.push(to);
+            let had = self.had.as_ref().map(|v| format!("The version you had ({v})")).unwrap_or_else(|| "The version you had".to_string());
+            lines.push(format!("{now_line} {had} is kept in a hidden folder (.previous) inside the {folder} folder; to go back, use Info > Select version."));
+        } else if self.target.is_some() || !self.waiting.is_empty() {
+            lines.push(now_line);
         }
-        let written = self.steam.changed_count();
-        if written > 0 {
+        if self.steam.changed_count() > 0 {
             lines.push("The Steam shortcut now starts the new version (artwork and play time kept).".into());
         }
-        if !self.steam.queued.is_empty() {
-            lines.push(format!(
-                "Steam is running, so the shortcut change waits until this app runs in Desktop Mode with Steam closed. Until then, starting {port_name} from Steam runs the old version, so it stays in place until then."
-            ));
+        if !self.waiting.is_empty() {
+            lines.push(
+                "Steam is running, so the shortcut change waits. Close Steam (or come back to Desktop Mode) and this app will ask to apply it; until then Steam starts the old version, which stays in place."
+                    .into(),
+            );
         }
         for (name, why) in &self.steam.skipped {
             lines.push(format!("Steam: {name} was left alone: {why}."));
@@ -362,10 +412,14 @@ impl Outcome {
             lines.push(format!("{s} now names the new version (the original is in .previous)."));
         }
         for (name, why) in &self.kept {
-            lines.push(format!("{name} was left where it is: {why}."));
+            let label = parse(name).version.map(|v| format!("The old version ({v})")).unwrap_or_else(|| name.clone());
+            lines.push(format!("{label} was left where it is: {why}."));
         }
         if self.older_bytes > 0 {
-            lines.push(format!("Older versions in .previous use {}; remove them from the port's folder if you need the room.", megabytes(self.older_bytes)));
+            lines.push(format!(
+                "Older versions in .previous use {} (in Desktop Mode's file manager, Ctrl+H shows hidden folders); remove them from the port's folder if you need the room.",
+                size_text(self.older_bytes)
+            ));
         }
         lines.extend(self.notes.iter().cloned());
         Some(lines.join("\n"))
@@ -405,11 +459,6 @@ fn older_versions_bytes(game_dir: &Path, skip: &[PathBuf]) -> u64 {
     fs::read_dir(game_dir.join(PREVIOUS)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| !skip.contains(p)).map(|p| tree_bytes(&p)).sum()
 }
 
-/// `3 MB`, rounded up so a small file never reads as `0 MB`.
-fn megabytes(bytes: u64) -> String {
-    format!("{} MB", bytes.div_ceil(1_000_000))
-}
-
 /// Moves `entry` (a top-level name of `game_dir`) into `.previous/<version>/`, reusing `folder` when
 /// given. Returns the folder used.
 fn move_to_previous(game_dir: &Path, entry: &str, version: &str, folder: Option<&Path>) -> std::io::Result<PathBuf> {
@@ -426,6 +475,48 @@ fn move_to_previous(game_dir: &Path, entry: &str, version: &str, folder: Option<
     Ok(dest_dir)
 }
 
+fn path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')
+}
+
+/// Whether the text before a match lets it name an entry of the port folder: nothing, a separator or
+/// quote, `./`, or a variable folder (`$HERE/`, `${DIR}/`, `"$(dirname "$0")"/`). Not a deeper path
+/// (`~/.local/share/Game-v1.0`) and not the middle of a longer name.
+fn starts_a_port_path(before: &str) -> bool {
+    let Some(last) = before.chars().last() else { return true };
+    if last != '/' {
+        return !path_char(last);
+    }
+    let head = &before[..before.len() - 1];
+    let Some(prev) = head.chars().last() else { return false };
+    if matches!(prev, '"' | '\'' | ')' | '}') {
+        return true;
+    }
+    let component = head.rsplit(|c: char| c == '/' || c.is_whitespace() || matches!(c, '"' | '\'' | '=' | '(')).next().unwrap_or("");
+    component == "." || component.starts_with('$')
+}
+
+/// `text` with every `old` that stands alone as a port-folder name (see `starts_a_port_path`, and no
+/// name character right after it) replaced by `new`; `None` when there is none.
+fn replace_names(text: &str, old: &str, new: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut any = false;
+    for (i, _) in text.match_indices(old) {
+        let after = &text[i + old.len()..];
+        if starts_a_port_path(&text[..i]) && !after.chars().next().is_some_and(path_char) {
+            out.push_str(&text[last..i]);
+            out.push_str(new);
+            last = i + old.len();
+            any = true;
+        }
+    }
+    any.then(|| {
+        out.push_str(&text[last..]);
+        out
+    })
+}
+
 /// Top-level `.sh` launchers (not part of the release) that name a moved entry get the new name; the
 /// original goes next to the old version as `<script>.before-update`.
 fn rewrite_scripts(game_dir: &Path, release: &[String], moved: &[(Supersede, String)], notes: &mut Vec<String>) -> Vec<String> {
@@ -440,12 +531,15 @@ fn rewrite_scripts(game_dir: &Path, release: &[String], moved: &[(Supersede, Str
             continue;
         }
         let Ok(text) = fs::read_to_string(&path) else { continue };
-        let hits: Vec<&(Supersede, String)> = moved.iter().filter(|(m, _)| text.contains(&m.old)).collect();
-        let Some((_, folder)) = hits.first() else { continue };
         let mut new_text = text.clone();
-        for (m, _) in &hits {
-            new_text = new_text.replace(&m.old, &m.new);
+        let mut folder: Option<&str> = None;
+        for (m, f) in moved {
+            if let Some(changed) = replace_names(&new_text, &m.old, &m.new) {
+                new_text = changed;
+                folder.get_or_insert(f.as_str());
+            }
         }
+        let Some(folder) = folder else { continue };
         let keep_copy = game_dir.join(PREVIOUS).join(folder).join(format!("{name}.before-update"));
         let tmp = game_dir.join(format!(".{name}.dpm-new"));
         let result = fs::copy(&path, &keep_copy)
@@ -456,11 +550,22 @@ fn rewrite_scripts(game_dir: &Path, release: &[String], moved: &[(Supersede, Str
             Ok(()) => done.push(name),
             Err(e) => {
                 let _ = fs::remove_file(&tmp);
-                notes.push(format!("{name} still names the old version: it could not be updated ({e}). Change it by hand or pick the new program in the port's info."));
+                notes.push(format!("{name} still names the old version: it could not be updated ({e}). Change it by hand or pick the new program in Info > Favorite executable."));
             }
         }
     }
     done
+}
+
+/// A repoint to `to` for this port is in the Steam queue now (a queued change can cancel out an
+/// earlier one, which leaves nothing waiting).
+fn still_queued(ctx: &SteamCtx, port_key: &str, to: &Path) -> bool {
+    let to = to.to_string_lossy();
+    crate::fork::steam_queue::load(&crate::fork::steam_queue::queue_path(ctx.config_dir))
+        .queue
+        .entries
+        .iter()
+        .any(|e| e.kind == crate::fork::steam_queue::QueuedKind::Repoint && e.port_key == port_key && e.repoint.as_ref().is_some_and(|(_, t)| *t == to))
 }
 
 /// The program the app starts today for this port (relative), if it can tell without asking.
@@ -482,8 +587,7 @@ pub fn finish_update(input: &FinishInput) -> Outcome {
 
 pub fn finish_with(input: &FinishInput, pending: &Pending) -> Outcome {
     let game_dir = input.game_dir;
-    let saves = save_folders(input.port, game_dir);
-    let plan = plan(game_dir, pending, &saves);
+    let plan = plan(game_dir, pending, &save_info(input.port, game_dir));
     let mut out = Outcome { kept: plan.kept.clone(), ..Default::default() };
     if plan.moves.is_empty() {
         return out;
@@ -516,13 +620,22 @@ pub fn finish_with(input: &FinishInput, pending: &Pending) -> Outcome {
             out.kept.push((m.old.clone(), "its replacement is missing".into()));
             continue;
         }
+        // A change queued by an earlier update may still end at this old entry: it ends at the new one now.
+        let queue = crate::fork::steam_queue::queue_path(ctx.config_dir);
+        if let Err(e) = crate::fork::steam_queue::retarget_repoints(&queue, input.port.key(), &from.to_string_lossy(), &to.to_string_lossy()) {
+            out.kept.push((m.old.clone(), format!("the queue of Steam changes could not be updated ({e})")));
+            continue;
+        }
         let holds_target = target_move.as_ref().is_some_and(|(t, _)| t.old == m.old);
+        let mut queued_here = false;
         if !m.dir || holds_target {
-            merge(&mut out.steam, steam::repoint_everywhere(input.port.key(), input.port.display_name(), &from, &to, ctx));
+            let report = steam::repoint_everywhere(input.port.key(), input.port.display_name(), &from, &to, ctx);
+            queued_here = !report.queued.is_empty() && still_queued(ctx, input.port.key(), &to);
+            merge(&mut out.steam, report);
         }
         match steam::shortcuts_pointing_into(ctx.home, &from) {
             Ok(names) if names.is_empty() => moves.push(m),
-            Ok(_) if !out.steam.queued.is_empty() => out.kept.push((m.old.clone(), "a Steam shortcut still starts it until the queued change is applied; it is moved then".into())),
+            Ok(_) if queued_here => out.waiting.push(m.old.clone()),
             Ok(names) => out.kept.push((m.old.clone(), format!("a Steam shortcut ({}) still points at it", names.join(", ")))),
             Err(e) => out.kept.push((m.old.clone(), format!("Steam shortcuts could not be read ({e})"))),
         }
@@ -542,6 +655,11 @@ pub fn finish_with(input: &FinishInput, pending: &Pending) -> Outcome {
             Err(e) => out.kept.push((m.old.clone(), format!("it could not be moved ({e})"))),
         }
     }
+    out.had = target_move
+        .as_ref()
+        .map(|(m, _)| m.version.clone())
+        .or_else(|| out.moved.first().map(|(m, _)| m.version.clone()))
+        .or_else(|| plan.moves.iter().find(|m| out.waiting.contains(&m.old)).map(|m| m.version.clone()));
     if !out.moved.is_empty() {
         out.scripts = rewrite_scripts(game_dir, &pending.release, &out.moved, &mut out.notes);
         let this_update: Vec<PathBuf> = folders.iter().map(|(_, f)| f.clone()).collect();
@@ -574,13 +692,20 @@ pub fn after_queued_repoint(from: &Path, to: &Path, library_dir: &Path, catalog:
         return None;
     }
     let before = Before { entries: vec![old.clone(), new.clone()], target: None };
-    let pending = Pending { before, release: vec![new] };
-    let plan = plan(game_dir, &pending, &save_folders(port, game_dir));
+    let pending = Pending { before, release: vec![new.clone()] };
+    let plan = plan(game_dir, &pending, &save_info(port, game_dir));
     let m = plan.moves.first()?;
     if !steam::shortcuts_pointing_into(home, from).ok()?.is_empty() {
         return None;
     }
     let folder = move_to_previous(game_dir, &m.old, &m.version, None).ok()?;
     let name = folder.file_name()?.to_string_lossy().into_owned();
-    Some(format!("{}: the old version ({old}) is now kept in .previous/{name}.", port.display_name()))
+    let mut lines = vec![format!("{}: the old version ({}) is now kept in .previous/{name}.", port.display_name(), m.version)];
+    let mut notes = Vec::new();
+    for script in rewrite_scripts(game_dir, &[new], &[(m.clone(), name.clone())], &mut notes) {
+        lines.push(format!("{script} now names the new version (the original is in .previous)."));
+    }
+    lines.extend(notes);
+    Some(lines.join("
+"))
 }
