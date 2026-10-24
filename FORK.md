@@ -790,9 +790,14 @@ AppImages and left the Steam shortcut pointing at a missing file. Now, for any p
   is itself superseded, its counterpart in the new release must exist or nothing moves. When the launch
   target is not superseded (a launcher script as favorite, or several programs so the app had to ask),
   superseded files still move, because that is exactly the case where the old file would otherwise stay
-  and keep being started (by the script, or by a Steam shortcut to it).
+  and keep being started (by the script, or by a Steam shortcut to it). But when the launch target is a
+  script (`.sh`, or `#!` at the start; any depth) that would still contain an old name after the rewrite
+  (a script in a subfolder or in the release is never rewritten, and a match the rewrite refuses stays),
+  that entry stays in place: "The old version (v1.0) was left where it is: the launcher bin/run.sh still
+  names it." Identical lines are shown once.
 - **Order:** for each superseded entry, queued repoints of the port that still end at it are
-  re-aimed at its successor (`steam_queue::retarget_repoints`; a change that cancels out is dropped), so
+  re-aimed at its successor (`steam_queue::retarget_repoints`, matched by path whichever port queued it;
+  a change that cancels out is dropped), so
   a change queued by an earlier update never points Steam into `.previous`. Then Steam shortcuts are
   repointed (`port_mover::steam::repoint_everywhere`: every account, app ID kept, backup first, never
   while Steam runs; queued in `steam-queue.json` while it does or in Game Mode; a release folder is
@@ -802,7 +807,8 @@ AppImages and left the Steam shortcut pointing at a missing file. Now, for any p
   entry goes to `.previous/<old version>/` (`-2`, `-3` when the name is taken; moved, never deleted).
 - **After:** top-level `.sh` launchers that are not part of the release get the new name wherever the
   old one stands alone as a name in the port folder (at the start, after a separator or quote, `./`,
-  `$VAR/`, `${VAR}/` or `"$(...)"/`, and with no name character after it), so
+  `$VAR/`, `${VAR}/`, `"$(...)"/` or a path whose last folder is the port folder, such as
+  `/home/deck/.../dusklight/` or `"$HOME/.../dusklight/`, and with no name character after it), so
   `~/.local/share/Game-v1.0`, `Game-v1.0-saves` and `Game-v1.0.cfg` are left alone; the original is kept
   as `.previous/<version>/<script>.before-update`. Nothing is ever deleted: every superseded version
   stays in `.previous/`. The favorite follows the new file; one is set when the app would not find the
