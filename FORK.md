@@ -961,6 +961,15 @@ closed. Privacy: [PRIVACY.md](PRIVACY.md).
   token refresh and one more try; a 401 after that is signed out. Drive's code words (`storageQuotaExceeded`,
   `rateLimitExceeded`, `userRateLimitExceeded`, `dailyLimitExceeded`) and `Retry-After` pick the failure kind. The
   code never deletes, trashes or changes a file (a test reads the source for `DELETE`, `PATCH`, `trashed`, `/trash`).
+- **Who may write the record.** Every sign-in has a name (`signin` in `cloud-tokens.json`, not a secret and not an
+  account id; a token refresh keeps it). A pass or a copy back takes the name when it starts, and the store refuses
+  its writes once the name is no longer the current sign-in (signed out, or signed in again as someone else). The
+  pass merges its entries with what is in the record (a copy back may have added some meanwhile) and a copy back
+  only adds entries, so neither undoes the other.
+- **What reaches logs and pages.** Every cloud log line is cleaned of web addresses (an upload session address
+  acts like a key), control characters and the tokens and email this process has held; the "Details:" line and
+  panic texts shown to the person go through the same `cloud::log::scrub`. A download is cut off before it writes
+  more bytes than the size Drive reported.
 - **Build credentials.** `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` are compiled in from repository
   secrets for a push to `main` only (never branches, pull requests or the upstream-sync build). A build without
   them says "Cloud backup isn't set up in this build". The mock-server and demo-folder switches
