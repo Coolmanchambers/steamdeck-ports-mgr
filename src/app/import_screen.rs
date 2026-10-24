@@ -1133,14 +1133,11 @@ fn linked_line(n: usize) -> String {
 }
 
 fn conclude(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, keys: &[String], wants_game_files: bool, outcome: Outcome) {
+    // The card page "N ports moved" first. The game file search is its own page after it ("Find their game files"
+    // there; in the setup wizard, its game files step), never a list with this summary on top.
     let next: Step = {
         let (ctx, text, keys) = (ctx.clone(), text.clone(), keys.to_vec());
-        Rc::new(move |app, router| {
-            if !keys.is_empty() && super::rom_screens::after_ports_added_then(app, router, &keys, &text, Some(ctx.finisher())) {
-                return;
-            }
-            super::import_cards_screen::show_finished(app, router, &ctx, &text, &keys, &outcome);
-        })
+        Rc::new(move |app, router| super::import_cards_screen::show_finished(app, router, &ctx, &text, &keys, &outcome))
     };
     // Ports stopped for their game files: offer Game files first (the wizard just continues, its own step
     // for game files comes later); "Not now" goes on to the search for the ports that came in.

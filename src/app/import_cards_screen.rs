@@ -717,7 +717,11 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
         (n, false) => SteamWaiting::Desktop(n),
     };
     let starting = STEAM_STARTING.with(|s| s.replace(false));
-    let page = finished_page(outcome.moved, &ports_now, &outcome.lines, ctx.from_wizard, steam, starting);
+    let find_files = {
+        let catalog = app.catalog.borrow();
+        keys.iter().filter_map(|k| catalog.iter().find(|p| p.key() == k)).filter(|p| super::rom_screens::port_missing_game_files(app, p)).count()
+    };
+    let page = finished_page(outcome.moved, &ports_now, &outcome.lines, ctx.from_wizard, steam, starting, find_files);
     let full = text.to_string();
     let this: Again = {
         let (ctx, keys, outcome, full) = (ctx.clone(), keys.to_vec(), outcome.clone(), full.clone());
@@ -725,9 +729,20 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
     };
     let act = {
         let ctx = ctx.clone();
+        let keys_now = keys.to_vec();
         move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
             CardAction::Leave => leave(app, router, &ctx),
             CardAction::Details => details_text(app, router, "Import ports", &format!("{full}\n"), this.clone()),
+            // The game file search, as its own page after this one (no summary on top of it).
+            CardAction::FindGameFiles => {
+                let leave_after: Step = {
+                    let ctx = ctx.clone();
+                    Rc::new(move |app, router| leave(app, router, &ctx))
+                };
+                if !super::rom_screens::after_ports_added_then(app, router, &keys_now, "", Some(leave_after)) {
+                    super::rom_screens::open_game_files(app, router);
+                }
+            }
             // The shared flow; this page comes back after it, saying what is left.
             CardAction::CloseSteam => {
                 let again = this.clone();

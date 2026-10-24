@@ -450,6 +450,8 @@ pub enum CardAction {
     ShowKeyboard,
     /// Close Steam and make the Steam changes the move queued (`fork::steam_close`).
     CloseSteam,
+    /// Look for the game files the moved ports need (its own page, after this one).
+    FindGameFiles,
 }
 
 /// Steam changes waiting when the finished page is drawn.
@@ -710,9 +712,10 @@ fn steam_line_now(line: &str, steam: SteamWaiting) -> String {
     }
 }
 
-/// In the setup wizard the Steam changes are left to its Steam step, so `steam` only shows outside it.
-/// `steam_starting`: the close flow just started Steam again.
-pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool, steam: SteamWaiting, steam_starting: bool) -> Page<CardAction> {
+/// In the setup wizard the Steam changes and the game files are left to its own steps, so `steam` and `find_files`
+/// (how many of the ports still miss a game file) only show outside it. `steam_starting`: the close flow just
+/// started Steam again.
+pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool, steam: SteamWaiting, steam_starting: bool, find_files: usize) -> Page<CardAction> {
     let title = if moved > 0 {
         format!("{} moved", ports(moved))
     } else if !ports_now.is_empty() {
@@ -727,10 +730,17 @@ pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines
     }
     p.tiles = ports_now.iter().map(|(name, art)| Tile::shown(art.clone(), name.clone())).collect();
     p.options = vec![option(if wizard { "Continue setup" } else { "Done" }, "", CardAction::Leave, true)];
+    if !wizard && find_files > 0 {
+        p.options[0].recommended = false;
+        let detail = if find_files == 1 { "1 port needs a game file you own".to_string() } else { format!("{find_files} ports need a game file you own") };
+        p.options.insert(0, option("Find their game files", &detail, CardAction::FindGameFiles, true));
+    }
     match steam {
         SteamWaiting::Desktop(n) if !wizard && n > 0 => {
             // Steam still starts the old copies until it takes the changes: that is the next thing to do.
-            p.options[0].recommended = false;
+            for o in p.options.iter_mut() {
+                o.recommended = false;
+            }
             p.options.insert(0, option(crate::fork::steam_close::CLOSE_LABEL, "Then Steam starts the ports from their new place", CardAction::CloseSteam, true));
         }
         SteamWaiting::GameMode(n) if !wizard && n > 0 => p.paragraphs.push(crate::fork::steam_close::GAME_MODE_TEXT.to_string()),
@@ -1361,7 +1371,7 @@ mod tests {
     fn the_closing_page_says_how_many_moved_shows_their_covers_and_has_one_button() {
         let art = |f: &str| Some(ArtRef { folder: f.into(), url: None });
         let ports = vec![("Dusklight".to_string(), art("dusklight")), ("SoH".to_string(), art("soh"))];
-        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false);
+        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false, 0);
         assert_eq!(p.title, "2 ports moved");
         assert_eq!(p.window_title, "Import ports: finished");
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH"]);
@@ -1369,36 +1379,51 @@ mod tests {
         assert_eq!(p.options.len(), 1, "no Cancel");
         assert_eq!((p.options[0].title.as_str(), p.options[0].action.clone(), p.options[0].recommended), ("Done", CardAction::Leave, true));
         assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Details);
-        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false).options[0].title, "Continue setup");
-        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false).title, "1 port moved");
-        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false, SteamWaiting::Nothing, false).title, "2 ports linked");
-        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false, SteamWaiting::Nothing, false).title, "Nothing was moved");
-        for page in [&p, &finished_page(0, &[], &[], true, SteamWaiting::Nothing, false)] {
+        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false, 0).options[0].title, "Continue setup");
+        assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false, 0).title, "1 port moved");
+        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false, SteamWaiting::Nothing, false, 0).title, "2 ports linked");
+        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false, SteamWaiting::Nothing, false, 0).title, "Nothing was moved");
+        for page in [&p, &finished_page(0, &[], &[], true, SteamWaiting::Nothing, false, 0)] {
             let t = all_text(page);
             assert!(!t.contains('/') && !t.contains("~/") && !t.to_lowercase().contains("json"), "{t}");
         }
     }
     #[test]
+    fn the_finished_page_offers_the_game_file_search_as_the_next_page_outside_the_wizard() {
+        let ports = vec![("Ocarina of Time".to_string(), None), ("Majora's Mask".to_string(), None)];
+        let p = finished_page(2, &ports, &[], false, SteamWaiting::Nothing, false, 2);
+        assert_eq!(p.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::FindGameFiles, CardAction::Leave]);
+        assert!(p.options[0].recommended && p.options[0].detail == "2 ports need a game file you own");
+        // Steam waiting too: closing Steam is recommended, the search still offered, Done last.
+        let s = finished_page(2, &ports, &[], false, SteamWaiting::Desktop(2), false, 2);
+        assert_eq!(s.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::CloseSteam, CardAction::FindGameFiles, CardAction::Leave]);
+        assert_eq!(s.options.iter().filter(|o| o.recommended).count(), 1);
+        // In the wizard its game files step does it.
+        let w = finished_page(2, &ports, &[], true, SteamWaiting::Nothing, false, 2);
+        assert_eq!(w.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
+    }
+
+    #[test]
     fn the_finished_page_offers_to_close_steam_when_the_move_queued_steam_changes() {
         let ports = vec![("Dusklight".to_string(), None)];
-        let p = finished_page(1, &ports, &[], false, SteamWaiting::Desktop(4), false);
+        let p = finished_page(1, &ports, &[], false, SteamWaiting::Desktop(4), false, 0);
         assert_eq!(p.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::CloseSteam, CardAction::Leave]);
         assert!(p.options[0].recommended && !p.options[1].recommended);
         assert_eq!(p.options[0].title, crate::fork::steam_close::CLOSE_LABEL);
         assert_eq!(p.initial, Focus::Option(0));
         // In the wizard its Steam step does it; in Game Mode one plain sentence and no close choice.
-        let w = finished_page(1, &ports, &[], true, SteamWaiting::Desktop(4), false);
+        let w = finished_page(1, &ports, &[], true, SteamWaiting::Desktop(4), false, 0);
         assert_eq!(w.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
-        let g = finished_page(1, &ports, &[], false, SteamWaiting::GameMode(4), false);
+        let g = finished_page(1, &ports, &[], false, SteamWaiting::GameMode(4), false, 0);
         assert_eq!(g.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
         assert_eq!(g.paragraphs.last().unwrap(), crate::fork::steam_close::GAME_MODE_TEXT);
         // The import's Steam line says what is true when the page is drawn.
         let line = vec!["Steam shortcuts: 1 will follow in Desktop Mode.".to_string(), "Moved 1 of 1 port.".to_string()];
-        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::Desktop(1), false).paragraphs[0], "Steam still starts the old copies until you update shortcuts.");
-        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::GameMode(1), false).paragraphs[0], "Steam still starts the old copies until you finish in Desktop Mode.");
-        let after = finished_page(1, &ports, &line, false, SteamWaiting::Nothing, true);
+        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::Desktop(1), false, 0).paragraphs[0], "Steam still starts the old copies until you update shortcuts.");
+        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::GameMode(1), false, 0).paragraphs[0], "Steam still starts the old copies until you finish in Desktop Mode.");
+        let after = finished_page(1, &ports, &line, false, SteamWaiting::Nothing, true, 0);
         assert_eq!(after.paragraphs, ["Steam shortcuts: updated.", "Moved 1 of 1 port.", "Steam is starting..."]);
-        assert_eq!(finished_page(1, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false).paragraphs[0], "Steam shortcuts: 1 followed the move.", "a line that is still true stays");
+        assert_eq!(finished_page(1, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false, 0).paragraphs[0], "Steam shortcuts: 1 followed the move.", "a line that is still true stays");
     }
 
     #[test]
