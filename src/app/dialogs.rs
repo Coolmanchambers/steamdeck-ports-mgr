@@ -3,6 +3,7 @@ use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
 use super::install_launch::{delete_port, open_favorite_exe_picker, open_version_picker, start_extra_install, start_install};
 use super::playtime::{format_last_played, format_playtime, LastPlayed};
+use super::save_finder_screen::open_from_info as open_find_saves;
 use super::save_restore_screen::open_from_info as open_restore_saves;
 use super::rom_screens::open_from_info as open_game_files_for_port;
 use super::state::AppState;
@@ -484,9 +485,11 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     // Fork: for an installed port, say so when a save folder has no known Linux location (upstream bug O1).
     if let Some(dir) = installed_dir.as_deref() {
         let (save_unknown, save2_unknown) = crate::core::save_backup::unknown_on_linux_fields(port, dir);
-        if let Some(note) = crate::fork::save_notes::info_note(save_unknown, save2_unknown) {
+        // Fork (save finder): its line (not found, or the answer the user gave) comes first.
+        if let Some(note) = super::save_finder_screen::info_line(app, port).or_else(|| crate::fork::save_notes::info_note(save_unknown, save2_unknown)) {
             dialog.set_save_note_text(note.into());
         }
+        dialog.set_find_saves_enabled(super::save_finder_screen::info_button(app, port));
     }
     dialog.set_mods_enabled(mods.is_some());
     dialog.set_website_enabled(website.is_some());
@@ -533,6 +536,7 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     on_port_action!(on_reset_playtime_requested, open_reset_playtime_dialog);
     on_port_action!(on_extra_requested, open_extra_install_confirm_dialog);
     on_port_action!(on_restore_saves_requested, open_restore_saves);
+    on_port_action!(on_find_saves_requested, open_find_saves);
     on_port_action!(on_game_files_requested, open_game_files_for_port);
     wire_dialog_close!(dialog, app, router);
     wire_nav_hovered!(dialog, app, info_nav_index);

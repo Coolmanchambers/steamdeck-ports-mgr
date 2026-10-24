@@ -5,6 +5,8 @@ export struct CardItem {
     name: string,
     image: image,
     selected: bool,
+    // Fork: installed, and its saves are not found: a small badge at the bottom of the card.
+    saves-warning: bool,
 }
 
 export struct CardRow {
@@ -21,6 +23,7 @@ export component CardGrid {
     in property <int> selected-row-index: -1;
     in property <bool> scroll-trigger: false;
     callback card-activated(int, int);
+    callback card-saves-requested(int, int);
     callback card-hovered(int, int);
     callback card-unhovered();
 
@@ -40,6 +43,7 @@ export component CardGrid {
         property <length> row-block-width: root.columns * card-width + (root.columns - 1) * card-spacing;
         property <length> row-left-margin: max(0px, (self.width - self.row-block-width) / 2);
         property <length> row-height: card-height + card-spacing;
+        property <length> badge-height: 34px / Theme.scale-factor;
 
         card-list := ListView {
             width: 100%;
@@ -98,6 +102,24 @@ export component CardGrid {
                         height: 100%;
                         background: SemanticColors.success-hover.with-alpha(0.22);
                     }
+
+                    if card.saves-warning: Rectangle {
+                        x: 0px;
+                        y: parent.height - self.height;
+                        width: 100%;
+                        height: grid-container.badge-height;
+                        background: SemanticColors.warning;
+
+                        Text {
+                            text: @tr("Saves not found");
+                            color: SemanticColors.text-on-accent;
+                            font-size: grid-container.badge-height * 0.5;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                    }
                 }
             }
         }
@@ -129,8 +151,14 @@ export component CardGrid {
                 }
             }
 
+            property <bool> pointer-on-badge:
+                self.pointer-on-card && root.rows[self.hovered-row].cards[self.hovered-column].saves-warning
+                && self.content-mouse-y >= self.card-top + card-height - grid-container.badge-height;
+
             clicked => {
-                if (self.pointer-on-card) {
+                if (self.pointer-on-badge) {
+                    root.card-saves-requested(self.hovered-row, self.hovered-column);
+                } else if (self.pointer-on-card) {
                     root.card-activated(self.hovered-row, self.hovered-column);
                 }
             }
@@ -144,7 +172,11 @@ export component CardGrid {
                     if (self.has-hover && self.pointer-on-card
                         && Math.abs(self.mouse-x - self.pressed-x) < 8px
                         && Math.abs(self.mouse-y - self.pressed-y) < 8px) {
-                        root.card-activated(self.hovered-row, self.hovered-column);
+                        if (self.pointer-on-badge) {
+                            root.card-saves-requested(self.hovered-row, self.hovered-column);
+                        } else {
+                            root.card-activated(self.hovered-row, self.hovered-column);
+                        }
                     }
                 }
             }

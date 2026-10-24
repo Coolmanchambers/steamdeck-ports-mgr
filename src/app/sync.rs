@@ -80,6 +80,7 @@ pub(crate) fn start_catalog_sync(app: &AppState) {
     };
     let ports_json_path = app.paths.config_dir.join("ports.json");
     let ports_local_json_path = app.paths.config_dir.join("ports.local.json");
+    let fork_settings_path = app.paths.config_dir.join(crate::fork::settings::FILE_NAME);
     let events = app.events.clone();
     std::thread::spawn(move || {
         let known_etag = catalog_sync::etag_for_saved_copy(&known_etag, &ports_json_path, catalog_sync::validate_ports);
@@ -87,7 +88,9 @@ pub(crate) fn start_catalog_sync(app: &AppState) {
             Ok(CatalogUpdate::NotModified) => lock(&events).push(AppEvent::PortsCheckDone { etag: known_etag }),
             Ok(CatalogUpdate::Updated { text, etag }) => {
                 let Ok(remote_ports) = crate::core::config::parse_catalog(&text) else { return };
-                let ports = crate::core::config::merge_local_catalog(remote_ports, crate::core::config::load_local_config(&ports_local_json_path));
+                let mut ports = crate::core::config::merge_local_catalog(remote_ports, crate::core::config::load_local_config(&ports_local_json_path));
+                // Fork (save finder): the save folders the user chose survive a catalog update.
+                crate::fork::save_finder::apply_from_file(&mut ports, &fork_settings_path);
                 let saved = crate::core::files::write_atomic(&ports_json_path, text.as_bytes()).is_ok();
                 let mut events = lock(&events);
                 events.push(AppEvent::PortsCheckDone { etag: catalog_sync::etag_to_record(saved, etag, known_etag) });

@@ -305,6 +305,8 @@ fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
             let old = std::mem::take(&mut *catalog);
             *catalog = crate::core::config::merge_local_catalog(old, vec![port.clone()]);
         }
+        // Fork (save finder): an answer given earlier for this folder applies to the entry just added.
+        super::save_finder_screen::reapply(app);
         app.refresh_current_view();
         start_install(app, router, port, None, None);
     });

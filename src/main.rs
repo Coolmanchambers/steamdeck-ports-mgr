@@ -64,7 +64,9 @@ fn main() {
     } else {
         Vec::new()
     };
-    let catalog = core::config::merge_local_catalog(catalog, core::config::load_local_config(&bdir.join("ports.local.json")));
+    let mut catalog = core::config::merge_local_catalog(catalog, core::config::load_local_config(&bdir.join("ports.local.json")));
+    // Fork (save finder): the save folders the user chose, where the catalog has none or a wrong one.
+    fork::save_finder::apply_from_file(&mut catalog, &bdir.join(fork::settings::FILE_NAME));
 
     let state_path = bdir.join("state.json");
     let is_first_run = !state_path.exists();
@@ -358,6 +360,16 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
         }
     }));
     window.on_list_row_open_folder_requested(with!(app => move |index| with_indexed_port(&app, index, |port| open_port_folder(&app, &port))));
+    window.on_list_row_saves_requested(with!(app, router => move |index| {
+        with_indexed_port(&app, index, |port| app::save_finder_screen::open_from_badge(&app, &router, port));
+    }));
+    window.on_card_saves_requested(with!(app, router => move |row, col| {
+        let idx = row as usize * app.grid_nav.grid_columns.get().max(1) + col as usize;
+        let port = app.grid_nav.displayed_installed.borrow().get(idx).cloned();
+        if let Some(port) = port {
+            app::save_finder_screen::open_from_badge(&app, &router, port);
+        }
+    }));
     window.on_list_row_info_requested(with!(app, router => move |index| {
         if !dialog_is_open(&app) {
             with_indexed_port(&app, index, |port| open_info_dialog(&app, &router, &port));

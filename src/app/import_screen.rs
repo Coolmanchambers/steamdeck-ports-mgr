@@ -992,6 +992,7 @@ fn add_new_entries(app: &Rc<AppState>, plans: &[PortPlan]) -> Result<Vec<Added>,
             let old = std::mem::take(&mut *catalog);
             *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
         }
+        super::save_finder_screen::reapply(app);
         added.push(Added { key: plan.request.port_key.clone(), name: plan.request.port_name.clone(), value: new.value.clone() });
     }
     Ok(added)
@@ -1102,6 +1103,7 @@ fn offer_link(app: &Rc<AppState>, router: &Router, requests: Vec<MoveRequest>, p
             let old = std::mem::take(&mut *catalog);
             *catalog = crate::core::config::merge_local_catalog(old, vec![port]);
         }
+        super::save_finder_screen::reapply(app);
         app.refresh_current_view();
         then(app, router, done.text, keys);
     }, on_cancel);

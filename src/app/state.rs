@@ -187,6 +187,7 @@ impl AppState {
                     auto_update_off: state.get(p.key()).is_some_and(|i| !i.update),
                     installed: self.is_installed(p),
                     is_local: p.user_managed,
+                    saves_warning: self.is_installed(p) && super::save_finder_screen::saves_warning(self, p),
                 })
                 .collect()
         };
@@ -257,7 +258,7 @@ impl AppState {
         let new_flat = previous_key.and_then(|k| installed.iter().position(|p| p.key() == k)).unwrap_or(0);
         self.grid_nav.grid_selected.set((new_flat / columns, new_flat % columns));
         self.grid_nav.grid_mouse_active.set(true);
-        let rows = build_card_rows(&self.grid_nav.card_image_cache, &installed, &self.paths.cache_dir, columns, Some(self.grid_nav.grid_selected.get()));
+        let rows = build_card_rows(&self.grid_nav.card_image_cache, &installed, &self.paths.cache_dir, columns, Some(self.grid_nav.grid_selected.get()), &|p| super::save_finder_screen::saves_warning(self, p));
         self.window().set_card_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         self.ensure_card_images_cached(&installed);
         *self.grid_nav.displayed_installed.borrow_mut() = installed;

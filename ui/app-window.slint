@@ -13,6 +13,8 @@ export struct PortItem {
     auto-update-off: bool,
     installed: bool,
     is-local: bool,
+    // Fork: installed, and its saves are not found (src/app/save_finder_screen.rs).
+    saves-warning: bool,
 }
 
 export { CardItem, CardRow, SemanticColors, Theme, MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr }
@@ -122,6 +124,8 @@ export component AppWindow inherits Window {
     callback list-row-uninstall-requested(int);
     callback list-row-open-folder-requested(int);
     callback list-row-info-requested(int);
+    callback list-row-saves-requested(int);
+    callback card-saves-requested(int, int);
     callback github-requested();
     callback discord-requested();
     callback key-intercepted(text: string, modified: bool, repeat: bool) -> bool;
@@ -377,6 +381,7 @@ export component AppWindow inherits Window {
                             selected-row-index: root.grid-selected-row;
                             scroll-trigger: root.scroll-trigger;
                             card-activated(r, c) => { root.card-activated(r, c); }
+                            card-saves-requested(r, c) => { root.card-saves-requested(r, c); }
                             card-hovered(r, c) => { root.card-hovered(r, c); }
                             card-unhovered() => { root.card-unhovered(); }
                         }
@@ -429,6 +434,10 @@ export component AppWindow inherits Window {
                                     property <length> update-x: self.slot1-x - row-spacing - self.update-w;
                                     property <length> play-x: (item.auto-update-off ? self.update-x : self.slot1-x) - row-spacing - self.play-w;
                                     property <length> leftmost-x: item.installed ? self.play-x : self.slot1-x;
+                                    // Fork: the small "Saves not found" badge sits left of the buttons.
+                                    property <length> saves-w: saves-btn.text-preferred-width + button-padding * 2;
+                                    property <length> saves-x: self.leftmost-x - row-spacing - self.saves-w;
+                                    property <length> name-right-x: item.saves-warning ? self.saves-x : self.leftmost-x;
 
                                     TouchArea {
                                         property <length> drag-start-cursor-y;
@@ -469,7 +478,20 @@ export component AppWindow inherits Window {
                                         font-size: item-font-px;
                                         vertical-alignment: center;
                                         x: text-margin;
-                                        width: row.leftmost-x - text-margin - row-spacing;
+                                        width: row.name-right-x - text-margin - row-spacing;
+                                    }
+
+                                    saves-btn := ActionButton {
+                                        visible: item.saves-warning;
+                                        text: @tr("Saves not found");
+                                        fill-color: SemanticColors.warning;
+                                        fill-hover-color: SemanticColors.warning-hover;
+                                        font-size: item-font-px * 0.85;
+                                        x: row.saves-x;
+                                        y: row-spacing;
+                                        width: item.saves-warning ? row.saves-w : 0px;
+                                        height: action-button-height;
+                                        clicked => { root.list-row-saves-requested(index); }
                                     }
 
                                     info-btn := ActionButton {

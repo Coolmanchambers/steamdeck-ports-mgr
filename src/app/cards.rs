@@ -30,6 +30,7 @@ pub(crate) fn build_card_rows(
     cache_dir: &Path,
     columns: usize,
     selected: Option<(usize, usize)>,
+    saves_warning: &dyn Fn(&Port) -> bool,
 ) -> Vec<CardRow> {
     let items: Vec<CardItem> = ports
         .iter()
@@ -38,6 +39,7 @@ pub(crate) fn build_card_rows(
             name: port.name.clone().into(),
             image: load_cached_card_image(image_cache, cache_dir, &port.folder),
             selected: Some((i / columns, i % columns)) == selected,
+            saves_warning: saves_warning(port),
         })
         .collect();
     grid::chunk_into_rows(&items, columns).into_iter().map(|cards| CardRow { cards: slint::ModelRc::new(slint::VecModel::from(cards)) }).collect()

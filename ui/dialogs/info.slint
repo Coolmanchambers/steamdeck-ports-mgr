@@ -37,6 +37,8 @@ export component InfoDialog inherits Window {
     in property <bool> restore-saves-enabled: false;
     // Fork: "Game files..." (button index 11), shown for an installed port that names game files.
     in property <bool> game-files-enabled: false;
+    // Fork: "Find saves..." (button index 12), shown when the saves are not found or an answer is stored.
+    in property <bool> find-saves-enabled: false;
     in property <int> selected-index: -1;
     callback change-version-requested();
     callback update-toggle-requested();
@@ -50,6 +52,7 @@ export component InfoDialog inherits Window {
     callback website-requested();
     callback restore-saves-requested();
     callback game-files-requested();
+    callback find-saves-requested();
     callback instructions-link-requested();
     callback close-requested();
     callback nav-hovered(int);
@@ -107,8 +110,9 @@ export component InfoDialog inherits Window {
     property <length> status-line-height: item-font-px * 1.3;
     property <length> content-width: chrome.content-width - root.gutter * 2;
     // Fork: one row above the shortcut row for "Restore saves..." and "Game files...", side by side.
-    property <bool> extra-row: root.restore-saves-enabled || root.game-files-enabled;
-    property <length> extra-gap: root.restore-saves-enabled && root.game-files-enabled ? row-spacing : 0px;
+    property <bool> extra-row: root.restore-saves-enabled || root.game-files-enabled || root.find-saves-enabled;
+    property <int> extra-count: (root.restore-saves-enabled ? 1 : 0) + (root.game-files-enabled ? 1 : 0) + (root.find-saves-enabled ? 1 : 0);
+    property <length> extra-gap: row-spacing;
 
     key-handler := FocusScope {
         key-pressed(event) => { return root.handle-nav-key(event); }
@@ -303,7 +307,7 @@ export component InfoDialog inherits Window {
                 font-size: root.item-font-px;
                 width: root.restore-saves-enabled ? self.text-preferred-width + button-padding * 2 : 0px;
                 height: root.extra-row ? row-height : 0px;
-                x: root.gutter + (content-width - self.width - game-files-button.width - root.extra-gap) / 2;
+                x: root.gutter + (content-width - self.width - game-files-button.width - find-saves-button.width - root.extra-gap * max(0, root.extra-count - 1)) / 2;
                 y: shortcut-row.y - (root.extra-row ? row-height + row-spacing : 0px);
                 clicked => { root.restore-saves-requested(); }
                 hovered => { root.nav-hovered(10); }
@@ -318,10 +322,25 @@ export component InfoDialog inherits Window {
                 font-size: root.item-font-px;
                 width: root.game-files-enabled ? self.text-preferred-width + button-padding * 2 : 0px;
                 height: root.extra-row ? row-height : 0px;
-                x: restore-button.x + restore-button.width + root.extra-gap;
+                x: restore-button.x + restore-button.width + (root.restore-saves-enabled && root.game-files-enabled ? root.extra-gap : 0px);
                 y: restore-button.y;
                 clicked => { root.game-files-requested(); }
                 hovered => { root.nav-hovered(11); }
+            }
+
+            find-saves-button := DialogButton {
+                visible: root.find-saves-enabled;
+                text: @tr("Find saves...");
+                enabled: root.find-saves-enabled;
+                selected: root.selected-index == 12;
+                border-px: root.border-px;
+                font-size: root.item-font-px;
+                width: root.find-saves-enabled ? self.text-preferred-width + button-padding * 2 : 0px;
+                height: root.extra-row ? row-height : 0px;
+                x: game-files-button.x + game-files-button.width + ((root.restore-saves-enabled || root.game-files-enabled) ? root.extra-gap : 0px);
+                y: restore-button.y;
+                clicked => { root.find-saves-requested(); }
+                hovered => { root.nav-hovered(12); }
             }
 
             shortcut-row := ButtonRow {

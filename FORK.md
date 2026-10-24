@@ -203,6 +203,10 @@ Files added by this fork:
 | 2026-10-22 | `src/fork/ports_folder_view.rs` | The lists of the ports folder screens (labels, row actions, preselected row), tested without UI |
 | 2026-10-24 | `src/fork/versioned/` | Versioned program files: family and version from a name (reuses `adopt::release_tokens`), the plan of what a new release supersedes, the finish step (launch target, favorite, Steam repoint or queue, move to `.previous/<version>/`, launcher scripts, size of the older versions) and `after_queued_repoint` |
 | 2026-10-24 | `src/app/versioned_update.rs` | Runs the finish step on the UI thread after an install and sets the favorite |
+| 2026-10-24 | `src/fork/save_finder/`, `src/app/save_finder_screen.rs` | Save finder (branch `save-finder`): per-port save override in `fork-settings.json`, state of a port's saves, read-only search of likely places, the wizard pages and the screen that draws them |
+| 2026-10-24 | `ui/dialogs/info.slint`, `src/app/gamepad_target.rs`, `src/app/dialogs.rs` | Info: 13th button "Find saves..." (index 12; the three buttons of the extra row are centred together), shown when the saves are not found or an answer is stored; the save line comes from the save finder first, the old O1 note second |
+| 2026-10-24 | `ui/app-window.slint`, `ui/card-grid.slint`, `src/app/cards.rs`, `src/app/state.rs` | `saves-warning` on `PortItem` and `CardItem`: a small "Saves not found" badge on an installed port's list row and on its card (touch or mouse opens the finder; a controller uses Info). `build_card_rows` takes the check as a parameter |
+| 2026-10-24 | `src/main.rs`, `src/app/sync.rs`, `src/app/deck_ready_screen.rs`, `src/app/import_screen.rs`, `src/app/mod.rs` | The stored save overrides are applied where the catalog is loaded (start-up, catalog update) and where a local entry is added (`save_finder_screen::reapply`); two callbacks for the badge; one module line |
 
 ## Add to Steam (Settings menu)
 
@@ -762,6 +766,56 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   are best effort. Ownership is not copied (same user). Launch options naming the old folder keep it
   (the old copy is not removable) until edited in Steam. English only.
 
+
+## Save finder (`src/fork/save_finder/`, `src/app/save_finder_screen.rs`)
+
+Update backup, Save Backup, Restore saves and the uninstall preserve only work where the app knows a port's save
+folder. Some recomps do not follow the catalog (Severed Chains added from the Deck-ready list has no save field;
+Dusklight's names only a Windows path). Tim, 2026-10-24: show a discreet warning on the game, and let a short wizard
+find the saves.
+
+- **State per installed port** (`state_of`): saves found (a known folder that holds a file), the known folder is empty,
+  the known folder is missing, no folder is known on Linux (no save field, or only a Windows or Android path), or the
+  user said the game has no saves. The game folder itself or a folder holding it never counts as a save folder.
+- **Badge:** installed ports whose saves are unknown always show a small amber "Saves not found" badge (list row and
+  card); an empty or missing known folder shows it only once the game was played (a game that never ran has nothing to
+  save). No popups. A mouse or touch click on the badge opens the wizard; a controller uses Info. A port's state is
+  worked out at most every 8 seconds and forgotten when an answer is stored or cleared.
+- **Info:** a line ("Saves not found: location unknown on Linux, not backed up", "...the save folder is empty",
+  "Saves: using the folder you chose", "Saves: you said this game has none") and a button **Find saves...**, shown when
+  the saves are not found or an answer is stored.
+- **Wizard** (the page framework `fork::page`, same window as the setup wizard): (1) "Where does X keep its saves?":
+  Look for them for me (recommended), Pick the folder..., This game has no saves; with an answer already stored the
+  page shows it and offers Look again, Pick another folder and Use what the catalog says. (2) The search page with
+  Cancel, then "Is one of these X's saves?" with a card per folder (folder name, file count, last changed, where) and
+  None of these (goes to the shared folder picker), or "I could not find X's saves" with Pick and No saves. (3) "Saved"
+  with Back up now (recommended; the same Update Backup that Restore saves lists, zipped to
+  `Saves Backup/Update Backups/<folder>/`), Not now and Undo (puts back what was stored when the wizard opened).
+- **Search** (`search::find`, read only, never writes or follows a link into another folder): the port's own folder
+  three levels down for folders named like "Save"; `~/.local/share`, `~/.config`, `~/Documents` and hidden folders of
+  the home folder (`~/.dusklight`) one and two levels down (`Company/Game`); every Proton prefix under Steam's
+  `compatdata` (the Deck's Steam folders and `steamapps` on a card under `/run/media`) at
+  `drive_c/users/steamuser/{AppData/Roaming,Local,LocalLow,Documents,My Documents,Saved Games}`. A folder is a
+  candidate when its name fits the port (`adopt::port_names`, `adopt::shared_words`, the import scan's words) and it
+  holds a save-like file (`.sav .srm .sra .eep .mpk .fla .save .sl2 .sgd .dat`, a file with "save", "slot" or
+  "profile" in its name, or any path with "save" in it). A folder that is another catalog port's own name is never
+  offered (Ship of Harkinian does not get 2 Ship 2 Harkinian's saves), nor anything in Saves Backup or in another
+  port's folder in the library. When every save file sits in one "Save" sub-folder, that sub-folder is offered. At most
+  6 cards, newest first. Bounded: 25 seconds, 60,000 directory entries, 4,000 per candidate; Cancel stops at the next
+  folder.
+- **The stored answer:** `save_overrides` in `fork-settings.json`, keyed by the port's catalog folder:
+  `{"path": "<form>"}` or `{"no_saves": true}`. The path is stored portably: relative to the game folder when inside it
+  (it follows the game when the ports folder moves), `%HOME%/...` when inside the home folder, else absolute (the same
+  forms `platform_resolve::save_location` reads). A name with `%` in it is refused. A chosen folder goes through the
+  Restore saves guards first (not the game folder, the home folder, the top of a drive or Saves Backup). The override is
+  applied when the catalog loads (start-up, a catalog update, a local entry added): a folder replaces both `save` and
+  `save2`, "no saves" empties both, so the update backup, Save Backup, Restore saves, the uninstall preserve and the
+  Info save buttons all read it. Clearing it re-reads the catalog entry from disk, so the catalog's own answer comes
+  back. Nothing is moved, copied into or written in a save folder.
+- **Known limits:** a catalog entry adopted into `ports.local.json` while an override is active carries the
+  overridden `save` value into the local entry (harmless; it is the same folder). The uninstall preserve only copies
+  saves that are inside the game folder (as upstream does); a folder outside it is simply left in place. Not yet tried
+  on a Deck; Severed Chains and Dusklight are on the Deck checklist.
 
 ## Versioned program files (`src/fork/versioned/`, `src/app/versioned_update.rs`)
 
