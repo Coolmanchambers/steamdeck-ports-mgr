@@ -10,7 +10,7 @@
 //! asks about each port that waits for a first start, one card at a time.
 
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::page::{Card, Focus, Page, PageButton, PageOption, Tile};
+use crate::fork::page::{Card, Focus, Page, PageButton, PageOption};
 use crate::fork::port_mover::old_copies::{OldCopy, Readiness};
 use crate::fork::rom_screens::util::{ellipsize, human_bytes};
 use crate::fork::screens::short_path;
@@ -171,10 +171,10 @@ impl Batch {
         let freed = self.freed_bytes();
         let size = if freed > 0 { format!(" The old {} {} {}.", copies(n), if n == 1 { "uses" } else { "use" }, human_bytes(freed)) } else { String::new() };
         p.paragraphs = vec![format!("{} from {} new place, so {} old {} can go.{size}", if n == 1 { "This port starts" } else { "These ports start" }, if n == 1 { "its" } else { "their" }, if n == 1 { "its" } else { "their" }, copies(n))];
-        p.tiles = removable.iter().map(|c| Tile::shown(c.art.clone(), c.copy.name.clone())).collect();
+        // Every port is named on its status line, so no cover row: the page fits a 7 inch screen without scrolling.
         let (keep, remove) = if n == 1 { ("Keep it", "Remove it") } else { ("Keep them", "Remove them") };
         p.options = vec![
-            PageOption { title: keep.to_string(), detail: "Nothing is deleted. You can remove them later from Settings.".to_string(), choice: None, enabled: true, recommended: true, action: BatchAction::Keep },
+            PageOption { title: keep.to_string(), detail: format!("Nothing is deleted. You can remove {} later from Settings.", if n == 1 { "it" } else { "them" }), choice: None, enabled: true, recommended: true, action: BatchAction::Keep },
             PageOption { title: remove.to_string(), detail: "Only the ready ones. Saves are zipped to a backup first".to_string(), choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
         ];
         p.options.extend(self.confirm_option());
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(p.title, "Remove the 4 old copies?");
         assert_eq!(p.window_title, "Import ports: old copies");
         assert_eq!(p.paragraphs, ["These ports start from their new place, so their old copies can go. The old copies use 3.2 GB."]);
-        assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH", "Abuse", "Pinball"]);
+        assert!(p.tiles.is_empty(), "the names are on the status lines");
         assert_eq!(p.options.iter().map(|o| (o.title.as_str(), o.action, o.recommended)).collect::<Vec<_>>(), [("Keep them", BatchAction::Keep, true), ("Remove them", BatchAction::Remove, false)]);
         assert_eq!(p.initial, Focus::Option(0), "Keep them has the focus");
         assert_eq!(p.facts, ["Dusklight: Ready to remove", "SoH: Ready to remove", "Abuse: Ready to remove", "Pinball: Ready to remove"]);
