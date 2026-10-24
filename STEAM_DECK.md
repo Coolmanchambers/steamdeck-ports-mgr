@@ -123,12 +123,20 @@ anything and run setup again later.
    shortcuts** (see "Close Steam and update shortcuts" below) and Continue (they keep waiting). In Game Mode it
    says "Switch to Desktop Mode and open Deck Ports Manager to finish updating Steam."
 5. **You're set up.** Where the ports go, how many moved in, game files, Steam and old copies, then Finish.
-   Before it, if this run kept old copies, one page asks "Remove the N old copies?" (Keep them is the default
-   and B). Finish (or a confirmed skip) is what marks setup as done; if you quit half-way the wizard opens again
-   next time.
+   Before it, when at least one old copy is **ready to remove** (see "Old copies" below), one page lists the old
+   copies with their status and asks "Remove the N old copies?" (Keep them is the default and B). When none is
+   ready, the last page says "Old copies are kept until each port has been checked." Finish (or a confirmed skip)
+   is what marks setup as done; if you quit half-way the wizard opens again next time.
 
-**Run it again any time:** Settings (Y) > **Setup wizard...**, the first row. It starts at the first page; every
-page has a "Close the wizard" button, and it leaves without changing anything you did not choose.
+**Run it again any time:** Settings (Y) > **Setup wizard...**, the first row. A rerun opens on **Your setup**:
+one line per step with a mark (done, still to do, or waiting), for example "Ports folder: SD card", "Your
+ports: 4 moved in", "Game files: no folder set yet", "Steam: 4 waiting for Steam to close", "Old copies: 4 kept,
+0 ready". **Finish what's left** (the default) visits only the steps that still need something, in order, then
+the last page, which shows every step as it stands; **Change a step...** does one step again. Steps that are done
+are never redone: Import ports only offers ports that are not in the ports folder yet, the Steam step only adds
+missing shortcuts and applies waiting changes, and the game files step keeps the folder that is set. B on the
+first visited page goes back to Your setup; "Close the wizard" leaves without changing anything you did not
+choose. What the wizard remembers between runs is `setup_progress` in `fork-settings.json`.
 
 ## Updating
 
@@ -345,16 +353,30 @@ folder in use, its free space and file system. (In Desktop Mode there is also **
    Game Mode) the change is queued and the app asks to apply it next time Steam is closed in Desktop Mode.
    Until then, starting the port from Steam still runs the OLD copy, and anything you save there stays in
    the old copy; the final message says so. Launch options are not changed.
-6. **Remove the old copy now?** The app asks right away, per port, showing the old path and its size.
-   **Keep for now** is selected when it opens; **Remove old copy** zips its saves to `Saves
-   Backup/Update Backups/` first. It asks each time; nothing is ever removed without that choice. Kept
-   copies are listed later under Settings > Ports folder > **Old copies kept after moves**. Removal waits
-   while a Steam shortcut still points into the old copy (including a queued change not applied yet, or a
-   launch option naming it), while a game runs from it, or when the old copy has newer saves than the new
-   one ("Copy the save files from <old save folder> into <new save folder> (or play once from the new copy
-   to check), then try again; or keep the old copy"). A shortcut Steam has not finished setting up is named:
-   open Steam, quit it, then try again. A port that left the catalog keeps its old copy (its saves can't be
-   found). Checking a big old copy takes a moment ("Checking the old copy...").
+6. **Old copies.** After the move one page lists each port's old copy with one status line (see "Old
+   copies" below); right after a move they all wait, so nothing is offered yet. Kept copies are listed
+   under Settings > Ports folder > **Old copies kept after moves** with their status; choosing one opens the
+   same page for it.
+
+### Old copies: validated before they can go
+
+An old copy is offered for removal only once its port is shown to work from the new place:
+
+- **Waiting for Steam to update**: a Steam shortcut still starts the old copy, or its change is still queued.
+  Use "Close Steam and update shortcuts" first.
+- **Start it once from its new place**: Steam starts the new copy, but the port has not been started since.
+  Start it from Steam (the app sees Steam's "last played" time on the shortcut, after the shortcut was
+  switched) or from this app (a run of at least 30 seconds counts). Or choose **It starts fine...** on the
+  page: one card per port, "Yes, it starts and my saves are there" or Not yet.
+- **Ready to remove**.
+
+**Remove them** removes only the Ready ones (Keep them is the default and B), each through the same checks as
+before: it waits while a game runs from it, and refuses when the old copy has newer saves than the new one
+("Copy the save files from <old save folder> into <new save folder>..., or keep the old copy"). Its saves are
+zipped to `Saves Backup/Update Backups/` first. A shortcut Steam has not finished setting up is named: open
+Steam, quit it, then try again. A port that left the catalog keeps its old copy (its saves can't be found).
+Checking a big old copy takes a moment ("Checking the old copies..."). Nothing is ever removed without "Remove
+them". The log says `old copies:` when a run or a yes is recorded.
 
 If the app was closed in the middle of a switch (after the new folder was saved, before Steam followed),
 Settings > Ports folder shows **Finish switching <port> (Steam and game files still point at the old
@@ -414,9 +436,9 @@ asks if one is missing or broken: Skip this port / Move anyway, or B to stop the
 ports folder (a hidden staging folder first, so a failure or Cancel leaves only the old folder); the copy is
 checked, game files again; the app switches over to the new folder; a Steam shortcut that pointed into the old
 folder is repointed and keeps its app ID (play time and art stay), or the change is queued for Desktop Mode when
-Steam is running (always in Game Mode). **The old folder is kept.** Then one page asks "Remove the N old copies?"
-(Keep them is the default and B; Remove them checks each copy first, zips its saves, and says what stayed and
-why). Inside the setup wizard that question comes once, near the end. Nothing is deleted automatically. A
+Steam is running (always in Game Mode). **The old folder is kept.** Then the old copies page lists each one with
+its status; right after the move none is ready (see "Old copies: validated before they can go"). Inside the setup
+wizard that page comes once, near the end, and only when one is ready. Nothing is deleted automatically. A
 progress page shows each port's state and a Cancel; a cancel stops the copy in progress and removes its partial
 copy, and ports already moved stay moved.
 
