@@ -58,11 +58,16 @@ impl Setup {
 /// The service object a pass, a listing or a download talks to: the demo folder in a debug or test run that
 /// asks for one, else Google Drive.
 pub fn service(setup: &Setup, tokens_path: &std::path::Path, id: ServiceId) -> Box<dyn CloudService> {
-    let _ = (setup, tokens_path);
     #[cfg(any(test, debug_assertions))]
     if let Some(dir) = super::demo::demo_dir() {
-        return Box::new(super::demo::FolderService::new(dir));
+        let (net, cfg, path) = (setup.net.clone(), setup.oauth(), tokens_path.to_path_buf());
+        let check = move || {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            super::store::access_token(&net, &cfg, &path, id, now).map(|_| ())
+        };
+        return Box::new(super::demo::FolderService::new(dir).with_auth(Box::new(check)));
     }
+    let _ = (setup, tokens_path);
     Box::new(NotBuilt(id))
 }
 

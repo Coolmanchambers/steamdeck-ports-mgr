@@ -6,6 +6,7 @@
 #   - its window is mapped and the screenshot is not blank;
 #   - Tab opens the Deck-ready list without a crash (whether it downloads is only reported), Tab returns;
 #   - Settings > Artwork sources... opens and its Back row returns to Settings;
+#   - Settings > Cloud backup... opens its first page and B returns to Settings;
 #   - Settings > Import ports... opens and closes without a crash;
 #   - Settings > Game files... opens without a crash;
 #   - Settings > Ports folder... opens, its "Choose another folder..." opens the folder picker, and
@@ -255,6 +256,19 @@ if [ "$alive" = yes ]; then
                 eval "$(xdotool getwindowgeometry --shell "$art")"; AX=$X; AY=$Y
                 xdotool mousemove $((AX + 100)) $((AY + 63 + 42 * 9)) click 1; sleep 1.5
                 check "Back leaves Artwork sources for Settings" '[ -z "$(xdotool search --name "^Artwork sources$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings$" 2>/dev/null)" ]'
+                # Settings > Cloud backup... (the 13th row, by keyboard) opens a page titled "Cloud backup" (the intro, or
+                # "isn't set up in this build" when the build has no Google client), and B returns to Settings.
+                cs=$(xdotool search --name "^Settings$" 2>/dev/null | head -1)
+                if [ -n "$cs" ]; then
+                    press_keys "$cs" Down Down Down Down Down Down Down Down Down Down Down Down Return; sleep 2
+                    import -window root "$OUT/cloud-backup.png" 2>/dev/null
+                    cb=$(xdotool search --name "^Cloud backup$" 2>/dev/null | head -1)
+                    check "Cloud backup screen opens and the app keeps running" '[ -n "$cb" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+                    if [ -n "$cb" ]; then
+                        press_keys "$cb" Escape; sleep 1.5
+                        check "B leaves Cloud backup for Settings" '[ -z "$(xdotool search --name "^Cloud backup$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings$" 2>/dev/null)" ]'
+                    fi
+                fi
                 eval "$(xdotool getwindowgeometry --shell "$win")"
             fi
             xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1

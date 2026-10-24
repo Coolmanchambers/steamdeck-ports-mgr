@@ -297,8 +297,8 @@ pub fn copying_back_page(what: &str, progress: &str) -> Page<Act> {
 pub fn copied_page(what: &str, port_name: Option<&str>, kept_both: bool) -> Page<Act> {
     let mut page = base("Copied");
     page.paragraphs = vec![match port_name {
-        Some(name) => format!("{what} is on this Deck now. Restore saves for {name} now?"),
-        None => format!("{what} is on this Deck now. Open Restore saves to put it back?"),
+        Some(name) => format!("Copied {what} to this Deck. Restore saves for {name} now?"),
+        None => format!("Copied {what} to this Deck. Open Restore saves to put it back?"),
     }];
     if kept_both {
         page.facts = vec!["A different file with the same name was already here, so both are kept.".into()];
@@ -461,7 +461,7 @@ mod tests {
     fn copied_offers_restore_saves_and_says_when_both_files_were_kept() {
         let page = copied_page("Ship of Harkinian, before update, Oct 20", Some("Ship of Harkinian"), true);
         assert_eq!(action_at(&page, 0), Some(Act::RestoreSaves));
-        assert!(page.paragraphs[0].contains("Restore saves for Ship of Harkinian now?"));
+        assert_eq!(page.paragraphs[0], "Copied Ship of Harkinian, before update, Oct 20 to this Deck. Restore saves for Ship of Harkinian now?");
         assert!(page.facts[0].contains("both are kept"));
         assert!(!copied_page("x", None, false).paragraphs[0].is_empty());
         assert!(focusables(&page).len() >= 2);

@@ -90,6 +90,7 @@ fn apply_art<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, images: &HashMap<S
     if let Some(card) = &page.card {
         d.set_card(WizardCard {
             image: card.qr.as_ref().map_or_else(|| image_of(images, &card.art), qr_image),
+            square: card.qr.is_some(),
             title: card.title.clone().into(),
             lines: model(card.lines.iter().map(|l| l.clone().into()).collect::<Vec<slint::SharedString>>()),
         });

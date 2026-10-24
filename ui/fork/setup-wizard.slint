@@ -28,6 +28,8 @@ export struct WizardOption {
 // One port shown big: its cover (an empty image shows the name instead), its name and a few short lines.
 export struct WizardCard {
     image: image,
+    // the picture is square (a QR code) instead of a portrait cover
+    square: bool,
     title: string,
     lines: [string],
 }
@@ -204,7 +206,7 @@ component CardBox inherits Rectangle {
         x: root.pad;
         y: root.pad;
         height: root.height - root.pad * 2;
-        width: self.height * 0.68;
+        width: self.height * (root.card.square ? 1.0 : 0.68);
         source: root.card.image;
         label: root.card.title;
         font-size: root.font-size * 0.9;

@@ -248,6 +248,8 @@ struct Session {
     /// What to hand over to Restore saves after "Copied".
     copied_folder: RefCell<Option<String>>,
     copying_label: RefCell<String>,
+    /// True when the copy is "Copy all my backups" (a summary), false for one chosen backup.
+    copying_all: Cell<bool>,
     last_status: RefCell<Option<Page<Act>>>,
     ticks: Cell<u64>,
 }
@@ -269,6 +271,7 @@ impl Session {
             shown: Cell::new(LIST_SHOWN),
             copied_folder: RefCell::new(None),
             copying_label: RefCell::new(String::new()),
+            copying_all: Cell::new(false),
             last_status: RefCell::new(None),
             ticks: Cell::new(0),
         })
@@ -398,11 +401,13 @@ fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             let file = s.remote.borrow().get(i).cloned();
             if let Some(file) = file {
                 let label = label_of(app, s, &file);
+                s.copying_all.set(false);
                 start_copy(app, router, s, vec![file], label);
             }
         }
         Act::CopyAll => {
             let missing: Vec<RemoteFile> = restore::missing_locally(&s.remote.borrow(), &app.paths.saves_backup_dir).into_iter().cloned().collect();
+            s.copying_all.set(true);
             start_copy(app, router, s, missing, "all your backups".to_string());
         }
         Act::ShowOlder => {
@@ -670,7 +675,7 @@ fn tick_copying(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 fn on_copied(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, outcome: CopyOutcome) {
     let label = s.copying_label.borrow().clone();
     let first_error = outcome.results.iter().find_map(|(_, r)| r.as_ref().err());
-    if outcome.results.len() == 1 {
+    if !s.copying_all.get() && outcome.results.len() == 1 {
         return match &outcome.results[0].1 {
             Ok(done) => {
                 let expected = done.place.rel();
