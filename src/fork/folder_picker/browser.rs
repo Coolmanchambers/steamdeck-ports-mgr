@@ -68,6 +68,8 @@ pub struct Picker {
     env: Env,
     /// Places the caller adds (the Game files screen offers ROM folders), shown after the built-in ones.
     extra: Vec<(String, PathBuf)>,
+    /// Show `extra` before the built-in places.
+    extra_first: bool,
     /// Whether a folder could be written to, so redrawing does not create a test file each time.
     write_cache: std::cell::RefCell<std::collections::HashMap<PathBuf, bool>>,
 }
@@ -86,7 +88,7 @@ impl Picker {
         let current = nearest_existing_folder(start)
             .or_else(|| env.home.clone())
             .unwrap_or_else(|| PathBuf::from("/"));
-        let mut picker = Picker { purpose, current, show_hidden: false, places: Vec::new(), folders: Vec::new(), hidden_count: 0, cut_off: 0, error: None, env, extra, write_cache: Default::default() };
+        let mut picker = Picker { purpose, current, show_hidden: false, places: Vec::new(), folders: Vec::new(), hidden_count: 0, cut_off: 0, error: None, env, extra, extra_first: false, write_cache: Default::default() };
         picker.places = picker.find_places();
         picker.reload();
         picker
@@ -94,6 +96,18 @@ impl Picker {
 
     fn drives(&self) -> Vec<Drive> {
         mounts::removable_drives(&self.env.mounts, &self.env.media_roots)
+    }
+
+    /// The caller's places go first (the game files folder: "SD card: Emulation/roms (Recommended)" on top).
+    pub fn put_extra_first(&mut self) {
+        self.extra_first = true;
+        self.places = self.find_places();
+        self.reload();
+    }
+
+    /// The folder in use as a place: "SD card > Emulation > roms", never a card's ID or a bare "~".
+    pub fn breadcrumb(&self) -> String {
+        crate::fork::rom_screens::util::ellipsize(&mounts::folder_label(&self.current, &self.drives(), self.env.home.as_deref()), 58)
     }
 
     fn free_text(&self, path: &Path) -> Option<String> {
@@ -121,11 +135,19 @@ impl Picker {
                 }
             }
         }
+        let mut extra: Vec<Place> = Vec::new();
         for (label, path) in &self.extra {
-            if path.is_dir() && !out.iter().any(|p| p.path == *path) {
-                out.push(Place { label: label.clone(), detail: String::new(), path: path.clone() });
+            if path.is_dir() && !out.iter().chain(extra.iter()).any(|p| p.path == *path) {
+                extra.push(Place { label: label.clone(), detail: String::new(), path: path.clone() });
             }
         }
+        if self.extra_first {
+            // The caller's places first; a built-in place they repeat (a whole card) is not listed twice.
+            out.retain(|p| !extra.iter().any(|e| e.path == p.path));
+            extra.extend(out);
+            return extra;
+        }
+        out.extend(extra);
         out
     }
 

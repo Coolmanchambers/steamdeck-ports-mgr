@@ -172,9 +172,36 @@ pub struct Drive {
 }
 
 impl Drive {
+    /// "SD card (SD512)"; a card whose folder is only its ID ("c14f9023-6854-...") is just "SD card".
     pub fn title(&self) -> String {
-        format!("{} ({})", self.kind, self.label)
+        if looks_like_an_id(&self.label) {
+            self.kind.to_string()
+        } else {
+            format!("{} ({})", self.kind, self.label)
+        }
     }
+}
+
+/// A file system ID rather than a name: hex digits and dashes, 8 or more of them (UUIDs, FAT serials like 1A2B-3C4D).
+fn looks_like_an_id(label: &str) -> bool {
+    label.len() >= 8 && label.contains('-') && label.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+/// A folder as a place, never a card's ID: "SD card > Emulation > roms", "Home > ROMs". A folder outside the
+/// drives and the home folder is its path.
+pub fn folder_label(path: &Path, drives: &[Drive], home: Option<&Path>) -> String {
+    let crumbs = |base: &str, rest: &Path| {
+        let mut parts = vec![base.to_string()];
+        parts.extend(rest.components().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+        parts.join(" > ")
+    };
+    if let Some(d) = drives.iter().filter(|d| path.starts_with(&d.mount_point)).max_by_key(|d| d.mount_point.as_os_str().len()) {
+        return crumbs(d.kind, path.strip_prefix(&d.mount_point).unwrap_or(Path::new("")));
+    }
+    if let Some(rest) = home.and_then(|h| path.strip_prefix(h).ok()) {
+        return crumbs("Home", rest);
+    }
+    path.display().to_string()
 }
 
 fn drive_kind(device: &str) -> &'static str {

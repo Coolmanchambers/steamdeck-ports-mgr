@@ -46,7 +46,10 @@ pub(crate) fn open_folder_picker(
     on_cancel: impl Fn(&Rc<AppState>, &Router) + 'static,
 ) {
     let off_use_this = request.cursor_off_use_this;
-    let picker = Picker::open_with(&request.start, request.purpose, Env::system(), request.extra_places);
+    let mut picker = Picker::open_with(&request.start, request.purpose, Env::system(), request.extra_places);
+    if request.extra_first {
+        picker.put_extra_first();
+    }
     let session = Rc::new(Session { title: request.title, picker: RefCell::new(picker), on_chosen: Rc::new(on_chosen), on_cancel: Rc::new(on_cancel) });
     let start = {
         let picker = session.picker.borrow();
@@ -69,7 +72,7 @@ fn rows_model(picker: &Picker) -> slint::ModelRc<FolderRow> {
 }
 
 fn fill(app: &AppState, dialog: &FolderPickerDialog, picker: &Picker, selected: usize) {
-    dialog.set_path_text(shown_path(&picker.current).into());
+    dialog.set_path_text(picker.breadcrumb().into());
     dialog.set_info_text(picker.info_line().into());
     dialog.set_hint_text(picker.hint_line().into());
     dialog.set_rows(rows_model(picker));

@@ -105,22 +105,7 @@ pub fn place_of(path: &Path, internal_default: &Path, drives: &[Drive]) -> Optio
     (path == internal_default).then_some(Kind::Internal)
 }
 
-/// A folder as a place, never a card's UUID: "SD card > Emulation > roms", "Home > ROMs". A folder outside the
-/// drives and the home folder is its path.
-pub fn folder_label(path: &Path, drives: &[Drive], home: Option<&Path>) -> String {
-    let crumbs = |base: &str, rest: &Path| {
-        let mut parts = vec![base.to_string()];
-        parts.extend(rest.components().map(|c| c.as_os_str().to_string_lossy().into_owned()));
-        parts.join(" > ")
-    };
-    if let Some(d) = drives.iter().filter(|d| path.starts_with(&d.mount_point)).max_by_key(|d| d.mount_point.as_os_str().len()) {
-        return crumbs(d.kind, path.strip_prefix(&d.mount_point).unwrap_or(Path::new("")));
-    }
-    if let Some(rest) = home.and_then(|h| path.strip_prefix(h).ok()) {
-        return crumbs("Home", rest);
-    }
-    path.display().to_string()
-}
+pub use crate::fork::folder_picker::mounts::folder_label;
 
 #[cfg(test)]
 mod tests {
@@ -142,6 +127,9 @@ mod tests {
         assert_eq!(place_of(Path::new("/run/media/deck/STICK/Ports"), Path::new("/x"), &drives), Some(Kind::OtherDrive));
         assert_eq!(place_of(Path::new("/home/deck/App/Library"), Path::new("/home/deck/App/Library"), &drives), Some(Kind::Internal));
         assert_eq!(place_of(Path::new("/home/deck/Games"), Path::new("/home/deck/App/Library"), &drives), None);
+        assert_eq!(sd.title(), "SD card", "the card's ID is never shown");
+        assert_eq!(Drive { label: "SD512".into(), ..sd.clone() }.title(), "SD card (SD512)");
+        assert_eq!(Drive { label: "1A2B-3C4D".into(), ..sd }.title(), "SD card");
     }
 
     fn drive(mount: &Path, kind: &'static str, label: &str, fs_type: &str) -> Drive {

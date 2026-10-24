@@ -479,8 +479,12 @@ fn connection_count(store: &RomLibraryStore) -> usize {
 fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
     // The shared folder picker, with the usual ROM folders (SD card, EmuDeck) as extra quick places.
     let home = home_dir();
-    let mut request = PickerRequest::new("Where are your game files?", home.as_deref().unwrap_or(Path::new("/")), Purpose::ScanFolder);
-    request.extra_places = browse::start_points(home.as_deref(), &browse::system_mounts());
+    let drives = browse::system_drives();
+    // It opens in the EmuDeck ROM folder when there is one (Use this folder is then one press), else the home folder.
+    let start = browse::emudeck_folder(home.as_deref(), &drives).or_else(|| home.clone()).unwrap_or_else(|| PathBuf::from("/"));
+    let mut request = PickerRequest::new("Where are your game files?", &start, Purpose::ScanFolder);
+    request.extra_places = browse::start_points(home.as_deref(), &drives);
+    request.extra_first = true;
     let on_cancel = then.clone();
     open_folder_picker(
         app,

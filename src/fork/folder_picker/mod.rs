@@ -60,11 +60,13 @@ pub struct PickerRequest {
     /// The cursor starts on the first sub-folder (or Cancel), never on "Use this folder": one press of A must not
     /// choose the folder the picker happens to open in (the save finder).
     pub cursor_off_use_this: bool,
+    /// List `extra_places` before the drives and home folders (the game files folder: its likely places first).
+    pub extra_first: bool,
 }
 
 impl PickerRequest {
     pub fn new(title: &str, start: &Path, purpose: Purpose) -> PickerRequest {
-        PickerRequest { title: title.to_string(), start: start.to_path_buf(), purpose, extra_places: Vec::new(), cursor_off_use_this: false }
+        PickerRequest { title: title.to_string(), start: start.to_path_buf(), purpose, extra_places: Vec::new(), cursor_off_use_this: false, extra_first: false }
     }
 }
 
