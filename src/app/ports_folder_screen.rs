@@ -693,13 +693,18 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
     if !note.is_empty() {
         summary.push(note);
     }
+    // In the setup wizard the old copies of a move are kept and asked about once, on its own page near the end.
+    if super::setup_wizard_screen::active() && !copies.is_empty() {
+        summary.push("The old copies are kept; the setup wizard asks about them at the end.".to_string());
+        copies.clear();
+    }
     prompt_old_copies(app, router, copies, summary.join("\n\n"));
 }
 
 // -- Old copies -----------------------------------------------------------------------------------
 
 mod batch;
-pub(crate) use batch::prompt_old_copies_batch_then;
+pub(crate) use batch::{prompt_old_copies_batch_then, CHECK_FAILED};
 
 /// Everything the removal check needs, owned, so it can also run on the worker thread.
 struct RemovalParts {
@@ -743,10 +748,6 @@ impl RemovalParts {
 /// "Remove the old copy now?" for each entry in turn, then `summary` (with what was removed or kept).
 /// Nothing is removed without the user choosing "Remove old copy" for that entry; Keep is preselected.
 pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies: VecDeque<OldCopy>, summary: String) {
-    // In the setup wizard the old copies of a move are kept and asked about once, on its own page near the end.
-    if super::setup_wizard_screen::active() && !copies.is_empty() {
-        copies.clear();
-    }
     let Some(entry) = copies.pop_front() else {
         if !summary.is_empty() {
             message(app, router, &summary);

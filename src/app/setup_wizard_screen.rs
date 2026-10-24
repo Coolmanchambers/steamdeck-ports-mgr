@@ -52,6 +52,8 @@ thread_local! {
     /// The folder an earlier build recorded, offered in this run only.
     static EARLIER: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     /// The old copies already listed when this wizard run started: only the ones added since are asked about.
+    /// What the old copy page said when it could not check the copies, shown once on top of the last page.
+    static OLD_COPIES_NOTE: RefCell<Option<String>> = const { RefCell::new(None) };
     static OLD_AT_START: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -113,6 +115,11 @@ fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
 
 /// The title bar X of a screen the wizard handed over to: leave the wizard like the X on its own pages (setup stays
 /// unfinished and comes back at the next start).
+/// The scan of the game files folder is done (its result is waiting): show the page again.
+pub(crate) fn resume_after_scan(app: &Rc<AppState>, router: &Router) {
+    with_wizard(app, router, |w, ui| flow::resume(w, ui));
+}
+
 pub(crate) fn exit_wizard(app: &Rc<AppState>, router: &Router) {
     end_session(app, router);
 }
@@ -191,7 +198,7 @@ fn context(app: &AppState, step: crate::fork::setup_wizard::flow::Step) -> Conte
         current_is_default: current == internal_default,
         ports_folder: current,
         rom_folder_set: rom_folder(app).is_some(),
-        steam: (step == crate::fork::setup_wizard::flow::Step::Steam).then(|| steam_info(app)),
+        steam: matches!(step, crate::fork::setup_wizard::flow::Step::Steam | crate::fork::setup_wizard::flow::Step::Done).then(|| steam_info(app)),
     }
 }
 
@@ -248,8 +255,13 @@ impl Adapters for Ui {
         super::rom_screens::open_folder_chooser(&self.app, &self.router);
     }
 
-    fn rom_folder_set(&mut self) -> bool {
-        rom_folder(&self.app).is_some()
+    fn ports_needing_game_files(&mut self) -> usize {
+        let catalog = self.app.catalog.borrow();
+        catalog.iter().filter(|p| super::rom_screens::port_needs_game_files(&self.app, p)).count()
+    }
+
+    fn game_files_result(&mut self) -> Option<crate::fork::setup_wizard::game_files::Results> {
+        super::rom_screens::take_wizard_result()
     }
 
     fn steam_accounts(&mut self) -> Vec<String> {
@@ -281,6 +293,10 @@ impl Adapters for Ui {
 
     fn old_copies_step(&mut self) {
         old_copies_step(&self.app, &self.router);
+    }
+
+    fn old_copies_note(&mut self) -> Option<String> {
+        OLD_COPIES_NOTE.with(|n| n.borrow_mut().take())
     }
 
     fn installed_count(&mut self) -> usize {
@@ -347,7 +363,11 @@ fn new_old_copies(app: &AppState) -> Vec<crate::fork::port_mover::old_copies::Ol
 fn old_copies_step(app: &Rc<AppState>, router: &Router) {
     close_current_dialog(app, router);
     let copies: std::collections::VecDeque<_> = new_old_copies(app).into();
-    super::ports_folder_screen::prompt_old_copies_batch_then(app, router, copies, String::new(), |app, router, _text| {
+    OLD_COPIES_NOTE.with(|n| *n.borrow_mut() = None);
+    super::ports_folder_screen::prompt_old_copies_batch_then(app, router, copies, String::new(), |app, router, text| {
+        if let Some(text) = text.filter(|t| t.contains(super::ports_folder_screen::CHECK_FAILED)) {
+            OLD_COPIES_NOTE.with(|n| *n.borrow_mut() = Some(text));
+        }
         let (app, router) = (app.clone(), router.clone());
         // After this dialog's own closing step has finished.
         slint::Timer::single_shot(Duration::from_millis(0), move || with_wizard(&app, &router, |w, ui| flow::resume_old_copies(w, ui)));
@@ -362,6 +382,8 @@ fn old_copies_step(app: &Rc<AppState>, router: &Router) {
 /// that does not. `finish` hands control back to the wizard, which counts the ports now installed against
 /// the count taken when the step was opened, so the Done page reports what the import really moved.
 fn import_step(app: &Rc<AppState>, router: &Router) {
+    // A "back" noted by an earlier visit is not this visit's.
+    let _ = super::import_screen::take_went_back();
     // Only the import hand-off is resumed: a late finish must not take another hand-off (the game files chooser, say).
     let finish: super::import_screen::Finish = Rc::new(|app, router| with_wizard(app, router, |w, ui| flow::resume_import(w, ui)));
     super::import_screen::open_with(app, router, true, Some(finish));

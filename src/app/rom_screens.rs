@@ -48,6 +48,8 @@ pub(crate) use find_flow::{after_install, after_ports_added_then, find_for_port,
 #[derive(Clone)]
 enum Then {
     Results,
+    /// From the setup wizard: the scan's result goes back to the wizard's page, not to the results lists.
+    Wizard,
     /// Look for this port's game files (`Port::key()`); `back` is where its flow returns.
     Find { key: String, back: Back },
 }
@@ -55,7 +57,7 @@ enum Then {
 /// Leave the folder chooser without choosing.
 fn leave(app: &Rc<AppState>, router: &Router, then: &Then) {
     match then {
-        Then::Results => open_game_files(app, router),
+        Then::Results | Then::Wizard => open_game_files(app, router),
         Then::Find { key, back } => find_flow::resume(app, router, key, back),
     }
 }
@@ -257,7 +259,17 @@ pub(crate) fn open_game_files(app: &Rc<AppState>, router: &Router) {
 /// Fork (setup wizard): the folder choice of this screen with no menu in front of it. After the scan
 /// the results list shows what was found.
 pub(crate) fn open_folder_chooser(app: &Rc<AppState>, router: &Router) {
-    choose_folder(app, router, Then::Results);
+    choose_folder(app, router, Then::Wizard);
+}
+
+thread_local! {
+    /// What the last scan run for the wizard found for the installed ports that need game files.
+    static WIZARD_RESULT: RefCell<Option<crate::fork::setup_wizard::game_files::Results>> = const { RefCell::new(None) };
+}
+
+/// Takes what the last wizard scan found (once).
+pub(crate) fn take_wizard_result() -> Option<crate::fork::setup_wizard::game_files::Results> {
+    WIZARD_RESULT.with(|r| r.borrow_mut().take())
 }
 
 fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
@@ -325,6 +337,7 @@ fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
     let Some(store) = load_store(app, router) else { return };
     let Some(root) = store.rom_dir().map(Path::to_path_buf) else { return choose_folder(app, router, then) };
     let input = report_input(app, &store);
+    let for_wizard = matches!(then, Then::Wizard);
     run_job(
         app,
         router,
@@ -333,6 +346,11 @@ fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
         move |app, router, result| match result.and_then(|r| r) {
             Err(e) => message(app, router, TITLE, &e),
             Ok(None) => open_game_files(app, router),
+            // The wizard reports what the scan found for the ports that need files; no lists.
+            Ok(Some(out)) if for_wizard => {
+                WIZARD_RESULT.with(|r| *r.borrow_mut() = Some(crate::fork::setup_wizard::game_files::Results::from_report(&out.report)));
+                super::setup_wizard_screen::resume_after_scan(app, router);
+            }
             Ok(Some(out)) => after_scan(app, router, out),
         },
     );

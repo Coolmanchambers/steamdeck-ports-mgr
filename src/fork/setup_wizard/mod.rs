@@ -12,6 +12,7 @@
 //! get the wizard once too.
 
 pub mod flow;
+pub mod game_files;
 pub mod places;
 pub mod steam;
 pub mod text;

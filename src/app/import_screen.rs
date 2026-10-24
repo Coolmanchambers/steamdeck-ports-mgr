@@ -491,7 +491,19 @@ pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, sp
 // -- Scanning ----------------------------------------------------------------------------------------
 
 pub(super) fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders) {
-    scan(app, router, ctx, folders, ctx.waited_on().then(|| ctx.finisher()));
+    // B or Cancel on the first scan leaves the step. In the setup wizard that is "back" to the question before,
+    // not a quiet skip.
+    let leave: Option<Step> = ctx.waited_on().then(|| {
+        let ctx = ctx.clone();
+        let step: Step = Rc::new(move |app, router| {
+            if ctx.from_wizard {
+                note_went_back();
+            }
+            ctx.finish_quiet(app, router);
+        });
+        step
+    });
+    scan(app, router, ctx, folders, leave);
 }
 
 /// The scan, with what B on its progress list does: leave the step (the first scan), or for a rescan from the

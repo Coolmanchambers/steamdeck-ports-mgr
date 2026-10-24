@@ -131,6 +131,10 @@ pub struct Summary {
     /// How many ports the import screen moved in, summed over the times it was opened; `None` = not opened.
     pub imported: Option<usize>,
     pub rom_folder_opened: bool,
+    /// How many installed ports need a game file, when the game files step was reached.
+    pub game_files_needed: Option<usize>,
+    /// What the last scan of the game files folder found for them.
+    pub game_files: Option<super::game_files::Results>,
     /// What adding to Steam did: `Added` or `Queued`; `None` = not done.
     pub steam: Option<SteamOutcome>,
     /// The account was asked about (several accounts), so it is not asked again this run.
@@ -194,8 +198,10 @@ pub trait Adapters {
     fn import_went_back(&mut self) -> bool;
     /// Open the game files folder choice and scan.
     fn rom_folder_step(&mut self);
-    /// A game files folder is set.
-    fn rom_folder_set(&mut self) -> bool;
+    /// How many installed ports name a game file they need.
+    fn ports_needing_game_files(&mut self) -> usize;
+    /// What the scan the game files hand-off ran found for those ports; once per scan.
+    fn game_files_result(&mut self) -> Option<super::game_files::Results>;
     /// The names of the Steam accounts when there are several (else none).
     fn steam_accounts(&mut self) -> Vec<String>;
     /// Remember which account gets the ports (by position in `steam_accounts`).
@@ -208,6 +214,8 @@ pub trait Adapters {
     fn kept_old_copies(&mut self) -> usize;
     /// Open the one page about those old copies; `resume_old_copies` runs when it is left.
     fn old_copies_step(&mut self);
+    /// What that page said when it could not check the copies (shown once as a notice), if so.
+    fn old_copies_note(&mut self) -> Option<String>;
     /// Ports installed right now (the import's result is the difference).
     fn installed_count(&mut self) -> usize;
     /// Remember that setup is finished (`setup_done`).
@@ -238,6 +246,15 @@ fn enter(w: &mut Wizard, step: Step, a: &mut dyn Adapters) {
     w.step = step;
     match step {
         Step::YourPorts => start_import(w, a),
+        Step::GameFiles => {
+            // No installed port needs a game file: nothing to ask about.
+            let needing = a.ports_needing_game_files();
+            w.summary.game_files_needed = Some(needing);
+            if needing == 0 {
+                return enter(w, Step::Steam, a);
+            }
+            show_step(w, a);
+        }
         Step::OldCopies => {
             let before = a.kept_old_copies();
             if before == 0 {
@@ -321,7 +338,11 @@ fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     match action {
         Action::Next if matches!(w.step, Step::PortsFolder | Step::GameFiles | Step::Steam | Step::OldCopies) => advance(w, a),
         Action::Back => {
-            if let Some(prev) = w.step.prev() {
+            if let Some(mut prev) = w.step.prev() {
+                // A page that was never shown (no port needs game files) is stepped over.
+                if prev == Step::GameFiles && w.summary.game_files_needed == Some(0) {
+                    prev = Step::YourPorts;
+                }
                 // Going back shows the page again; it never starts the import over.
                 w.step = prev;
                 show_step(w, a);
@@ -405,12 +426,17 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
     match handoff {
         HandOff::Import { installed_before } => {
             let added = a.installed_count().saturating_sub(installed_before);
-            w.summary.imported = Some(w.summary.imported.unwrap_or(0) + added);
-            // B on the first page of Import ports is "back" to the ports folder question; Skip and the end
-            // of an import go on.
+            // B on the first page of Import ports (or Cancel on its scan) is "back" to the ports folder question;
+            // Skip and the end of an import go on.
             if a.import_went_back() {
                 w.step = Step::PortsFolder;
                 return show_step(w, a);
+            }
+            // Moved N, or skipped: leaving without moving anything is not "no ports were moved in".
+            if added > 0 {
+                w.summary.imported = Some(w.summary.imported.unwrap_or(0) + added);
+            } else if w.summary.imported.is_none() && !w.summary.skipped.contains(&Step::YourPorts) {
+                w.summary.skipped.push(Step::YourPorts);
             }
             w.view = View::Step;
             advance(w, a);
@@ -425,12 +451,11 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
         }
         HandOff::RomFolder => {
             w.summary.rom_folder_opened = true;
-            if a.rom_folder_set() {
-                w.view = View::Step;
-                advance(w, a);
-            } else {
-                show_step(w, a);
+            // The results page is the answer; Continue goes on. A cancelled picker leaves the page as it was.
+            if let Some(results) = a.game_files_result() {
+                w.summary.game_files = Some(results);
             }
+            show_step(w, a);
         }
         HandOff::Art => {
             w.summary.art_opened = true;
@@ -441,6 +466,11 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
             w.summary.old_copies = Some(OldCopiesResult { removed: before.saturating_sub(kept), kept });
             w.view = View::Step;
             advance(w, a);
+            // The copies could not be checked: say so once, on top of the last page.
+            if let Some(note) = a.old_copies_note() {
+                w.view = View::Notice(note);
+                a.show(w);
+            }
         }
     }
 }
@@ -471,7 +501,9 @@ pub(crate) mod fake {
         pub installed: usize,
         pub folder: PathBuf,
         pub went_back: bool,
-        pub rom_set: bool,
+        pub needing: usize,
+        pub note: Option<String>,
+        pub result: Option<super::super::game_files::Results>,
         pub kept: usize,
         pub accounts: Vec<String>,
         pub steam_result: SteamOutcome,
@@ -479,7 +511,7 @@ pub(crate) mod fake {
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, rom_set: false, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2) }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2) }
         }
     }
 
@@ -505,8 +537,11 @@ pub(crate) mod fake {
         fn rom_folder_step(&mut self) {
             self.calls.push("rom".into());
         }
-        fn rom_folder_set(&mut self) -> bool {
-            self.rom_set
+        fn ports_needing_game_files(&mut self) -> usize {
+            self.needing
+        }
+        fn game_files_result(&mut self) -> Option<super::super::game_files::Results> {
+            self.result.take()
         }
         fn steam_accounts(&mut self) -> Vec<String> {
             self.accounts.clone()
@@ -528,6 +563,9 @@ pub(crate) mod fake {
         fn old_copies_step(&mut self) {
             self.calls.push("old_copies".into());
         }
+        fn old_copies_note(&mut self) -> Option<String> {
+            self.note.take()
+        }
         fn installed_count(&mut self) -> usize {
             self.installed
         }
@@ -545,6 +583,7 @@ pub(crate) mod fake {
 mod tests {
     use super::fake::Fake;
     use super::*;
+    use crate::fork::setup_wizard::game_files::Results as GameFilesResults;
 
     fn at(step: Step, mode: Mode) -> Wizard {
         let mut w = Wizard::new(mode);
@@ -619,20 +658,46 @@ mod tests {
     }
 
     #[test]
-    fn the_game_files_page_goes_on_after_a_folder_is_set_and_stays_when_none_was() {
-        let (mut w, mut a) = (at(Step::GameFiles, Mode::FirstRun), Fake::default());
+    fn the_game_files_page_shows_the_results_of_a_scan_and_goes_on_only_with_continue() {
+        let (mut w, mut a) = (at(Step::GameFiles, Mode::FirstRun), Fake { needing: 4, ..Fake::default() });
         press(&mut w, Action::ChooseRomFolder, &mut a);
+        // The picker was cancelled: no result, same page, no advance.
         resume(&mut w, &mut a);
-        assert_eq!(w.step, Step::GameFiles, "no folder came of it");
+        assert_eq!((w.step, w.summary.game_files.clone()), (Step::GameFiles, None));
         assert!(w.summary.rom_folder_opened);
+        // A scan came back: the results page is the same step, shown again.
         press(&mut w, Action::ChooseRomFolder, &mut a);
-        a.rom_set = true;
+        a.result = Some(GameFilesResults { total: 4, found: 3, missing: vec![("Zelda".into(), "Ocarina".into())] });
         resume(&mut w, &mut a);
-        assert_eq!(w.step, Step::Steam);
-        // Keeping the folder that is already set goes on directly.
-        let (mut w, mut a) = (at(Step::GameFiles, Mode::FirstRun), Fake { rom_set: true, ..Fake::default() });
+        assert_eq!(w.step, Step::GameFiles, "the results are read before going on");
+        assert_eq!(w.summary.game_files.as_ref().map(|r| (r.found, r.total)), Some((3, 4)));
+        assert_eq!(a.calls.last().unwrap(), "show GameFiles Step");
+        // Another folder picked and cancelled keeps the earlier results and does not move on.
+        press(&mut w, Action::ChooseRomFolder, &mut a);
+        resume(&mut w, &mut a);
+        assert_eq!((w.step, w.summary.game_files.is_some()), (Step::GameFiles, true));
+        // Continue goes on.
         press(&mut w, Action::Next, &mut a);
         assert_eq!(w.step, Step::Steam);
+    }
+
+    #[test]
+    fn game_files_are_skipped_when_no_installed_port_needs_any_and_back_steps_over_them() {
+        let (mut w, mut a) = (at(Step::YourPorts, Mode::FirstRun), Fake { needing: 0, ..Fake::default() });
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!(w.step, Step::Steam, "nothing to ask about");
+        assert_eq!(w.summary.game_files_needed, Some(0));
+        assert!(!w.summary.skipped.contains(&Step::GameFiles), "it was not skipped by the user");
+        assert_eq!(a.calls.last().unwrap(), "show Steam Step");
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!(w.step, Step::YourPorts, "back does not stop on a page that was never shown");
+        // With ports that need files the page is shown and Back returns to it.
+        let (mut w, mut a) = (at(Step::YourPorts, Mode::FirstRun), Fake { needing: 2, ..Fake::default() });
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!((w.step, w.summary.game_files_needed), (Step::GameFiles, Some(2)));
+        w.step = Step::Steam;
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!(w.step, Step::GameFiles);
     }
 
     #[test]
@@ -885,7 +950,7 @@ mod tests {
 
     #[test]
     fn no_hand_off_resume_or_walk_through_the_steps_marks_setup_done() {
-        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake { kept: 1, rom_set: true, ..Fake::default() });
+        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake { kept: 1, needing: 2, ..Fake::default() });
         press(&mut w, Action::Next, &mut a);
         resume_import(&mut w, &mut a);
         press(&mut w, Action::Next, &mut a);
@@ -953,16 +1018,23 @@ mod tests {
     }
 
     #[test]
-    fn an_import_that_moved_nothing_is_reported_as_zero_and_ports_removed_meanwhile_never_make_it_negative() {
+    fn leaving_import_ports_without_moving_anything_is_a_skip_not_zero_moved_and_ports_removed_meanwhile_never_count() {
         let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake { installed: 3, ..Fake::default() });
         press(&mut w, Action::Next, &mut a);
         resume(&mut w, &mut a);
-        assert_eq!(w.summary.imported, Some(0));
+        assert_eq!(w.summary.imported, None);
+        assert_eq!(w.summary.skipped, [Step::YourPorts], "Skip or Cancel reads as skipped on the last page");
         w.step = Step::YourPorts;
         press(&mut w, Action::FindPorts, &mut a);
         a.installed = 1;
         resume(&mut w, &mut a);
-        assert_eq!(w.summary.imported, Some(0));
+        assert_eq!((w.summary.imported, w.summary.skipped.clone()), (None, vec![Step::YourPorts]), "listed once");
+        // Going back is neither.
+        let (mut w, mut a) = (at(Step::PortsFolder, Mode::FirstRun), Fake::default());
+        press(&mut w, Action::Next, &mut a);
+        a.went_back = true;
+        resume(&mut w, &mut a);
+        assert_eq!((w.summary.imported, w.summary.skipped.clone()), (None, vec![]));
     }
 
     #[test]
@@ -1039,4 +1111,20 @@ mod tests {
         assert_eq!(a.calls.len(), before);
         assert_eq!(w.view, View::ConfirmSkipSetup);
     }
+    #[test]
+    fn a_failed_old_copy_check_is_shown_once_on_top_of_the_last_page() {
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { kept: 2, note: Some("The old copies could not be checked (x).".into()), ..Fake::default() });
+        press(&mut w, Action::Skip, &mut a);
+        resume_old_copies(&mut w, &mut a);
+        assert_eq!(w.step, Step::Done);
+        assert_eq!(w.view, View::Notice("The old copies could not be checked (x).".into()));
+        press(&mut w, Action::Ok, &mut a);
+        assert_eq!((w.step, w.view.clone()), (Step::Done, View::Step));
+        // Without a note there is no notice.
+        let (mut w, mut a) = (at(Step::Steam, Mode::FirstRun), Fake { kept: 2, ..Fake::default() });
+        press(&mut w, Action::Skip, &mut a);
+        resume_old_copies(&mut w, &mut a);
+        assert_eq!(w.view, View::Step);
+    }
+
 }

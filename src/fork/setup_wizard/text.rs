@@ -170,19 +170,7 @@ fn step_page(w: &Wizard, ctx: &Context) -> Page {
             start_on_the_recommended(&mut p);
             p
         }
-        Step::GameFiles => {
-            let mut p = page(w, "Where are your game files?");
-            p.paragraphs = paras(&["Some ports need a game file you own, such as a ROM.", "Your files are only read, never changed or moved."]);
-            if ctx.rom_folder_set {
-                p.facts = vec!["A game files folder is set.".to_string()];
-                p.options = vec![recommended("Keep it", "Go on with the folder that is set", Action::Next), option("Pick another folder...", "Choose a different folder", Action::ChooseRomFolder)];
-            } else {
-                p.options = vec![recommended("Pick a folder...", "The folder that holds your ROMs", Action::ChooseRomFolder), option("Skip for now", "Do this later from Settings", Action::Skip)];
-            }
-            nav(&mut p, w);
-            start_on_the_recommended(&mut p);
-            p
-        }
+        Step::GameFiles => game_files_page(w, ctx),
         Step::Steam => steam_page(w, ctx),
         // Normally this step opens the "Remove the old copies?" page and has none of its own.
         Step::OldCopies => {
@@ -241,6 +229,48 @@ fn steam_line(w: &Wizard, ctx: &Context) -> String {
 
 fn ports_word(n: usize) -> String {
     if n == 1 { "1 port".to_string() } else { format!("{n} ports") }
+}
+
+fn game_files_page(w: &Wizard, ctx: &Context) -> Page {
+    let mut p;
+    if let Some(r) = &w.summary.game_files {
+        // A scan was done: what it found is the page, and Continue goes on.
+        p = page(w, &r.headline());
+        p.facts = r.missing_lines();
+        if r.found > 0 {
+            p.footnote = "Connect them to each port from Settings > Game files.".to_string();
+        }
+        p.options = vec![recommended("Continue", "", Action::Next), option("Pick another folder...", "Look in a different folder", Action::ChooseRomFolder)];
+    } else {
+        p = page(w, "Where are your game files?");
+        let needing = w.summary.game_files_needed.unwrap_or(0);
+        p.paragraphs = vec![
+            if needing > 0 { format!("{} to run.", if needing == 1 { "1 of your ports needs a game file you own".to_string() } else { format!("{needing} of your ports need a game file you own") }) } else { "Some ports need a game file you own, such as a ROM.".to_string() },
+            "Your files are only read, never changed or moved.".to_string(),
+        ];
+        if ctx.rom_folder_set {
+            p.facts = vec!["A game files folder is set.".to_string()];
+            p.options = vec![recommended("Keep it", "Go on with the folder that is set", Action::Next), option("Pick another folder...", "Choose a different folder", Action::ChooseRomFolder)];
+        } else {
+            p.options = vec![recommended("Pick a folder...", "The folder that holds your ROMs", Action::ChooseRomFolder), option("Skip for now", "Do this later from Settings", Action::Skip)];
+        }
+    }
+    nav(&mut p, w);
+    start_on_the_recommended(&mut p);
+    p
+}
+
+fn game_files_line(w: &Wizard, ctx: &Context) -> String {
+    let s = &w.summary;
+    if s.game_files_needed == Some(0) {
+        return "Game files: none of your ports need any.".to_string();
+    }
+    match &s.game_files {
+        Some(r) if r.total > 0 => format!("Game files found for {} of {}.", r.found, if r.total == 1 { "1 port".to_string() } else { format!("{} ports", r.total) }),
+        _ if ctx.rom_folder_set => "A game files folder is set.".to_string(),
+        _ if s.skipped.contains(&Step::GameFiles) => "Game files folder: skipped.".to_string(),
+        _ => "No game files folder yet.".to_string(),
+    }
 }
 
 fn moved_line(n: usize) -> String {
@@ -315,16 +345,10 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
         ports_where(ctx),
         match s.imported {
             Some(n) => moved_line(n),
-            None if s.skipped.contains(&Step::YourPorts) => "Ports you already have: skipped.".to_string(),
-            None => "Ports you already have: not looked for.".to_string(),
+            None if s.skipped.contains(&Step::YourPorts) => "Your ports: skipped.".to_string(),
+            None => "Your ports: not looked for.".to_string(),
         },
-        if ctx.rom_folder_set {
-            "A game files folder is set.".to_string()
-        } else if s.skipped.contains(&Step::GameFiles) {
-            "Game files folder: skipped.".to_string()
-        } else {
-            "No game files folder yet.".to_string()
-        },
+        game_files_line(w, ctx),
         steam_line(w, ctx),
     ];
     if let Some(r) = s.old_copies {
@@ -577,6 +601,57 @@ mod tests {
     }
 
     #[test]
+    fn after_a_scan_the_page_says_how_many_ports_have_their_files_and_which_do_not() {
+        use crate::fork::setup_wizard::game_files::Results;
+        let mut w = at(Step::GameFiles);
+        w.summary.game_files_needed = Some(4);
+        w.summary.game_files = Some(Results { total: 4, found: 3, missing: vec![("Zelda".into(), "Ocarina of Time (USA).z64".into())] });
+        let p = page_for(&w, &ctx());
+        assert_eq!(p.title, "Found game files for 3 of 4 ports.");
+        assert_eq!(p.facts, ["Zelda needs Ocarina of Time (USA).z64."]);
+        assert_eq!(option_actions(&p), [Action::Next, Action::ChooseRomFolder]);
+        assert!(p.footnote.contains("Settings > Game files"));
+        assert_eq!(start(&p), Focus::Option(0));
+        // Nothing found: no pointer to connecting anything.
+        w.summary.game_files = Some(Results { total: 2, found: 0, missing: vec![("A".into(), "x".into()), ("B".into(), "y".into())] });
+        let p = page_for(&w, &ctx());
+        assert_eq!(p.title, "No game files were found for your 2 ports.");
+        assert!(p.footnote.is_empty());
+        assert_eq!(p.facts.len(), 2);
+    }
+
+    #[test]
+    fn before_a_scan_the_page_says_how_many_ports_need_a_file() {
+        let mut w = at(Step::GameFiles);
+        w.summary.game_files_needed = Some(1);
+        assert!(all_text(&page_for(&w, &ctx())).contains("1 of your ports needs a game file you own"));
+        w.summary.game_files_needed = Some(3);
+        assert!(all_text(&page_for(&w, &ctx())).contains("3 of your ports need a game file you own"));
+    }
+
+    #[test]
+    fn the_last_page_says_what_the_game_files_step_found_or_that_none_were_needed() {
+        use crate::fork::setup_wizard::game_files::Results;
+        let line = |needed: Option<usize>, results: Option<Results>, set: bool, skipped: bool| {
+            let mut w = at(Step::Done);
+            w.summary.game_files_needed = needed;
+            w.summary.game_files = results;
+            if skipped {
+                w.summary.skipped.push(Step::GameFiles);
+            }
+            let mut c = ctx();
+            c.rom_folder_set = set;
+            page_for(&w, &c).facts[2].clone()
+        };
+        assert_eq!(line(Some(0), None, false, false), "Game files: none of your ports need any.");
+        assert_eq!(line(Some(4), Some(Results { total: 4, found: 3, missing: vec![] }), true, false), "Game files found for 3 of 4 ports.");
+        assert_eq!(line(Some(1), Some(Results { total: 1, found: 1, missing: vec![] }), true, false), "Game files found for 1 of 1 port.");
+        assert_eq!(line(Some(2), None, true, false), "A game files folder is set.");
+        assert_eq!(line(Some(2), None, false, true), "Game files folder: skipped.");
+        assert_eq!(line(Some(2), None, false, false), "No game files folder yet.");
+    }
+
+    #[test]
     fn the_steam_page_offers_add_all_with_the_count_artwork_and_skip() {
         let p = pg(Step::Steam);
         assert_eq!(p.title, "Add your ports to Steam?");
@@ -675,9 +750,9 @@ mod tests {
         let mut w = at(Step::Done);
         w.summary.skipped = vec![Step::YourPorts, Step::GameFiles, Step::Steam];
         let p = page_for(&w, &ctx());
-        assert_eq!(p.facts, ["Ports go to internal storage.", "Ports you already have: skipped.", "Game files folder: skipped.", "Steam: skipped."]);
+        assert_eq!(p.facts, ["Ports go to internal storage.", "Your ports: skipped.", "Game files folder: skipped.", "Steam: skipped."]);
         let p = pg(Step::Done);
-        assert_eq!(p.facts[1], "Ports you already have: not looked for.");
+        assert_eq!(p.facts[1], "Your ports: not looked for.");
         assert_eq!(p.facts[2], "No game files folder yet.");
         assert_eq!(p.facts[3], "Steam: not set up yet.");
         // Where the ports go is told by kind, never by path.

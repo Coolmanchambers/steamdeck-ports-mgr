@@ -12,6 +12,9 @@ use crate::fork::art::thumbs::ArtRef;
 use crate::fork::import::old_batch::{Batch, BatchAction, Checked};
 use crate::app::page_dialog::{show_page, Handlers};
 
+/// Said when the old copies could not be checked at all (the setup wizard shows that text once, on its last page).
+pub(crate) const CHECK_FAILED: &str = "could not be checked";
+
 /// Gets the closing text when the question has been dealt with, or `None` when it was abandoned because
 /// another dialog took the screen while the copies were being checked (they stay listed under Old copies).
 type Then = Rc<dyn Fn(&Rc<AppState>, &Router, Option<String>)>;
@@ -85,7 +88,7 @@ pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, 
                     let items = checked.into_iter().map(|(copy, check)| Checked { art: art_of(&app2, &copy.port_key), copy, check }).collect();
                     ask(&app2, &router2, Rc::new(Batch::new(items)), summary, then);
                 }
-                Err(e) => then(&app2, &router2, Some(format!("{summary}\n\nThe old copies could not be checked ({e}), so they stay. Remove them later in Settings, Ports folder, Old copies.").trim_start().to_string())),
+                Err(e) => then(&app2, &router2, Some(format!("{summary}\n\nThe old copies {CHECK_FAILED} ({e}), so they stay. Remove them later in Settings, Ports folder, Old copies.").trim_start().to_string())),
             }
         });
     });
