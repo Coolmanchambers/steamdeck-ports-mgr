@@ -13,7 +13,8 @@ use crate::fork::art::net::{Fetch, NetError, MAX_JSON_BYTES};
 use serde_json::Value;
 
 const API: &str = "https://api.github.com/repos";
-const HEADERS: [(&str, &str); 1] = [("Accept", "application/vnd.github+json")];
+/// The longest piece of text GitHub gives that is shown or saved (a description, a version, a file name).
+pub const MAX_SERVER_TEXT: usize = 120;
 /// How many of the newest releases are looked at (the stable one is chosen from them).
 const RELEASES: usize = 5;
 
@@ -48,6 +49,8 @@ pub enum CheckError {
     NoLinuxFile(String),
     /// GitHub answered with something unreadable.
     Unreadable,
+    /// The user cancelled the check.
+    Cancelled,
 }
 
 impl CheckError {
@@ -60,12 +63,19 @@ impl CheckError {
             CheckError::NoReleases(slug) => format!("{slug} has no releases, so there is nothing to download. Look for a project page with a Releases section that has files."),
             CheckError::NoLinuxFile(version) => format!("The newest release ({version}) has no file for Linux. Look for a download ending in .AppImage, .tar.gz or .zip that says Linux."),
             CheckError::Unreadable => "GitHub's answer could not be read. Try again later.".to_string(),
+            CheckError::Cancelled => "Cancelled.".to_string(),
         }
     }
 }
 
-fn get(fetch: &dyn Fetch, url: &str) -> Result<Value, CheckError> {
-    let response = fetch.get(url, &HEADERS, MAX_JSON_BYTES).map_err(|e| match e {
+fn get(fetch: &dyn Fetch, url: &str, token: Option<&str>) -> Result<Value, CheckError> {
+    // The login only raises GitHub's limit (60 an hour without one); `Net` never forwards it to another host.
+    let bearer = token.map(str::trim).filter(|t| !t.is_empty()).map(|t| format!("Bearer {t}"));
+    let mut headers: Vec<(&str, &str)> = vec![("Accept", "application/vnd.github+json")];
+    if let Some(bearer) = &bearer {
+        headers.push(("Authorization", bearer));
+    }
+    let response = fetch.get(url, &headers, MAX_JSON_BYTES).map_err(|e| match e {
         NetError::Offline(_) | NetError::Refused(_) => CheckError::Offline,
         NetError::TooLarge => CheckError::Unreadable,
     })?;
@@ -106,16 +116,20 @@ pub fn is_linux_file(name: &str) -> bool {
     ARCHIVES.iter().any(|e| lower.ends_with(e)) || tokens.contains(&"linux")
 }
 
-/// How good a Linux file looks: 0 an AppImage, 1 an archive that says Linux, 2 any other.
+/// How good a Linux file looks: 0 an AppImage, 1 an archive that says Linux, 2 any other; 3 added to those for a
+/// source, debug, symbols or 32-bit build, which is rarely what is wanted.
 fn rank(name: &str) -> u8 {
     let lower = name.to_lowercase();
-    if lower.ends_with(".appimage") {
-        0
-    } else if lower.contains("linux") {
-        1
-    } else {
-        2
-    }
+    let tokens: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).filter(|t| !t.is_empty()).collect();
+    let lesser = if tokens.iter().any(|t| ["src", "source", "debug", "dbg", "symbols", "i686", "i386"].contains(t)) { 3 } else { 0 };
+    lesser
+        + if lower.ends_with(".appimage") {
+            0
+        } else if tokens.contains(&"linux") {
+            1
+        } else {
+            2
+        }
 }
 
 /// The best Linux file of a release, if it has one.
@@ -126,25 +140,47 @@ pub fn best_linux_file(release: &Value) -> Option<String> {
     names.first().map(|n| n.to_string())
 }
 
+/// Text from GitHub, made safe to show and to save: control characters (and line breaks) become spaces, runs of
+/// spaces become one, and it is cut at [`MAX_SERVER_TEXT`] characters.
+pub fn cap(s: &str) -> String {
+    let flat: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= MAX_SERVER_TEXT {
+        flat
+    } else {
+        let cut: String = flat.chars().take(MAX_SERVER_TEXT - 3).collect();
+        format!("{}...", cut.trim_end())
+    }
+}
+
 fn text(v: &Value, key: &str) -> String {
-    v.get(key).and_then(Value::as_str).unwrap_or_default().trim().to_string()
+    cap(v.get(key).and_then(Value::as_str).unwrap_or_default())
 }
 
 /// Asks GitHub about `repo`: the project, then its newest release.
 pub fn check(fetch: &dyn Fetch, repo: &Repo) -> Result<Checked, CheckError> {
-    let project = get(fetch, &format!("{API}/{}/{}", repo.owner, repo.name)).map_err(|e| not_found(e, repo))?;
+    check_with(fetch, repo, None, &|| false)
+}
+
+/// [`check`] with the user's GitHub token (when they set one) and a way to stop between the two calls.
+pub fn check_with(fetch: &dyn Fetch, repo: &Repo, token: Option<&str>, cancelled: &dyn Fn() -> bool) -> Result<Checked, CheckError> {
+    let project = get(fetch, &format!("{API}/{}/{}", repo.owner, repo.name), token).map_err(|e| not_found(e, repo))?;
+    if cancelled() {
+        return Err(CheckError::Cancelled);
+    }
     // GitHub follows renames and case: its own name for the project is the one to keep.
     let named = text(&project, "full_name");
     let settled = super::parse::parse_link(&named).unwrap_or_else(|_| repo.clone());
-    let name = Some(text(&project, "name")).filter(|n| !n.is_empty()).unwrap_or_else(|| settled.name.clone());
+    // The name is the one the link was checked to have (letters, digits, - _ .), never free text from the answer.
+    let name = settled.name.clone();
     let description = text(&project, "description");
 
-    let releases = get(fetch, &format!("{API}/{}/{}/releases?per_page={RELEASES}", settled.owner, settled.name)).map_err(|e| not_found(e, repo))?;
+    let releases = get(fetch, &format!("{API}/{}/{}/releases?per_page={RELEASES}", settled.owner, settled.name), token).map_err(|e| not_found(e, repo))?;
     let releases: Vec<Value> = releases.as_array().cloned().unwrap_or_default().into_iter().filter(|r| !is_draft(r)).collect();
     let Some(release) = asset_select::newest_release(releases) else { return Err(CheckError::NoReleases(settled.slug())) };
     let version = Some(text(&release, "tag_name")).filter(|t| !t.is_empty()).or_else(|| Some(text(&release, "name")).filter(|t| !t.is_empty())).unwrap_or_else(|| "the newest release".to_string());
-    let Some(linux_file) = best_linux_file(&release) else { return Err(CheckError::NoLinuxFile(version)) };
-    let date = Some(text(&release, "published_at")).filter(|d| d.len() >= 10).map(|d| d[..10].to_string());
+    let Some(linux_file) = best_linux_file(&release).map(|f| cap(&f)) else { return Err(CheckError::NoLinuxFile(version)) };
+    let date = Some(text(&release, "published_at")).filter(|d| d.len() >= 10 && d.is_char_boundary(10)).map(|d| d[..10].to_string()).filter(|d| d.chars().all(|c| c.is_ascii_digit() || c == '-'));
     Ok(Checked { repo: settled, name, description, version, date, linux_file })
 }
 
@@ -154,14 +190,18 @@ pub fn check(fetch: &dyn Fetch, repo: &Repo) -> Result<Checked, CheckError> {
 /// GitHub can give without the network. `<folder>/<owner>/<project>.project` answers the project call and
 /// `.releases` the releases call. A file starts with a line `<status> [<delay in ms>]` (status 0 = no
 /// answer at all), then the body. A missing file is a 404.
+/// The file a replay folder must hold for the switch to count.
+pub const REPLAY_MARKER: &str = "DPM_REPLAY_OK";
+
 pub struct ReplayFetch {
     pub dir: std::path::PathBuf,
 }
 
 impl ReplayFetch {
-    /// The replay folder named by the test switch, if it is set.
+    /// The replay folder named by the test switch, if it is set and holds the marker file. Without the marker a
+    /// stray variable in a real user's environment cannot make the app believe saved answers.
     pub fn from_env() -> Option<ReplayFetch> {
-        std::env::var_os("DPM_GITHUB_REPLAY").map(|d| ReplayFetch { dir: d.into() }).filter(|r| r.dir.is_dir())
+        std::env::var_os("DPM_GITHUB_REPLAY").map(|d| ReplayFetch { dir: d.into() }).filter(|r| r.dir.join(REPLAY_MARKER).is_file())
     }
 }
 
@@ -201,17 +241,20 @@ pub(crate) mod fake {
     pub struct FakeGithub {
         pub answers: Vec<(String, Result<(u16, String), NetError>)>,
         pub asked: RefCell<Vec<String>>,
+        /// The headers of each call, as `name: value`.
+        pub headers: RefCell<Vec<Vec<String>>>,
     }
 
     impl FakeGithub {
         pub fn new(answers: Vec<(&str, Result<(u16, String), NetError>)>) -> FakeGithub {
-            FakeGithub { answers: answers.into_iter().map(|(u, a)| (u.to_string(), a)).collect(), asked: RefCell::new(Vec::new()) }
+            FakeGithub { answers: answers.into_iter().map(|(u, a)| (u.to_string(), a)).collect(), asked: RefCell::new(Vec::new()), headers: RefCell::new(Vec::new()) }
         }
     }
 
     impl Fetch for FakeGithub {
-        fn get(&self, url: &str, _headers: &[(&str, &str)], _max: u64) -> Result<Response, NetError> {
+        fn get(&self, url: &str, headers: &[(&str, &str)], _max: u64) -> Result<Response, NetError> {
             self.asked.borrow_mut().push(url.to_string());
+            self.headers.borrow_mut().push(headers.iter().map(|(n, v)| format!("{n}: {v}")).collect());
             match self.answers.iter().find(|(u, _)| url.contains(u.as_str())) {
                 Some((_, Ok((status, body)))) => Ok(Response { status: *status, body: body.clone().into_bytes(), final_url: url.to_string() }),
                 Some((_, Err(e))) => Err(e.clone()),
@@ -371,10 +414,74 @@ mod tests {
         std::fs::write(dir.join("o/r.project"), "429\n").unwrap();
         let replay = ReplayFetch { dir: dir.clone() };
         let c = check(&replay, &parse_link("github.com/o/p").unwrap()).unwrap();
-        assert_eq!((c.name.as_str(), c.version.as_str(), c.linux_file.as_str()), ("P", "1.0", "p-linux.AppImage"));
+        assert_eq!((c.name.as_str(), c.version.as_str(), c.linux_file.as_str()), ("p", "1.0", "p-linux.AppImage"));
         assert_eq!(check(&replay, &parse_link("github.com/o/q").unwrap()), Err(CheckError::Offline));
         assert_eq!(check(&replay, &parse_link("github.com/o/r").unwrap()), Err(CheckError::RateLimited));
         assert_eq!(check(&replay, &parse_link("github.com/o/missing").unwrap()), Err(CheckError::NotFound("o/missing".into())));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_token_is_sent_to_both_calls_only_when_one_is_set() {
+        let g = github(ok(&project()), ok(&releases(vec![release("9.1.0", false, &["SoH-Linux.AppImage"])])));
+        check_with(&g, &repo(), Some(" secret-token "), &|| false).unwrap();
+        for sent in g.headers.borrow().iter() {
+            assert!(sent.contains(&"Authorization: Bearer secret-token".to_string()), "{sent:?}");
+            assert!(sent.iter().any(|h| h.starts_with("Accept:")));
+        }
+        assert_eq!(g.headers.borrow().len(), 2);
+        let none = github(ok(&project()), ok(&releases(vec![release("9.1.0", false, &["SoH-Linux.AppImage"])])));
+        check_with(&none, &repo(), None, &|| false).unwrap();
+        check_with(&none, &repo(), Some("  "), &|| false).unwrap();
+        assert!(none.headers.borrow().iter().all(|sent| sent.iter().all(|h| !h.starts_with("Authorization"))));
+    }
+
+    #[test]
+    fn a_cancelled_check_stops_after_the_first_call() {
+        let g = github(ok(&project()), ok(&releases(vec![release("9.1.0", false, &["SoH-Linux.AppImage"])])));
+        assert_eq!(check_with(&g, &repo(), None, &|| true), Err(CheckError::Cancelled));
+        assert_eq!(g.asked.borrow().len(), 1);
+    }
+
+    #[test]
+    fn text_from_github_is_flattened_and_cut_and_the_name_is_the_checked_one() {
+        let long = "x".repeat(500);
+        let evil = json!({"full_name": "HarbourMasters/Shipwright", "name": "Evil\nName <b>", "description": format!("Line one\nline two\u{7}\u{1b}[31m {long}")}).to_string();
+        let g = github(ok(&evil), ok(&releases(vec![release(&format!("v1\n{long}"), false, &["SoH-Linux.AppImage"])])));
+        let c = check(&g, &repo()).unwrap();
+        assert_eq!(c.name, "Shipwright", "the entry is named by the validated project name, not by free text");
+        assert!(c.description.starts_with("Line one line two"), "{}", c.description);
+        assert!(c.description.chars().all(|ch| !ch.is_control()));
+        assert_eq!(c.description.chars().count(), MAX_SERVER_TEXT);
+        assert!(c.description.ends_with("..."));
+        assert!(c.version.chars().count() <= MAX_SERVER_TEXT && !c.version.contains('\n'));
+        assert_eq!(cap("  a \t b\r\nc  "), "a b c");
+    }
+
+    #[test]
+    fn source_debug_symbol_and_32_bit_files_rank_below_the_real_download() {
+        let rel = release("1", false, &["Game-src-linux.tar.gz", "Game-linux-debug.zip", "Game-linux-i686.tar.gz", "Game-symbols.zip", "Game-linux.tar.gz"]);
+        assert_eq!(best_linux_file(&rel).as_deref(), Some("Game-linux.tar.gz"));
+        let only_lesser = release("1", false, &["Game-src.tar.gz", "Game-linux-debug.zip"]);
+        assert_eq!(best_linux_file(&only_lesser).as_deref(), Some("Game-linux-debug.zip"), "still offered when nothing better exists, but saying linux wins");
+    }
+
+    #[test]
+    fn a_script_or_run_file_counts_only_when_it_says_linux() {
+        assert!(is_linux_file("Install-linux.run") && is_linux_file("Game.linux.sh"));
+        assert!(!is_linux_file("Install.run") && !is_linux_file("setup.sh"));
+    }
+
+    #[test]
+    fn the_replay_switch_needs_the_marker_file() {
+        let dir = std::env::temp_dir().join(format!("dpm_replay_marker_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("DPM_GITHUB_REPLAY", &dir);
+        assert!(ReplayFetch::from_env().is_none(), "a folder without the marker is ignored");
+        std::fs::write(dir.join(REPLAY_MARKER), "").unwrap();
+        assert!(ReplayFetch::from_env().is_some());
+        std::env::remove_var("DPM_GITHUB_REPLAY");
         let _ = std::fs::remove_dir_all(dir);
     }
 

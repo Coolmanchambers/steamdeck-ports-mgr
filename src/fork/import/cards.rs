@@ -314,9 +314,17 @@ impl Cards {
         self.items.get(i)
     }
 
+    /// The position of the item for this folder, if there is one.
+    pub fn index_of(&self, path: &Path) -> Option<usize> {
+        self.items.iter().position(|i| i.path() == path)
+    }
+
     /// A folder the user picked by hand (nothing was found, so there was nothing to walk): it becomes an item
     /// still to be given a port. Returns its position.
     pub fn add_folder(&mut self, path: PathBuf) -> usize {
+        if let Some(at) = self.index_of(&path) {
+            return at;
+        }
         let dir_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         self.items.push(Item::Unsure(Unsure { path, dir_name, could_be: Vec::new() }));
         self.verdicts.push(Verdict::Undecided);
@@ -1350,5 +1358,16 @@ mod tests {
         let cut = port_list_page(&many, 300, "", false);
         assert_eq!(cut.options.len(), MAX_LIST_ROWS);
         assert!(cut.footnote.contains("Showing 40 of 300"), "{}", cut.footnote);
+    }
+
+    #[test]
+    fn the_same_folder_picked_twice_is_one_item() {
+        let mut cards = Cards::new(vec![]);
+        let a = cards.add_folder(PathBuf::from("/home/deck/Games/My Game"));
+        let b = cards.add_folder(PathBuf::from("/home/deck/Games/My Game"));
+        assert_eq!((a, b, cards.len()), (0, 0, 1));
+        assert_eq!(cards.index_of(Path::new("/home/deck/Games/My Game")), Some(0));
+        assert_eq!(cards.index_of(Path::new("/home/deck/Games/Other")), None);
+        assert_eq!(cards.walk(), [0]);
     }
 }
