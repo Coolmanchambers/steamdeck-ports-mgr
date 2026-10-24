@@ -13,7 +13,8 @@
 //! screen, and once it is closed the screen calls [`resume`], which reads what changed and either goes
 //! on to the next page (the question was answered) or shows the same page again (it was not). Two steps
 //! have no page of their own: Your ports opens Import ports at once, and Old copies opens the one
-//! "Remove the old copies?" page, but only when this run kept any.
+//! "Remove the old copies?" page, but only when at least one old copy is ready to remove (Steam starts the new
+//! copy and the port was started from there); otherwise the last page says they are kept until checked.
 
 use std::path::PathBuf;
 
@@ -163,6 +164,8 @@ pub struct Summary {
     pub art_opened: bool,
     /// What the old copy question did: how many copies were removed and how many stay; `None` = not asked.
     pub old_copies: Option<OldCopiesResult>,
+    /// Old copies were kept but none was ready, so the question was not asked: how many.
+    pub old_copies_waiting: Option<usize>,
     pub skipped: Vec<Step>,
 }
 
@@ -266,8 +269,10 @@ pub trait Adapters {
     fn steam_waiting(&mut self) -> usize;
     /// Open Artwork sources.
     fn art_sources_step(&mut self);
-    /// Old copies this run kept (the ones in the list that were not there when the wizard opened).
+    /// Old copies kept after moves (all of them, from this run or an earlier one).
     fn kept_old_copies(&mut self) -> usize;
+    /// Of those, the ones ready to remove (`old_copies::Readiness::Ready`).
+    fn ready_old_copies(&mut self) -> usize;
     /// Open the one page about those old copies; `resume_old_copies` runs when it is left.
     fn old_copies_step(&mut self);
     /// What that page said when it could not check the copies (shown once as a notice), if so.
@@ -297,7 +302,8 @@ fn show_step(w: &mut Wizard, a: &mut dyn Adapters) {
 }
 
 /// Arrive at `step` going forward. Two steps have no page: Your ports opens Import ports at once, and the
-/// old copy question is asked only when this run kept some copies, else it is passed over.
+/// old copy question is asked only when some old copy is ready to remove, else it is passed over (and the last page
+/// says the copies are kept until each port has been checked).
 fn enter(w: &mut Wizard, step: Step, a: &mut dyn Adapters) {
     w.step = step;
     match step {
@@ -314,6 +320,10 @@ fn enter(w: &mut Wizard, step: Step, a: &mut dyn Adapters) {
         Step::OldCopies => {
             let before = a.kept_old_copies();
             if before == 0 {
+                return enter(w, Step::Done, a);
+            }
+            if a.ready_old_copies() == 0 {
+                w.summary.old_copies_waiting = Some(before);
                 return enter(w, Step::Done, a);
             }
             // Recorded first: the page can tell the wizard it is done before `old_copies_step` returns.
@@ -648,6 +658,8 @@ pub(crate) mod fake {
         pub connected: Option<Result<usize, String>>,
         pub result: Option<super::super::game_files::Results>,
         pub kept: usize,
+        /// Ready old copies; `None` = all the kept ones.
+        pub ready: Option<usize>,
         pub accounts: Vec<String>,
         pub steam_result: SteamOutcome,
         pub close_result: Option<SteamCloseResult>,
@@ -656,7 +668,7 @@ pub(crate) mod fake {
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None, waiting: 0 }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, ready: None, accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None, waiting: 0 }
         }
     }
 
@@ -713,6 +725,9 @@ pub(crate) mod fake {
         }
         fn kept_old_copies(&mut self) -> usize {
             self.kept
+        }
+        fn ready_old_copies(&mut self) -> usize {
+            self.ready.unwrap_or(self.kept)
         }
         fn old_copies_step(&mut self) {
             self.calls.push("old_copies".into());
@@ -1007,6 +1022,20 @@ mod tests {
         press(&mut w, Action::Skip, &mut a);
         assert_eq!((w.step, a.calls.clone()), (Step::Done, vec!["show Done Step".to_string()]));
         assert_eq!(w.summary.old_copies, None);
+    }
+
+    #[test]
+    fn the_old_copy_question_waits_until_one_is_ready_and_the_last_page_says_so() {
+        // Tim's Deck now: 4 old copies kept, none ready (Steam not updated, or not started yet).
+        let (mut w, mut a) = (at(Step::Steam, Mode::Rerun), Fake { kept: 4, ready: Some(0), ..Fake::default() });
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!(w.step, Step::Done);
+        assert!(!a.calls.contains(&"old_copies".to_string()), "no question while nothing is ready");
+        assert_eq!((w.summary.old_copies, w.summary.old_copies_waiting), (None, Some(4)));
+        // One ready: the page comes.
+        let (mut w, mut a) = (at(Step::Steam, Mode::Rerun), Fake { kept: 4, ready: Some(1), ..Fake::default() });
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!((w.step, a.calls.clone()), (Step::OldCopies, vec!["old_copies".to_string()]));
     }
 
     #[test]

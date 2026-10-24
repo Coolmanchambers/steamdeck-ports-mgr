@@ -28,6 +28,7 @@ pub(crate) fn format_last_played(last_played_at: &str) -> LastPlayed {
 }
 
 fn record_playtime(app: &AppState, key: &str) {
+    super::ports_folder_screen::note_launch_end(app, key); // fork: a long enough run validates a moved port
     let runtime = &app.install_runtime;
     if let Some(started_at) = runtime.launch_started_at.borrow_mut().remove(key) {
         app.state.borrow_mut().add_playtime(key, started_at.elapsed().as_secs());

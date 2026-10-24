@@ -2,14 +2,17 @@
 //! (`crate::fork::import::old_batch` says what the page says). Settings > Ports folder keeps its per-copy
 //! questions; only Import ports comes here.
 //!
-//! Every old copy is checked first (`removal_check`, on the worker thread, as the per-copy question does);
-//! the ones that fail stay and are listed with the reason. Keep is the default and is what B does. Remove
-//! them removes the checked copies one after another through the same `old_copies::remove` (which checks again
-//! and zips the saves first), and says what happened to each.
+//! Every old copy is checked first (`removal_check` and its readiness, on the worker thread); each port gets one
+//! status line and only the Ready ones that passed are offered. Keep is the default and is what B does. Remove
+//! them removes those one after another through the same `old_copies::remove` (which checks again, readiness
+//! included, and zips the saves first), and says what happened to each. "It starts fine..." asks about each
+//! port that waits for a first start (one card each), records the yes, and shows the page again.
+//!
+//! `note_launch_end` is the app's own Play: a run of 30 s or more from the new copy counts as a start.
 
 use super::*;
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::import::old_batch::{Batch, BatchAction, Checked};
+use crate::fork::import::old_batch::{confirm_page, Batch, BatchAction, Checked, ConfirmAction};
 use crate::app::page_dialog::{show_page, Handlers};
 
 /// Said when the old copies could not be checked at all (the setup wizard shows that text once, on its last page).
@@ -43,8 +46,9 @@ pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, 
             .enumerate()
             .map(|(i, copy)| {
                 ctl.set_progress(format!("Checking the old copy of {} ({} of {total})...", copy.name, i + 1));
-                let check = parts.check(&copy);
-                (copy, check)
+                let check = parts.removal_only(&copy);
+                let ready = parts.readiness(&copy);
+                (copy, check, ready)
             })
             .collect::<Vec<_>>()
     }));
@@ -85,7 +89,7 @@ pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, 
             }
             match result {
                 Ok(checked) => {
-                    let items = checked.into_iter().map(|(copy, check)| Checked { art: art_of(&app2, &copy.port_key), copy, check }).collect();
+                    let items = checked.into_iter().map(|(copy, check, ready)| Checked { art: art_of(&app2, &copy.port_key), copy, check, ready }).collect();
                     ask(&app2, &router2, Rc::new(Batch::new(items)), summary, then);
                 }
                 Err(e) => then(&app2, &router2, Some(format!("{summary}\n\nThe old copies {CHECK_FAILED} ({e}), so they stay. Remove them later in Settings, Ports folder, Old copies.").trim_start().to_string())),
@@ -136,6 +140,13 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
                     close_current_dialog(app, router);
                     remove_all(app, router, batch.clone(), summary.clone(), then.clone());
                 }
+                BatchAction::Confirm => {
+                    if done.replace(true) {
+                        return;
+                    }
+                    let asks: Vec<Checked> = batch.to_confirm().into_iter().cloned().collect();
+                    confirm_cards(app, router, Rc::new(asks), 0, batch.clone(), summary.clone(), then.clone());
+                }
             })
         },
         on_back: keep.clone(),
@@ -147,6 +158,66 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
     if !show_page(app, router, page, handlers) {
         // The page could not be built: nothing is removed, and the flow goes on.
         then(app, router, Some(with_summary(&summary, &batch.kept_text())));
+    }
+}
+
+/// "Does <port> start from its new place?" for `asks[index]`, then the next; after the last (or B), the page is
+/// checked and shown again with what was said. A yes is recorded on the old copy's record
+/// (`old_copies::mark_started`); nothing is removed here.
+fn confirm_cards(app: &Rc<AppState>, router: &Router, asks: Rc<Vec<Checked>>, index: usize, batch: Rc<Batch>, summary: Rc<String>, then: Then) {
+    let again = {
+        let (batch, summary, then) = (batch.clone(), summary.clone(), then.clone());
+        move |app: &Rc<AppState>, router: &Router| {
+            close_current_dialog(app, router);
+            let copies: VecDeque<OldCopy> = batch.items.iter().map(|c| c.copy.clone()).collect();
+            let then = then.clone();
+            prompt_old_copies_batch_then(app, router, copies, summary.as_ref().clone(), move |app, router, text| then(app, router, text));
+        }
+    };
+    let Some(item) = asks.get(index) else { return again(app, router) };
+    let page = confirm_page(item, index, asks.len());
+    let page = if crate::app::setup_wizard_screen::active() { page.in_wizard(4, crate::fork::setup_wizard::flow::Step::COUNTED) } else { page };
+    let back: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(again.clone());
+    let handlers = Handlers {
+        on_action: {
+            let (asks, again) = (asks.clone(), again.clone());
+            Rc::new(move |app: &Rc<AppState>, router: &Router, action: ConfirmAction| {
+                if action == ConfirmAction::Yes {
+                    let at = chrono::Utc::now().timestamp();
+                    match old_copies::mark_started(&app.paths.config_dir, &asks[index].copy.old_path, old_copies::StartedBy::User, at) {
+                        Ok(_) => eprintln!("old copies: {} confirmed to start from its new place", asks[index].copy.name),
+                        Err(e) => eprintln!("old copies: could not record the confirm for {}: {e}", asks[index].copy.name),
+                    }
+                }
+                if index + 1 < asks.len() {
+                    confirm_cards(app, router, asks.clone(), index + 1, batch.clone(), summary.clone(), then.clone());
+                } else {
+                    again(app, router);
+                }
+            })
+        },
+        // B (and the X) is "Not yet" for this one and the rest: the page comes back as it was, with any yes said.
+        on_back: back.clone(),
+        on_exit: back,
+        on_input: None,
+    };
+    if !show_page(app, router, page, handlers) {
+        again(app, router);
+    }
+}
+
+/// The app's own launch of `key` ended (upstream's playtime code calls this before it forgets the start time):
+/// a run of at least `old_copies::MIN_RUN_SECONDS` from the port's folder in the ports folder in use counts as
+/// "started from its new place" for that port's old copies.
+pub(crate) fn note_launch_end(app: &AppState, key: &str) {
+    let Some(started) = app.install_runtime.launch_started_at.borrow().get(key).copied() else { return };
+    let Some(folder) = app.catalog.borrow().iter().find(|p| p.key() == key).map(|p| p.folder.clone()) else { return };
+    let Ok(dir) = crate::core::path_safety::safe_join(&app.paths.library_dir(), &folder) else { return };
+    let ran = started.elapsed().as_secs();
+    match old_copies::note_launch(&app.paths.config_dir, key, &dir, ran, chrono::Utc::now().timestamp()) {
+        Ok(n) if n > 0 => eprintln!("old copies: {key} ran {ran} s from its new place; {n} old copy record(s) noted"),
+        Ok(_) => {}
+        Err(e) => eprintln!("old copies: could not note the run of {key}: {e}"),
     }
 }
 
@@ -199,7 +270,10 @@ fn remove_all(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc
                 Ok(lines) => lines,
                 Err(e) => vec![format!("The old copies could not be removed ({e}). Nothing else was touched.")],
             };
-            lines.extend(batch.kept().iter().map(|c| format!("The old copy of {} stays: {}", c.copy.name, c.check.as_ref().err().cloned().unwrap_or_default())));
+            let kept = Batch::new(batch.kept().into_iter().cloned().collect()).kept_text();
+            if !kept.is_empty() {
+                lines.push(kept);
+            }
             then(&app, &router, Some(with_summary(&summary, &lines.join("\n"))));
         });
     });

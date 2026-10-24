@@ -10,10 +10,10 @@
 //! - `startup_dialog_pending()`: true while the "not available" message is due or showing; other
 //!   startup dialogs wait for it.
 //! - `quit_waits_for_move(app, router)`: Close and Quit ask it; a running move is stopped first.
-//! - `prompt_old_copies_batch_then(app, router, copies, summary, then)`: the one page about all the old copies of an
-//!   import (`batch.rs`); Settings > Ports folder keeps the per-copy prompts below.
-//! - `prompt_old_copies(app, router, copies, summary)`: the "Remove the old copy now?" prompts that
-//!   follow a move (stage 2's import calls it after its own moves).
+//! - `prompt_old_copies_batch_then(app, router, copies, summary, then)`: the one page about old copies
+//!   (`batch.rs`): after an import, after a move here, after "Finish switching", and for one copy chosen in
+//!   Old copies. Each port has a status line; only Ready ones can be removed.
+//! - `show_old_copies_then_summary`: that page followed by the closing message.
 //! - `open_old_copies(app, router)`: the list of old copies kept after moves.
 //! - `choose_folder(app, router)` and `consider(app, router, folder)`: the whole ports folder change
 //!   (picker, checks, create, move, switch, old-copy prompts).
@@ -904,13 +904,22 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
         eprintln!("ports folder: {}", summary.join(" | ").replace('\n', " "));
         return;
     }
-    prompt_old_copies(app, router, copies, summary.join("\n\n"));
+    show_old_copies_then_summary(app, router, copies, summary.join("\n\n"));
+}
+
+/// The old copies page for `copies` (nothing is removed unless chosen there), then `summary` with what happened.
+fn show_old_copies_then_summary(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String) {
+    prompt_old_copies_batch_then(app, router, copies, summary, |app, router, text| {
+        if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
+            message(app, router, &text);
+        }
+    });
 }
 
 // -- Old copies -----------------------------------------------------------------------------------
 
 mod batch;
-pub(crate) use batch::{prompt_old_copies_batch_then, CHECK_FAILED};
+pub(crate) use batch::{note_launch_end, prompt_old_copies_batch_then, CHECK_FAILED};
 
 /// Everything the removal check needs, owned, so it can also run on the worker thread.
 struct RemovalParts {
@@ -942,187 +951,18 @@ impl RemovalParts {
         )
     }
 
-    fn check(&self, entry: &OldCopy) -> Result<u64, String> {
+    /// The removal checks alone (the old copies page shows readiness on its own line).
+    fn removal_only(&self, entry: &OldCopy) -> Result<u64, String> {
         let saves = |e: &OldCopy, dir: &Path| self.save_folders(e, dir);
         old_copies::removal_check(
             entry,
             &RemovalCtx { home: &self.home, config_dir: &self.config_dir, library_dir: &self.library, active_paths: &self.active, running: &running_in, save_folders: &saves },
         )
     }
-}
 
-/// "Remove the old copy now?" for each entry in turn, then `summary` (with what was removed or kept).
-/// Nothing is removed without the user choosing "Remove old copy" for that entry; Keep is preselected.
-pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies: VecDeque<OldCopy>, summary: String) {
-    let Some(entry) = copies.pop_front() else {
-        if !summary.is_empty() {
-            message(app, router, &summary);
-        }
-        return;
-    };
-    // One check at a time: a second request (another screen) is not allowed to replace the first.
-    if CHECK_RUNNING.with(Cell::get) {
-        let mut text = "Another old copy is being checked right now. These old copies stay listed under Settings > Ports folder > Old copies, to remove later.".to_string();
-        if !summary.is_empty() {
-            text = format!("{summary}
-
-{text}");
-        }
-        return message(app, router, &text);
+    fn readiness(&self, entry: &OldCopy) -> old_copies::Readiness {
+        old_copies::readiness(entry, &old_copies::steam_view(entry, &self.home, &self.config_dir))
     }
-    // The check walks the old copy (gigabytes on an SD card): on the worker thread, with a progress note.
-    let parts = RemovalParts::of(app);
-    let checked = entry.clone();
-    let job = Rc::new(Background::spawn(move |_| parts.check(&checked)));
-    open_progress_dialog(app, router, "Checking the old copy", &format!("Checking the old copy of {}...", entry.name));
-    // Only this dialog is closed when the check ends, never another progress dialog (an install's).
-    let own = match &*app.dialog_nav.dialogs.borrow() {
-        DialogSlot::Progress(d) => Some(d.as_weak()),
-        _ => None,
-    };
-    CHECK_RUNNING.with(|c| c.set(true));
-    let (app2, router2) = (app.clone(), router.clone());
-    let pending = RefCell::new(Some((entry, copies, summary)));
-    CHECK_TIMER.with(|timer| {
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(150), move || {
-            let Some(result) = job.take() else { return };
-            CHECK_TIMER.with(|t| t.stop());
-            CHECK_RUNNING.with(|c| c.set(false));
-            let ours = own.as_ref().and_then(slint::Weak::upgrade);
-            let showing_ours = match (&*app2.dialog_nav.dialogs.borrow(), &ours) {
-                (DialogSlot::Progress(d), Some(o)) => std::ptr::eq(d.window(), o.window()),
-                _ => false,
-            };
-            if showing_ours {
-                close_current_dialog(&app2, &router2);
-            } else if super::dialogs::dialog_is_open(&app2) {
-                // Something else is on screen now: leave it; the old copies stay listed under Old copies.
-                eprintln!("ports folder: old-copy prompt skipped, another dialog is open");
-                return;
-            }
-            if let Some((entry, copies, summary)) = pending.borrow_mut().take() {
-                show_old_copy_prompt(&app2, &router2, entry, copies, summary, result.and_then(|r| r));
-            }
-        });
-    });
-}
-
-/// Why an old copy can't be removed now. OK (or B) comes back to the same question, so the questions that
-/// follow, the summary and whatever waits for them carry on.
-fn explain_kept(app: &Rc<AppState>, router: &Router, why: &str, entry: OldCopy, copies: Rc<RefCell<Option<VecDeque<OldCopy>>>>, summary: Rc<String>, check: Result<u64, String>) {
-    let again: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(move |app, router| {
-        let rest = copies.borrow_mut().take().unwrap_or_default();
-        show_old_copy_prompt(app, router, entry.clone(), rest, summary.as_ref().clone(), check.clone());
-    });
-    let on_ok = again.clone();
-    open_confirm_dialog(app, router, "Why it is kept".into(), format!("{why}\n").into(), "Back to the question".into(), move |app, router| on_ok(app, router));
-    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
-        let (app, router) = (app.clone(), router.clone());
-        let (b_app, b_router, b_again) = (app.clone(), router.clone(), again.clone());
-        d.on_close_requested(move || {
-            close_current_dialog(&b_app, &b_router);
-            b_again(&b_app, &b_router);
-        });
-        // The title bar's X only hides the window; it goes where B goes.
-        d.window().on_close_requested(move || {
-            close_current_dialog(&app, &router);
-            again(&app, &router);
-            slint::CloseRequestResponse::HideWindow
-        });
-    }
-}
-
-fn show_old_copy_prompt(app: &Rc<AppState>, router: &Router, entry: OldCopy, copies: VecDeque<OldCopy>, summary: String, check: Result<u64, String>) {
-    let model = view::old_copy_prompt(&entry, &check);
-    let reshow_check = check.clone();
-    let why = check.err();
-    let copies = Rc::new(RefCell::new(Some(copies)));
-    let summary = Rc::new(summary);
-    let (b_entry, b_copies, b_summary) = (entry.clone(), copies.clone(), summary.clone());
-    let (app_x, router_x) = (app.clone(), router.clone());
-    let (e_copies, e_summary) = (copies.clone(), summary.clone());
-    let dialog = open_model(app, router, "Remove the old copy now?", model, move |app, router, act| {
-        let rest = || copies.borrow_mut().take().unwrap_or_default();
-        match act {
-            Act::RemoveOldCopy => remove_one(app, router, entry.clone(), rest(), summary.as_ref().clone()),
-            Act::ExplainKept => {
-                if let Some(why) = &why {
-                    explain_kept(app, router, why, entry.clone(), e_copies.clone(), e_summary.clone(), reshow_check.clone());
-                }
-            }
-            Act::KeepForNow => {
-                let note = format!("{}\n\nKept the old copy of {} at {} (remove it later: Settings > Ports folder > Old copies).", summary, entry.name, entry.old_path.display());
-                prompt_old_copies(app, router, rest(), note.trim_start().to_string());
-            }
-            _ => {}
-        }
-    });
-    // B is "Keep for now" for this one and for every old copy still to be asked about: nothing is removed,
-    // they stay listed under Old copies, and the sequence ends with its summary as usual.
-    if let Some(dialog) = dialog {
-        let keep_rest: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(move |app, router| {
-            close_current_dialog(app, router);
-            let rest = b_copies.borrow_mut().take().unwrap_or_default();
-            let mut note = format!("{}\n\nKept the old copy of {} at {} (remove it later: Settings > Ports folder > Old copies).", b_summary, b_entry.name, b_entry.old_path.display());
-            for other in &rest {
-                note.push_str(&format!("\nKept the old copy of {} at {} (not asked about).", other.name, other.old_path.display()));
-            }
-            prompt_old_copies(app, router, VecDeque::new(), note.trim_start().to_string());
-        });
-        let (b_app, b_router, on_b) = (app_x.clone(), router_x.clone(), keep_rest.clone());
-        dialog.on_close_requested(move || on_b(&b_app, &b_router));
-        // The title bar's X only hides the window; it goes where B goes, so the run (and the hook waiting on
-        // it) ends instead of being left behind.
-        dialog.window().on_close_requested(move || {
-            keep_rest(&app_x, &router_x);
-            slint::CloseRequestResponse::HideWindow
-        });
-    }
-}
-
-fn remove_one(app: &Rc<AppState>, router: &Router, entry: OldCopy, rest: VecDeque<OldCopy>, summary: String) {
-    let parts = RemovalParts::of(app);
-    let port = find_port(app, &entry.port_key);
-    let saves_dir = app.paths.saves_backup_dir.clone();
-    open_progress_dialog(app, router, "Removing the old copy", &format!("Removing {}...", entry.old_path.display()));
-    JOB_BUSY.with(|b| b.set(true));
-    let job = Rc::new(Background::spawn(move |_| {
-        let backup = |e: &OldCopy| -> Result<Option<PathBuf>, String> {
-            match &port {
-                Some(port) => crate::core::save_backup::backup_before_update(port, &saves_dir, &e.old_path, &crate::fork::store::backup_stamp(), &mut |_| {}),
-                None => Err("the port is not in the catalog any more".into()),
-            }
-        };
-        let saves = |e: &OldCopy, dir: &Path| parts.save_folders(e, dir);
-        let ctx = RemovalCtx { home: &parts.home, config_dir: &parts.config_dir, library_dir: &parts.library, active_paths: &parts.active, running: &running_in, save_folders: &saves };
-        old_copies::remove(&entry, &ctx, &backup).map(|r| (entry, r))
-    }));
-    let (app, router) = (app.clone(), router.clone());
-    let rest = RefCell::new(Some(rest));
-    JOB_TIMER.with(|timer| {
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
-            let Some(result) = job.take() else {
-                if let DialogSlot::Progress(d) = &*app.dialog_nav.dialogs.borrow() {
-                    update_progress_dialog(&app, d, "Removing the old copy...");
-                }
-                return;
-            };
-            JOB_TIMER.with(|t| t.stop());
-            close_current_dialog(&app, &router);
-            if job_finished() {
-                return;
-            }
-            let line = match result {
-                Ok(Ok((entry, removed))) => {
-                    let zip = removed.saves_zip.map(|z| format!(" Its saves were zipped to {} first.", z.display())).unwrap_or_default();
-                    format!("Removed the old copy of {} ({} freed).{zip}", entry.name, human_bytes(removed.bytes))
-                }
-                Ok(Err(e)) | Err(e) => e,
-            };
-            let summary = format!("{summary}\n\n{line}");
-            prompt_old_copies(&app, &router, rest.borrow_mut().take().unwrap_or_default(), summary.trim_start().to_string());
-        });
-    });
 }
 
 /// The list of old copies kept after moves (Settings > Ports folder > Old copies).
@@ -1131,7 +971,8 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
         Ok(list) => list,
         Err(e) => return message(app, router, &e),
     };
-    let mut labels: Vec<String> = list.iter().map(|o| format!("{}: {} ({})", o.name, ellipsize(&o.old_path.to_string_lossy(), 56), human_bytes(o.bytes))).collect();
+    let parts = RemovalParts::of(app);
+    let mut labels: Vec<String> = list.iter().map(|o| format!("{}: {} ({})", o.name, parts.readiness(o).line(), human_bytes(o.bytes))).collect();
     labels.push("Back".to_string());
     let model = ListModel { acts: (0..list.len()).map(Act::Detail).chain([Act::Back]).collect(), labels, select: 0 };
     let list = Rc::new(list);
@@ -1154,7 +995,16 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
                     open_old_copies,
                 );
             }
-            prompt_old_copies(app, router, VecDeque::from([entry.clone()]), String::new());
+            // The old copies page for this one: its status, "It starts fine..." and, when ready, Remove.
+            prompt_old_copies_batch_then(app, router, VecDeque::from([entry.clone()]), String::new(), |app, router, text| {
+                match text.filter(|t| !t.trim().is_empty()) {
+                    Some(text) => {
+                        let (app2, router2) = (app.clone(), router.clone());
+                        open_confirm_dialog(app, router, "Old copies".into(), format!("{text}\n").into(), "OK".into(), move |_, _| open_old_copies(&app2, &router2));
+                    }
+                    None => open_old_copies(app, router),
+                }
+            });
         }
         Act::Back => open_menu(app, router),
         _ => {}
@@ -1176,5 +1026,5 @@ fn finish_switch(app: &Rc<AppState>, router: &Router, record: &OldCopy) {
     let text = report.text();
     let summary = if text.is_empty() { format!("Finished switching {}.", record.name) } else { format!("Finished switching {}.\n\n{text}", record.name) };
     let entry = old_copies::load(&config_dir).unwrap_or_default().into_iter().find(|o| o.old_path == record.old_path);
-    prompt_old_copies(app, router, entry.into_iter().collect(), summary);
+    show_old_copies_then_summary(app, router, entry.into_iter().collect(), summary);
 }

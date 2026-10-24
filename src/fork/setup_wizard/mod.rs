@@ -1,5 +1,5 @@
 //! The first-run setup wizard: where ports go, ports you already have (Import ports), game files folder,
-//! Steam, the old copies this run kept, and a summary. Settings > Setup wizard... runs it again any time.
+//! Steam, the old copies (when one is ready to remove), and a summary. Settings > Setup wizard... runs it again any time.
 //!
 //! - `flow`: the state machine and the `Adapters` it calls (everything outside the wizard).
 //! - `text`: what each view says.

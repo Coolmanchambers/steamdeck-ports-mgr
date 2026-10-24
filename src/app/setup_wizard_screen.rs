@@ -51,12 +51,10 @@ thread_local! {
     static QUIET: Cell<u32> = const { Cell::new(0) };
     /// The folder an earlier build recorded, offered in this run only.
     static EARLIER: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
-    /// The old copies already listed when this wizard run started: only the ones added since are asked about.
     /// What the old copy page said when it could not check the copies, shown once on top of the last page.
     static OLD_COPIES_NOTE: RefCell<Option<String>> = const { RefCell::new(None) };
     /// The covers for Steam were asked for in this wizard run.
     static PREFETCHED: Cell<bool> = const { Cell::new(false) };
-    static OLD_AT_START: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
     /// What the "Close Steam and update shortcuts" flow did, read once by the wizard when it comes back.
     static STEAM_CLOSE: Cell<Option<flow::SteamCloseResult>> = const { Cell::new(None) };
 }
@@ -109,7 +107,6 @@ pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
 fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
     let session: Session = Rc::new(RefCell::new(Wizard::new(mode)));
     EARLIER.with(|e| *e.borrow_mut() = take_earlier_choice(app));
-    OLD_AT_START.with(|o| *o.borrow_mut() = old_copy_paths(app));
     SESSION.with(|s| *s.borrow_mut() = Some(session.clone()));
     QUIET.with(|q| q.set(0));
     PREFETCHED.with(|p| p.set(false));
@@ -324,7 +321,16 @@ impl Adapters for Ui {
     }
 
     fn kept_old_copies(&mut self) -> usize {
-        new_old_copies(&self.app).len()
+        old_copies_now(&self.app).len()
+    }
+
+    fn ready_old_copies(&mut self) -> usize {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        let config = &self.app.paths.config_dir;
+        old_copies_now(&self.app)
+            .iter()
+            .filter(|o| crate::fork::port_mover::old_copies::readiness(o, &crate::fork::port_mover::old_copies::steam_view(o, &home, config)).is_ready())
+            .count()
     }
 
     fn old_copies_step(&mut self) {
@@ -386,21 +392,16 @@ fn steam_info(app: &AppState) -> crate::fork::setup_wizard::steam::Info {
 
 // -- Old copies ---------------------------------------------------------------------------------------
 
-fn old_copy_paths(app: &AppState) -> Vec<PathBuf> {
-    crate::fork::port_mover::old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().map(|o| o.old_path).collect()
-}
-
-/// The old copies this wizard run kept: the ones listed now that were not listed when it started.
-fn new_old_copies(app: &AppState) -> Vec<crate::fork::port_mover::old_copies::OldCopy> {
-    let before = OLD_AT_START.with(|o| o.borrow().clone());
-    crate::fork::port_mover::old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().filter(|o| !before.contains(&o.old_path)).collect()
+/// Every old copy kept after a move (this run's and earlier ones: a rerun finishes what an earlier run left).
+fn old_copies_now(app: &AppState) -> Vec<crate::fork::port_mover::old_copies::OldCopy> {
+    crate::fork::port_mover::old_copies::load(&app.paths.config_dir).unwrap_or_default()
 }
 
 /// The one page about the old copies this run kept (the same page Import ports used to show after its move):
 /// Keep them is the default and B. The wizard goes on whichever way it is left.
 fn old_copies_step(app: &Rc<AppState>, router: &Router) {
     close_current_dialog(app, router);
-    let copies: std::collections::VecDeque<_> = new_old_copies(app).into();
+    let copies: std::collections::VecDeque<_> = old_copies_now(app).into();
     OLD_COPIES_NOTE.with(|n| *n.borrow_mut() = None);
     super::ports_folder_screen::prompt_old_copies_batch_then(app, router, copies, String::new(), |app, router, text| {
         if let Some(text) = text.filter(|t| t.contains(super::ports_folder_screen::CHECK_FAILED)) {

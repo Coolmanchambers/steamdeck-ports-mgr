@@ -418,6 +418,9 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
         game_files_line(w, ctx),
         steam_line(w, ctx),
     ];
+    if s.old_copies.is_none() && s.old_copies_waiting.is_some_and(|n| n > 0) {
+        p.facts.push(crate::fork::import::old_batch::KEPT_UNTIL_CHECKED.to_string());
+    }
     if let Some(r) = s.old_copies {
         p.facts.push(match (r.removed, r.kept) {
             (0, 0) => "No old copies are kept.".to_string(),
@@ -843,6 +846,9 @@ mod tests {
         assert_eq!(line(0, 4), "4 old copies are kept. Remove them later in Settings.");
         assert_eq!(line(0, 0), "No old copies are kept.");
         assert_eq!(pg(Step::Done).facts.len(), 4, "no line when the question was not asked");
+        let mut w = at(Step::Done);
+        w.summary.old_copies_waiting = Some(4);
+        assert_eq!(page_for(&w, &ctx()).facts.last().unwrap(), "Old copies are kept until each port has been checked.");
     }
 
     #[test]

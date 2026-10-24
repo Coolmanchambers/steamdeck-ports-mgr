@@ -1,30 +1,52 @@
-//! The one page that asks about all the old copies an import left behind ("Remove the 4 old copies?"),
-//! instead of one question per port. No UI code here; the screen is in
+//! The one page about the old copies moves left behind ("Remove the 2 old copies?"), instead of one question
+//! per port, and the "Does it start?" cards. No UI code here; the screen is in
 //! `src/app/ports_folder_screen/batch.rs`.
 //!
-//! Every old copy has already been through `removal_check`; the ones that did not pass are listed as staying,
-//! with the reason, and are never offered. "Keep them" is the recommended choice, has the focus, and is what
-//! B does: nothing is removed unless the user chooses "Remove them", and each removal then runs the same
-//! checks and the same saves backup as removing a single old copy.
+//! Every port is listed with one status line (`old_copies::Readiness`): "Waiting for Steam to update", "Start
+//! it once from its new place", "Ready to remove", or why it stays when its `removal_check` failed. Only the
+//! Ready ones that passed the check are offered. "Keep them" is the recommended choice, has the focus, and is
+//! what B does: nothing is removed unless the user chooses "Remove them", and each removal then runs the same
+//! checks (readiness included) and the same saves backup as removing a single old copy. "It starts fine..."
+//! asks about each port that waits for a first start, one card at a time.
 
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::page::{Focus, Page, PageButton, PageOption, Tile};
-use crate::fork::port_mover::old_copies::OldCopy;
+use crate::fork::page::{Card, Focus, Page, PageButton, PageOption, Tile};
+use crate::fork::port_mover::old_copies::{OldCopy, Readiness};
 use crate::fork::rom_screens::util::{ellipsize, human_bytes};
 use crate::fork::screens::short_path;
 use std::path::Path;
 
-/// An old copy with what its check said: `Ok` with the bytes it would free, or why it must stay.
+/// An old copy with what its check said (`Ok` with the bytes it would free, or why it must stay) and whether
+/// it is ready to go.
 #[derive(Debug, Clone)]
 pub struct Checked {
     pub copy: OldCopy,
     pub check: Result<u64, String>,
+    pub ready: Readiness,
     pub art: Option<ArtRef>,
 }
 
 impl Checked {
     pub fn removable(&self) -> bool {
-        self.check.is_ok()
+        self.ready.is_ready() && self.check.is_ok()
+    }
+
+    /// The port's line on the page.
+    fn status_line(&self) -> String {
+        match (&self.check, self.ready) {
+            (_, r) if !r.is_ready() => format!("{}: {}", self.copy.name, r.line()),
+            (Err(why), _) => format!("{} stays: {}", self.copy.name, ellipsize(why, 90)),
+            (Ok(_), r) => format!("{}: {}", self.copy.name, r.line()),
+        }
+    }
+
+    /// Why it stays, whole, for the closing text.
+    fn why_kept(&self) -> String {
+        match (&self.check, self.ready) {
+            (_, r) if !r.is_ready() => r.line().to_lowercase(),
+            (Err(why), _) => why.clone(),
+            (Ok(_), _) => String::new(),
+        }
     }
 }
 
@@ -36,9 +58,21 @@ pub enum BatchAction {
     Details,
     /// Nothing can be removed: just carry on.
     Ok,
+    /// Say which ports start fine from their new place (the cards).
+    Confirm,
+}
+
+/// What a "Does it start?" card's choices do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmAction {
+    Yes,
+    NotYet,
 }
 
 pub const WINDOW_TITLE: &str = "Import ports: old copies";
+
+/// Said on the last page of the setup wizard when no old copy is ready yet.
+pub const KEPT_UNTIL_CHECKED: &str = "Old copies are kept until each port has been checked.";
 
 pub struct Batch {
     pub items: Vec<Checked>,
@@ -57,12 +91,16 @@ impl Batch {
         self.items.iter().filter(|c| !c.removable()).collect()
     }
 
+    /// The ports that wait for a first start from their new place (the cards ask about these).
+    pub fn to_confirm(&self) -> Vec<&Checked> {
+        self.items.iter().filter(|c| c.ready == Readiness::StartOnce).collect()
+    }
+
     /// What removing them would free. A link's target stays, so a link frees nothing.
     pub fn freed_bytes(&self) -> u64 {
         self.removable().iter().filter(|c| !c.copy.link_only).filter_map(|c| c.check.as_ref().ok()).sum()
     }
 
-    /// The names of the old copies that stay, for the closing text.
     fn names(items: &[&Checked]) -> String {
         items.iter().map(|c| c.copy.name.as_str()).collect::<Vec<_>>().join(", ")
     }
@@ -74,7 +112,7 @@ impl Batch {
         if !removable.is_empty() {
             parts.push(format!("Kept the old {} of {}. Remove {} later in Settings, Ports folder, Old copies.", copies(removable.len()), Batch::names(&removable), if removable.len() == 1 { "it" } else { "them" }));
         }
-        parts.extend(self.kept().iter().map(|c| format!("The old copy of {} stays: {}", c.copy.name, why(&c.check))));
+        parts.extend(self.kept().iter().map(|c| format!("The old copy of {} stays: {}", c.copy.name, c.why_kept())));
         parts.join("\n")
     }
 
@@ -88,59 +126,94 @@ impl Batch {
                 Ok(bytes) => human_bytes(*bytes),
                 Err(_) => human_bytes(c.copy.bytes),
             };
-            lines.push(format!("{}: {} ({size})", c.copy.name, short_path(&c.copy.old_path, home)));
+            lines.push(format!("{}: {} ({size}). {}", c.copy.name, short_path(&c.copy.old_path, home), c.ready.line()));
+            if let Err(why) = &c.check {
+                if c.ready.is_ready() {
+                    lines.push(format!("  Kept: {why}"));
+                }
+            }
         }
         lines.push(String::new());
         lines.push(format!("Before an old copy is removed, its saves are zipped into {}.", short_path(saves, home)));
+        lines.push("An old copy can go once Steam starts the new copy and the port was started from its new place (or you said it starts and your saves are there).".to_string());
         lines.push("Whatever is kept stays listed under Settings, Ports folder, Old copies.".to_string());
-        lines.join("
-")
+        lines.join("\n")
     }
 
-    /// The page. Keep is first, recommended and focused; Remove is never the default.
+    fn confirm_option(&self) -> Option<PageOption<BatchAction>> {
+        let n = self.to_confirm().len();
+        (n > 0).then(|| PageOption {
+            title: "It starts fine...".to_string(),
+            detail: format!("Say which of {} start and have your saves", if n == 1 { "1 port".to_string() } else { format!("{n} ports") }),
+            choice: None,
+            enabled: true,
+            recommended: false,
+            action: BatchAction::Confirm,
+        })
+    }
+
+    /// The page. Keep (or OK) is first, recommended and focused; Remove is never the default.
     pub fn page(&self) -> Page<BatchAction> {
         let removable = self.removable();
         let n = removable.len();
         let mut p = Page::<BatchAction> { window_title: WINDOW_TITLE.to_string(), large: true, header: crate::fork::import::cards::HEADER.to_string(), ..Page::default() };
-        p.facts = self.kept().iter().map(|c| format!("{} stays: {}", c.copy.name, ellipsize(&why(&c.check), 90))).collect();
+        p.facts = self.items.iter().map(Checked::status_line).collect();
+        p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
+        p.initial = Focus::Option(0);
         if n == 0 {
-            p.title = "The old copies stay".to_string();
-            p.paragraphs = vec!["None of the old copies can be removed right now. They are kept, and nothing is lost.".to_string()];
+            p.title = "The old copies stay for now".to_string();
+            p.paragraphs = vec![KEPT_UNTIL_CHECKED.to_string(), "An old copy can go once Steam starts the new copy and the port has been started from there.".to_string()];
             p.options = vec![PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: BatchAction::Ok }];
-            p.initial = Focus::Option(0);
-            p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
+            p.options.extend(self.confirm_option());
             return p;
         }
         p.title = if n == 1 { "Remove the old copy?".to_string() } else { format!("Remove the {n} old copies?") };
         let freed = self.freed_bytes();
         let size = if freed > 0 { format!(" The old {} {} {}.", copies(n), if n == 1 { "uses" } else { "use" }, human_bytes(freed)) } else { String::new() };
-        p.paragraphs = vec![format!("Your ports were copied and checked.{size}")];
+        p.paragraphs = vec![format!("{} from {} new place, so {} old {} can go.{size}", if n == 1 { "This port starts" } else { "These ports start" }, if n == 1 { "its" } else { "their" }, if n == 1 { "its" } else { "their" }, copies(n))];
         p.tiles = removable.iter().map(|c| Tile::shown(c.art.clone(), c.copy.name.clone())).collect();
         let (keep, remove) = if n == 1 { ("Keep it", "Remove it") } else { ("Keep them", "Remove them") };
         p.options = vec![
             PageOption { title: keep.to_string(), detail: "Nothing is deleted. You can remove them later from Settings.".to_string(), choice: None, enabled: true, recommended: true, action: BatchAction::Keep },
-            PageOption { title: remove.to_string(), detail: "Saves are zipped to a backup first".to_string(), choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
+            PageOption { title: remove.to_string(), detail: "Only the ready ones. Saves are zipped to a backup first".to_string(), choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
         ];
-        p.initial = Focus::Option(0);
-        p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
+        p.options.extend(self.confirm_option());
         p
     }
+}
+
+/// "Does Majora's Mask start from its new place?": one card, `index` of `count`.
+pub fn confirm_page(c: &Checked, index: usize, count: usize) -> Page<ConfirmAction> {
+    let mut p = Page::<ConfirmAction> {
+        window_title: format!("{WINDOW_TITLE}: does it start"),
+        large: true,
+        header: crate::fork::import::cards::HEADER.to_string(),
+        step_text: format!("Port {} of {count}", index + 1),
+        title: format!("Does {} start from its new place?", c.copy.name),
+        ..Page::default()
+    };
+    p.card = Some(Card {
+        art: c.art.clone(),
+        qr: None,
+        title: c.copy.name.clone(),
+        lines: vec!["Start it from Steam or from this app, play a moment, and check that your saves are there.".to_string(), "Say yes only when both are true. The old copy is still only removed when you choose Remove.".to_string()],
+    });
+    p.options = vec![
+        PageOption { title: "Yes, it starts and my saves are there".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: ConfirmAction::Yes },
+        PageOption { title: "Not yet".to_string(), detail: "Its old copy stays".to_string(), choice: None, enabled: true, recommended: false, action: ConfirmAction::NotYet },
+    ];
+    p.initial = Focus::Option(0);
+    p
 }
 
 fn copies(n: usize) -> &'static str {
     if n == 1 { "copy" } else { "copies" }
 }
 
-fn why(check: &Result<u64, String>) -> String {
-    match check {
-        Ok(_) => String::new(),
-        Err(why) => why.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fork::port_mover::old_copies::StartedBy;
     use std::path::PathBuf;
 
     fn copy(name: &str, bytes: u64, link_only: bool) -> OldCopy {
@@ -160,11 +233,15 @@ mod tests {
     }
 
     fn ok(name: &str, bytes: u64) -> Checked {
-        Checked { copy: copy(name, bytes, false), check: Ok(bytes), art: Some(ArtRef { folder: name.to_lowercase(), url: None }) }
+        Checked { copy: copy(name, bytes, false), check: Ok(bytes), ready: Readiness::Ready(StartedBy::App), art: Some(ArtRef { folder: name.to_lowercase(), url: None }) }
+    }
+
+    fn waiting(name: &str, ready: Readiness) -> Checked {
+        Checked { copy: copy(name, 7, false), check: Err("Steam shortcuts still point into it".to_string()), ready, art: None }
     }
 
     fn stays(name: &str, why: &str) -> Checked {
-        Checked { copy: copy(name, 5, false), check: Err(why.to_string()), art: None }
+        Checked { copy: copy(name, 5, false), check: Err(why.to_string()), ready: Readiness::Ready(StartedBy::User), art: None }
     }
 
     fn all_text(p: &Page<BatchAction>) -> String {
@@ -177,43 +254,88 @@ mod tests {
     }
 
     #[test]
-    fn the_page_asks_once_for_all_the_old_copies_and_keeping_is_the_default() {
+    fn the_page_asks_once_for_the_ready_old_copies_and_keeping_is_the_default() {
         let b = Batch::new(vec![ok("Dusklight", 3_000_000_000), ok("SoH", 200_000_000), ok("Abuse", 10_000_000), ok("Pinball", 1_000_000)]);
         let p = b.page();
         assert_eq!(p.title, "Remove the 4 old copies?");
         assert_eq!(p.window_title, "Import ports: old copies");
-        assert_eq!(p.paragraphs, ["Your ports were copied and checked. The old copies use 3.2 GB."]);
+        assert_eq!(p.paragraphs, ["These ports start from their new place, so their old copies can go. The old copies use 3.2 GB."]);
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH", "Abuse", "Pinball"]);
         assert_eq!(p.options.iter().map(|o| (o.title.as_str(), o.action, o.recommended)).collect::<Vec<_>>(), [("Keep them", BatchAction::Keep, true), ("Remove them", BatchAction::Remove, false)]);
         assert_eq!(p.initial, Focus::Option(0), "Keep them has the focus");
-        assert!(p.facts.is_empty());
+        assert_eq!(p.facts, ["Dusklight: Ready to remove", "SoH: Ready to remove", "Abuse: Ready to remove", "Pinball: Ready to remove"]);
+    }
+
+    #[test]
+    fn each_port_has_one_status_line_and_only_ready_ones_are_offered() {
+        let b = Batch::new(vec![ok("Severed Chains", 100), waiting("Majora's Mask", Readiness::WaitingForSteam), waiting("Ocarina of Time", Readiness::StartOnce), stays("Twilight Princess", "a program is running from it")]);
+        let p = b.page();
+        assert_eq!(p.title, "Remove the old copy?", "only the ready one that passed its check counts");
+        assert_eq!(
+            p.facts,
+            ["Severed Chains: Ready to remove", "Majora's Mask: Waiting for Steam to update", "Ocarina of Time: Start it once from its new place", "Twilight Princess stays: a program is running from it"]
+        );
+        assert_eq!(b.removable().iter().map(|c| c.copy.name.as_str()).collect::<Vec<_>>(), ["Severed Chains"]);
+        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::Keep, BatchAction::Remove, BatchAction::Confirm]);
+        assert_eq!(b.to_confirm().iter().map(|c| c.copy.name.as_str()).collect::<Vec<_>>(), ["Ocarina of Time"]);
+    }
+
+    #[test]
+    fn a_port_that_is_not_ready_is_never_removable_even_when_its_check_passed() {
+        for r in [Readiness::WaitingForSteam, Readiness::StartOnce] {
+            let c = Checked { ready: r, ..ok("SoH", 10) };
+            assert!(!c.removable(), "{r:?}");
+            assert!(Batch::new(vec![c]).removable().is_empty());
+        }
+    }
+
+    #[test]
+    fn tims_deck_now_every_copy_waits_and_the_page_says_they_stay_until_checked() {
+        let b = Batch::new(vec![
+            waiting("Severed Chains", Readiness::WaitingForSteam),
+            waiting("Majora's Mask", Readiness::WaitingForSteam),
+            waiting("Ocarina of Time", Readiness::WaitingForSteam),
+            waiting("Twilight Princess", Readiness::WaitingForSteam),
+        ]);
+        let p = b.page();
+        assert_eq!(p.title, "The old copies stay for now");
+        assert_eq!(p.paragraphs[0], KEPT_UNTIL_CHECKED);
+        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::Ok], "nothing to confirm while Steam still starts the old copies");
+        assert!(p.facts.iter().all(|f| f.ends_with("Waiting for Steam to update")), "{:?}", p.facts);
+        assert!(b.kept_text().contains("The old copy of Severed Chains stays: waiting for steam to update"), "{}", b.kept_text());
+        // Steam updated, not started yet: the cards are offered.
+        let b = Batch::new(vec![waiting("Severed Chains", Readiness::StartOnce), waiting("Majora's Mask", Readiness::StartOnce)]);
+        let p = b.page();
+        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::Ok, BatchAction::Confirm]);
+        assert_eq!(p.options[1].detail, "Say which of 2 ports start and have your saves");
+        assert_eq!(p.initial, Focus::Option(0), "OK, never the confirm, has the focus");
+    }
+
+    #[test]
+    fn the_confirm_card_shows_the_port_and_starts_on_yes() {
+        let c = waiting("Ocarina of Time", Readiness::StartOnce);
+        let p = confirm_page(&c, 1, 3);
+        assert_eq!(p.title, "Does Ocarina of Time start from its new place?");
+        assert_eq!((p.step_text.as_str(), p.window_title.as_str()), ("Port 2 of 3", "Import ports: old copies: does it start"));
+        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [ConfirmAction::Yes, ConfirmAction::NotYet]);
+        assert_eq!(p.options[0].title, "Yes, it starts and my saves are there");
+        assert!(p.card.as_ref().unwrap().lines[0].contains("check that your saves are there"));
     }
 
     #[test]
     fn one_old_copy_reads_in_the_singular() {
         let p = Batch::new(vec![ok("Dusklight", 3_000_000_000)]).page();
         assert_eq!(p.title, "Remove the old copy?");
-        assert_eq!(p.paragraphs, ["Your ports were copied and checked. The old copy uses 3.0 GB."]);
+        assert_eq!(p.paragraphs, ["This port starts from its new place, so its old copy can go. The old copy uses 3.0 GB."]);
         assert_eq!(p.options[0].title, "Keep it");
         assert_eq!(p.options[1].title, "Remove it");
-    }
-
-    #[test]
-    fn a_copy_that_failed_its_check_is_listed_as_staying_and_never_offered() {
-        let b = Batch::new(vec![ok("Dusklight", 100), stays("SoH", "Steam shortcuts still point into it")]);
-        let p = b.page();
-        assert_eq!(p.title, "Remove the old copy?", "only the one that passed counts");
-        assert_eq!(p.tiles.len(), 1);
-        assert_eq!(p.facts, ["SoH stays: Steam shortcuts still point into it"]);
-        assert_eq!(b.removable().len(), 1);
-        assert_eq!(b.kept().len(), 1);
     }
 
     #[test]
     fn when_nothing_can_go_the_page_says_so_and_has_only_ok() {
         let b = Batch::new(vec![stays("Dusklight", "a program is running from it"), stays("SoH", "saves newer than the new copy")]);
         let p = b.page();
-        assert_eq!(p.title, "The old copies stay");
+        assert_eq!(p.title, "The old copies stay for now");
         assert_eq!(p.options.len(), 1);
         assert_eq!(p.options[0].action, BatchAction::Ok);
         assert!(p.tiles.is_empty());
@@ -223,11 +345,11 @@ mod tests {
 
     #[test]
     fn a_link_frees_nothing_so_the_size_sentence_leaves_it_out() {
-        let link = Checked { copy: copy("Linked", 9_000_000_000, true), check: Ok(9_000_000_000), art: None };
+        let link = Checked { copy: copy("Linked", 9_000_000_000, true), check: Ok(9_000_000_000), ready: Readiness::Ready(StartedBy::App), art: None };
         let b = Batch::new(vec![ok("Dusklight", 2_000_000_000), link.clone()]);
         assert_eq!(b.freed_bytes(), 2_000_000_000);
         assert!(b.page().paragraphs[0].contains("use 2.0 GB"));
-        assert_eq!(Batch::new(vec![link]).page().paragraphs[0], "Your ports were copied and checked.");
+        assert_eq!(Batch::new(vec![link]).page().paragraphs[0], "This port starts from its new place, so its old copy can go.");
     }
 
     #[test]
@@ -244,13 +366,13 @@ mod tests {
     fn a_long_reason_is_shortened_on_the_page_but_kept_whole_in_the_closing_text() {
         let long = "x".repeat(300);
         let b = Batch::new(vec![ok("A", 1), stays("B", &long)]);
-        assert!(b.page().facts[0].len() < 140, "{}", b.page().facts[0]);
+        assert!(b.page().facts[1].len() < 140, "{}", b.page().facts[1]);
         assert!(b.kept_text().contains(&long));
     }
 
     #[test]
     fn no_page_shows_a_path_or_a_file_name() {
-        let b = Batch::new(vec![ok("Dusklight", 100), stays("SoH", "Steam shortcuts still point into it")]);
+        let b = Batch::new(vec![ok("Dusklight", 100), stays("SoH", "Steam shortcuts still point into it"), waiting("X", Readiness::StartOnce)]);
         for p in [b.page(), Batch::new(vec![stays("SoH", "x")]).page()] {
             let t = all_text(&p);
             assert!(!t.contains("/home") && !t.contains("/run/") && !t.to_lowercase().contains("json"), "{t}");
@@ -258,11 +380,11 @@ mod tests {
     }
 
     #[test]
-    fn details_list_each_old_folder_with_its_size_and_say_where_the_save_backups_go() {
+    fn details_list_each_old_folder_with_its_size_and_status_and_say_where_the_save_backups_go() {
         let b = Batch::new(vec![ok("Dusklight", 3_000_000_000), stays("SoH", "Steam shortcuts still point into it")]);
         let text = b.details_text(Path::new("/home/deck"), Path::new("/home/deck/Apps/dpm/Saves Backup"));
-        assert!(text.contains("Dusklight: /home/deck/Games/Dusklight (3.0 GB)") || text.contains("Dusklight: ~/Games/Dusklight (3.0 GB)"), "{text}");
-        assert!(text.contains("SoH: ") && text.contains("(5 B)"), "a copy that must stay still lists its recorded size: {text}");
+        assert!(text.contains("Dusklight: ~/Games/Dusklight (3.0 GB). Ready to remove") || text.contains("Dusklight: /home/deck/Games/Dusklight (3.0 GB). Ready to remove"), "{text}");
+        assert!(text.contains("SoH: ") && text.contains("(5 B)") && text.contains("Kept: Steam shortcuts still point into it"), "{text}");
         assert!(text.contains("saves are zipped into ~/Apps/dpm/Saves Backup"), "{text}");
         assert!(text.contains("Settings, Ports folder, Old copies"), "{text}");
         for page in [b.page(), Batch::new(vec![stays("SoH", "x")]).page()] {
