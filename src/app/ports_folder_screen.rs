@@ -786,7 +786,7 @@ fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun)
                 }
             }
         };
-        let (undo_action, undo_back, undo_exit) = (undo.clone(), undo.clone(), undo);
+        let (undo_action, undo_back, undo_exit, undo_fail) = (undo.clone(), undo.clone(), undo.clone(), undo);
         let handlers = Handlers {
             on_action: Rc::new(move |app, router, action| match action {
                 FolderAction::UseMoved => switch_now(app, router, &new_dir, moved.as_ref().clone(), "Some ports were not moved and stay in the old folder.".into()),
@@ -806,6 +806,8 @@ fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun)
             on_input: None,
         };
         if !show_page(app, router, ports_pages::some_failed_page(&shown, count), handlers) {
+            // The page could not be built: the new copies are taken back, as Undo would.
+            undo_fail();
             open_menu(app, router);
         }
         return;

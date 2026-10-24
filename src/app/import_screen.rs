@@ -120,7 +120,7 @@ pub(super) fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, tex
     if super::setup_wizard_screen::active() && text.len() <= notice::MAX_TEXT {
         let page = notice::notice_page(title, text, label, preselect_cancel, 2);
         let (on_confirm, on_cancel): (Rc<dyn Fn(&Rc<AppState>, &Router)>, Step) = (Rc::new(on_confirm), on_cancel);
-        let (confirm_now, cancel_now, cancel_back, cancel_fail) = (on_confirm, on_cancel.clone(), on_cancel.clone(), on_cancel);
+        let (confirm_now, cancel_now, cancel_back, cancel_exit, cancel_fail) = (on_confirm, on_cancel.clone(), on_cancel.clone(), on_cancel.clone(), on_cancel);
         let handlers = Handlers {
             on_action: Rc::new(move |app, router, action: NoticeAction| {
                 close_current_dialog(app, router);
@@ -133,7 +133,11 @@ pub(super) fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, tex
                 close_current_dialog(app, router);
                 cancel_back(app, router);
             }),
-            on_exit: Rc::new(|app, router| super::setup_wizard_screen::exit_wizard(app, router)),
+            // The X answers like B (the safe answer runs), then ends the wizard.
+            on_exit: Rc::new(move |app, router| {
+                cancel_exit(app, router);
+                super::setup_wizard_screen::exit_wizard(app, router);
+            }),
             on_input: None,
         };
         if !show_page(app, router, page, handlers) {

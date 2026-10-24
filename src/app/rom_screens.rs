@@ -382,18 +382,25 @@ pub(crate) fn wizard_plan(app: &AppState) -> Result<crate::fork::setup_wizard::f
     Ok(info)
 }
 
+/// The wizard asked for this from inside one of its own presses, which holds it busy: the answer is handed back on
+/// the next turn of the event loop, so it is not lost (and the question page is not left standing with dead choices).
+fn resume_later(app: &Rc<AppState>, router: &Router) {
+    let (app, router) = (app.clone(), router.clone());
+    slint::Timer::single_shot(Duration::from_millis(0), move || super::setup_wizard_screen::resume_after_scan(&app, &router));
+}
+
 /// Connects the planned files in the background: links and in-place use always; the copies only when `copies` (the
 /// user saw their size). The result waits for the wizard (`take_wizard_connect`).
 pub(crate) fn wizard_connect(app: &Rc<AppState>, router: &Router, copies: bool) {
     let Some(plan) = WIZARD_PLAN.with(|p| p.borrow_mut().take()) else {
         WIZARD_CONNECT.with(|c| *c.borrow_mut() = Some(Err("The plan is gone; try again.".to_string())));
-        return super::setup_wizard_screen::resume_after_scan(app, router);
+        return resume_later(app, router);
     };
     let plans: Vec<_> = plan.plans.iter().filter(|p| copies || !p.needs_confirmation).cloned().collect();
     let approval = if copies && plans.iter().any(|p| p.needs_confirmation) { Approval::CopyAllowed } else { Approval::None };
     if plans.is_empty() {
         WIZARD_CONNECT.with(|c| *c.borrow_mut() = Some(Ok(0)));
-        return super::setup_wizard_screen::resume_after_scan(app, router);
+        return resume_later(app, router);
     }
     let status = if approval == Approval::CopyAllowed { "Copying game files. This can take a while and cannot be cancelled." } else { "Connecting game files..." };
     let path = store_path(app);
