@@ -1008,6 +1008,41 @@ mod tests {
         assert_eq!(fs::read(dest_dir.join("data.bin")).unwrap(), b"new data");
     }
 
+    // Reproduction (branch versioned-files): a release that names its file with the version.
+    #[test]
+    fn repro_versioned_appimage_update_keeps_the_old_release_in_previous() {
+        let dir = temp_dir("repro_versioned_appimage");
+        let library_dir = dir.join("Library");
+        let dest_dir = library_dir.join("game");
+        put(&dest_dir.join("Game-v1.0-linux-x86_64.AppImage"), b"\x7fELF old");
+        let port = port_with_save("game", None);
+        let archive_path = dir.join("Game-v1.1-linux-x86_64.AppImage");
+        fs::write(&archive_path, b"\x7fELF new").unwrap();
+        let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &dir.join("Saves Backup") };
+
+        apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress).unwrap();
+
+        assert_eq!(fs::read(dest_dir.join("Game-v1.1-linux-x86_64.AppImage")).unwrap(), b"\x7fELF new");
+        assert_eq!(fs::read(dest_dir.join(".previous").join("v1.0").join("Game-v1.0-linux-x86_64.AppImage")).ok().as_deref(), Some(b"\x7fELF old".as_slice()), "the old release must be kept, not deleted");
+    }
+
+    #[test]
+    fn repro_versioned_program_without_extension_leaves_two_programs_to_choose_from() {
+        let dir = temp_dir("repro_versioned_elf");
+        let library_dir = dir.join("Library");
+        let dest_dir = library_dir.join("game");
+        put(&dest_dir.join("Game-v1.0-linux-x86_64"), b"\x7fELF old");
+        let port = port_with_save("game", None);
+        let archive_path = dir.join("update.zip");
+        build_archive("zip", &[("Game-v1.1-linux-x86_64", b"\x7fELF new".as_slice()), ("README.txt", b"r".as_slice())], &archive_path);
+        let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &dir.join("Saves Backup") };
+
+        apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress).unwrap();
+
+        assert!(dest_dir.join("Game-v1.1-linux-x86_64").is_file());
+        assert!(!dest_dir.join("Game-v1.0-linux-x86_64").exists(), "the old release still sits beside the new one");
+    }
+
     #[test]
     fn follow_favorite_exe_suit_le_nouvel_appimage_de_la_meme_famille() {
         let dir = temp_dir("favorite_follows");
