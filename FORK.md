@@ -207,6 +207,9 @@ Files added by this fork:
 | 2026-10-24 | `ui/dialogs/info.slint`, `src/app/gamepad_target.rs`, `src/app/dialogs.rs` | Info: 13th button "Find saves..." (index 12; the three buttons of the extra row are centred together), shown when the saves are not found or an answer is stored; the save line comes from the save finder first, the old O1 note second |
 | 2026-10-24 | `ui/app-window.slint`, `ui/card-grid.slint`, `src/app/cards.rs`, `src/app/state.rs` | `saves-warning` on `PortItem` and `CardItem`: a small "Saves not found" badge on an installed port's list row and on its card (touch or mouse opens the finder; a controller uses Info). `build_card_rows` takes the check as a parameter |
 | 2026-10-24 | `src/main.rs`, `src/app/sync.rs`, `src/app/deck_ready_screen.rs`, `src/app/import_screen.rs`, `src/app/mod.rs` | The stored save overrides are applied where the catalog is loaded (start-up, catalog update) and where a local entry is added (`save_finder_screen::reapply`); two callbacks for the badge; one module line |
+| 2026-10-24 | `src/fork/save_restore/mod.rs`, `src/fork/save_restore/broad.rs` | Save finder review fixes: the guards moved into one `folder_problem` that `resolve_target`, the finder and the symlink re-check share; new refusals for folders that hold many apps' files (`broad::container_reason`: another port's folder in the library, `~/.local/share`, `~/.config`, Steam and Proton prefix levels, Documents, mount roots); a save folder that is a link is checked again by where it leads before the swap; `tree_size_capped`, `free_bytes` made `pub(crate)` |
+| 2026-10-24 | `src/core/save_backup.rs` | `backup_before_update`: a save folder outside the game folder is checked against the free room before it is copied (fork: save finder) |
+| 2026-10-24 | `src/fork/folder_picker/mod.rs`, `src/app/folder_picker_screen.rs` | `PickerRequest.cursor_off_use_this`: the cursor starts on the first sub-folder (or Cancel), never "Use this folder" (used by the save finder) |
 
 ## Add to Steam (Settings menu)
 
@@ -779,7 +782,8 @@ find the saves.
   user said the game has no saves. The game folder itself or a folder holding it never counts as a save folder.
 - **Badge:** installed ports whose saves are unknown always show a small amber "Saves not found" badge (list row and
   card); an empty or missing known folder shows it only once the game was played (a game that never ran has nothing to
-  save). No popups. A mouse or touch click on the badge opens the wizard; a controller uses Info. A port's state is
+  save; in a window too narrow for the words the badge is a small amber "!"). No popups. A mouse or touch click on the
+  badge opens the wizard; a controller uses Info (X in Game Mode). A port's state is
   worked out at most every 8 seconds and forgotten when an answer is stored or cleared.
 - **Info:** a line ("Saves not found: unknown on Linux", "Saves not found: folder is empty",
   "Saves: using the folder you chose", "Saves: you said this game has none") and a button **Find saves...**, shown when
@@ -812,6 +816,17 @@ find the saves.
   `save2`, "no saves" empties both, so the update backup, Save Backup, Restore saves, the uninstall preserve and the
   Info save buttons all read it. Clearing it re-reads the catalog entry from disk, so the catalog's own answer comes
   back. Nothing is moved, copied into or written in a save folder.
+- **What a chosen folder may not be** (`fork::save_restore::folder_problem`, shared with Restore saves, so a hand-edited
+  override gets the same refusal): the game folder or a folder holding it, anything in or around Saves Backup, the home
+  folder, a folder that holds many apps' files (another port's folder in the library or the library itself,
+  `~/.local`, `~/.local/share`, `~/.config`, `~/.steam`, `~/.var`, `~/.cache`, Documents, Desktop, Downloads, Steam and
+  `steamapps` folders, `compatdata`, `compatdata/<n>`, `pfx`, `drive_c`, `users`, `users/<x>`, `AppData` and its
+  `Roaming`/`Local`/`LocalLow`, Saved Games, My Games, and mount roots `/run/media/*/*`, `/media/*`, `/mnt/*`) and
+  anything near the top of a drive. The finder says "That folder holds many apps' files, not this game's. Open the
+  game's own folder inside it." A link is judged by where it leads (the finder when it is chosen, Restore saves again
+  before the swap), and a folder over 2 GB is refused as "very large for saves". The folder picker the finder opens
+  never starts on "Use this folder". "Back up now" and the update backup check the free room first for a save folder
+  outside the game folder, and the Saved page shows the size.
 - **Known limits:** a catalog entry adopted into `ports.local.json` while an override is active carries the
   overridden `save` value into the local entry (harmless; it is the same folder). The uninstall preserve only copies
   saves that are inside the game folder (as upstream does); a folder outside it is simply left in place. Not yet tried
