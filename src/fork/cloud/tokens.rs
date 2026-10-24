@@ -106,7 +106,7 @@ impl ServiceTokens {
 /// already hold those keys. An empty path (keys held in memory) has no folder, so nothing.
 pub fn values_beside(secrets_path: &Path) -> Vec<String> {
     match secrets_path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        Some(dir) => CloudTokens::load(&dir.join(FILE_NAME)).all_values(),
+        Some(dir) => CloudTokens::peek(&dir.join(FILE_NAME)).all_values(),
         None => Vec::new(),
     }
 }

@@ -182,6 +182,17 @@ fn pass_job(config_dir: &Path, saves: &Path, why: Why, ctl: &Ctl) -> PassOutcome
         &mut |text| ctl.set_progress(text.to_string()),
     );
     ctl.set_progress(String::new());
+    // Drive refused the token even after a fresh one was asked for: the status must say signed out, with the buttons
+    // that go with it, not "up to date" with a failure line.
+    for (id, r) in &reports {
+        if r.error.as_ref().is_some_and(|e| e.kind == ErrorKind::SignedOut) {
+            if let Some((_, signin)) = signed.iter().find(|(s, _)| s == id) {
+                if let Err(e) = store::mark_signed_out(&tokens_file, *id, signin) {
+                    cloud::log::note(format!("{}: could not record the sign-out ({})", id.key(), e.kind()));
+                }
+            }
+        }
+    }
     PassOutcome {
         reports: reports
             .into_iter()
@@ -255,6 +266,9 @@ struct Session {
     copying_all: Cell<bool>,
     last_status: RefCell<Option<Page<Act>>>,
     ticks: Cell<u64>,
+    /// Cancel was pressed on a copy: the file being copied still finishes, then the page says how far it got.
+    cancelling: Cell<bool>,
+    copying_total: Cell<usize>,
 }
 
 impl Session {
@@ -277,6 +291,8 @@ impl Session {
             copying_all: Cell::new(false),
             last_status: RefCell::new(None),
             ticks: Cell::new(0),
+            cancelling: Cell::new(false),
+            copying_total: Cell::new(0),
         })
     }
 
@@ -380,9 +396,19 @@ fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
                 s.cancel_jobs();
                 show_home(app, router, s);
             }
-            Stage::Listing | Stage::Copying => {
+            Stage::Listing => {
                 s.cancel_jobs();
                 show_status(app, router, s);
+            }
+            // A file cannot be stopped half way: the one being copied finishes, then the page says how far it got.
+            Stage::Copying => {
+                if let Some(job) = s.copy_job.borrow().as_ref() {
+                    job.cancel();
+                }
+                s.cancelling.set(true);
+                if let Some(h) = s.handle.borrow().as_ref() {
+                    h.update(view::copying_back_page(&s.copying_label.borrow(), "Stopping after this file..."));
+                }
             }
             _ => leave(app, router, s),
         },
@@ -567,6 +593,8 @@ fn finish_sign_in(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, tokens: 
 
 /// A revoked sign-in the person does not want to renew: the remembered account goes, back to the first page.
 fn forget_account(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
+    cancel_pass();
+    RETRY_TIMER.with(slint::Timer::stop);
     match store::sign_out(&tokens_path(&app.paths.config_dir), &record_path(&app.paths.config_dir), SERVICE) {
         Ok(()) => show_home(app, router, s),
         Err(e) => notice(app, router, s, "Could not forget the account", vec![format!("This Deck could not remove it ({}).", e.kind())]),
@@ -642,6 +670,8 @@ fn start_copy(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, files: Vec<R
     };
     *s.copying_label.borrow_mut() = label.clone();
     *s.copied_folder.borrow_mut() = None;
+    s.cancelling.set(false);
+    s.copying_total.set(files.len());
     *s.copy_job.borrow_mut() = Some(Rc::new(Background::spawn(move |ctl| copy_job(&setup, &config_dir, &saves, &signin, files, ctl))));
     show(app, router, s, Stage::Copying, view::copying_back_page(&label, ""));
 }
@@ -677,7 +707,7 @@ fn copy_job(setup: &Setup, config_dir: &Path, saves: &Path, signin: &str, files:
 fn tick_copying(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let Some(job) = s.copy_job.borrow().clone() else { return };
     let Some(result) = job.take() else {
-        let progress = job.progress();
+        let progress = if s.cancelling.get() { "Stopping after this file...".to_string() } else { job.progress() };
         if s.ticks.get() % 4 == 0 {
             if let Some(h) = s.handle.borrow().as_ref() {
                 h.update(view::copying_back_page(&s.copying_label.borrow(), &progress));
@@ -686,6 +716,11 @@ fn tick_copying(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
         return;
     };
     s.copy_job.borrow_mut().take();
+    if s.cancelling.replace(false) {
+        let done = result.as_ref().map_or(0, |o| o.results.iter().filter(|(_, r)| r.is_ok()).count());
+        let total = s.copying_total.get();
+        return notice(app, router, s, "The copy was stopped", vec![format!("{done} of {total} copied. Nothing on this Deck was replaced."), "Press Back to return to Cloud backup.".into()]);
+    }
     match result {
         Ok(outcome) => on_copied(app, router, s, outcome),
         Err(panic) => notice(app, router, s, "The copy stopped", vec![cloud::log::scrub(&panic), "Nothing on this Deck was replaced.".into()]),
@@ -714,7 +749,7 @@ fn on_copied(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, outcome: Copy
     let failed = outcome.results.iter().filter(|(_, r)| r.is_err()).count();
     let mut page = view::copied_all_page(copied, already, failed);
     if let Some(e) = first_error {
-        page.paragraphs.insert(page.paragraphs.len() - 1, e.text());
+        page.paragraphs.push(e.text());
     }
     show(app, router, s, Stage::Copied, page);
     // The summary's own button is Done, which returns to the status page.

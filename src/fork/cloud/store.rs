@@ -43,8 +43,29 @@ pub fn tokens_of(tokens_path: &Path, id: ServiceId) -> Option<ServiceTokens> {
 }
 
 /// The name of the current sign-in of `id` (see `ServiceTokens::signin`); a pass takes it when it starts.
+///
+/// A signed-in entry written by an earlier build has no name: it is given one here (and saved), so such a sign-in
+/// is not left unable to upload.
 pub fn signin_name(tokens_path: &Path, id: ServiceId) -> Option<String> {
-    tokens_of(tokens_path, id).filter(ServiceTokens::signed_in).and_then(|t| t.signin)
+    let _g = lock();
+    let mut store = CloudTokens::load(tokens_path);
+    let current = store.get(id).filter(|t| t.signed_in())?.clone();
+    if let Some(name) = current.signin {
+        return Some(name);
+    }
+    let name = new_signin_name();
+    store.set(id, ServiceTokens { signin: Some(name.clone()), ..current }).ok()?;
+    Some(name)
+}
+
+/// The service said the access is gone for good (a 401 after a forced refresh): the sign-in is marked signed out,
+/// but only if it is still the sign-in the caller began with, so the status shows what the pass saw.
+pub fn mark_signed_out(tokens_path: &Path, id: ServiceId, signin: &str) -> io::Result<()> {
+    let _g = lock();
+    if !still_that_sign_in(tokens_path, id, signin) {
+        return Ok(());
+    }
+    CloudTokens::load(tokens_path).mark_signed_out(id)
 }
 
 pub fn record_of(record_path: &Path, id: ServiceId) -> ServiceRecord {
@@ -252,6 +273,34 @@ mod tests {
         assert!(record_of(&r, ServiceId::Google).uploaded.is_empty(), "and so is a copy back that began under it");
         persist_service(&r, &t, ServiceId::Google, &second, &uploaded()).unwrap();
         assert_eq!(record_of(&r, ServiceId::Google).uploaded.len(), 1);
+    }
+
+    #[test]
+    fn a_sign_in_from_an_earlier_build_without_a_name_is_given_one_and_keeps_it() {
+        let dir = temp_dir("noname");
+        let (t, r) = (dir.join("t.json"), dir.join("r.json"));
+        fs::write(&t, r#"{"google":{"refresh_token":"REFRESH-OLD-BUILD","email":"tim@example.com"}}"#).unwrap();
+        let name = signin_name(&t, ServiceId::Google).expect("the entry is signed in, so it gets a name");
+        assert_eq!(signin_name(&t, ServiceId::Google), Some(name.clone()), "the same name the next time");
+        assert!(fs::read_to_string(&t).unwrap().contains(&name), "and it is saved");
+        persist_service(&r, &t, ServiceId::Google, &name, &uploaded()).unwrap();
+        assert_eq!(record_of(&r, ServiceId::Google).uploaded.len(), 1, "such a sign-in can upload");
+        let (t2, _) = (dir.join("t2.json"), 0);
+        fs::write(&t2, r#"{"google":{"email":"x@y.z"}}"#).unwrap();
+        assert_eq!(signin_name(&t2, ServiceId::Google), None, "a signed-out entry gets none");
+    }
+
+    #[test]
+    fn marking_signed_out_after_a_401_only_applies_to_the_sign_in_the_pass_began_with() {
+        let dir = temp_dir("mark");
+        let (t, r) = (dir.join("t.json"), dir.join("r.json"));
+        sign_in(&t, &r, ServiceId::Google, tokens("REFRESH-1", 3600), 1_000).unwrap();
+        let first = signin_name(&t, ServiceId::Google).unwrap();
+        mark_signed_out(&t, ServiceId::Google, "some-other-name").unwrap();
+        assert!(signed_in(&t).iter().any(|(id, _)| *id == ServiceId::Google), "a stale name changes nothing");
+        mark_signed_out(&t, ServiceId::Google, &first).unwrap();
+        assert!(signed_in(&t).is_empty());
+        assert_eq!(tokens_of(&t, ServiceId::Google).unwrap().email.as_deref(), Some("tim@example.com"), "the account is remembered for the status page");
     }
 
     #[test]

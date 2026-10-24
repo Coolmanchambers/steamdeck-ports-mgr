@@ -320,6 +320,8 @@ pub fn restore_list_page(service: ServiceId, rows: &[(String, String)], copy_all
     if has_more {
         page.options.push(option("Show older", "", false, Act::ShowOlder));
     }
+    // The cursor starts on the recommended row.
+    page.initial = Focus::Option(if all_first { 0 } else { usize::from(copy_all.is_some()) });
     page.buttons[LEFT] = button("Back", Act::Back);
     page
 }
@@ -547,11 +549,14 @@ mod tests {
         assert_eq!(new_deck.options.iter().filter(|o| o.recommended).count(), 1);
         assert!(new_deck.options[0].recommended && new_deck.options[0].detail.starts_with("4 files, 3"), "{}", new_deck.options[0].detail);
         assert!(new_deck.paragraphs[0].contains("Nothing on the Deck is replaced"));
+        assert_eq!(new_deck.initial, Focus::Option(0), "the cursor starts on Copy all");
         let old_deck = restore_list_page(ServiceId::Google, &rows, Some((1, 100)), false, false);
+        assert_eq!(old_deck.initial, Focus::Option(1), "the cursor starts on the newest backup, past Copy all");
         assert!(!old_deck.options[0].recommended && old_deck.options[1].recommended, "the newest backup is the recommended one");
         assert_eq!(old_deck.options.iter().filter(|o| o.recommended).count(), 1);
         let none = restore_list_page(ServiceId::Google, &rows, None, false, false);
         assert!(none.options[0].recommended && none.options[0].action == Act::Pick(0));
+        assert_eq!(none.initial, Focus::Option(0));
         let empty = restore_list_page(ServiceId::Google, &[], None, false, false);
         assert!(empty.title.contains("No backups") && empty.options.is_empty());
     }
