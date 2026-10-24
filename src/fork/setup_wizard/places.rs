@@ -45,8 +45,15 @@ fn plain_note(path: &Path, fs_type: Option<&str>) -> Option<String> {
 
 /// The note of a drive's Ports folder: when the folder is there already, the wizard says it is used as it is.
 fn drive_note(path: &Path, fs_type: &str) -> Option<String> {
-    let note = plain_note(path, Some(fs_type))?;
-    Some(if path.is_dir() && !is_non_linux_fs(fs_type) { format!("uses the Ports folder already there. {note}") } else { note })
+    let note = plain_note(path, Some(fs_type));
+    if path.is_dir() && !is_non_linux_fs(fs_type) {
+        // Free space is not known on every system; the sentence stands without it.
+        return Some(match note {
+            Some(free) => format!("uses the Ports folder already there. {free}"),
+            None => "uses the Ports folder already there".to_string(),
+        });
+    }
+    note
 }
 
 fn notes(path: &Path, fs_type: Option<&str>) -> String {
