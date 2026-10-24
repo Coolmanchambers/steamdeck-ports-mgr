@@ -32,6 +32,8 @@ pub struct Context {
     pub rom_folder_set: bool,
     /// Where Steam stands; read only while the Steam page is up (`None` before that).
     pub steam: Option<super::steam::Info>,
+    /// A rerun's "Your setup" lines (for that page, "Change which step?" and a rerun's last page).
+    pub overview: Option<Vec<super::rerun::StepLine>>,
 }
 
 fn btn(label: impl Into<String>, action: Action) -> Option<PageButton> {
@@ -61,6 +63,8 @@ pub fn title(w: &Wizard) -> String {
         View::Notice(_) | View::SaveFailed(_) => "Setup wizard".into(),
         View::PickAccount(_) => "Setup wizard: Steam account".into(),
         View::ConfirmCopies { .. } => "Setup wizard: Game files: copy".into(),
+        View::Overview => "Setup wizard: your setup".into(),
+        View::PickStep => "Setup wizard: change a step".into(),
         View::Step => match w.step {
             Step::Done => "Setup wizard: all done".into(),
             step => format!("Setup wizard: {}", step_name(step)),
@@ -137,8 +141,56 @@ fn page_inside(w: &Wizard, ctx: &Context) -> Page {
             p.initial = Focus::Option(0);
             p
         }
+        View::Overview => overview_page(w, ctx),
+        View::PickStep => pick_step_page(w, ctx),
         View::Step => step_page(w, ctx),
     }
+}
+
+/// A page outside the counted steps: no "Step 2 of 5", no progress bar.
+fn uncounted(mut p: Page) -> Page {
+    p.step_text = String::new();
+    p.step_number = 0;
+    p.step_count = 0;
+    p
+}
+
+/// "Your setup": one line per step, then Finish what's left (only the pending steps) or Change a step.
+fn overview_page(w: &Wizard, ctx: &Context) -> Page {
+    let lines = ctx.overview.clone().unwrap_or_default();
+    let pending = super::rerun::pending(&lines);
+    let mut p = uncounted(page(w, "Your setup"));
+    p.facts = lines.iter().map(super::rerun::StepLine::marked).collect();
+    if pending.is_empty() {
+        p.paragraphs = paras(&["Everything is set up. Nothing needs doing now."]);
+        p.options = vec![recommended("Close the wizard", "", Action::SkipSetup), option("Change a step...", "Do one step again", Action::ChangeStep)];
+    } else {
+        let names: Vec<&str> = pending.iter().map(|s| step_name(*s)).collect();
+        p.paragraphs = paras(&["Steps that are done stay as they are."]);
+        p.options = vec![recommended("Finish what's left", &names.join(", "), Action::FinishLeft), option("Change a step...", "Do one step again", Action::ChangeStep)];
+        p.buttons[LEFT] = btn("Close the wizard", Action::SkipSetup);
+    }
+    start_on_the_recommended(&mut p);
+    p
+}
+
+/// "Change which step?": the five steps with what each says now.
+fn pick_step_page(w: &Wizard, ctx: &Context) -> Page {
+    let mut p = uncounted(page(w, "Change which step?"));
+    p.paragraphs = paras(&["Only the step you pick is done again."]);
+    let lines = ctx.overview.clone().unwrap_or_default();
+    p.options = lines
+        .iter()
+        .map(|l| {
+            let detail = l.text.split_once(": ").map_or(l.text.as_str(), |(_, rest)| rest);
+            option(step_name(l.step), &capitalised(detail), Action::RedoStep(l.step))
+        })
+        .collect();
+    p.buttons[LEFT] = btn("Back", Action::Back);
+    if !p.options.is_empty() {
+        p.initial = Focus::Option(0);
+    }
+    p
 }
 
 fn option(title: &str, detail: &str, action: Action) -> PageOption {
@@ -149,9 +201,10 @@ fn recommended(title: &str, detail: &str, action: Action) -> PageOption {
     PageOption { recommended: true, ..option(title, detail, action) }
 }
 
-/// Back (and, in a rerun, "Close the wizard" beside it). The first page has no Back: its B asks about skipping.
+/// Back (and, in a rerun, "Close the wizard" beside it). The first page has no Back: its B asks about skipping
+/// (in a rerun's plan it has Back, to "Your setup").
 fn nav(p: &mut Page, w: &Wizard) {
-    if w.step == Step::PortsFolder {
+    if w.step == Step::PortsFolder && w.plan.is_none() {
         p.buttons[LEFT] = btn(if w.mode == Mode::FirstRun { "Skip setup..." } else { "Close the wizard" }, Action::SkipSetup);
         return;
     }
@@ -408,6 +461,15 @@ fn ports_where(ctx: &Context) -> String {
 fn done_page(w: &Wizard, ctx: &Context) -> Page {
     let mut p = page(w, "You're set up");
     let s = &w.summary;
+    // A rerun says how everything stands now, not only what this run did.
+    if let (Mode::Rerun, Some(lines)) = (w.mode, &ctx.overview) {
+        p.facts = lines.iter().map(super::rerun::StepLine::marked).collect();
+        p.footnote = "Run setup again from Settings > Setup wizard to finish anything left.".to_string();
+        p.options = vec![recommended("Finish", "", Action::Finish)];
+        nav(&mut p, w);
+        start_on_the_recommended(&mut p);
+        return p;
+    }
     p.facts = vec![
         ports_where(ctx),
         match s.imported {
@@ -460,6 +522,7 @@ mod tests {
             ],
             rom_folder_set: false,
             steam: Some(crate::fork::setup_wizard::steam::Info { to_add: 2, immediate: true, ..Default::default() }),
+            overview: None,
         }
     }
 
@@ -1053,6 +1116,70 @@ mod tests {
         assert!(t.contains("queued first; then this app can close Steam"), "{t}");
         let t = all_text(&page_for(&at(Step::Steam), &steam_ctx(Info { to_add: 2, game_mode: true, ..Default::default() })));
         assert!(t.contains("Desktop Mode with Steam closed"), "{t}");
+    }
+
+    fn tims_lines() -> Vec<crate::fork::setup_wizard::rerun::StepLine> {
+        use crate::fork::setup_wizard::rerun::{lines, Facts, Progress};
+        let facts = Facts { ports_place: Some(Kind::SdCard), installed: 4, old_kept: 4, game_files_needed: 4, steam_waiting: 4, ..Facts::default() };
+        lines(&facts, &Progress::default())
+    }
+
+    #[test]
+    fn your_setup_lists_each_step_with_a_mark_and_offers_finish_whats_left_first() {
+        let w = Wizard::new(Mode::Rerun);
+        let c = Context { overview: Some(tims_lines()), ..ctx() };
+        let p = page_for(&w, &c);
+        assert_eq!((p.title.as_str(), p.window_title.as_str()), ("Your setup", "Setup wizard: your setup"));
+        assert_eq!(
+            p.facts,
+            [
+                "\u{2713} Ports folder: SD card",
+                "\u{2713} Your ports: 4 moved in",
+                "\u{2192} Game files: no folder set yet",
+                "\u{2192} Steam: 4 waiting for Steam to close",
+                "\u{2026} Old copies: 4 kept, 0 ready",
+            ]
+        );
+        assert_eq!(option_actions(&p), [Action::FinishLeft, Action::ChangeStep]);
+        assert_eq!(p.options[0].detail, "Game files, Steam");
+        assert!(p.options[0].recommended);
+        assert_eq!(start(&p), Focus::Option(0));
+        assert_eq!(button_actions(&p), [Action::SkipSetup]);
+        assert_eq!((p.step_text.as_str(), p.step_count), ("", 0), "not one of the counted steps");
+        assert!(!all_text(&p).contains('/'));
+        // All done: Close is the answer, a step can still be changed.
+        use crate::fork::setup_wizard::rerun::{State, StepLine};
+        let done: Vec<StepLine> = tims_lines().into_iter().map(|l| StepLine { state: State::Done, ..l }).collect();
+        let p = page_for(&w, &Context { overview: Some(done), ..ctx() });
+        assert_eq!(option_actions(&p), [Action::SkipSetup, Action::ChangeStep]);
+        assert!(all_text(&p).contains("Everything is set up"));
+    }
+
+    #[test]
+    fn change_which_step_lists_the_steps_with_what_each_says_now() {
+        let mut w = Wizard::new(Mode::Rerun);
+        w.view = View::PickStep;
+        let p = page_for(&w, &Context { overview: Some(tims_lines()), ..ctx() });
+        assert_eq!(p.window_title, "Setup wizard: change a step");
+        assert_eq!(option_actions(&p), [Action::RedoStep(Step::PortsFolder), Action::RedoStep(Step::YourPorts), Action::RedoStep(Step::GameFiles), Action::RedoStep(Step::Steam), Action::RedoStep(Step::OldCopies)]);
+        assert_eq!((p.options[0].title.as_str(), p.options[0].detail.as_str()), ("Ports folder", "SD card"));
+        assert_eq!(p.options[3].detail, "4 waiting for Steam to close");
+        assert_eq!(button_actions(&p), [Action::Back]);
+    }
+
+    #[test]
+    fn a_rerun_plan_has_back_on_its_first_page_and_its_last_page_shows_how_everything_stands() {
+        let mut w = at(Step::PortsFolder);
+        w.mode = Mode::Rerun;
+        w.plan = Some(vec![Step::PortsFolder]);
+        let p = page_for(&w, &ctx());
+        assert_eq!(button_actions(&p), [Action::Back, Action::SkipSetup]);
+        let mut w = at(Step::Done);
+        w.mode = Mode::Rerun;
+        let p = page_for(&w, &Context { overview: Some(tims_lines()), ..ctx() });
+        assert_eq!(p.facts.len(), 5);
+        assert_eq!(p.facts[3], "\u{2192} Steam: 4 waiting for Steam to close");
+        assert_eq!(option_actions(&p), [Action::Finish]);
     }
 
     #[test]

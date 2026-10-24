@@ -96,10 +96,53 @@ pub fn quick_choices(current: &Path, internal_default: &Path, drives: &[Drive], 
     usable
 }
 
+/// What kind of place `path` is: on a removable drive (an SD card or another drive), the internal default, or
+/// `None` for a folder the user picked elsewhere.
+pub fn place_of(path: &Path, internal_default: &Path, drives: &[Drive]) -> Option<Kind> {
+    if let Some(d) = drives.iter().find(|d| path.starts_with(&d.mount_point)) {
+        return Some(if d.kind == "SD card" { Kind::SdCard } else { Kind::OtherDrive });
+    }
+    (path == internal_default).then_some(Kind::Internal)
+}
+
+/// A folder as a place, never a card's UUID: "SD card > Emulation > roms", "Home > ROMs". A folder outside the
+/// drives and the home folder is its path.
+pub fn folder_label(path: &Path, drives: &[Drive], home: Option<&Path>) -> String {
+    let crumbs = |base: &str, rest: &Path| {
+        let mut parts = vec![base.to_string()];
+        parts.extend(rest.components().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+        parts.join(" > ")
+    };
+    if let Some(d) = drives.iter().filter(|d| path.starts_with(&d.mount_point)).max_by_key(|d| d.mount_point.as_os_str().len()) {
+        return crumbs(d.kind, path.strip_prefix(&d.mount_point).unwrap_or(Path::new("")));
+    }
+    if let Some(rest) = home.and_then(|h| path.strip_prefix(h).ok()) {
+        return crumbs("Home", rest);
+    }
+    path.display().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn a_folder_is_named_by_its_place_never_by_the_cards_uuid() {
+        let sd = Drive { mount_point: PathBuf::from("/run/media/deck/c14f9023-6854-443f-9348-735551234567"), kind: "SD card", label: "c14f9023-6854-443f-9348-735551234567".into(), fs_type: "ext4".into() };
+        let usb = Drive { mount_point: PathBuf::from("/run/media/deck/STICK"), kind: "USB drive", label: "STICK".into(), fs_type: "ext4".into() };
+        let drives = [sd.clone(), usb];
+        let home = Path::new("/home/deck");
+        assert_eq!(folder_label(&sd.mount_point.join("Emulation/roms"), &drives, Some(home)), "SD card > Emulation > roms");
+        assert_eq!(folder_label(&sd.mount_point, &drives, Some(home)), "SD card");
+        assert_eq!(folder_label(Path::new("/run/media/deck/STICK/games"), &drives, Some(home)), "USB drive > games");
+        assert_eq!(folder_label(Path::new("/home/deck/ROMs/psx"), &drives, Some(home)), "Home > ROMs > psx");
+        assert_eq!(folder_label(Path::new("/mnt/other"), &drives, Some(home)), "/mnt/other");
+        assert_eq!(place_of(&sd.mount_point.join("Ports"), Path::new("/home/deck/App/Library"), &drives), Some(Kind::SdCard));
+        assert_eq!(place_of(Path::new("/run/media/deck/STICK/Ports"), Path::new("/x"), &drives), Some(Kind::OtherDrive));
+        assert_eq!(place_of(Path::new("/home/deck/App/Library"), Path::new("/home/deck/App/Library"), &drives), Some(Kind::Internal));
+        assert_eq!(place_of(Path::new("/home/deck/Games"), Path::new("/home/deck/App/Library"), &drives), None);
+    }
 
     fn drive(mount: &Path, kind: &'static str, label: &str, fs_type: &str) -> Drive {
         Drive { mount_point: mount.to_path_buf(), kind, label: label.into(), fs_type: fs_type.into() }

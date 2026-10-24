@@ -16,6 +16,7 @@ pub mod game_files;
 pub mod notice;
 pub mod places;
 pub mod progress;
+pub mod rerun;
 pub mod ports_pages;
 pub mod steam;
 pub mod text;

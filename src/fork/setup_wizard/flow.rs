@@ -76,6 +76,10 @@ pub enum Mode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum View {
     Step,
+    /// The first page of a rerun: "Your setup", one line per step.
+    Overview,
+    /// "Change which step?": pick one step to do again.
+    PickStep,
     ConfirmSkipSetup,
     Notice(String),
     /// `setup_done` could not be saved: the page offers "Close anyway" as well as OK.
@@ -118,6 +122,12 @@ pub enum Action {
     /// This account (by position in the names the page showed) gets the ports.
     ChooseAccount(usize),
     OpenArtSources,
+    /// "Finish what's left": visit only the steps with something pending.
+    FinishLeft,
+    /// "Change a step...".
+    ChangeStep,
+    /// Do this one step again (from "Change which step?").
+    RedoStep(Step),
     Finish,
     Yes,
     No,
@@ -217,11 +227,16 @@ pub struct Wizard {
     pub view: View,
     pub summary: Summary,
     pub handoff: Option<HandOff>,
+    /// A rerun's chosen steps ("Finish what's left", or the one step picked): only these are visited, in order,
+    /// then the last page. `None`: every step, as on the first run.
+    pub plan: Option<Vec<Step>>,
 }
 
 impl Wizard {
+    /// A first run starts on the ports folder question; a rerun on "Your setup".
     pub fn new(mode: Mode) -> Wizard {
-        Wizard { mode, step: Step::PortsFolder, view: View::Step, summary: Summary::default(), handoff: None }
+        let view = if mode == Mode::Rerun { View::Overview } else { View::Step };
+        Wizard { mode, step: Step::PortsFolder, view, summary: Summary::default(), handoff: None, plan: None }
     }
 }
 
@@ -279,6 +294,10 @@ pub trait Adapters {
     fn old_copies_note(&mut self) -> Option<String>;
     /// Ports installed right now (the import's result is the difference).
     fn installed_count(&mut self) -> usize;
+    /// The steps with something left to do, in order (`rerun::pending` of the app as it is now).
+    fn pending_steps(&mut self) -> Vec<Step>;
+    /// The user went on from `step`: remember what it left behind (`setup_progress`).
+    fn step_finished(&mut self, step: Step, summary: &Summary);
     /// Remember that setup is finished (`setup_done`).
     fn mark_done(&mut self) -> Result<(), String>;
     /// Close the wizard and land on the main list.
@@ -290,8 +309,10 @@ pub fn back_action(wizard: &Wizard) -> Action {
     match &wizard.view {
         View::Notice(_) | View::SaveFailed(_) => Action::Ok,
         View::ConfirmSkipSetup => Action::No,
-        View::PickAccount(_) | View::ConfirmCopies { .. } => Action::Back,
-        View::Step if wizard.step == Step::PortsFolder => Action::SkipSetup,
+        View::PickAccount(_) | View::ConfirmCopies { .. } | View::PickStep => Action::Back,
+        View::Overview => Action::SkipSetup,
+        // In a rerun's plan the first page goes back to "Your setup".
+        View::Step if wizard.step == Step::PortsFolder && wizard.plan.is_none() => Action::SkipSetup,
         View::Step => Action::Back,
     }
 }
@@ -313,18 +334,18 @@ fn enter(w: &mut Wizard, step: Step, a: &mut dyn Adapters) {
             let needing = a.ports_needing_game_files();
             w.summary.game_files_needed = Some(needing);
             if needing == 0 {
-                return enter(w, Step::Steam, a);
+                return advance(w, a);
             }
             show_step(w, a);
         }
         Step::OldCopies => {
             let before = a.kept_old_copies();
             if before == 0 {
-                return enter(w, Step::Done, a);
+                return advance(w, a);
             }
             if a.ready_old_copies() == 0 {
                 w.summary.old_copies_waiting = Some(before);
-                return enter(w, Step::Done, a);
+                return advance(w, a);
             }
             // Recorded first: the page can tell the wizard it is done before `old_copies_step` returns.
             w.handoff = Some(HandOff::OldCopies { before });
@@ -335,9 +356,45 @@ fn enter(w: &mut Wizard, step: Step, a: &mut dyn Adapters) {
     }
 }
 
+/// On to the next step: the next one of the plan (then the last page), or simply the next step. What the step
+/// left behind is recorded first.
 fn advance(w: &mut Wizard, a: &mut dyn Adapters) {
-    if let Some(next) = w.step.next() {
-        enter(w, next, a);
+    if w.step == Step::Done {
+        return;
+    }
+    a.step_finished(w.step, &w.summary);
+    let next = match &w.plan {
+        Some(plan) => plan.iter().position(|s| *s == w.step).and_then(|i| plan.get(i + 1)).copied().unwrap_or(Step::Done),
+        None => w.step.next().unwrap_or(Step::Done),
+    };
+    w.view = View::Step;
+    enter(w, next, a);
+}
+
+/// "Your setup" again (B on the first page of a plan, or Back from "Change which step?"). The plan is dropped.
+fn show_overview(w: &mut Wizard, a: &mut dyn Adapters) {
+    w.plan = None;
+    w.step = Step::PortsFolder;
+    w.view = View::Overview;
+    a.show(w);
+}
+
+/// Back inside a plan: the planned step before this one, or "Your setup" from the first. Steps without a page of
+/// their own (the old copies, game files nobody needs) are stepped over.
+fn back_in_plan(w: &mut Wizard, a: &mut dyn Adapters, plan: &[Step]) {
+    let pages: Vec<Step> = plan.iter().copied().filter(|s| *s != Step::OldCopies && !(*s == Step::GameFiles && w.summary.game_files_needed == Some(0))).collect();
+    let target = match pages.iter().position(|s| *s == w.step) {
+        Some(0) => None,
+        Some(i) => Some(pages[i - 1]),
+        None if w.step == Step::Done => pages.last().copied(),
+        None => None,
+    };
+    match target {
+        Some(step) => {
+            w.step = step;
+            show_step(w, a);
+        }
+        None => show_overview(w, a),
     }
 }
 
@@ -419,6 +476,29 @@ pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
                 a.show(w);
             }
         },
+        (View::Overview, Action::FinishLeft) => {
+            let plan = a.pending_steps();
+            match plan.first().copied() {
+                Some(first) => {
+                    w.plan = Some(plan);
+                    w.view = View::Step;
+                    enter(w, first, a);
+                }
+                // Nothing left (it was finished meanwhile): the page again, saying so.
+                None => a.show(w),
+            }
+        }
+        (View::Overview, Action::ChangeStep) => {
+            w.view = View::PickStep;
+            a.show(w);
+        }
+        (View::Overview, Action::SkipSetup) => a.close(),
+        (View::PickStep, Action::RedoStep(step)) if step != Step::Done => {
+            w.plan = Some(vec![step]);
+            w.view = View::Step;
+            enter(w, step, a);
+        }
+        (View::PickStep, Action::Back) => show_overview(w, a),
         (View::Step, action) => press_in_step(w, action, a),
         // A press that does not belong to this view (a stale item) changes nothing.
         _ => {}
@@ -428,6 +508,10 @@ pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
 fn press_in_step(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     match action {
         Action::Next if matches!(w.step, Step::PortsFolder | Step::GameFiles | Step::Steam | Step::OldCopies) => advance(w, a),
+        Action::Back if w.plan.is_some() => {
+            let plan = w.plan.clone().unwrap_or_default();
+            back_in_plan(w, a, &plan);
+        }
         Action::Back => {
             if let Some(mut prev) = w.step.prev() {
                 // A page that was never shown (no port needs game files) is stepped over.
@@ -660,6 +744,8 @@ pub(crate) mod fake {
         pub kept: usize,
         /// Ready old copies; `None` = all the kept ones.
         pub ready: Option<usize>,
+        pub pending: Vec<Step>,
+        pub finished: Vec<Step>,
         pub accounts: Vec<String>,
         pub steam_result: SteamOutcome,
         pub close_result: Option<SteamCloseResult>,
@@ -668,7 +754,7 @@ pub(crate) mod fake {
 
     impl Default for Fake {
         fn default() -> Fake {
-            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, ready: None, accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None, waiting: 0 }
+            Fake { calls: Vec::new(), done_error: None, installed: 0, folder: PathBuf::from("/home/deck/Library"), went_back: false, needing: 1, note: None, plan: Ok(GamePlan { ports: 2, copy_ports: 0, copy_bytes: 0 }), connected: Some(Ok(2)), result: None, kept: 0, ready: None, pending: Vec::new(), finished: Vec::new(), accounts: Vec::new(), steam_result: SteamOutcome::Added(2), close_result: None, waiting: 0 }
         }
     }
 
@@ -747,6 +833,12 @@ pub(crate) mod fake {
         fn installed_count(&mut self) -> usize {
             self.installed
         }
+        fn pending_steps(&mut self) -> Vec<Step> {
+            self.pending.clone()
+        }
+        fn step_finished(&mut self, step: Step, _summary: &Summary) {
+            self.finished.push(step);
+        }
         fn mark_done(&mut self) -> Result<(), String> {
             self.calls.push("mark_done".into());
             self.done_error.clone().map_or(Ok(()), Err)
@@ -766,6 +858,7 @@ mod tests {
     fn at(step: Step, mode: Mode) -> Wizard {
         let mut w = Wizard::new(mode);
         w.step = step;
+        w.view = View::Step;
         w
     }
 
@@ -1038,6 +1131,98 @@ mod tests {
         assert_eq!((w.step, a.calls.clone()), (Step::OldCopies, vec!["old_copies".to_string()]));
     }
 
+    // -- reruns ----------------------------------------------------------------------------------
+
+    #[test]
+    fn a_rerun_starts_on_your_setup_and_b_or_close_leaves_without_touching_setup_done() {
+        let w = Wizard::new(Mode::Rerun);
+        assert_eq!((w.view.clone(), w.plan.clone()), (View::Overview, None));
+        assert_eq!(back_action(&w), Action::SkipSetup);
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake::default());
+        press(&mut w, Action::SkipSetup, &mut a);
+        assert_eq!(a.calls, ["close"]);
+        assert_eq!(Wizard::new(Mode::FirstRun).view, View::Step, "a first run has no overview");
+    }
+
+    #[test]
+    fn finish_whats_left_visits_only_the_pending_steps_in_order_then_the_last_page() {
+        // Tim's Deck: game files and Steam are left; the ports folder and the import are done and never redone.
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake { pending: vec![Step::GameFiles, Step::Steam], needing: 4, ..Fake::default() });
+        press(&mut w, Action::FinishLeft, &mut a);
+        assert_eq!((w.step, w.view.clone()), (Step::GameFiles, View::Step));
+        assert_eq!(a.calls, ["show GameFiles Step"], "no ports folder page, no import");
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!(w.step, Step::Steam);
+        press(&mut w, Action::Next, &mut a);
+        assert_eq!(w.step, Step::Done, "straight to the last page after the last planned step");
+        assert!(!a.calls.iter().any(|c| c == "import" || c.starts_with("ports_folder")), "{:?}", a.calls);
+        assert_eq!(a.finished, [Step::GameFiles, Step::Steam], "what each visited step left is recorded");
+        // Back from the last page goes to the last planned page, then the one before, then "Your setup".
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!(w.step, Step::Steam);
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!(w.step, Step::GameFiles);
+        assert_eq!(back_action(&w), Action::Back);
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!((w.view.clone(), w.plan.clone()), (View::Overview, None));
+        // Nothing left: the page stays (it says so).
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake::default());
+        press(&mut w, Action::FinishLeft, &mut a);
+        assert_eq!((w.view.clone(), a.calls.clone()), (View::Overview, vec!["show PortsFolder Overview".to_string()]));
+    }
+
+    #[test]
+    fn a_planned_step_with_nothing_to_ask_is_passed_over_to_the_next_planned_one() {
+        // Game files left, but by now no port needs any: on to Steam, the next planned step.
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake { pending: vec![Step::GameFiles, Step::Steam], needing: 0, ..Fake::default() });
+        press(&mut w, Action::FinishLeft, &mut a);
+        assert_eq!(w.step, Step::Steam);
+        // Old copies planned but none ready any more: the last page.
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake { pending: vec![Step::OldCopies], kept: 4, ready: Some(0), ..Fake::default() });
+        press(&mut w, Action::FinishLeft, &mut a);
+        assert_eq!((w.step, w.summary.old_copies_waiting), (Step::Done, Some(4)));
+    }
+
+    #[test]
+    fn change_a_step_does_that_one_step_again_and_then_the_last_page() {
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake::default());
+        press(&mut w, Action::ChangeStep, &mut a);
+        assert_eq!(w.view, View::PickStep);
+        assert_eq!(back_action(&w), Action::Back);
+        press(&mut w, Action::Back, &mut a);
+        assert_eq!(w.view, View::Overview);
+        press(&mut w, Action::ChangeStep, &mut a);
+        press(&mut w, Action::RedoStep(Step::PortsFolder), &mut a);
+        assert_eq!((w.step, w.view.clone(), w.plan.clone()), (Step::PortsFolder, View::Step, Some(vec![Step::PortsFolder])));
+        assert_eq!(back_action(&w), Action::Back, "B on the first page of a plan goes back to Your setup, not 'close'");
+        // Keeping the folder ends the plan: the last page, not Your ports.
+        press(&mut w, Action::Next, &mut a);
+        assert_eq!(w.step, Step::Done);
+        assert!(!a.calls.contains(&"import".to_string()));
+        // Your ports again opens the import (it shows only ports not in the ports folder yet).
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake { installed: 4, ..Fake::default() });
+        press(&mut w, Action::ChangeStep, &mut a);
+        press(&mut w, Action::RedoStep(Step::YourPorts), &mut a);
+        assert_eq!(a.calls.last().unwrap(), "import");
+        resume_import(&mut w, &mut a);
+        assert_eq!(w.step, Step::Done);
+        // The last page is not a step to redo.
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake::default());
+        press(&mut w, Action::ChangeStep, &mut a);
+        press(&mut w, Action::RedoStep(Step::Done), &mut a);
+        assert_eq!(w.view, View::PickStep);
+    }
+
+    #[test]
+    fn a_first_run_records_each_step_it_goes_on_from() {
+        let (mut w, mut a) = (Wizard::new(Mode::FirstRun), Fake { needing: 0, ..Fake::default() });
+        press(&mut w, Action::Next, &mut a);
+        resume_import(&mut w, &mut a);
+        press(&mut w, Action::Skip, &mut a);
+        assert_eq!(a.finished, [Step::PortsFolder, Step::YourPorts, Step::GameFiles, Step::Steam, Step::OldCopies]);
+        assert_eq!(w.step, Step::Done);
+    }
+
     #[test]
     fn a_late_old_copy_finish_changes_nothing_unless_it_is_the_pending_hand_off() {
         let (mut w, mut a) = (at(Step::Done, Mode::FirstRun), Fake::default());
@@ -1146,7 +1331,7 @@ mod tests {
         // it is the confirmed skip's Yes, which B never maps to.
         for mode in [Mode::FirstRun, Mode::Rerun] {
             for step in Step::ALL {
-                for view in [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into())] {
+                for view in [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into()), View::Overview, View::PickStep] {
                     let (mut w, mut a) = (at(step, mode), Fake::default());
                     w.view = view.clone();
                     let action = back_action(&w);
@@ -1182,13 +1367,16 @@ mod tests {
             Action::TryAgain,
             Action::ChooseAccount(0),
             Action::OpenArtSources,
+            Action::FinishLeft,
+            Action::ChangeStep,
+            Action::RedoStep(Step::Steam),
             Action::Finish,
             Action::Yes,
             Action::No,
             Action::Ok,
             Action::CloseAnyway,
         ];
-        let views = [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into()), View::PickAccount(vec!["a".into(), "b".into()]), View::ConfirmCopies { ports: 1, bytes: 1 }];
+        let views = [View::Step, View::ConfirmSkipSetup, View::Notice("n".into()), View::SaveFailed("e".into()), View::PickAccount(vec!["a".into(), "b".into()]), View::ConfirmCopies { ports: 1, bytes: 1 }, View::Overview, View::PickStep];
         for mode in [Mode::FirstRun, Mode::Rerun] {
             for step in Step::ALL {
                 for view in &views {

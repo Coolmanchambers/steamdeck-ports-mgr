@@ -23,7 +23,7 @@ use crate::fork::rom_library::RomLibraryStore;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::fork::setup_wizard::flow::{self, Adapters, Menu, Mode, Wizard};
 use crate::fork::setup_wizard::text::{self, Context};
-use crate::fork::setup_wizard::{places, setup_state, SetupState};
+use crate::fork::setup_wizard::{places, rerun, setup_state, SetupState};
 use crate::ui::gamepad_router::GamepadRouter;
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
@@ -57,6 +57,8 @@ thread_local! {
     static PREFETCHED: Cell<bool> = const { Cell::new(false) };
     /// What the "Close Steam and update shortcuts" flow did, read once by the wizard when it comes back.
     static STEAM_CLOSE: Cell<Option<flow::SteamCloseResult>> = const { Cell::new(None) };
+    /// How many ports earlier runs moved in (`setup_progress`), so this run's count adds to it.
+    static IMPORTED_BEFORE: Cell<usize> = const { Cell::new(0) };
 }
 
 fn settings_path(app: &AppState) -> PathBuf {
@@ -107,6 +109,7 @@ pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
 fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
     let session: Session = Rc::new(RefCell::new(Wizard::new(mode)));
     EARLIER.with(|e| *e.borrow_mut() = take_earlier_choice(app));
+    IMPORTED_BEFORE.with(|n| n.set(rerun::Progress::load(&ForkSettings::load(&settings_path(app))).imported));
     SESSION.with(|s| *s.borrow_mut() = Some(session.clone()));
     QUIET.with(|q| q.set(0));
     PREFETCHED.with(|p| p.set(false));
@@ -190,6 +193,41 @@ fn tick(app: &Rc<AppState>, router: &Router) {
 
 // -- Drawing ---------------------------------------------------------------------------------------
 
+/// "Your setup": every step as it stands now (`rerun::lines` of the app and `setup_progress`).
+fn setup_lines(app: &AppState) -> Vec<rerun::StepLine> {
+    let current = app.paths.library_dir();
+    let internal_default = crate::fork::ports_folder::default_dir(&app.paths.config_dir);
+    let drives = removable_drives(&system_mounts(), &default_media_roots());
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let old = old_copies_now(app);
+    let ready = old.iter().filter(|o| crate::fork::port_mover::old_copies::readiness(o, &crate::fork::port_mover::old_copies::steam_view(o, home.as_deref().unwrap_or(Path::new("/")), &app.paths.config_dir)).is_ready()).count();
+    let steam = steam_info(app);
+    let needing = app.catalog.borrow().iter().filter(|p| super::rom_screens::port_needs_game_files(app, p)).count();
+    let facts = rerun::Facts {
+        ports_place: places::place_of(&current, &internal_default, &drives),
+        ports_folder_is_default: current == internal_default,
+        installed: installed_count(app),
+        old_kept: old.len(),
+        old_ready: ready,
+        game_files_needed: needing,
+        rom_folder: rom_folder(app).map(|dir| places::folder_label(&dir, &drives, home.as_deref())),
+        steam_to_add: steam.to_add.saturating_sub(steam.queued),
+        steam_waiting: steam.waiting.max(steam.queued),
+        steam_problem: steam.problem.is_some(),
+        game_mode: steam.game_mode,
+    };
+    rerun::lines(&facts, &rerun::Progress::load(&ForkSettings::load(&settings_path(app))))
+}
+
+fn context_for(app: &AppState, w: &Wizard) -> Context {
+    let mut ctx = context(app, w.step);
+    let wants_lines = matches!(w.view, flow::View::Overview | flow::View::PickStep) || (w.mode == Mode::Rerun && w.step == flow::Step::Done);
+    if wants_lines {
+        ctx.overview = Some(setup_lines(app));
+    }
+    ctx
+}
+
 fn context(app: &AppState, step: crate::fork::setup_wizard::flow::Step) -> Context {
     let current = app.paths.library_dir();
     let internal_default = crate::fork::ports_folder::default_dir(&app.paths.config_dir);
@@ -201,11 +239,12 @@ fn context(app: &AppState, step: crate::fork::setup_wizard::flow::Step) -> Conte
         ports_folder: current,
         rom_folder_set: rom_folder(app).is_some(),
         steam: matches!(step, crate::fork::setup_wizard::flow::Step::Steam | crate::fork::setup_wizard::flow::Step::Done).then(|| steam_info(app)),
+        overview: None,
     }
 }
 
 fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
-    let ctx = context(app, w.step);
+    let ctx = context_for(app, w);
     let page = text::page_for(w, &ctx);
     let handlers = Handlers {
         on_action: Rc::new(|app, router, action| with_wizard(app, router, |w, ui| flow::press(w, action, ui))),
@@ -343,6 +382,19 @@ impl Adapters for Ui {
 
     fn installed_count(&mut self) -> usize {
         installed_count(&self.app)
+    }
+
+    fn pending_steps(&mut self) -> Vec<flow::Step> {
+        rerun::pending(&setup_lines(&self.app))
+    }
+
+    fn step_finished(&mut self, step: flow::Step, summary: &flow::Summary) {
+        let mut settings = ForkSettings::load(&settings_path(&self.app));
+        let mut progress = rerun::Progress::load(&settings);
+        rerun::record_step(&mut progress, step, summary, IMPORTED_BEFORE.with(Cell::get));
+        if let Err(e) = progress.save(&mut settings) {
+            eprintln!("setup wizard: could not record the progress of {step:?}: {e}");
+        }
     }
 
     fn mark_done(&mut self) -> Result<(), String> {
