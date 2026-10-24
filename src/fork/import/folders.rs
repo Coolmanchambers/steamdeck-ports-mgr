@@ -8,7 +8,8 @@
 //! - `import_defaults_off`: names of well-known folders switched off (`"Games"`);
 //! - `import_look_deeper`: true to look one level further into folders that matched nothing.
 
-use crate::fork::adopt::{expand_home, scan_roots_with, WELL_KNOWN};
+use crate::fork::adopt::{expand_home, scan_roots_full, WELL_KNOWN};
+use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts, MountEntry};
 use crate::fork::settings::ForkSettings;
 use serde_json::Value;
 use std::io;
@@ -16,6 +17,21 @@ use std::path::{Path, PathBuf};
 
 const KEY_DEFAULTS_OFF: &str = "import_defaults_off";
 const KEY_DEEPER: &str = "import_look_deeper";
+const KEY_DRIVES_OFF: &str = "import_drives_off";
+
+/// A removable drive (an SD card, a USB drive) that is plugged in: its top is a place Import ports looks in,
+/// switched on unless the user turned it off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriveRoot {
+    pub mount: PathBuf,
+    /// "SD card (SD512)".
+    pub title: String,
+}
+
+/// The drives that are plugged in, from the mount list and the places the system mounts removable media.
+pub fn drive_roots_from(mounts: &[MountEntry], media_roots: &[PathBuf]) -> Vec<DriveRoot> {
+    removable_drives(mounts, media_roots).into_iter().map(|d| DriveRoot { title: d.title(), mount: d.mount_point }).collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ScanFolders {
@@ -24,6 +40,10 @@ pub struct ScanFolders {
     /// The user's own folders, as stored.
     pub user: Vec<String>,
     pub look_deeper: bool,
+    /// The removable drives plugged in now (not saved: they come and go).
+    pub drives: Vec<DriveRoot>,
+    /// Mount points of the drives switched off (saved).
+    pub drives_off: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +67,32 @@ impl ScanFolders {
             defaults_off,
             user: settings.adopt_folders(),
             look_deeper: settings.get(KEY_DEEPER).and_then(Value::as_bool).unwrap_or(false),
+            drives: Vec::new(),
+            drives_off: settings.get(KEY_DRIVES_OFF).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
+        }
+    }
+
+    /// [`load`], with the removable drives that are plugged in on this device.
+    pub fn on_this_device(settings: &ForkSettings) -> ScanFolders {
+        ScanFolders::load(settings).with_drives(drive_roots_from(&system_mounts(), &default_media_roots()))
+    }
+
+    pub fn with_drives(mut self, drives: Vec<DriveRoot>) -> ScanFolders {
+        self.drives = drives;
+        self
+    }
+
+    pub fn drive_is_on(&self, index: usize) -> bool {
+        self.drives.get(index).is_some_and(|d| !self.drives_off.iter().any(|m| Path::new(m) == d.mount))
+    }
+
+    pub fn toggle_drive(&mut self, index: usize) {
+        let Some(drive) = self.drives.get(index) else { return };
+        let mount = drive.mount.to_string_lossy().into_owned();
+        if self.drive_is_on(index) {
+            self.drives_off.push(mount);
+        } else {
+            self.drives_off.retain(|m| *m != mount);
         }
     }
 
@@ -54,6 +100,7 @@ impl ScanFolders {
     pub fn save(&self, settings: &mut ForkSettings) -> io::Result<()> {
         settings.set_adopt_folders(&self.user)?;
         settings.set(KEY_DEFAULTS_OFF, Value::from(self.defaults_off.clone()))?;
+        settings.set(KEY_DRIVES_OFF, Value::from(self.drives_off.clone()))?;
         settings.set(KEY_DEEPER, Value::from(self.look_deeper))
     }
 
@@ -106,12 +153,13 @@ impl ScanFolders {
 
     /// The folders that exist and are switched on, each once, never the library.
     pub fn roots(&self, home: &Path, library_dir: &Path) -> Vec<PathBuf> {
-        scan_roots_with(home, &self.defaults_off, &self.user, library_dir)
+        let tops: Vec<PathBuf> = (0..self.drives.len()).filter(|i| self.drive_is_on(*i)).map(|i| self.drives[i].mount.clone()).collect();
+        scan_roots_full(home, &self.defaults_off, &self.user, &tops, library_dir)
     }
 
     /// How many folders are switched on (well-known ones plus the user's), whether or not they exist.
     pub fn on_count(&self) -> usize {
-        WELL_KNOWN.iter().filter(|n| self.default_is_on(n)).count() + self.user.len()
+        WELL_KNOWN.iter().filter(|n| self.default_is_on(n)).count() + (0..self.drives.len()).filter(|i| self.drive_is_on(*i)).count() + self.user.len()
     }
 }
 
@@ -212,6 +260,53 @@ mod tests {
         f.toggle_default("Ports");
         assert_eq!(f.roots(&home, &library), [home.join("Applications"), home.join("mine")]);
         assert_eq!(f.on_count(), 3, "one standard folder plus two listed ones, even though one does not exist");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_plugged_in_drive_is_a_place_that_is_looked_in_until_it_is_switched_off() {
+        let dir = temp_dir("drives");
+        let home = dir.join("home");
+        let sd = dir.join("run/media/deck/SD512");
+        fs::create_dir_all(&sd).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        let mounts = [MountEntry { device: "/dev/mmcblk0p1".into(), mount_point: sd.clone(), fs_type: "ext4".into() }];
+        let drives = drive_roots_from(&mounts, &[dir.join("run/media/deck")]);
+        assert_eq!(drives, [DriveRoot { mount: sd.clone(), title: "SD card (SD512)".into() }]);
+        let mut f = ScanFolders::default().with_drives(drives);
+        let library = sd.join("Ports");
+        assert_eq!(f.roots(&home, &library), [sd.clone()], "found with no folder added by the user");
+        assert!(f.drive_is_on(0) && f.on_count() == 4);
+        f.toggle_drive(0);
+        assert!(f.roots(&home, &library).is_empty() && f.on_count() == 3);
+        // The switch is remembered, and a drive that is not plugged in changes nothing.
+        let path = dir.join("s.json");
+        let mut settings = ForkSettings::load(&path);
+        f.save(&mut settings).unwrap();
+        let again = ScanFolders::load(&ForkSettings::load(&path)).with_drives(f.drives.clone());
+        assert!(!again.drive_is_on(0));
+        assert!(ScanFolders::load(&ForkSettings::load(&path)).roots(&home, &library).is_empty());
+        f.toggle_drive(0);
+        assert!(f.drive_is_on(0));
+        f.toggle_drive(7);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_ports_on_an_sd_card_top_are_found_with_no_folder_added() {
+        use crate::fork::import::scan::{run_scan, tests as scan_tests};
+        let dir = temp_dir("sd_top_scan");
+        let sd = crate::fork::adopt::test_fixtures::tims_sd_card(&dir);
+        let mounts = [MountEntry { device: "/dev/mmcblk0p1".into(), mount_point: sd.clone(), fs_type: "ext4".into() }];
+        let folders = ScanFolders::default().with_drives(drive_roots_from(&mounts, &[sd.parent().unwrap().to_path_buf()]));
+        let home = dir.join("home");
+        fs::create_dir_all(&home).unwrap();
+        let mut input = scan_tests::tims_input(&sd, Default::default());
+        input.roots = folders.roots(&home, &sd.join("Ports"));
+        assert_eq!(input.roots, [sd.clone()]);
+        let scan = run_scan(&input, &|| false, &|_| {});
+        let folders: Vec<&str> = scan.found.iter().map(|f| f.catalog_folder.as_str()).collect();
+        assert_eq!(folders, ["Severed-Chains", "2ship2harkinian", "Shipwright", "dusklight"], "Tim's four ports, from the card's top");
         let _ = fs::remove_dir_all(dir);
     }
 

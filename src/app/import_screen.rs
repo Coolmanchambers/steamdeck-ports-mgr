@@ -169,7 +169,7 @@ pub(crate) fn open_with(app: &Rc<AppState>, router: &Router, from_wizard: bool, 
     if !from_wizard && dialog_is_open(app) {
         return;
     }
-    let folders = ScanFolders::load(&ForkSettings::load(&settings_path(app)));
+    let folders = ScanFolders::on_this_device(&ForkSettings::load(&settings_path(app)));
     start_scan(app, router, &Ctx::new(from_wizard, finish), folders);
 }
 
@@ -640,6 +640,10 @@ pub(super) fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state
                 Some(FolderLine::Add) => return add_folder(&app, &router, &ctx, state.clone()),
                 Some(FolderLine::Default(i)) => {
                     state.screen.borrow_mut().folders.toggle_default(crate::fork::adopt::WELL_KNOWN[i]);
+                    changed = true;
+                }
+                Some(FolderLine::Drive(i)) => {
+                    state.screen.borrow_mut().folders.toggle_drive(i);
                     changed = true;
                 }
                 Some(FolderLine::User(i)) => {

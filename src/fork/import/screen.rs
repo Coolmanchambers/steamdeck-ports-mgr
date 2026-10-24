@@ -206,6 +206,8 @@ pub enum FolderLine {
     Add,
     /// A well-known folder, by index into `WELL_KNOWN`.
     Default(usize),
+    /// A removable drive that is plugged in, by index into `ScanFolders::drives`.
+    Drive(usize),
     /// One the user added, by index into `ScanFolders::user`.
     User(usize),
     Deeper,
@@ -235,6 +237,7 @@ impl FoldersScreen {
         }
         lines.push(FolderLine::Add);
         lines.extend((0..WELL_KNOWN.len()).map(FolderLine::Default));
+        lines.extend((0..self.folders.drives.len()).map(FolderLine::Drive));
         lines.extend((0..self.folders.user.len()).map(FolderLine::User));
         lines.extend([FolderLine::Deeper, FolderLine::Back]);
         lines
@@ -251,6 +254,7 @@ impl FoldersScreen {
                     let missing = if self.home.join(name).is_dir() { "" } else { ", not there" };
                     format!("{}~/{name} (standard{missing})", if self.folders.default_is_on(name) { "[x] " } else { "[ ] " })
                 }
+                FolderLine::Drive(i) => format!("{}{} (standard)", if self.folders.drive_is_on(i) { "[x] " } else { "[ ] " }, self.folders.drives[i].title),
                 FolderLine::User(i) => {
                     let shown = ellipsize(&short_path(&crate::fork::adopt::expand_home(&self.folders.user[i], &self.home), &self.home), 56);
                     let missing = if crate::fork::adopt::expand_home(&self.folders.user[i], &self.home).is_dir() { "" } else { " (not there)" };
@@ -452,5 +456,16 @@ mod tests {
         assert!(s.scan.unrecognised.is_empty());
         assert_eq!(s.scan.left_alone, [sd.join("Mystery Game")], "noted once");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_plugged_in_drive_has_a_row_that_can_be_switched_off() {
+        let mut folders = ScanFolders::default().with_drives(vec![crate::fork::import::folders::DriveRoot { mount: "/run/media/deck/SD512".into(), title: "SD card (SD512)".into() }]);
+        let s = FoldersScreen::new(Path::new("/home/deck"), folders.clone());
+        assert!(s.labels().contains(&"[x] SD card (SD512) (standard)".to_string()), "{:?}", s.labels());
+        assert!(s.lines().contains(&FolderLine::Drive(0)));
+        folders.toggle_drive(0);
+        let s = FoldersScreen::new(Path::new("/home/deck"), folders);
+        assert!(s.labels().contains(&"[ ] SD card (SD512) (standard)".to_string()));
     }
 }

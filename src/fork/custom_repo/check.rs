@@ -201,7 +201,12 @@ impl ReplayFetch {
     /// The replay folder named by the test switch, if it is set and holds the marker file. Without the marker a
     /// stray variable in a real user's environment cannot make the app believe saved answers.
     pub fn from_env() -> Option<ReplayFetch> {
-        std::env::var_os("DPM_GITHUB_REPLAY").map(|d| ReplayFetch { dir: d.into() }).filter(|r| r.dir.join(REPLAY_MARKER).is_file())
+        ReplayFetch::from_dir(std::env::var_os("DPM_GITHUB_REPLAY"))
+    }
+
+    /// The folder counts only when it holds the marker file.
+    pub fn from_dir(dir: Option<std::ffi::OsString>) -> Option<ReplayFetch> {
+        dir.map(|d| ReplayFetch { dir: d.into() }).filter(|r| r.dir.join(REPLAY_MARKER).is_file())
     }
 }
 
@@ -477,11 +482,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dpm_replay_marker_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("DPM_GITHUB_REPLAY", &dir);
-        assert!(ReplayFetch::from_env().is_none(), "a folder without the marker is ignored");
+        let named = || Some(dir.clone().into_os_string());
+        assert!(ReplayFetch::from_dir(named()).is_none(), "a folder without the marker is ignored");
+        assert!(ReplayFetch::from_dir(None).is_none());
         std::fs::write(dir.join(REPLAY_MARKER), "").unwrap();
-        assert!(ReplayFetch::from_env().is_some());
-        std::env::remove_var("DPM_GITHUB_REPLAY");
+        assert!(ReplayFetch::from_dir(named()).is_some());
         let _ = std::fs::remove_dir_all(dir);
     }
 

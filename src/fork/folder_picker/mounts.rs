@@ -76,8 +76,24 @@ pub fn parse_mounts(text: &str) -> Vec<MountEntry> {
         .collect()
 }
 
+/// A folder named by `DPM_TEST_MOUNTS` that holds the marker file `DPM_REPLAY_OK` stands in for the machine's
+/// mounts: its `mounts` file (the `/proc/self/mounts` format) and its `media-root` file (one folder where removable
+/// drives appear). It lets a walk of the screens under a virtual display plug in an SD card without mounting
+/// anything; without the marker the variable does nothing.
+fn test_mounts_dir() -> Option<PathBuf> {
+    marked(std::env::var_os("DPM_TEST_MOUNTS"))
+}
+
+fn marked(dir: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let dir = PathBuf::from(dir?);
+    dir.join("DPM_REPLAY_OK").is_file().then_some(dir)
+}
+
 /// The machine's mounts; empty where there is no `/proc` (Windows).
 pub fn system_mounts() -> Vec<MountEntry> {
+    if let Some(dir) = test_mounts_dir() {
+        return std::fs::read_to_string(dir.join("mounts")).map(|t| parse_mounts(&t)).unwrap_or_default();
+    }
     std::fs::read_to_string("/proc/self/mounts").map(|t| parse_mounts(&t)).unwrap_or_default()
 }
 
@@ -125,6 +141,9 @@ pub fn fs_type_of(path: &Path, mounts: &[MountEntry]) -> Option<String> {
 /// with a trimmed environment) still finds it; [`removable_drives`] also takes any mount one folder
 /// deeper than a root.
 pub fn default_media_roots() -> Vec<PathBuf> {
+    if let Some(dir) = test_mounts_dir() {
+        return std::fs::read_to_string(dir.join("media-root")).map(|t| vec![PathBuf::from(t.trim())]).unwrap_or_default();
+    }
     media_roots_for(std::env::var("USER").ok().as_deref(), std::env::var_os("HOME").map(PathBuf::from).as_deref())
 }
 
@@ -322,5 +341,28 @@ tmpfs /run tmpfs rw 0 0
         let drives = removable_drives(&parse_mounts(text), &roots());
         let titles: Vec<String> = drives.iter().map(Drive::title).collect();
         assert_eq!(titles, ["SD card (Carte\u{e9})", "SD card (Second)"]);
+    }
+}
+
+#[cfg(test)]
+mod test_override_tests {
+    use super::*;
+
+    #[test]
+    fn the_test_mounts_folder_counts_only_with_its_marker() {
+        let dir = std::env::temp_dir().join(format!("dpm_test_mounts_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("mounts"), "/dev/mmcblk0p1 /x/run/media/deck/SD512 ext4 rw 0 0\n").unwrap();
+        std::fs::write(dir.join("media-root"), "/x/run/media/deck\n").unwrap();
+        assert!(marked(Some(dir.clone().into_os_string())).is_none(), "no marker, no effect");
+        assert!(marked(None).is_none());
+        std::fs::write(dir.join("DPM_REPLAY_OK"), "").unwrap();
+        let used = marked(Some(dir.clone().into_os_string())).expect("the marker makes it count");
+        let mounts = parse_mounts(&std::fs::read_to_string(used.join("mounts")).unwrap());
+        let roots = vec![PathBuf::from(std::fs::read_to_string(used.join("media-root")).unwrap().trim())];
+        assert_eq!(roots, [PathBuf::from("/x/run/media/deck")]);
+        assert_eq!(removable_drives(&mounts, &roots)[0].title(), "SD card (SD512)");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

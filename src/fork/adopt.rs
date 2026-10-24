@@ -187,6 +187,13 @@ pub fn scan_roots(home: &Path, user_folders: &[String], library_dir: &Path) -> V
 
 /// Like `scan_roots`, with some of the well-known folders (by name, like `Games`) switched off.
 pub fn scan_roots_with(home: &Path, defaults_off: &[String], user_folders: &[String], library_dir: &Path) -> Vec<PathBuf> {
+    scan_roots_full(home, defaults_off, user_folders, &[], library_dir)
+}
+
+/// Like `scan_roots_with`, and the tops of the removable drives that are switched on (an SD card holds ports
+/// in folders right at its top). The ports folder and the folders that are never ports are left out when the
+/// scan reads each root.
+pub fn scan_roots_full(home: &Path, defaults_off: &[String], user_folders: &[String], drive_tops: &[PathBuf], library_dir: &Path) -> Vec<PathBuf> {
     let library = fs::canonicalize(library_dir).unwrap_or_else(|_| library_dir.to_path_buf());
     let mut seen: Vec<PathBuf> = Vec::new();
     let mut roots = Vec::new();
@@ -194,7 +201,8 @@ pub fn scan_roots_with(home: &Path, defaults_off: &[String], user_folders: &[Str
         .iter()
         .filter(|n| !defaults_off.iter().any(|off| off == *n))
         .map(|n| home.join(n))
-        .chain(user_folders.iter().map(|f| expand_home(f, home)));
+        .chain(user_folders.iter().map(|f| expand_home(f, home)))
+        .chain(drive_tops.iter().cloned());
     for root in wanted {
         let Ok(real) = fs::canonicalize(&root) else { continue };
         if !real.is_dir() || real == library || real.starts_with(&library) || seen.contains(&real) {
