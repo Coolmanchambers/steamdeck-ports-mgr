@@ -283,6 +283,7 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
         import_folder: None,
         started: None,
         steam_at: None,
+        repoint_queued: Some(true),
     })
     .unwrap();
     let steam = FakeSteam::up();

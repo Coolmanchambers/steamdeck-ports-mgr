@@ -425,6 +425,19 @@ pub(crate) fn take_wizard_connect() -> Option<Result<usize, String>> {
     WIZARD_CONNECT.with(|c| c.borrow_mut().take())
 }
 
+/// What the saved scan of the game files folder says for the installed ports that need files, without reading the
+/// folder: `None` when no folder is set or it was never scanned (by the wizard, Settings > Game files, an older build).
+pub(crate) fn saved_results(app: &AppState) -> Option<crate::fork::setup_wizard::game_files::Results> {
+    let store = RomLibraryStore::load(&store_path(app)).ok()?;
+    let root = store.rom_dir()?.to_path_buf();
+    let out = scan_work::run_report(&store, &root, &report_input(app, &store)).ok()?;
+    let library = app.paths.library_dir();
+    let rows: Vec<&crate::fork::rom_screens::report::PortRow> = out.report.groups.iter().flat_map(|g| g.ports.iter()).filter(|r| r.installed).collect();
+    let dirs = rows.iter().filter_map(|r| safe_join(&library, &r.port.folder).ok().map(|d| (&r.port, d)));
+    let in_folder = crate::fork::setup_wizard::game_files::in_folder_keys(dirs, &app.paths.config_dir);
+    Some(crate::fork::setup_wizard::game_files::Results::from_report(&out.report, &in_folder, &Default::default()))
+}
+
 /// Takes what the last wizard scan found (once).
 pub(crate) fn take_wizard_result() -> Option<crate::fork::setup_wizard::game_files::Results> {
     WIZARD_RESULT.with(|r| r.borrow_mut().take())

@@ -60,6 +60,8 @@ pub enum BatchAction {
     Ok,
     /// Say which ports start fine from their new place (the cards).
     Confirm,
+    /// Close Steam and make its waiting changes (the shared flow), then look again.
+    UpdateSteam,
 }
 
 /// What a "Does it start?" card's choices do.
@@ -103,15 +105,22 @@ pub const KEPT_UNTIL_CHECKED: &str = "Old copies are kept until each port has be
 pub struct Batch {
     pub items: Vec<Checked>,
     pub origin: Origin,
+    /// Steam changes waiting, so a "Waiting for Steam" port has a way on from this page.
+    pub steam: crate::fork::import::cards::SteamWaiting,
 }
 
 impl Batch {
     pub fn new(items: Vec<Checked>) -> Batch {
-        Batch { items, origin: Origin::Import }
+        Batch { items, origin: Origin::Import, steam: crate::fork::import::cards::SteamWaiting::Nothing }
     }
 
     pub fn from(items: Vec<Checked>, origin: Origin) -> Batch {
-        Batch { items, origin }
+        Batch { items, origin, steam: crate::fork::import::cards::SteamWaiting::Nothing }
+    }
+
+    pub fn with_steam(mut self, steam: crate::fork::import::cards::SteamWaiting) -> Batch {
+        self.steam = steam;
+        self
     }
 
     pub fn removable(&self) -> Vec<&Checked> {
@@ -175,7 +184,7 @@ impl Batch {
         let n = self.to_confirm().len();
         (n > 0).then(|| PageOption {
             title: "It starts fine...".to_string(),
-            detail: format!("Say which of {} start and have your saves", if n == 1 { "1 port".to_string() } else { format!("{n} ports") }),
+            detail: if self.items.len() == 1 { "Say it starts and has your saves".to_string() } else { format!("Say which of {} start and have your saves", if n == 1 { "1 port".to_string() } else { format!("{n} ports") }) },
             choice: None,
             enabled: true,
             recommended: false,
@@ -191,10 +200,24 @@ impl Batch {
         p.facts = self.items.iter().map(Checked::status_line).collect();
         p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
         p.initial = Focus::Option(0);
+        let one = self.items.len() == 1;
+        let waiting_for_steam = self.items.iter().any(|c| c.ready == Readiness::WaitingForSteam);
+        let start_note = (!self.to_confirm().is_empty()).then(|| "Played it from Steam already? It may only show after Steam restarts, or say so with It starts fine...".to_string());
         if n == 0 {
-            p.title = "The old copies stay for now".to_string();
-            p.paragraphs = vec![KEPT_UNTIL_CHECKED.to_string(), "An old copy can go once Steam starts the new copy and the port has been started from there.".to_string()];
+            p.title = if one { "This old copy stays for now".to_string() } else { "The old copies stay for now".to_string() };
+            p.paragraphs = vec![if one { "The old copy is kept until its port has been checked.".to_string() } else { KEPT_UNTIL_CHECKED.to_string() }];
             p.options = vec![PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: BatchAction::Ok }];
+            match self.steam {
+                // Steam's changes are the next thing: they can be made from here (Desktop Mode).
+                crate::fork::import::cards::SteamWaiting::Desktop(w) if waiting_for_steam && w > 0 => {
+                    p.paragraphs.push("Steam still starts the old copies until its shortcuts are updated.".to_string());
+                    p.options[0].recommended = false;
+                    p.options.insert(0, PageOption { title: crate::fork::steam_close::CLOSE_LABEL.to_string(), detail: "Then start each port once from its new place".to_string(), choice: None, enabled: true, recommended: true, action: BatchAction::UpdateSteam });
+                }
+                crate::fork::import::cards::SteamWaiting::GameMode(w) if waiting_for_steam && w > 0 => p.paragraphs.push(crate::fork::steam_close::GAME_MODE_TEXT.to_string()),
+                _ => p.paragraphs.push("An old copy can go once Steam starts the new copy and the port has been started from there.".to_string()),
+            }
+            p.paragraphs.extend(start_note);
             p.options.extend(self.confirm_option());
             return p;
         }
@@ -202,11 +225,12 @@ impl Batch {
         let freed = self.freed_bytes();
         let size = if freed > 0 { format!(" The old {} {} {}.", copies(n), if n == 1 { "uses" } else { "use" }, human_bytes(freed)) } else { String::new() };
         p.paragraphs = vec![format!("{} from {} new place, so {} old {} can go.{size}", if n == 1 { "This port starts" } else { "These ports start" }, if n == 1 { "its" } else { "their" }, if n == 1 { "its" } else { "their" }, copies(n))];
+        p.paragraphs.extend(start_note);
         // Every port is named on its status line, so no cover row: the page fits a 7 inch screen without scrolling.
         let (keep, remove) = if n == 1 { ("Keep it", "Remove it") } else { ("Keep them", "Remove them") };
         p.options = vec![
             PageOption { title: keep.to_string(), detail: format!("Nothing is deleted. You can remove {} later from Settings.", if n == 1 { "it" } else { "them" }), choice: None, enabled: true, recommended: true, action: BatchAction::Keep },
-            PageOption { title: remove.to_string(), detail: "Only the ready ones. Saves are zipped to a backup first".to_string(), choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
+            PageOption { title: remove.to_string(), detail: if one { "Its saves are zipped to a backup first".to_string() } else { "Only the ready ones. Saves are zipped to a backup first".to_string() }, choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
         ];
         p.options.extend(self.confirm_option());
         p
@@ -260,6 +284,7 @@ mod tests {
             import_folder: None,
             started: None,
             steam_at: None,
+            repoint_queued: None,
         }
     }
 
@@ -332,6 +357,15 @@ mod tests {
         assert_eq!(p.title, "The old copies stay for now");
         assert_eq!(p.paragraphs[0], KEPT_UNTIL_CHECKED);
         assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::Ok], "nothing to confirm while Steam still starts the old copies");
+        // With Steam's changes waiting, the page leads on to them (Desktop Mode) or says where to finish (Game Mode).
+        use crate::fork::import::cards::SteamWaiting;
+        let items = || vec![waiting("Severed Chains", Readiness::WaitingForSteam), waiting("Majora's Mask", Readiness::WaitingForSteam)];
+        let d = Batch::new(items()).with_steam(SteamWaiting::Desktop(2)).page();
+        assert_eq!(d.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::UpdateSteam, BatchAction::Ok]);
+        assert!(d.options[0].recommended && d.initial == Focus::Option(0));
+        let g = Batch::new(items()).with_steam(SteamWaiting::GameMode(2)).page();
+        assert_eq!(g.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::Ok]);
+        assert!(g.paragraphs.contains(&crate::fork::steam_close::GAME_MODE_TEXT.to_string()));
         assert!(p.facts.iter().all(|f| f.ends_with("Waiting for Steam to update")), "{:?}", p.facts);
         assert!(b.kept_text().contains("The old copy of Severed Chains stays: waiting for steam to update"), "{}", b.kept_text());
         // Steam updated, not started yet: the cards are offered.
@@ -340,6 +374,11 @@ mod tests {
         assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::Ok, BatchAction::Confirm]);
         assert_eq!(p.options[1].detail, "Say which of 2 ports start and have your saves");
         assert_eq!(p.initial, Focus::Option(0), "OK, never the confirm, has the focus");
+        assert!(p.paragraphs.iter().any(|t| t.contains("may only show after Steam restarts")), "{:?}", p.paragraphs);
+        // One port: singular words.
+        let one = Batch::new(vec![waiting("Severed Chains", Readiness::StartOnce)]).page();
+        assert_eq!(one.title, "This old copy stays for now");
+        assert_eq!(one.options[1].detail, "Say it starts and has your saves");
     }
 
     #[test]
@@ -367,6 +406,7 @@ mod tests {
     #[test]
     fn one_old_copy_reads_in_the_singular() {
         let p = Batch::new(vec![ok("Dusklight", 3_000_000_000)]).page();
+        assert_eq!(p.options[1].detail, "Its saves are zipped to a backup first");
         assert_eq!(p.title, "Remove the old copy?");
         assert_eq!(p.paragraphs, ["This port starts from its new place, so its old copy can go. The old copy uses 3.0 GB."]);
         assert_eq!(p.options[0].title, "Keep it");

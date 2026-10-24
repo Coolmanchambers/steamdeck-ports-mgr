@@ -104,7 +104,41 @@ fn with_summary(summary: &str, text: &str) -> String {
 }
 
 /// The page itself. Keep, OK, B and the X all keep the old copies; only Remove them removes.
+/// Steam changes waiting now, for the page's "Close Steam and update shortcuts".
+fn steam_waiting(app: &AppState) -> crate::fork::import::cards::SteamWaiting {
+    use crate::fork::import::cards::SteamWaiting;
+    match (crate::fork::steam_queue::load(&crate::fork::steam_queue::queue_path(&app.paths.config_dir)).queue.len(), crate::fork::steam_queue::game_mode_from_env()) {
+        (0, _) => SteamWaiting::Nothing,
+        (n, true) => SteamWaiting::GameMode(n),
+        (n, false) => SteamWaiting::Desktop(n),
+    }
+}
+
+/// What a Settings visit to the page ended with, on a page with one OK; `then` runs after it (B too).
+pub(crate) fn result_page(app: &Rc<AppState>, router: &Router, text: &str, origin: Origin, then: Rc<dyn Fn(&Rc<AppState>, &Router)>) {
+    let mut page = crate::fork::page::Page::<BatchAction> { window_title: format!("{}: done", origin.window_title()), large: true, header: origin.header().to_string(), title: "Old copies".to_string(), ..Default::default() };
+    page.paragraphs = text.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect();
+    page.options = vec![crate::fork::page::PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: BatchAction::Ok }];
+    page.initial = crate::fork::page::Focus::Option(0);
+    let go = {
+        let then = then.clone();
+        Rc::new(move |app: &Rc<AppState>, router: &Router| {
+            close_current_dialog(app, router);
+            then(app, router);
+        })
+    };
+    let on_action = {
+        let go = go.clone();
+        Rc::new(move |app: &Rc<AppState>, router: &Router, _: BatchAction| go(app, router))
+    };
+    let handlers = Handlers { on_action, on_back: go.clone(), on_exit: go.clone(), on_input: None };
+    if !show_page(app, router, page, handlers) {
+        go(app, router);
+    }
+}
+
 fn ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: String, then: Then) {
+    let batch = Rc::new(Batch::from(batch.items.clone(), batch.origin).with_steam(steam_waiting(app)));
     // Whichever way the page is left, the closing step runs once.
     show_ask(app, router, batch, Rc::new(summary), then, Rc::new(Cell::new(false)));
 }
@@ -140,6 +174,19 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
                     }
                     close_current_dialog(app, router);
                     remove_all(app, router, batch.clone(), summary.clone(), then.clone());
+                }
+                BatchAction::UpdateSteam => {
+                    if done.replace(true) {
+                        return;
+                    }
+                    // The shared flow, then the page again with what Steam says now.
+                    let (batch, summary, then) = (batch.clone(), summary.clone(), then.clone());
+                    let back: crate::app::steam_close_screen::Then = Rc::new(move |app, router, _| {
+                        let copies: VecDeque<OldCopy> = batch.items.iter().map(|c| c.copy.clone()).collect();
+                        let then = then.clone();
+                        prompt_old_copies_batch_then(app, router, copies, summary.as_ref().clone(), batch.origin, move |app, router, text| then(app, router, text));
+                    });
+                    crate::app::steam_close_screen::open(app, router, crate::app::steam_close_screen::Opts::default(), back);
                 }
                 BatchAction::Confirm => {
                     if done.replace(true) {

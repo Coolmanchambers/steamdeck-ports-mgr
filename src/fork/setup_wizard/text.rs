@@ -165,10 +165,17 @@ fn overview_page(w: &Wizard, ctx: &Context) -> Page {
         p.paragraphs = paras(&["Everything is set up. Nothing needs doing now."]);
         p.options = vec![recommended("Close the wizard", "", Action::SkipSetup), option("Change a step...", "Do one step again", Action::ChangeStep)];
     } else {
-        let names: Vec<&str> = pending.iter().map(|s| step_name(*s)).collect();
+        // Steam waiting for Desktop Mode cannot be finished here: the choice says so.
+        let names: Vec<&str> = pending
+            .iter()
+            .map(|s| if *s == Step::Steam && lines.iter().any(|l| l.step == Step::Steam && l.text.contains("Desktop Mode")) { "Steam (Desktop Mode)" } else { step_name(*s) })
+            .collect();
         p.paragraphs = paras(&["Steps that are done stay as they are."]);
         p.options = vec![recommended("Finish what's left", &names.join(", "), Action::FinishLeft), option("Change a step...", "Do one step again", Action::ChangeStep)];
         p.buttons[LEFT] = btn("Close the wizard", Action::SkipSetup);
+    }
+    if super::rerun::old_copies_waiting(&lines) {
+        p.paragraphs.push(super::rerun::START_EACH_ONCE.to_string());
     }
     start_on_the_recommended(&mut p);
     p
@@ -472,6 +479,9 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
     // A rerun says how everything stands now, not only what this run did.
     if let (Mode::Rerun, Some(lines)) = (w.mode, &ctx.overview) {
         p.facts = lines.iter().map(super::rerun::StepLine::marked).collect();
+        if super::rerun::old_copies_waiting(lines) {
+            p.paragraphs = vec![super::rerun::START_EACH_ONCE.to_string()];
+        }
         p.footnote = "Run setup again from Settings > Setup wizard to finish anything left.".to_string();
         p.options = vec![recommended("Finish", "", Action::Finish)];
         nav(&mut p, w);
@@ -1152,9 +1162,10 @@ mod tests {
                 "\u{2713} Your ports: 4 moved in",
                 "\u{2192} Game files: no folder set yet",
                 "\u{2192} Steam: 4 waiting for Steam to close",
-                "\u{2026} Old copies: 4 kept, 0 ready",
+                "   Old copies: 4 kept, none ready yet",
             ]
         );
+        assert!(p.paragraphs.contains(&crate::fork::setup_wizard::rerun::START_EACH_ONCE.to_string()));
         assert_eq!(option_actions(&p), [Action::FinishLeft, Action::ChangeStep]);
         assert_eq!(p.options[0].detail, "Game files, Steam");
         assert!(p.options[0].recommended);
@@ -1164,6 +1175,10 @@ mod tests {
         assert!(!all_text(&p).contains('/'));
         // All done: Close is the answer, a step can still be changed.
         use crate::fork::setup_wizard::rerun::{State, StepLine};
+        // In Game Mode the Steam step cannot be finished here, and the choice says so.
+        use crate::fork::setup_wizard::rerun::{lines as rerun_lines, Facts, Progress};
+        let gm = rerun_lines(&Facts { ports_place: Some(Kind::SdCard), installed: 4, old_kept: 4, game_files_needed: 4, steam_waiting: 4, game_mode: true, ..Facts::default() }, &Progress::default());
+        assert_eq!(page_for(&w, &Context { overview: Some(gm), ..ctx() }).options[0].detail, "Game files, Steam (Desktop Mode)");
         let done: Vec<StepLine> = tims_lines().into_iter().map(|l| StepLine { state: State::Done, ..l }).collect();
         let p = page_for(&w, &Context { overview: Some(done), ..ctx() });
         assert_eq!(option_actions(&p), [Action::SkipSetup, Action::ChangeStep]);

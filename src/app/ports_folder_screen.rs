@@ -919,7 +919,7 @@ fn show_old_copies_then_summary(app: &Rc<AppState>, router: &Router, copies: Vec
 // -- Old copies -----------------------------------------------------------------------------------
 
 mod batch;
-pub(crate) use batch::{note_launch_end, prompt_old_copies_batch_then, Origin, CHECK_FAILED};
+pub(crate) use batch::{note_launch_end, prompt_old_copies_batch_then, result_page, Origin, CHECK_FAILED};
 
 /// Everything the removal check needs, owned, so it can also run on the worker thread.
 struct RemovalParts {
@@ -961,9 +961,9 @@ impl RemovalParts {
     }
 
     /// Read from the record as it is now (a yes or a long enough run may have been recorded since `entry` was read).
+    /// A list that cannot be read reads as not ready.
     fn readiness(&self, entry: &OldCopy) -> old_copies::Readiness {
-        let entry = old_copies::current(entry, &self.config_dir);
-        old_copies::readiness(&entry, &old_copies::steam_view(&entry, &self.home, &self.config_dir))
+        old_copies::readiness_now(entry, &self.home, &self.config_dir).unwrap_or(old_copies::Readiness::StartOnce)
     }
 }
 
@@ -1000,10 +1000,8 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
             // The old copies page for this one: its status, "It starts fine..." and, when ready, Remove.
             prompt_old_copies_batch_then(app, router, VecDeque::from([entry.clone()]), String::new(), Origin::PortsFolder, |app, router, text| {
                 match text.filter(|t| !t.trim().is_empty()) {
-                    Some(text) => {
-                        let (app2, router2) = (app.clone(), router.clone());
-                        open_confirm_dialog(app, router, "Old copies".into(), format!("{text}\n").into(), "OK".into(), move |_, _| open_old_copies(&app2, &router2));
-                    }
+                    // What happened, on a page with one OK, then the list again.
+                    Some(text) => result_page(app, router, &text, Origin::PortsFolder, Rc::new(|app, router| open_old_copies(app, router))),
                     None => open_old_copies(app, router),
                 }
             });

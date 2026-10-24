@@ -200,7 +200,7 @@ fn setup_lines(app: &AppState) -> Vec<rerun::StepLine> {
     let drives = removable_drives(&system_mounts(), &default_media_roots());
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let old = old_copies_now(app);
-    let ready = old.iter().filter(|o| crate::fork::port_mover::old_copies::readiness(o, &crate::fork::port_mover::old_copies::steam_view(o, home.as_deref().unwrap_or(Path::new("/")), &app.paths.config_dir)).is_ready()).count();
+    let ready = old.iter().filter(|o| crate::fork::port_mover::old_copies::readiness_now(o, home.as_deref().unwrap_or(Path::new("/")), &app.paths.config_dir).is_ok_and(|r| r.is_ready())).count();
     let steam = steam_info(app);
     let needing = app.catalog.borrow().iter().filter(|p| super::rom_screens::port_needs_game_files(app, p)).count();
     let facts = rerun::Facts {
@@ -211,6 +211,7 @@ fn setup_lines(app: &AppState) -> Vec<rerun::StepLine> {
         old_ready: ready,
         game_files_needed: needing,
         rom_folder: rom_folder(app).map(|dir| places::folder_label(&dir, &drives, home.as_deref())),
+        game_files_found: super::rom_screens::saved_results(app).map(|r| (r.have(), r.total)),
         steam_to_add: steam.to_add.saturating_sub(steam.queued),
         steam_waiting: steam.waiting.max(steam.queued),
         steam_problem: steam.problem.is_some(),
@@ -373,7 +374,7 @@ impl Adapters for Ui {
         let config = &self.app.paths.config_dir;
         old_copies_now(&self.app)
             .iter()
-            .filter(|o| crate::fork::port_mover::old_copies::readiness(o, &crate::fork::port_mover::old_copies::steam_view(o, &home, config)).is_ready())
+            .filter(|o| crate::fork::port_mover::old_copies::readiness_now(o, &home, config).is_ok_and(|r| r.is_ready()))
             .count()
     }
 

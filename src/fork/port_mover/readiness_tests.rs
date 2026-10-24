@@ -1,7 +1,7 @@
 //! When an old copy may go: Waiting for Steam / Start it once / Ready, what records it, and that `remove` never
 //! takes one that is not Ready.
 
-use super::old_copies::{self, mark_started, mark_steam_switched, note_launch, readiness, steam_since, steam_view, OldCopy, Readiness, RemovalCtx, Started, StartedBy, SteamView};
+use super::old_copies::{self, mark_started, mark_steam_switched, note_launch, readiness, readiness_now, steam_since, steam_view, OldCopy, Readiness, RemovalCtx, Started, StartedBy, SteamView};
 use crate::fork::steam_queue::{self, ArtChoice, QueuedChange, QueuedKind, SteamQueue};
 use crate::fork::vdf::fixtures::{file_of, steam_entry_played};
 use std::fs;
@@ -20,6 +20,7 @@ fn copy(old: &Path, new: &Path) -> OldCopy {
         import_folder: None,
         started: None,
         steam_at: None,
+        repoint_queued: None,
     }
 }
 
@@ -29,7 +30,8 @@ fn local(stamp: &str) -> i64 {
 
 #[test]
 fn each_status_follows_from_steam_and_the_starts() {
-    let c = copy(Path::new("/home/deck/Games/SoH"), Path::new("/run/media/deck/SD/Ports/SoH"));
+    // Moved with Steam closed: the move switched the shortcut, so its time is when Steam starts begin to count.
+    let c = OldCopy { repoint_queued: Some(false), ..copy(Path::new("/home/deck/Games/SoH"), Path::new("/run/media/deck/SD/Ports/SoH")) };
     let moved = local("20261024-100000");
     let quiet = SteamView::default();
     assert_eq!(readiness(&c, &quiet), Readiness::StartOnce, "moved, Steam switched, never started");
@@ -48,6 +50,13 @@ fn each_status_follows_from_steam_and_the_starts() {
     // No move time known (an old record): only the app or the user can tell.
     let unknown = OldCopy { moved_at: String::new(), ..c.clone() };
     assert_eq!(readiness(&unknown, &SteamView { waiting: false, played_new_at: Some(moved + 60) }), Readiness::StartOnce);
+    // The change was queued and never applied by this app (fixed by hand), or the record does not say: a Steam
+    // start after the move could have been the old copy's, so it does not count.
+    for queued in [Some(true), None] {
+        let q = OldCopy { repoint_queued: queued, ..c.clone() };
+        assert_eq!(steam_since(&q), None, "{queued:?}");
+        assert_eq!(readiness(&q, &SteamView { waiting: false, played_new_at: Some(moved + 60) }), Readiness::StartOnce, "{queued:?}");
+    }
     for (r, line) in [(Readiness::WaitingForSteam, "Waiting for Steam to update"), (Readiness::StartOnce, "Start it once from its new place"), (Readiness::Ready(StartedBy::App), "Ready to remove")] {
         assert_eq!(r.line(), line);
     }
@@ -91,6 +100,10 @@ impl Home {
         old_copies::load(&self.app).unwrap().remove(0)
     }
 
+    fn entry_unchecked(&self) -> OldCopy {
+        copy(&self.old, &self.new)
+    }
+
     fn view(&self) -> SteamView {
         steam_view(&self.entry(), &self.home, &self.app)
     }
@@ -123,6 +136,7 @@ fn steam_is_read_for_shortcuts_into_the_old_copy_queued_repoints_and_starts_of_t
     assert_eq!(readiness(&h.entry(), &h.view()), Readiness::WaitingForSteam);
     // The queue applied (the shortcut now starts the new copy), not started since.
     fs::remove_file(steam_queue::queue_path(&h.app)).unwrap();
+    mark_steam_switched(&h.app, "a/soh", &h.old, i64::from(moved)).unwrap();
     h.shortcut_at(&h.new, moved - 100);
     assert_eq!(h.view(), SteamView { waiting: false, played_new_at: Some(i64::from(moved) - 100) });
     assert_eq!(readiness(&h.entry(), &h.view()), Readiness::StartOnce);
@@ -136,6 +150,24 @@ fn steam_is_read_for_shortcuts_into_the_old_copy_queued_repoints_and_starts_of_t
     fs::remove_file(steam_queue::queue_path(&h.app)).unwrap();
     fs::create_dir_all(steam_queue::queue_path(&h.app)).unwrap();
     assert!(h.view().waiting, "unreadable queue");
+}
+
+#[test]
+fn a_switch_seen_without_a_recorded_time_is_noted_and_only_later_steam_starts_count() {
+    let h = home();
+    // A queued repoint, fixed by hand: Steam's shortcut already starts the new copy and says it was played after
+    // the move, but that start may have been the old copy's.
+    old_copies::record(&h.app, OldCopy { repoint_queued: Some(true), ..h.entry() }).unwrap();
+    h.shortcut_at(&h.new, local("20261024-100000") as u32 + 100);
+    assert_eq!(readiness_now(&h.entry(), &h.home, &h.app).unwrap(), Readiness::StartOnce);
+    let noted = h.entry().steam_at.expect("the first look notes when Steam was seen switched");
+    assert!((chrono::Utc::now().timestamp() - noted).abs() < 60);
+    // A start after that counts.
+    h.shortcut_at(&h.new, (noted + 30) as u32);
+    assert_eq!(readiness_now(&h.entry(), &h.home, &h.app).unwrap(), Readiness::Ready(StartedBy::Steam));
+    // The list cannot be read: an error, never the copy held in memory.
+    fs::write(old_copies::path(&h.app), "not json").unwrap();
+    assert!(readiness_now(&h.entry_unchecked(), &h.home, &h.app).is_err());
 }
 
 #[test]

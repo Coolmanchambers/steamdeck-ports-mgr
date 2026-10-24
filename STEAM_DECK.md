@@ -376,7 +376,11 @@ before: it waits while a game runs from it, and refuses when the old copy has ne
 zipped to `Saves Backup/Update Backups/` first. A shortcut Steam has not finished setting up is named: open
 Steam, quit it, then try again. A port that left the catalog keeps its old copy (its saves can't be found).
 Checking a big old copy takes a moment ("Checking the old copies..."). Nothing is ever removed without "Remove
-them". The log says `old copies:` when a run or a yes is recorded.
+them". The one exception is the explicit "Replace the old copy with the current one, then move" choice when you move
+a port back onto an old copy (Ports folder, above): that replaces a copy that may not be Ready, after its own checks
+and with its saves zipped first. A port still waiting for Steam has **Close Steam and update shortcuts** on its page
+(Desktop Mode). A start from Steam in Game Mode may only show once Steam has restarted; "It starts fine..." always
+works. The log says `old copies:` when a run or a yes is recorded.
 
 If the app was closed in the middle of a switch (after the new folder was saved, before Steam followed),
 Settings > Ports folder shows **Finish switching <port> (Steam and game files still point at the old

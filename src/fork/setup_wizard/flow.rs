@@ -622,6 +622,10 @@ pub fn resume(w: &mut Wizard, a: &mut dyn Adapters) {
             // B on the first page of Import ports (or Cancel on its scan) is "back" to the ports folder question;
             // Skip and the end of an import go on.
             if a.import_went_back() {
+                // Inside a rerun's plan, "back" is the planned step before (or Your setup).
+                if let Some(plan) = w.plan.clone() {
+                    return back_in_plan(w, a, &plan);
+                }
                 w.step = Step::PortsFolder;
                 return show_step(w, a);
             }
@@ -1212,6 +1216,13 @@ mod tests {
         press(&mut w, Action::Next, &mut a);
         assert_eq!(w.step, Step::Done);
         assert!(!a.calls.contains(&"import".to_string()));
+        // B on Import ports inside a plan goes back to Your setup, not to the ports folder question.
+        let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake::default());
+        press(&mut w, Action::ChangeStep, &mut a);
+        press(&mut w, Action::RedoStep(Step::YourPorts), &mut a);
+        a.went_back = true;
+        resume_import(&mut w, &mut a);
+        assert_eq!((w.view.clone(), w.plan.clone()), (View::Overview, None));
         // Your ports again opens the import (it shows only ports not in the ports folder yet).
         let (mut w, mut a) = (Wizard::new(Mode::Rerun), Fake { installed: 4, ..Fake::default() });
         press(&mut w, Action::ChangeStep, &mut a);

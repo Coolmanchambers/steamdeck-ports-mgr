@@ -55,9 +55,13 @@ pub struct OldCopy {
     pub import_folder: Option<String>,
     /// The port was shown to work from its new place (see [`Readiness`]); recorded once, never cleared.
     pub started: Option<Started>,
-    /// When the queued Steam shortcut change for this port was applied (seconds since 1970, UTC). A change
-    /// written at move time (Steam was closed) leaves it empty: the move time counts then.
+    /// When the queued Steam shortcut change for this port was applied (seconds since 1970, UTC), or when the
+    /// app first saw no shortcut pointing into the old copy any more. A change written at move time (Steam was
+    /// closed) leaves it empty: the move time counts then.
     pub steam_at: Option<i64>,
+    /// The move queued its Steam change (`Some(true)`), wrote it at once (`Some(false)`), or the record is from a
+    /// build that did not say (`None`). Only `Some(false)` lets the move time stand in for `steam_at`.
+    pub repoint_queued: Option<bool>,
 }
 
 /// How a port was shown to start from its new place.
@@ -129,6 +133,7 @@ impl OldCopy {
             "started_by": self.started.map(|s| s.by.as_str()),
             "started_at": self.started.map(|s| s.at),
             "steam_at": self.steam_at,
+            "repoint_queued": self.repoint_queued,
         })
     }
 
@@ -149,6 +154,7 @@ impl OldCopy {
                 _ => None,
             },
             steam_at: v.get("steam_at").and_then(Value::as_i64),
+            repoint_queued: v.get("repoint_queued").and_then(Value::as_bool),
         })
     }
 }
@@ -212,7 +218,9 @@ pub fn mark_started(config_dir: &Path, old_path: &Path, by: StartedBy, at: i64) 
     update(config_dir, |e| e.old_path == old_path, |e| e.started.is_none() && { e.started = Some(Started { by, at }); true })
 }
 
-/// A queued Steam repoint for `port_key` from `from` was just written: the records it concerns note when.
+/// A queued Steam repoint for `port_key` from `from` was just written: the records it concerns note when. (It is
+/// also called for a queued repoint that was dropped as no longer applicable; readiness still needs no shortcut
+/// pointing into the old copy, so that is harmless.)
 pub fn mark_steam_switched(config_dir: &Path, port_key: &str, from: &Path, at: i64) -> io::Result<usize> {
     update(config_dir, |e| e.port_key == port_key || is_within(&e.old_path, from) || e.old_path == from, |e| {
         let was = e.steam_at;
@@ -286,11 +294,33 @@ pub fn steam_view(entry: &OldCopy, home: &Path, config_dir: &Path) -> SteamView 
 }
 
 /// Since when a Steam start counts as a start of the new copy: the time its shortcut was switched, else the
-/// move (the shortcut was switched with it). `None` when neither is known: only the app or the user can tell.
+/// move when the move itself switched it (`repoint_queued == Some(false)`). `None` when neither is known (a queued
+/// change fixed by hand, a record from an older build): only the app or the user can tell then, until
+/// [`readiness_now`] notes the switch.
 pub fn steam_since(entry: &OldCopy) -> Option<i64> {
     entry.steam_at.or_else(|| {
-        chrono::NaiveDateTime::parse_from_str(&entry.moved_at, "%Y%m%d-%H%M%S").ok().and_then(|t| t.and_local_timezone(chrono::Local).single()).map(|t| t.timestamp())
+        (entry.repoint_queued == Some(false))
+            .then(|| chrono::NaiveDateTime::parse_from_str(&entry.moved_at, "%Y%m%d-%H%M%S").ok().and_then(|t| t.and_local_timezone(chrono::Local).single()).map(|t| t.timestamp()))
+            .flatten()
     })
+}
+
+/// The readiness of the old copy as it is now: the record read again, Steam read, and, the first time Steam is
+/// seen switched without a recorded time, that time noted (`steam_at`), so only a Steam start after it counts.
+pub fn readiness_now(entry: &OldCopy, home: &Path, config_dir: &Path) -> Result<Readiness, String> {
+    let mut entry = current(entry, config_dir)?;
+    let view = steam_view(&entry, home, config_dir);
+    if !view.waiting && entry.steam_at.is_none() && entry.repoint_queued != Some(false) {
+        let now = chrono::Utc::now().timestamp();
+        if mark_steam_seen(config_dir, &entry.old_path, now).unwrap_or(0) > 0 {
+            entry.steam_at = Some(now);
+        }
+    }
+    Ok(readiness(&entry, &view))
+}
+
+fn mark_steam_seen(config_dir: &Path, old_path: &Path, at: i64) -> io::Result<usize> {
+    update(config_dir, |e| e.old_path == old_path, |e| e.steam_at.is_none() && { e.steam_at = Some(at); true })
 }
 
 pub fn readiness(entry: &OldCopy, steam: &SteamView) -> Readiness {
@@ -316,14 +346,15 @@ pub fn not_ready_reason(entry: &OldCopy, readiness: Readiness) -> Option<String>
 }
 
 /// The latest record for the same old copy (a confirm or a launch may have been recorded since `entry` was read).
-pub fn current(entry: &OldCopy, config_dir: &Path) -> OldCopy {
-    load(config_dir).ok().and_then(|list| list.into_iter().find(|e| e.old_path == entry.old_path)).unwrap_or_else(|| entry.clone())
+/// A list that cannot be read is an error (never the copy held in memory); a record no longer listed is `entry`.
+pub fn current(entry: &OldCopy, config_dir: &Path) -> Result<OldCopy, String> {
+    Ok(load(config_dir)?.into_iter().find(|e| e.old_path == entry.old_path).unwrap_or_else(|| entry.clone()))
 }
 
 /// [`removal_check`] for an old copy that must also be [`Readiness::Ready`]: what every removal goes through.
 pub fn ready_removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
-    let entry = current(entry, ctx.config_dir);
-    let readiness = readiness(&entry, &steam_view(&entry, ctx.home, ctx.config_dir));
+    let entry = current(entry, ctx.config_dir).map_err(|e| format!("{e} The old copy is kept."))?;
+    let readiness = readiness_now(&entry, ctx.home, ctx.config_dir)?;
     if let Some(why) = not_ready_reason(&entry, readiness) {
         return Err(why);
     }

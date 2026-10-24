@@ -248,6 +248,7 @@ mod tests {
             import_folder: None,
             started: None,
             steam_at: None,
+            repoint_queued: None,
         }
     }
 

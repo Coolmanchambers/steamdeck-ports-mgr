@@ -433,7 +433,7 @@ fn protected_folders_are_never_removed_as_old_copies() {
         let new_copy = w.root.join("elsewhere").join(old.file_name().unwrap());
         fs::create_dir_all(&new_copy).unwrap();
         let active = vec![new_copy.clone()];
-        let entry = old_copies::OldCopy { port_key: "k".into(), name: "n".into(), old_path: old.clone(), new_path: new_copy.clone(), bytes: 0, moved_at: String::new(), link_only: false, switched: true, import_folder: None, started: None, steam_at: None };
+        let entry = old_copies::OldCopy { port_key: "k".into(), name: "n".into(), old_path: old.clone(), new_path: new_copy.clone(), bytes: 0, moved_at: String::new(), link_only: false, switched: true, import_folder: None, started: None, steam_at: None, repoint_queued: None };
         assert!(old_copies::removal_check(&entry, &w.removal_ctx(&active)).unwrap_err().contains("never removed"), "{}", old.display());
     }
 }
@@ -864,6 +864,7 @@ fn kept_copy(w: &World, stale: &Path, current: &Path) -> old_copies::OldCopy {
         import_folder: None,
         started: None,
         steam_at: None,
+        repoint_queued: None,
     };
     old_copies::record(&w.app, entry.clone()).unwrap();
     entry

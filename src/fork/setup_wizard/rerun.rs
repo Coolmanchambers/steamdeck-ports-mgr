@@ -89,6 +89,9 @@ pub struct Facts {
     pub game_files_needed: usize,
     /// The game files folder, as a place ("SD card > Emulation > roms"); `None` when none is set.
     pub rom_folder: Option<String>,
+    /// What the saved scan of that folder says (have, total), however it was made (the wizard, Settings > Game
+    /// files, an older build); `None` when that folder was never scanned.
+    pub game_files_found: Option<(usize, usize)>,
     pub steam_to_add: usize,
     pub steam_waiting: usize,
     pub steam_problem: bool,
@@ -118,7 +121,8 @@ impl StepLine {
         let mark = match self.state {
             State::Done => "\u{2713}",
             State::Pending => "\u{2192}",
-            State::Waiting => "\u{2026}",
+            // Nothing to do now: no mark, the words say it ("none ready yet").
+            State::Waiting => return format!("   {}", self.text),
         };
         format!("{mark} {}", self.text)
     }
@@ -157,7 +161,7 @@ pub fn lines(facts: &Facts, progress: &Progress) -> Vec<StepLine> {
         None => line(Step::YourPorts, State::Pending, "Your ports: not looked for yet".to_string()),
     });
     // Game files.
-    out.push(match (&facts.rom_folder, progress.game_files_found) {
+    out.push(match (&facts.rom_folder, facts.game_files_found.or(progress.game_files_found)) {
         _ if facts.game_files_needed == 0 => line(Step::GameFiles, State::Done, "Game files: none of your ports need any".to_string()),
         (None, _) if progress.game_files_skipped => line(Step::GameFiles, State::Pending, "Game files: skipped, no folder set".to_string()),
         (None, _) => line(Step::GameFiles, State::Pending, "Game files: no folder set yet".to_string()),
@@ -183,9 +187,17 @@ pub fn lines(facts: &Facts, progress: &Progress) -> Vec<StepLine> {
     } else if facts.old_ready > 0 {
         line(Step::OldCopies, State::Pending, format!("Old copies: {} kept, {} ready to remove", facts.old_kept, facts.old_ready))
     } else {
-        line(Step::OldCopies, State::Waiting, format!("Old copies: {} kept, 0 ready", facts.old_kept))
+        line(Step::OldCopies, State::Waiting, format!("Old copies: {} kept, none ready yet", facts.old_kept))
     });
     out
+}
+
+/// Said on "Your setup" and a rerun's last page while old copies wait for their ports to be started.
+pub const START_EACH_ONCE: &str = "Start each port once from its new place; then its old copy can be removed.";
+
+/// Whether the old copies wait for their ports (kept, none ready).
+pub fn old_copies_waiting(lines: &[StepLine]) -> bool {
+    lines.iter().any(|l| l.step == Step::OldCopies && l.state == State::Waiting)
 }
 
 /// The steps "Finish what's left" visits, in order.
@@ -232,6 +244,7 @@ mod tests {
             old_ready: 0,
             game_files_needed: 4,
             rom_folder: None,
+            game_files_found: None,
             steam_to_add: 0,
             steam_waiting: 4,
             steam_problem: false,
@@ -253,13 +266,14 @@ mod tests {
                 (Step::YourPorts, State::Done, "Your ports: 4 moved in"),
                 (Step::GameFiles, State::Pending, "Game files: no folder set yet"),
                 (Step::Steam, State::Pending, "Steam: 4 waiting for Steam to close"),
-                (Step::OldCopies, State::Waiting, "Old copies: 4 kept, 0 ready"),
+                (Step::OldCopies, State::Waiting, "Old copies: 4 kept, none ready yet"),
             ]
         );
         assert_eq!(pending(&l), [Step::GameFiles, Step::Steam], "the ports folder and the import are never redone");
         assert_eq!(l[0].marked(), "\u{2713} Ports folder: SD card");
         assert_eq!(l[2].marked(), "\u{2192} Game files: no folder set yet");
-        assert_eq!(l[4].marked(), "\u{2026} Old copies: 4 kept, 0 ready");
+        assert_eq!(l[4].marked(), "   Old copies: 4 kept, none ready yet");
+        assert!(old_copies_waiting(&l));
     }
 
     #[test]
@@ -272,6 +286,16 @@ mod tests {
         assert_eq!(l[3].text, "Steam: your ports are in Steam");
         assert_eq!((l[4].state, l[4].text.as_str()), (State::Pending, "Old copies: 4 kept, 2 ready to remove"));
         assert_eq!(pending(&l), [Step::OldCopies]);
+    }
+
+    #[test]
+    fn game_files_scanned_outside_the_wizard_or_by_an_older_build_count_as_done() {
+        // The folder was set and scanned in Settings > Game files: no `setup_progress` about it at all.
+        let f = Facts { rom_folder: Some("SD card > Emulation > roms".into()), game_files_found: Some((3, 4)), ..tims_deck() };
+        let l = lines(&f, &Progress::default());
+        assert_eq!((l[2].state, l[2].text.as_str()), (State::Done, "Game files: SD card > Emulation > roms, found for 3 of 4"));
+        // What the app's saved scan says wins over what an earlier run recorded.
+        assert_eq!(lines(&f, &Progress { game_files_found: Some((1, 4)), ..Progress::default() })[2].text, "Game files: SD card > Emulation > roms, found for 3 of 4");
     }
 
     #[test]

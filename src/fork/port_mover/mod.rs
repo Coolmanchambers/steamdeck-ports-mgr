@@ -331,7 +331,7 @@ impl SwitchReport {
     }
 }
 
-fn old_copy_record(prepared: &Prepared, switched: bool) -> old_copies::OldCopy {
+fn old_copy_record(prepared: &Prepared, switched: bool, repoint_queued: Option<bool>) -> old_copies::OldCopy {
     old_copies::OldCopy {
         port_key: prepared.port.key.clone(),
         name: prepared.port.name.clone(),
@@ -344,6 +344,7 @@ fn old_copy_record(prepared: &Prepared, switched: bool) -> old_copies::OldCopy {
         import_folder: prepared.import_folder.clone(),
         started: None,
         steam_at: None,
+        repoint_queued,
     }
 }
 
@@ -352,7 +353,7 @@ fn old_copy_record(prepared: &Prepared, switched: bool) -> old_copies::OldCopy {
 /// (and not removable). `switch_over` marks each one finished.
 pub fn record_pending(config_dir: &Path, prepared: &[Prepared]) -> std::io::Result<()> {
     for p in prepared {
-        old_copies::record(config_dir, old_copy_record(p, false))?;
+        old_copies::record(config_dir, old_copy_record(p, false, None))?;
     }
     Ok(())
 }
@@ -360,7 +361,7 @@ pub fn record_pending(config_dir: &Path, prepared: &[Prepared]) -> std::io::Resu
 /// Step 2: point Steam, the ROM library records and the old-copy list at the new copy. Never deletes.
 pub fn switch_over(prepared: &Prepared, env: &MoveEnv) -> SwitchReport {
     let mut report = SwitchReport { port_name: prepared.port.name.clone(), ..Default::default() };
-    if let Err(e) = old_copies::record(env.config_dir, old_copy_record(prepared, false)) {
+    if let Err(e) = old_copies::record(env.config_dir, old_copy_record(prepared, false, None)) {
         report.notes.push(format!("The old copy at {} could not be added to the list of old copies ({e}); it is still there.", prepared.from.display()));
     }
     let ctx = steam::SteamCtx { home: env.home, config_dir: env.config_dir, settings: env.settings, steam: env.steam, game_mode: env.game_mode, now: SystemTime::now() };
@@ -372,7 +373,8 @@ pub fn switch_over(prepared: &Prepared, env: &MoveEnv) -> SwitchReport {
         },
         Err(e) => report.notes.push(format!("Game files: {e}")),
     }
-    let _ = old_copies::record(env.config_dir, old_copy_record(prepared, true));
+    // Whether Steam's change waits in the queue: then only a Steam start after it is applied counts (`steam_since`).
+    let _ = old_copies::record(env.config_dir, old_copy_record(prepared, true, Some(!report.steam.queued.is_empty())));
     report
 }
 
