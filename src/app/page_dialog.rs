@@ -193,10 +193,41 @@ fn fill_body<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_input_focus(page::input_number(page));
 }
 
+/// A page on screen that its owner can replace while it stays open (a progress page).
+pub(crate) struct PageHandle<A> {
+    app: Rc<AppState>,
+    weak: slint::Weak<SetupWizardDialog>,
+    cur: Current<A>,
+    focus: Rc<Cell<usize>>,
+}
+
+impl<A: Clone + 'static> PageHandle<A> {
+    /// Draws `page` in the same window; the cursor stays where it was when that place still exists. False when the
+    /// window is gone (something else replaced it), so the owner can stop updating.
+    pub(crate) fn update(&self, page: Page<A>) -> bool {
+        let Some(d) = self.weak.upgrade() else { return false };
+        if !d.window().is_visible() {
+            return false;
+        }
+        let page = Rc::new(page);
+        *self.cur.borrow_mut() = page.clone();
+        fill(&d, &page);
+        load_art(&self.app, &d, &self.cur);
+        let n = self.focus.get().min(page::focusables(&page).len().saturating_sub(1));
+        select(&d, &page, &self.focus, n);
+        true
+    }
+}
+
 /// Opens the page, replacing whatever dialog is open. False when the window could not be made.
 pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, page: Page<A>, handlers: Handlers<A>) -> bool {
+    show_page_handle(app, router, page, handlers).is_some()
+}
+
+/// [`show_page`], giving back the handle that replaces the page later.
+pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, page: Page<A>, handlers: Handlers<A>) -> Option<PageHandle<A>> {
     let cur: Current<A> = Rc::new(RefCell::new(Rc::new(page)));
-    let Some(dialog) = build_setup_wizard_dialog(app, router) else { return false };
+    let Some(dialog) = build_setup_wizard_dialog(app, router) else { return None };
     let focus = Rc::new(Cell::new(0usize));
     {
         let first = page_now(&cur);
@@ -292,6 +323,8 @@ pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router,
     }
     let _ = dialog.show();
     let for_window = dialog.clone_strong();
+    let weak = dialog.as_weak();
+    let (app_for_handle, cur_for_handle) = (app.clone(), cur.clone());
     finish_dialog_open(app, router, DialogSlot::SetupWizard(dialog));
     // The window system's own close (a window manager's button, Alt+F4) leaves like the X does;
     // `finish_dialog_open` would only close the page, which its owner would then draw again.
@@ -300,5 +333,5 @@ pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router,
         (handlers.on_exit)(&app, &router);
         slint::CloseRequestResponse::HideWindow
     });
-    true
+    Some(PageHandle { app: app_for_handle, weak, cur: cur_for_handle, focus })
 }

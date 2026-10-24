@@ -20,7 +20,9 @@
 
 use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_progress_dialog, set_picker_items, update_progress_dialog, DialogSlot};
 use super::folder_picker_screen::open_folder_picker;
+use super::page_dialog::{show_page, show_page_handle, Handlers};
 use super::state::AppState;
+use crate::fork::setup_wizard::ports_pages::{self, FolderAction, MoveFacts};
 use crate::core::models::Port;
 use crate::core::path_safety::is_within;
 use crate::fork::folder_picker::mounts::{default_media_roots, system_mounts};
@@ -101,6 +103,25 @@ fn confirm_or(app: &Rc<AppState>, router: &Router, title: &str, text: String, co
 
 fn is_default(app: &AppState, dir: &Path) -> bool {
     dir == ports_folder::default_dir(&app.paths.config_dir)
+}
+
+/// Inside the setup wizard the first question has pages of its own where Settings > Ports folder has lists.
+fn in_wizard() -> bool {
+    super::setup_wizard_screen::active()
+}
+
+/// A wizard page of this flow. B goes back to the wizard (through the Ports folder menu, which the wizard takes
+/// over while it waits for this screen), the title bar X ends the wizard.
+fn wizard_page(app: &Rc<AppState>, router: &Router, page: crate::fork::page::Page<FolderAction>, on_action: impl Fn(&Rc<AppState>, &Router, FolderAction) + 'static) {
+    let handlers = Handlers {
+        on_action: Rc::new(on_action),
+        on_back: Rc::new(|app, router| open_menu(app, router)),
+        on_exit: Rc::new(|app, router| super::setup_wizard_screen::exit_wizard(app, router)),
+        on_input: None,
+    };
+    if !show_page(app, router, page, handlers) {
+        open_menu(app, router);
+    }
 }
 
 /// Why the ports folder in use cannot be used right now, if it cannot.
@@ -313,9 +334,25 @@ pub(crate) fn consider(app: &Rc<AppState>, router: &Router, dir: PathBuf) {
     if check.same_as_current {
         return message(app, router, &format!("{} is already the ports folder.", dir.display()));
     }
+    if !check.ok() && in_wizard() {
+        return wizard_page(app, router, ports_pages::cannot_use_page(&check.problems), |app, router, action| match action {
+            FolderAction::PickAnother => choose_folder(app, router),
+            _ => open_menu(app, router),
+        });
+    }
     if !check.ok() {
         let text = format!("{}\n\n{}", dir.display(), check.problems.join("\n\n"));
         return confirm_or(app, router, "Can't use this folder", text, "Choose another folder", |app, router| choose_folder(app, router), open_menu);
+    }
+    if !check.exists && in_wizard() {
+        return wizard_page(app, router, ports_pages::create_page(), move |app, router, action| match action {
+            FolderAction::CreateIt => match ports_folder::create(&dir, &system_mounts(), &default_media_roots()) {
+                Ok(()) => consider(app, router, dir.clone()),
+                Err(e) => message(app, router, &e),
+            },
+            FolderAction::PickAnother => choose_folder(app, router),
+            _ => open_menu(app, router),
+        });
     }
     if !check.exists {
         let text = format!("{} does not exist yet.\n\nCreate it and use it as the ports folder? ({})", dir.display(), check.summary());
@@ -359,6 +396,9 @@ fn plan_switch(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, summary: S
     let old_dir = app.paths.library_dir();
     let plan = if old_dir.is_dir() { ports_folder::plan_move(&old_dir, &new_dir, &app.catalog.borrow(), &kept_old_copy_paths(app)) } else { MovePlan::default() };
     let needed = plan.bytes.saturating_add(port_mover::SPACE_MARGIN);
+    if in_wizard() {
+        return wizard_switch(app, router, new_dir, plan, free, needed);
+    }
     let model = view::switch_screen(&new_dir, &summary, &plan, free, needed);
     let plan = Rc::new(plan);
     open_model(app, router, "Switch the ports folder?", model, move |app, router, act| match act {
@@ -391,6 +431,30 @@ If the move then fails, the kept copy is already gone; the copy in use is not to
     });
 }
 
+/// The wizard's version of "Switch the ports folder?": nothing to move goes straight on, else one question.
+fn wizard_switch(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: MovePlan, free: Option<u64>, needed: u64) {
+    let n = plan.ports.len() + plan.stale.len();
+    let plan = Rc::new(plan);
+    if n == 0 {
+        if let Some(why) = running_now(app, &plan) {
+            return message(app, router, &why);
+        }
+        return switch_now(app, router, &new_dir, Vec::new(), String::new());
+    }
+    let facts = MoveFacts { ports: n, bytes: plan.bytes, free, needed, stale: !plan.stale.is_empty() };
+    wizard_page(app, router, ports_pages::move_page(&facts), move |app, router, action| match action {
+        FolderAction::MoveThem | FolderAction::ReplaceAndMove => check_game_files_then_move(app, router, new_dir.clone(), plan.clone()),
+        FolderAction::LeaveThem => {
+            if let Some(why) = running_now(app, &plan) {
+                return message(app, router, &why);
+            }
+            switch_now(app, router, &new_dir, Vec::new(), format!("{} port(s) stay in the old folder and show as not installed here.", plan.ports.len()));
+        }
+        FolderAction::PickAnother => choose_folder(app, router),
+        _ => open_menu(app, router),
+    });
+}
+
 fn find_port(app: &AppState, key: &str) -> Option<Port> {
     app.catalog.borrow().iter().find(|p| p.key() == key).cloned()
 }
@@ -403,7 +467,10 @@ fn check_game_files_then_move(app: &Rc<AppState>, router: &Router, new_dir: Path
         issues.extend(check_before(&p.from, &files).into_iter().map(|i| (p.name.clone(), i)));
     }
     if issues.is_empty() {
-        return start_move(app, router, new_dir, plan, false);
+        return start_move(app, router, new_dir, plan, false, Vec::new());
+    }
+    if in_wizard() {
+        return wizard_game_files(app, router, new_dir, plan, issues, Vec::new());
     }
     let details: Vec<String> = issues.iter().map(|(name, i)| format!("{name}\n\n{}", i.line())).collect();
     open_model(app, router, "Check the game files", view::game_file_issues(&issues), move |app, router, act| match act {
@@ -413,9 +480,48 @@ fn check_game_files_then_move(app: &Rc<AppState>, router: &Router, new_dir: Path
             }
         }
         Act::FixInGameFiles => super::rom_screens::open_game_files(app, router),
-        Act::MoveAnyway => start_move(app, router, new_dir.clone(), plan.clone(), true),
+        Act::MoveAnyway => start_move(app, router, new_dir.clone(), plan.clone(), true, Vec::new()),
         Act::Cancel => open_menu(app, router),
         _ => {}
+    });
+}
+
+/// The wizard asks about the ports with a game file problem one at a time: skip the port, or move it anyway.
+fn wizard_game_files(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<MovePlan>, mut issues: Vec<(String, Issue)>, accept: Vec<String>) {
+    if issues.is_empty() {
+        let left = plan.ports.len() + plan.stale.len();
+        if left == 0 {
+            return switch_now(app, router, &new_dir, Vec::new(), String::new());
+        }
+        return start_move(app, router, new_dir, plan, false, accept);
+    }
+    // Every problem of the first port is one decision about that port.
+    let name = issues[0].0.clone();
+    let same: Vec<usize> = (0..issues.len()).filter(|i| issues[*i].0 == name).collect();
+    let first = issues[same[0]].1.clone();
+    let file = Path::new(&first.file).file_name().map_or(first.file.clone(), |n| n.to_string_lossy().into_owned());
+    let problem = format!("{file}: {}.", first.problem.trim_end_matches('.'));
+    let others: std::collections::BTreeSet<String> = issues.iter().map(|(n, _)| n.clone()).filter(|n| *n != name).collect();
+    let key = plan.ports.iter().chain(&plan.stale).find(|p| p.name == name).map(|p| p.key.clone());
+    for i in same.iter().rev() {
+        issues.remove(*i);
+    }
+    let page = ports_pages::game_file_page(&name, &problem, others.len());
+    wizard_page(app, router, page, move |app, router, action| match action {
+        FolderAction::SkipPort => {
+            let mut smaller = (*plan).clone();
+            if let Some(key) = &key {
+                smaller.ports.retain(|p| &p.key != key);
+                smaller.stale.retain(|p| &p.key != key);
+            }
+            wizard_game_files(app, router, new_dir.clone(), Rc::new(smaller), issues.clone(), accept.clone());
+        }
+        FolderAction::MoveAnyway => {
+            let mut accept = accept.clone();
+            accept.extend(key.clone());
+            wizard_game_files(app, router, new_dir.clone(), plan.clone(), issues.clone(), accept);
+        }
+        _ => open_menu(app, router),
     });
 }
 
@@ -456,7 +562,7 @@ fn replace_stale(stale: &PortToMove, record: Option<&OldCopy>, port: Option<&Por
     Ok(())
 }
 
-fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<MovePlan>, accept_issues: bool) {
+fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<MovePlan>, accept_issues: bool, accept_keys: Vec<String>) {
     if JOB_BUSY.with(Cell::get) {
         return message(app, router, "A move is already running.");
     }
@@ -483,6 +589,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
     let (home, _) = move_env_parts(app);
     let saves_dir = app.paths.saves_backup_dir.clone();
     let total = items.len();
+    let shown_names: Vec<String> = items.iter().map(|i| i.port.name.clone()).collect();
     let job = Rc::new(Background::spawn(move |ctl| {
         let settings = ForkSettings::load(&config_dir.join(FILE_NAME));
         let steam = SystemSteamCheck::new();
@@ -500,7 +607,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
         let todo: Vec<(BatchItem, GameFiles)> = items.into_iter().zip(files).filter(|(i, _)| !blocked.contains(&i.port.key)).collect();
         let (batch_items, batch_files): (Vec<BatchItem>, Vec<GameFiles>) = todo.into_iter().unzip();
         let names: Vec<String> = batch_items.iter().map(|i| i.port.name.clone()).collect();
-        let options = |i: usize| MoveOptions { game_files: batch_files[i].clone(), accept_issues_before: accept_issues, ..Default::default() };
+        let options = |i: usize| MoveOptions { game_files: batch_files[i].clone(), accept_issues_before: accept_issues || accept_keys.contains(&batch_items[i].port.key), ..Default::default() };
         let mut progress = |i: usize, done: u64, size: u64| ctl.set_progress(format!("Copying {} of {total}: {}\n{} of {}", i + 1, names[i], human_bytes(done), human_bytes(size)));
         let result = port_mover::run_batch(&batch_items, &env, &options, &mut progress, ctl.flag());
         for outcome in result.outcomes {
@@ -523,7 +630,27 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
 
     // A list showing progress with a Cancel row; B cancels too.
     let cancelling = Rc::new(Cell::new(false));
-    let list = build_picker_dialog(app, router, "Moving ports", &view::progress_labels("Copying 99 of 99: A port name that is quite long\n999.9 GB of 999.9 GB", false));
+    // In the setup wizard the progress is a page: one line per port, and Cancel.
+    let page_handle = if in_wizard() {
+        let cancel_now = {
+            let (job, cancelling) = (job.clone(), cancelling.clone());
+            Rc::new(move |_: &Rc<AppState>, _: &Router| {
+                job.cancel();
+                cancelling.set(true);
+            })
+        };
+        let (on_action, on_back) = (cancel_now.clone(), cancel_now);
+        let handlers = Handlers {
+            on_action: Rc::new(move |app, router, _action: FolderAction| on_action(app, router)),
+            on_back: Rc::new(move |app, router| on_back(app, router)),
+            on_exit: Rc::new(|app, router| super::setup_wizard_screen::exit_wizard(app, router)),
+            on_input: None,
+        };
+        show_page_handle(app, router, ports_pages::moving_page(&shown_names, "", false), handlers)
+    } else {
+        None
+    };
+    let list = if page_handle.is_some() { None } else { build_picker_dialog(app, router, "Moving ports", &view::progress_labels("Copying 99 of 99: A port name that is quite long\n999.9 GB of 999.9 GB", false)) };
     let list_weak = list.as_ref().map(|d| d.as_weak());
     if let Some(dialog) = list {
         set_picker_items(&dialog, &view::progress_labels("", false));
@@ -578,6 +705,9 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
             let text = job.progress();
             if text != *last.borrow() || cancelling.get() {
                 *last.borrow_mut() = text.clone();
+                if let Some(handle) = &page_handle {
+                    handle.update(ports_pages::moving_page(&shown_names, &text, cancelling.get()));
+                }
                 if let Some(d) = list_weak.as_ref().and_then(slint::Weak::upgrade) {
                     set_picker_items(&d, &view::progress_labels(&text, cancelling.get()));
                 }
@@ -608,6 +738,22 @@ fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun)
     }
     if failed.is_empty() {
         return switch_now(app, router, new_dir, moved, String::new());
+    }
+    if in_wizard() {
+        let shown: Vec<(String, String)> = failed.iter().map(|(n, t, _)| (n.clone(), ellipsize(t.lines().next().unwrap_or_default(), 80))).collect();
+        let count = moved.len();
+        let moved = Rc::new(moved);
+        let new_dir = new_dir.to_path_buf();
+        return wizard_page(app, router, ports_pages::some_failed_page(&shown, count), move |app, router, action| match action {
+            FolderAction::UseMoved => switch_now(app, router, &new_dir, moved.as_ref().clone(), "Some ports were not moved and stay in the old folder.".into()),
+            _ => {
+                let problems = discard_all(&moved);
+                if !problems.is_empty() {
+                    eprintln!("ports folder: {}", problems.join("; "));
+                }
+                open_menu(app, router)
+            }
+        });
     }
     let details: Vec<String> = failed.iter().map(|(n, t, _)| format!("{n}: {t}")).collect();
     let model = view::after_move(&failed, moved.len());
@@ -694,9 +840,11 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
         summary.push(note);
     }
     // In the setup wizard the old copies of a move are kept and asked about once, on its own page near the end.
-    if super::setup_wizard_screen::active() && !copies.is_empty() {
-        summary.push("The old copies are kept; the setup wizard asks about them at the end.".to_string());
-        copies.clear();
+    if in_wizard() {
+        // The wizard's pages say what matters; the details go to the log. The old copies are kept, and the
+        // wizard asks about them once, near the end.
+        eprintln!("ports folder: {}", summary.join(" | ").replace('\n', " "));
+        return;
     }
     prompt_old_copies(app, router, copies, summary.join("\n\n"));
 }
