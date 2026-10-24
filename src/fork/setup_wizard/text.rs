@@ -194,6 +194,10 @@ fn steam_page(w: &Wizard, ctx: &Context) -> Page {
     } else if info.to_add == 0 {
         p.paragraphs = paras(&["Nothing to add: no ports are installed yet, or they are already in Steam."]);
         p.options = vec![recommended("Continue", "", Action::Next)];
+    } else if info.queued >= info.to_add {
+        // Back on this page after queueing: they are waiting for Desktop Mode, nothing more to press.
+        p.paragraphs = vec![format!("{} already queued. {} added the next time you are in Desktop Mode with Steam closed.", if info.to_add == 1 { "1 port is".to_string() } else { format!("All {} ports are", info.to_add) }, if info.to_add == 1 { "It is" } else { "They are" })];
+        p.options = vec![recommended("Continue", "", Action::Next)];
     } else {
         let n = info.to_add;
         p.paragraphs = vec![
@@ -932,4 +936,13 @@ mod tests {
         let p = pg(Step::Steam);
         assert_eq!(move_focus(&p, 99, 0, 1), initial_focus(&p));
     }
+    #[test]
+    fn back_on_the_steam_page_after_queueing_says_the_ports_are_queued() {
+        let p = page_for(&at(Step::Steam), &steam_ctx(crate::fork::setup_wizard::steam::Info { to_add: 3, queued: 3, ..Default::default() }));
+        assert!(all_text(&p).contains("All 3 ports are already queued"), "{}", all_text(&p));
+        assert_eq!(option_actions(&p), [Action::Next]);
+        let part = page_for(&at(Step::Steam), &steam_ctx(crate::fork::setup_wizard::steam::Info { to_add: 3, queued: 1, ..Default::default() }));
+        assert_eq!(part.options[0].title, "Add all 3");
+    }
+
 }

@@ -316,8 +316,13 @@ fn show_progress_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, c
             if !view.closed.get() {
                 cancel();
                 view.closed.set(true);
+                view.cancelling.set(true);
+                if let Some(page) = view.page.borrow().as_ref() {
+                    page.update(progress_page_of(&view));
+                }
             }
         })
+
     };
     let handlers = Handlers {
         on_action: Rc::new({

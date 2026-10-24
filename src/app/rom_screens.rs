@@ -257,9 +257,15 @@ fn run_job<T: Send + 'static>(
                 if abandoned.get() {
                     if let Some(hook) = hook {
                         hook(&app, &router);
+                    } else if page_handle.is_some() && super::setup_wizard_screen::active() {
+                        // B on the wizard's scan page: the page goes, and the wizard's game files page comes back
+                        // (opening the Game files menu is what the wizard takes over while it waits).
+                        close_current_dialog(&app, &router);
+                        open_game_files(&app, &router);
                     }
                     return;
                 }
+
                 // Only close what this job opened: the user may have closed it and opened something else.
                 let own_dialog = !progress_mode || matches!(&*app.dialog_nav.dialogs.borrow(), DialogSlot::Progress(_));
                 if own_dialog {

@@ -435,13 +435,23 @@ If the move then fails, the kept copy is already gone; the copy in use is not to
 fn wizard_switch(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: MovePlan, free: Option<u64>, needed: u64) {
     let n = plan.ports.len() + plan.stale.len();
     let plan = Rc::new(plan);
+    if n == 0 && !plan.already_there.is_empty() {
+        // Nothing to copy, but ports are in that place already: say what the switch does.
+        let there = plan.already_there.len();
+        return wizard_page(app, router, ports_pages::already_there_page(there), move |app, router, action| match action {
+            FolderAction::UseIt => switch_now(app, router, &new_dir, Vec::new(), String::new()),
+            FolderAction::PickAnother => choose_folder(app, router),
+            _ => open_menu(app, router),
+        });
+    }
     if n == 0 {
         if let Some(why) = running_now(app, &plan) {
             return message(app, router, &why);
         }
         return switch_now(app, router, &new_dir, Vec::new(), String::new());
     }
-    let facts = MoveFacts { ports: n, bytes: plan.bytes, free, needed, stale: !plan.stale.is_empty() };
+    let facts = MoveFacts
+ { ports: n, bytes: plan.bytes, free, needed, stale: !plan.stale.is_empty() };
     wizard_page(app, router, ports_pages::move_page(&facts), move |app, router, action| match action {
         FolderAction::MoveThem | FolderAction::ReplaceAndMove => check_game_files_then_move(app, router, new_dir.clone(), plan.clone()),
         FolderAction::LeaveThem => {
@@ -470,7 +480,7 @@ fn check_game_files_then_move(app: &Rc<AppState>, router: &Router, new_dir: Path
         return start_move(app, router, new_dir, plan, false, Vec::new());
     }
     if in_wizard() {
-        return wizard_game_files(app, router, new_dir, plan, issues, Vec::new());
+        return wizard_game_files(app, router, new_dir, plan, issues, Vec::new(), 0);
     }
     let details: Vec<String> = issues.iter().map(|(name, i)| format!("{name}\n\n{}", i.line())).collect();
     open_model(app, router, "Check the game files", view::game_file_issues(&issues), move |app, router, act| match act {
@@ -487,12 +497,18 @@ fn check_game_files_then_move(app: &Rc<AppState>, router: &Router, new_dir: Path
 }
 
 /// The wizard asks about the ports with a game file problem one at a time: skip the port, or move it anyway.
-fn wizard_game_files(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<MovePlan>, mut issues: Vec<(String, Issue)>, accept: Vec<String>) {
+fn wizard_game_files(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<MovePlan>, mut issues: Vec<(String, Issue)>, accept: Vec<String>, skipped: usize) {
     if issues.is_empty() {
         let left = plan.ports.len() + plan.stale.len();
         if left == 0 {
-            return switch_now(app, router, &new_dir, Vec::new(), String::new());
+            // Every port was skipped: nothing moves, and the skipped ones stay where they are.
+            return wizard_page(app, router, ports_pages::nothing_moved_page(skipped), move |app, router, action| match action {
+                FolderAction::UseIt => switch_now(app, router, &new_dir, Vec::new(), String::new()),
+                FolderAction::PickAnother => choose_folder(app, router),
+                _ => open_menu(app, router),
+            });
         }
+
         return start_move(app, router, new_dir, plan, false, accept);
     }
     // Every problem of the first port is one decision about that port.
@@ -514,12 +530,12 @@ fn wizard_game_files(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan
                 smaller.ports.retain(|p| &p.key != key);
                 smaller.stale.retain(|p| &p.key != key);
             }
-            wizard_game_files(app, router, new_dir.clone(), Rc::new(smaller), issues.clone(), accept.clone());
+            wizard_game_files(app, router, new_dir.clone(), Rc::new(smaller), issues.clone(), accept.clone(), skipped + 1);
         }
         FolderAction::MoveAnyway => {
             let mut accept = accept.clone();
             accept.extend(key.clone());
-            wizard_game_files(app, router, new_dir.clone(), plan.clone(), issues.clone(), accept);
+            wizard_game_files(app, router, new_dir.clone(), plan.clone(), issues.clone(), accept, skipped);
         }
         _ => open_menu(app, router),
     });
@@ -590,6 +606,8 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
     let saves_dir = app.paths.saves_backup_dir.clone();
     let total = items.len();
     let shown_names: Vec<String> = items.iter().map(|i| i.port.name.clone()).collect();
+    let replaces = !plan.stale.is_empty();
+    let was_wizard = in_wizard();
     let job = Rc::new(Background::spawn(move |ctl| {
         let settings = ForkSettings::load(&config_dir.join(FILE_NAME));
         let steam = SystemSteamCheck::new();
@@ -640,13 +658,19 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
             })
         };
         let (on_action, on_back) = (cancel_now.clone(), cancel_now);
+        let exit_job = job.clone();
         let handlers = Handlers {
             on_action: Rc::new(move |app, router, _action: FolderAction| on_action(app, router)),
             on_back: Rc::new(move |app, router| on_back(app, router)),
-            on_exit: Rc::new(|app, router| super::setup_wizard_screen::exit_wizard(app, router)),
+            // Leaving the wizard stops the copy too; what it had copied is removed when the worker has stopped.
+            on_exit: Rc::new(move |app, router| {
+                exit_job.cancel();
+                super::setup_wizard_screen::exit_wizard(app, router);
+            }),
             on_input: None,
         };
-        show_page_handle(app, router, ports_pages::moving_page(&shown_names, "", false), handlers)
+        show_page_handle(app, router, ports_pages::moving_page(&shown_names, "", false, replaces), handlers)
+
     } else {
         None
     };
@@ -695,7 +719,15 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
                         if quitting {
                             run.cancelled = true;
                         }
-                        after_move(&app, &router, &new_dir, run);
+                        if was_wizard && !in_wizard() {
+                            // The wizard was left during the move: no pages over the main window, no switch of
+                            // the ports folder; what was copied is taken back.
+                            let problems = discard_all(&run.moved);
+                            eprintln!("ports folder: the wizard was left during the move; the new copies were removed {}", problems.join("; "));
+                        } else {
+                            after_move(&app, &router, &new_dir, run);
+                        }
+
                     }
                     Err(e) => message(&app, &router, &e),
                 }
@@ -706,7 +738,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
             if text != *last.borrow() || cancelling.get() {
                 *last.borrow_mut() = text.clone();
                 if let Some(handle) = &page_handle {
-                    handle.update(ports_pages::moving_page(&shown_names, &text, cancelling.get()));
+                    handle.update(ports_pages::moving_page(&shown_names, &text, cancelling.get(), replaces));
                 }
                 if let Some(d) = list_weak.as_ref().and_then(slint::Weak::upgrade) {
                     set_picker_items(&d, &view::progress_labels(&text, cancelling.get()));
@@ -744,16 +776,40 @@ fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun)
         let count = moved.len();
         let moved = Rc::new(moved);
         let new_dir = new_dir.to_path_buf();
-        return wizard_page(app, router, ports_pages::some_failed_page(&shown, count), move |app, router, action| match action {
-            FolderAction::UseMoved => switch_now(app, router, &new_dir, moved.as_ref().clone(), "Some ports were not moved and stay in the old folder.".into()),
-            _ => {
+        // B and the title bar X take the new copies back like Undo does: none are left untracked in the new folder.
+        let undo = {
+            let moved = moved.clone();
+            move || {
                 let problems = discard_all(&moved);
                 if !problems.is_empty() {
                     eprintln!("ports folder: {}", problems.join("; "));
                 }
-                open_menu(app, router)
             }
-        });
+        };
+        let (undo_action, undo_back, undo_exit) = (undo.clone(), undo.clone(), undo);
+        let handlers = Handlers {
+            on_action: Rc::new(move |app, router, action| match action {
+                FolderAction::UseMoved => switch_now(app, router, &new_dir, moved.as_ref().clone(), "Some ports were not moved and stay in the old folder.".into()),
+                _ => {
+                    undo_action();
+                    open_menu(app, router)
+                }
+            }),
+            on_back: Rc::new(move |app, router| {
+                undo_back();
+                open_menu(app, router)
+            }),
+            on_exit: Rc::new(move |app, router| {
+                undo_exit();
+                super::setup_wizard_screen::exit_wizard(app, router)
+            }),
+            on_input: None,
+        };
+        if !show_page(app, router, ports_pages::some_failed_page(&shown, count), handlers) {
+            open_menu(app, router);
+        }
+        return;
+
     }
     let details: Vec<String> = failed.iter().map(|(n, t, _)| format!("{n}: {t}")).collect();
     let model = view::after_move(&failed, moved.len());

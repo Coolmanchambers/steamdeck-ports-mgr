@@ -19,6 +19,8 @@ use std::time::SystemTime;
 pub struct Info {
     /// Ports that would be added or brought up to date.
     pub to_add: usize,
+    /// Of those, the ones already in the queue for Desktop Mode (a second visit to the page after queueing).
+    pub queued: usize,
     /// Several accounts: their names, to choose from before adding. Empty with one account.
     pub accounts: Vec<String>,
     /// Why nothing can be done (no Steam account folder, a shortcuts file that cannot be read), in plain words.
@@ -31,7 +33,11 @@ pub fn info(screen: &SteamScreen, steam: &dyn SteamProcessCheck) -> Info {
     let problem = screen.load_error.clone();
     let immediate = !screen.game_mode && steam.running_steam_processes().is_ok_and(|p| p.is_empty());
     let accounts = if screen.accounts.len() > 1 { screen.accounts.iter().map(SteamAccount::label).collect() } else { Vec::new() };
-    Info { to_add: if problem.is_some() { 0 } else { screen.missing_count() }, accounts, problem, immediate }
+    let queued = match screen.active_account() {
+        Some(a) if problem.is_none() => screen.rows.iter().filter(|r| r.can_change() && !r.by_name() && screen.queue.contains(a.account_id, &r.key)).count(),
+        _ => 0,
+    };
+    Info { to_add: if problem.is_some() { 0 } else { screen.missing_count() }, queued, accounts, problem, immediate }
 }
 
 /// Adds every missing port to the shortcut list, or queues them while Steam runs.
@@ -268,4 +274,16 @@ mod tests {
         assert_eq!(dusk.exe_path(), "/old/dusk", "left for the user to repoint in Add to Steam");
         let _ = fs::remove_dir_all(home);
     }
+    #[test]
+    fn ports_already_queued_are_counted_so_the_page_can_say_so() {
+        let (home, library, _) = fake_home("alreadyqueued", &[1234]);
+        let queue = home.join("steam-queue.json");
+        let mut s = screen(&home, &library, false);
+        assert_eq!(add_all(&mut s, &running, &settings(&home), &queue, SystemTime::now(), "20261023-100000"), SteamOutcome::Queued { count: 2, game_mode: false });
+        let again = screen(&home, &library, false);
+        let i = info(&again, &running);
+        assert_eq!((i.to_add, i.queued), (2, 2));
+        let _ = fs::remove_dir_all(home);
+    }
+
 }

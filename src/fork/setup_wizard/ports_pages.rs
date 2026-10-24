@@ -24,6 +24,8 @@ pub enum FolderAction {
     MoveAnyway,
     /// Go on with the ports that did move.
     UseMoved,
+    /// Use the place as it is (the ports in it stay where they are).
+    UseIt,
     /// Take back what was copied (the new copies are removed; the originals were never touched).
     Undo,
     /// Stop the copy in progress.
@@ -141,6 +143,26 @@ pub fn game_file_page(port: &str, problem: &str, more: usize) -> Page<FolderActi
     p
 }
 
+/// Ports are in that place already: nothing is copied.
+pub fn already_there_page(n: usize) -> Page<FolderAction> {
+    let mut p = base("Ports folder: already there", "Your ports are already there");
+    p.paragraphs = vec![format!("{} in that place already, and {} used from there. Nothing is copied.", if n == 1 { "1 port is".to_string() } else { format!("{n} ports are") }, if n == 1 { "it is" } else { "they are" })];
+    p.options = vec![option("Use that place", "", FolderAction::UseIt, true), option("Pick another place", "", FolderAction::PickAnother, false)];
+    back_button(&mut p);
+    p.initial = Focus::Option(0);
+    p
+}
+
+/// Every port was skipped for its game files: nothing moves.
+pub fn nothing_moved_page(skipped: usize) -> Page<FolderAction> {
+    let mut p = base("Ports folder: nothing moved", "No ports were moved");
+    p.paragraphs = vec![format!("The {} you skipped {} where {} and show{} as not installed in the new place.", ports(skipped), if skipped == 1 { "stays" } else { "stay" }, if skipped == 1 { "it is" } else { "they are" }, if skipped == 1 { "s" } else { "" })];
+    p.options = vec![option("Use the new place anyway", "", FolderAction::UseIt, false), option("Pick another place", "", FolderAction::PickAnother, true)];
+    back_button(&mut p);
+    p.initial = Focus::Option(1);
+    p
+}
+
 /// The state of each port while the copy runs, from the worker's progress text
 /// ("Copying 2 of 3: Name\n12 MB of 28 MB"). Ports before the current one are done, the current one shows its
 /// bytes, the rest wait. A text that does not look like that (a kept copy being replaced first) leaves all waiting.
@@ -163,15 +185,21 @@ pub fn progress_lines(names: &[String], text: &str) -> Vec<String> {
         .collect()
 }
 
-/// "Moving your ports" with one line per port and a Cancel.
-pub fn moving_page(names: &[String], text: &str, cancelling: bool) -> Page<FolderAction> {
+/// "Moving your ports" with one line per port and a Cancel. `replaces` is a kept old copy being replaced first,
+/// which is the one thing in this flow that removes anything, so the page does not claim "nothing is deleted".
+pub fn moving_page(names: &[String], text: &str, cancelling: bool, replaces: bool) -> Page<FolderAction> {
     let mut p = base("Ports folder: moving", "Moving your ports");
-    p.paragraphs = vec!["Each port is copied and checked. Nothing is deleted.".to_string()];
+    p.paragraphs = vec![if replaces {
+        "The old copy you kept is replaced first (its saves are zipped). Then each port is copied and checked.".to_string()
+    } else {
+        "Each port is copied and checked. Nothing is deleted.".to_string()
+    }];
+
     p.facts = progress_lines(names, text);
     p.options = vec![if cancelling {
         PageOption { enabled: false, ..option("Cancelling...", "", FolderAction::CancelMove, false) }
     } else {
-        option("Cancel", "Nothing is changed", FolderAction::CancelMove, false)
+        option("Cancel", if replaces { "The copy in progress is removed" } else { "Nothing is changed" }, FolderAction::CancelMove, false)
     }];
     p.initial = Focus::Option(0);
     p
@@ -188,7 +216,7 @@ pub fn some_failed_page(failed: &[(String, String)], moved: usize) -> Page<Folde
     if moved > 0 {
         p.options.push(option(&format!("Go on with the {} that moved", ports(moved)), "The others stay where they are", FolderAction::UseMoved, true));
     }
-    p.options.push(option("Undo", "The new copies are removed; your ports are untouched", FolderAction::Undo, moved == 0));
+    p.options.push(option("Undo", "The new copies are removed; the ports you use are untouched", FolderAction::Undo, moved == 0));
     p.initial = Focus::Option(0);
     p
 }
@@ -259,11 +287,11 @@ mod tests {
     #[test]
     fn the_progress_page_has_one_line_per_port_and_cancel_is_all_there_is_to_press() {
         let names: Vec<String> = ["Demo Blocks", "Demo Severed", "Demo Wolf"].iter().map(|s| s.to_string()).collect();
-        let p = moving_page(&names, "Copying 2 of 3: Demo Severed\n12.0 MB of 28.0 MB", false);
+        let p = moving_page(&names, "Copying 2 of 3: Demo Severed\n12.0 MB of 28.0 MB", false, false);
         assert_eq!(p.facts, ["Demo Blocks: done", "Demo Severed: copying, 12.0 MB of 28.0 MB", "Demo Wolf: waiting"]);
         assert_eq!(actions(&p), [FolderAction::CancelMove]);
         assert!(p.options[0].enabled && p.options[0].title == "Cancel");
-        let c = moving_page(&names, "", true);
+        let c = moving_page(&names, "", true, false);
         assert!(!c.options[0].enabled && c.options[0].title == "Cancelling...");
         assert!(c.facts.iter().all(|l| l.ends_with("waiting")));
         // A kept copy being replaced first leaves every port waiting.
@@ -302,4 +330,26 @@ mod tests {
             assert_eq!(p.buttons[LEFT].as_ref().map(|b| b.action), Some(FolderAction::Back));
         }
     }
+    #[test]
+    fn replacing_a_kept_copy_does_not_claim_that_nothing_is_deleted_or_changed() {
+        let names = vec!["A".to_string()];
+        let plain = all_text(&moving_page(&names, "", false, false));
+        assert!(plain.contains("Nothing is deleted") && plain.contains("Nothing is changed"));
+        let replacing = all_text(&moving_page(&names, "", false, true));
+        assert!(!replacing.contains("Nothing is deleted") && !replacing.contains("Nothing is changed"), "{replacing}");
+        assert!(replacing.contains("replaced first") && replacing.contains("saves are zipped") && replacing.contains("The copy in progress is removed"));
+    }
+
+    #[test]
+    fn ports_already_there_and_ports_all_skipped_say_what_the_switch_does() {
+        let p = already_there_page(2);
+        assert!(p.paragraphs[0].starts_with("2 ports are in that place already, and they are used from there"));
+        assert_eq!(actions(&p), [FolderAction::UseIt, FolderAction::PickAnother]);
+        assert!(already_there_page(1).paragraphs[0].starts_with("1 port is in that place already, and it is used"));
+        let q = nothing_moved_page(2);
+        assert!(q.paragraphs[0].contains("The 2 ports you skipped stay where they are"));
+        assert_eq!(q.initial, Focus::Option(1), "using the new place anyway is not the default");
+        assert!(nothing_moved_page(1).paragraphs[0].contains("stays where it is"));
+    }
+
 }

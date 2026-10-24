@@ -54,6 +54,8 @@ thread_local! {
     /// The old copies already listed when this wizard run started: only the ones added since are asked about.
     /// What the old copy page said when it could not check the copies, shown once on top of the last page.
     static OLD_COPIES_NOTE: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The covers for Steam were asked for in this wizard run.
+    static PREFETCHED: Cell<bool> = const { Cell::new(false) };
     static OLD_AT_START: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -108,6 +110,7 @@ fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
     OLD_AT_START.with(|o| *o.borrow_mut() = old_copy_paths(app));
     SESSION.with(|s| *s.borrow_mut() = Some(session.clone()));
     QUIET.with(|q| q.set(0));
+    PREFETCHED.with(|p| p.set(false));
     start_watch(app, router);
     let mut ui = Ui { app: app.clone(), router: router.clone() };
     ui.show(&session.borrow());
@@ -341,8 +344,10 @@ fn steam_screen(app: &AppState) -> crate::fork::screens::SteamScreen {
 }
 
 fn steam_info(app: &AppState) -> crate::fork::setup_wizard::steam::Info {
-    // Covers are fetched in the background while the page is up, so "Add all" finds them cached.
-    super::steam_screens::prefetch_art(app);
+    // Covers are fetched in the background while the page is up, so "Add all" finds them cached (once per run).
+    if !PREFETCHED.with(|p| p.replace(true)) {
+        super::steam_screens::prefetch_art(app);
+    }
     crate::fork::setup_wizard::steam::info(&steam_screen(app), &crate::fork::store::SystemSteamCheck::new())
 }
 
