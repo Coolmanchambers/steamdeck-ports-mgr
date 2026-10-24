@@ -85,7 +85,7 @@ pub struct Facts {
     /// Old copies recorded after moves (each one a port moved in, even if no run recorded it).
     pub old_kept: usize,
     pub old_ready: usize,
-    /// Installed ports that need a game file.
+    /// Installed ports that still miss a game file (not in their folder, not connected).
     pub game_files_needed: usize,
     /// The game files folder, as a place ("SD card > Emulation > roms"); `None` when none is set.
     pub rom_folder: Option<String>,
@@ -162,7 +162,7 @@ pub fn lines(facts: &Facts, progress: &Progress) -> Vec<StepLine> {
     });
     // Game files.
     out.push(match (&facts.rom_folder, facts.game_files_found.or(progress.game_files_found)) {
-        _ if facts.game_files_needed == 0 => line(Step::GameFiles, State::Done, "Game files: none of your ports need any".to_string()),
+        _ if facts.game_files_needed == 0 => line(Step::GameFiles, State::Done, "Game files: nothing missing".to_string()),
         (None, _) if progress.game_files_skipped => line(Step::GameFiles, State::Pending, "Game files: skipped, no folder set".to_string()),
         (None, _) => line(Step::GameFiles, State::Pending, "Game files: no folder set yet".to_string()),
         (Some(folder), Some((have, total))) => line(Step::GameFiles, State::Done, format!("Game files: {folder}, found for {have} of {total}")),
@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(lines(&fresh, &Progress { your_ports: Some(true), ..Progress::default() })[1].state, State::Done);
         assert_eq!(texts(&lines(&fresh, &Progress { your_ports: Some(false), ..Progress::default() }))[1], (Step::YourPorts, State::Pending, "Your ports: skipped"));
         // Game files: none needed; a folder never scanned; skipped.
-        assert_eq!((l[2].state, l[2].text.as_str()), (State::Done, "Game files: none of your ports need any"));
+        assert_eq!((l[2].state, l[2].text.as_str()), (State::Done, "Game files: nothing missing"));
         let needs = Facts { game_files_needed: 2, rom_folder: Some("Home > ROMs".into()), ..fresh.clone() };
         assert_eq!(texts(&lines(&needs, &Progress::default()))[2], (Step::GameFiles, State::Pending, "Game files: Home > ROMs, not looked at yet"));
         let skipped = Facts { rom_folder: None, ..needs.clone() };

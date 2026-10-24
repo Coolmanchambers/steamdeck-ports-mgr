@@ -160,6 +160,16 @@ pub fn load_local_entries(path: &Path) -> HashMap<String, Value> {
 
 /// Ports known to read the game file once and build their own assets from it. From the findings
 /// document, not yet confirmed on a Deck; a local entry's `rom_access` overrides it.
+/// Files a port makes from its game file on first start, in its own folder (the HarbourMasters ports turn the
+/// ROM into an `.o2r` archive and do not need the ROM again). One of them there means the port has its game.
+pub fn generated_archives(folder: &str) -> &'static [&'static str] {
+    match folder.to_ascii_lowercase().as_str() {
+        "shipwright" => &["oot.o2r", "oot-mq.o2r"],
+        "2ship2harkinian" => &["mm.o2r"],
+        _ => &[],
+    }
+}
+
 fn builtin_access(folder: &str) -> Access {
     match folder.to_ascii_lowercase().as_str() {
         "shipwright" | "2ship2harkinian" => Access::InPlace,

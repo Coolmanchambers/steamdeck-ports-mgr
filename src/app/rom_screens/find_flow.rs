@@ -65,6 +65,16 @@ fn request_for(app: &AppState, local: &LocalEntries, port: &Port, mappings: Vec<
     FindRequest::new(port.clone(), app.is_installed(port), local.get(&port.folder), mappings)
 }
 
+/// Installed, needs game files, and does not have them yet: not in its own folder (nor the archive it makes from
+/// them), not connected. What the setup wizard asks about.
+pub(crate) fn port_missing_game_files(app: &AppState, port: &Port) -> bool {
+    if !port_needs_game_files(app, port) {
+        return false;
+    }
+    let Ok(dir) = crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder) else { return true };
+    !crate::fork::setup_wizard::game_files::in_folder_keys(std::iter::once((port, dir)), &app.paths.config_dir).contains(port.key())
+}
+
 /// For the Info dialog: is the port installed and does it name files it needs.
 pub(crate) fn port_needs_game_files(app: &AppState, port: &Port) -> bool {
     !port.is_android_only() && app.is_installed(port) && request_for(app, &local_entries(app), port, Vec::new()).needs_files()

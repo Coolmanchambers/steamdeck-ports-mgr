@@ -202,7 +202,7 @@ fn setup_lines(app: &AppState) -> Vec<rerun::StepLine> {
     let old = old_copies_now(app);
     let ready = old.iter().filter(|o| crate::fork::port_mover::old_copies::readiness_now(o, home.as_deref().unwrap_or(Path::new("/")), &app.paths.config_dir).is_ok_and(|r| r.is_ready())).count();
     let steam = steam_info(app);
-    let needing = app.catalog.borrow().iter().filter(|p| super::rom_screens::port_needs_game_files(app, p)).count();
+    let needing = app.catalog.borrow().iter().filter(|p| super::rom_screens::port_missing_game_files(app, p)).count();
     let facts = rerun::Facts {
         ports_place: places::place_of(&current, &internal_default, &drives),
         ports_folder_is_default: current == internal_default,
@@ -299,7 +299,8 @@ impl Adapters for Ui {
 
     fn ports_needing_game_files(&mut self) -> usize {
         let catalog = self.app.catalog.borrow();
-        catalog.iter().filter(|p| super::rom_screens::port_needs_game_files(&self.app, p)).count()
+        // Ports whose game file is already in their folder (or made into its archive) are not asked about.
+        catalog.iter().filter(|p| super::rom_screens::port_missing_game_files(&self.app, p)).count()
     }
 
     fn game_files_result(&mut self) -> Option<crate::fork::setup_wizard::game_files::Results> {

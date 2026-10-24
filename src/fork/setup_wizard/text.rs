@@ -374,7 +374,7 @@ fn game_files_page(w: &Wizard, ctx: &Context) -> Page {
         let needing = w.summary.game_files_needed.unwrap_or(0);
         p.paragraphs = vec![
             if needing > 0 { format!("{} to run.", if needing == 1 { "1 of your ports needs a game file you own".to_string() } else { format!("{needing} of your ports need a game file you own") }) } else { "Some ports need a game file you own, such as a ROM.".to_string() },
-            "Your files are only read, never changed or moved.".to_string(),
+            format!("Only files that could be {} are read. Nothing is changed or moved.", if needing == 1 { "the one it needs" } else { "the ones they need" }),
         ];
         if ctx.rom_folder_set {
             p.facts = vec!["A game files folder is set.".to_string()];
@@ -391,7 +391,7 @@ fn game_files_page(w: &Wizard, ctx: &Context) -> Page {
 fn game_files_line(w: &Wizard, ctx: &Context) -> String {
     let s = &w.summary;
     if s.game_files_needed == Some(0) {
-        return "Game files: none of your ports need any.".to_string();
+        return "Game files: nothing is missing.".to_string();
     }
     match &s.game_files {
         Some(r) if r.total > 0 => {
@@ -731,7 +731,7 @@ mod tests {
     fn the_game_files_page_asks_for_a_folder_or_keeps_the_one_set_and_says_files_are_only_read() {
         let p = pg(Step::GameFiles);
         assert_eq!(p.title, "Where are your game files?");
-        assert!(all_text(&p).contains("only read, never changed or moved") && all_text(&p).contains("ROM"));
+        assert!(all_text(&p).contains("Only files that could be") && all_text(&p).contains("Nothing is changed or moved") && all_text(&p).contains("ROM"), "{}", all_text(&p));
         assert_eq!(option_actions(&p), [Action::ChooseRomFolder, Action::Skip]);
         assert!(p.facts.is_empty());
         let mut c = ctx();
@@ -794,7 +794,7 @@ mod tests {
             c.rom_folder_set = set;
             page_for(&w, &c).facts[2].clone()
         };
-        assert_eq!(line(Some(0), None, false, false), "Game files: none of your ports need any.");
+        assert_eq!(line(Some(0), None, false, false), "Game files: nothing is missing.");
         assert_eq!(line(Some(4), Some(Results { total: 4, found: 3, ..Default::default() }), true, false), "Game files found for 3 of 4 ports.");
         assert_eq!(line(Some(1), Some(Results { total: 1, found: 1, ..Default::default() }), true, false), "Game files found for 1 of 1 port.");
         assert_eq!(line(Some(2), None, true, false), "A game files folder is set.");

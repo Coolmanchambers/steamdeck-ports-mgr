@@ -44,7 +44,7 @@ const NOTE_READ_ONLY: &str = "Your game files are only read, never moved or dele
 // The "find this port's game files" flow (after an install, Info, Settings, and for other screens).
 mod find_flow;
 #[allow(unused_imports)]
-pub(crate) use find_flow::{after_install, after_ports_added_then, find_for_port, open_from_info, port_needs_game_files};
+pub(crate) use find_flow::{after_install, after_ports_added_then, find_for_port, open_from_info, port_missing_game_files, port_needs_game_files};
 
 /// What to do once a folder is chosen (and where Back goes).
 #[derive(Clone)]

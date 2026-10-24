@@ -43,12 +43,14 @@ fn first_missing(row: &PortRow) -> String {
         .unwrap_or_else(|| "a game file".to_string())
 }
 
-/// The ports (by key) whose required files are all already in their own folder or connected: nothing to look for.
+/// The ports (by key) whose required files are all already in their own folder or connected, or that already
+/// made their game archive from them (`requirements::generated_archives`): nothing to look for, no scan needed.
 pub fn in_folder_keys<'a>(ports: impl Iterator<Item = (&'a Port, PathBuf)>, config_dir: &Path) -> HashSet<String> {
     ports
         .filter(|(port, dir)| {
             let files = GameFiles::for_port(port, config_dir);
-            !files.required.is_empty() && required_not_found(dir, &files).is_empty()
+            let made = crate::fork::rom_library::requirements::generated_archives(&port.folder).iter().any(|name| dir.join(name).is_file());
+            !files.required.is_empty() && (made || required_not_found(dir, &files).is_empty())
         })
         .map(|(port, _)| port.key().to_string())
         .collect()
@@ -110,6 +112,21 @@ mod tests {
 
     fn crc_text(data: &[u8]) -> String {
         format!("{:08X}", digests_of(data).crc32)
+    }
+
+    #[test]
+    fn a_port_that_already_made_its_game_archive_has_its_game_without_a_scan() {
+        let tmp = temp_dir();
+        let soh = port("Ship of Harkinian", "Shipwright", &["n64"], "Required files: Legend of Zelda, The - Ocarina of Time (USA).z64 (CRC32: 12345678)");
+        let mm = port("2 Ship 2 Harkinian", "2ship2harkinian", &["n64"], "Required files: Legend of Zelda, The - Majora's Mask (USA).z64 (CRC32: 9ABCDEF0)");
+        let (soh_dir, mm_dir) = (tmp.path().join("Shipwright"), tmp.path().join("2ship2harkinian"));
+        write(&soh_dir.join("oot.o2r"), b"archive");
+        write(&mm_dir.join("soh.appimage"), b"x");
+        let keys = in_folder_keys([(&soh, soh_dir.clone()), (&mm, mm_dir.clone())].into_iter(), tmp.path());
+        assert!(keys.contains(soh.key()), "oot.o2r is there");
+        assert!(!keys.contains(mm.key()), "no mm.o2r, no ROM: still missing");
+        write(&mm_dir.join("mm.o2r"), b"archive");
+        assert!(in_folder_keys([(&mm, mm_dir)].into_iter(), tmp.path()).contains(mm.key()));
     }
 
     fn none() -> HashSet<String> {
