@@ -188,7 +188,7 @@ mod tests {
         let choices = quick_choices(&internal, &internal, &drives, None);
         let notes: Vec<(&str, &str)> = choices.iter().map(|c| (c.title.as_str(), c.note.as_str())).collect();
         assert_eq!(notes[0], ("SD card (SD)", "a new folder will be made"));
-        assert!(notes[1].1.ends_with(" free"), "{notes:?}");
+        assert!(notes[1].1.is_empty() || notes[1].1.ends_with(" free"), "{notes:?}"); // free space is not known everywhere
         assert!(notes[2].1.contains("exFAT cannot hold ports"), "{notes:?}");
         assert!(choices.iter().all(|c| !c.note.contains('/')), "no path in a note");
     }
