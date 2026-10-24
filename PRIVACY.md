@@ -19,12 +19,14 @@ and off until you sign in.
   list to pick the account, then writes a shortcut entry and artwork files into your Steam folder, after
   making a backup of the shortcut file.
 - **Your game files folder:** it looks inside the folder you pick to find the files a port needs, and
-  reads a game file to compute a checksum that is kept on the device. The app never uploads or sends the
-  game files themselves.
+  reads a game file to compute a checksum. The checksum is kept on the device and is sent only to
+  ScreenScraper, only when you look up art for that game. The app never uploads or sends the game files
+  themselves.
 
 ## What the app sends over the internet
 
-Only to the sites needed for the thing you asked for. The app has no account or profile of yours to send.
+Only to the sites needed for the thing you asked for. The app has no account or profile of yours. The
+only things it sends that identify you are the keys, logins or tokens you entered yourself, listed below.
 
 - **GitHub, GitLab, or the site a port's author hosts it on (shown in the catalog):** to look up and
   download port releases, and to check for updates to this app. Those sites see an ordinary web request
@@ -33,7 +35,7 @@ Only to the sites needed for the thing you asked for. The app has no account or 
 - **Image servers named in the catalog (SteamGridDB's and others):** to show each port's icon and cover.
   No key is used for these.
 - **SteamGridDB, TheGamesDB and ScreenScraper:** to look up game art, when you use game-art lookup. The
-  request carries the game name or a checksum of the game file, your key or login for that site
+  request carries the game name (ScreenScraper: a checksum of your game file instead), your key or login for that site
   (ScreenScraper: username and password, if you entered one), and any key built into the app by the
   developer.
 - **Discord (off by default):** if you switch on Rich Presence, the name of the game, its folder name,
@@ -47,9 +49,8 @@ own Google Drive. It does nothing with Google until you do this.
 
 **Which Google data it touches**
 
-- **Files the app creates itself,** in a folder called "Deck Ports Manager", with a subfolder named after this Deck (its network name), in
-  your Google Drive. The app
-  asks for the `drive.file` permission, which lets it see only files and folders it created. It cannot
+- **Files the app creates itself,** in a folder called "Deck Ports Manager", with a subfolder named
+  after this Deck (its network name), in your Google Drive. The app asks for the `drive.file` permission, which lets it see only files and folders it created. It cannot
   read, list, change, or delete anything else in your Drive.
 - **Your Google account email address,** read at sign-in, so the app can show which account is
   connected ("Signed in as ..."). It stays on your device and is not sent anywhere else.
