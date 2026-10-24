@@ -138,7 +138,9 @@ impl Picker {
         let mut extra: Vec<Place> = Vec::new();
         for (label, path) in &self.extra {
             if path.is_dir() && !out.iter().chain(extra.iter()).any(|p| p.path == *path) {
-                extra.push(Place { label: label.clone(), detail: String::new(), path: path.clone() });
+                // "... (Recommended)" moves to the detail column, so a narrow window never cuts it off.
+                let (label, detail) = label.strip_suffix(" (Recommended)").map_or((label.clone(), String::new()), |l| (l.to_string(), "Recommended".to_string()));
+                extra.push(Place { label, detail, path: path.clone() });
             }
         }
         if self.extra_first {

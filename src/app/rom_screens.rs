@@ -147,7 +147,7 @@ thread_local! {
 
 /// The game files scan as a wizard page: what it is reading now, and Cancel.
 fn scan_progress_page(title: &str, text: &str, cancelling: bool) -> crate::fork::page::Page<ProgressAction> {
-    let mut page = progress_page(title, "Only files your ports could need are read; nothing is changed or moved.", 3, &text.lines().take(2).collect::<Vec<_>>().join("\n"), "Skip for now (the folder is kept)", cancelling);
+    let mut page = progress_page(title, "Only files your ports could need are read; nothing is changed or moved.", 3, &text.lines().take(3).collect::<Vec<_>>().join("\n"), "Skip for now (the folder is kept)", cancelling);
     page.window_title = format!("Setup wizard: {}", title.to_lowercase());
     page
 }

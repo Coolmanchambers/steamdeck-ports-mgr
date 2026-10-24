@@ -9,24 +9,20 @@ use crate::fork::rom_library::{scan_folder, RomLibraryStore, RomSpec, ScanOption
 use std::path::Path;
 use std::time::Duration;
 
-/// "Looking at 3 of 412 files (1.2 GB of 4.0 GB), about 2 min left", then the file being read. `elapsed` is the
-/// time since the scan started; the estimate appears once enough has been read to judge the speed.
+/// Three lines: "Looking at 3 of 12 files: 1.2 GB of 4.0 GB, about 2 min left", the file being read, and how many
+/// other files are not needed. `elapsed` is the time since the scan started; the estimate appears once enough has
+/// been read to judge the speed. (Lists that show two lines show the first two.)
 pub fn progress_text(p: &Progress<'_>, elapsed: Duration) -> String {
     let n = (p.files_read + 1).min(p.to_read.max(1));
-    let mut line = if p.to_read == 0 {
-        format!("Looked at {} files", p.seen)
-    } else {
-        format!("Looking at {n} of {} files ({} of {})", p.to_read, human_bytes(p.bytes_hashed), human_bytes(p.bytes_to_read))
-    };
-    if p.to_read > 0 && p.to_read < p.seen {
-        line.push_str(&format!("; {} others are not needed", p.seen - p.to_read));
-    }
+    let mut line = format!("Looking at {n} of {} {}: {} of {}", p.to_read, if p.to_read == 1 { "file" } else { "files" }, human_bytes(p.bytes_hashed), human_bytes(p.bytes_to_read));
     let secs = elapsed.as_secs_f64();
     if secs >= 3.0 && p.bytes_hashed > 0 && p.bytes_to_read > p.bytes_hashed {
         let left = (p.bytes_to_read - p.bytes_hashed) as f64 / (p.bytes_hashed as f64 / secs);
         line.push_str(&if left < 60.0 { ", under a minute left".to_string() } else { format!(", about {} min left", (left / 60.0).ceil() as u64) });
     }
-    format!("{line}\n{}", file_name(p.current))
+    let others = p.seen.saturating_sub(p.to_read);
+    let rest = if others > 0 { format!("\n{others} other game {} not needed, so not read.", if others == 1 { "file is" } else { "files are" }) } else { String::new() };
+    format!("{line}\n{}{rest}", file_name(p.current))
 }
 
 /// What the installed ports of `input` need: the files worth reading.
@@ -68,6 +64,23 @@ pub fn run_report(store: &RomLibraryStore, root: &Path, input: &ReportInput) -> 
     let scan = store.load_scan_cache().filter(|p| p.root == root).ok_or_else(|| "There is no saved scan of this folder yet. Scan it first.".to_string())?;
     let report = build_report(input, &scan);
     Ok(ScanOutput { report, scan, cache_error: None })
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn the_progress_says_how_far_how_many_are_skipped_and_how_long_is_left() {
+        let p = Progress { current: Path::new("/r/n64/Zelda.z64"), files_done: 0, bytes_hashed: 1_000_000_000, to_read: 3, files_read: 1, bytes_to_read: 4_000_000_000, seen: 63 };
+        let t = progress_text(&p, Duration::from_secs(10));
+        assert_eq!(t, "Looking at 2 of 3 files: 1.0 GB of 4.0 GB, under a minute left\nZelda.z64\n60 other game files are not needed, so not read.");
+        let slow = progress_text(&p, Duration::from_secs(100));
+        assert!(slow.starts_with("Looking at 2 of 3 files: 1.0 GB of 4.0 GB, about 5 min left"), "{slow}");
+        let early = progress_text(&Progress { seen: 1, to_read: 1, files_read: 0, ..p }, Duration::from_secs(1));
+        assert_eq!(early, "Looking at 1 of 1 file: 1.0 GB of 4.0 GB\nZelda.z64");
+    }
 }
 
 #[cfg(test)]
