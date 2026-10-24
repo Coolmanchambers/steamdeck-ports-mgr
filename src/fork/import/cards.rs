@@ -565,7 +565,7 @@ fn step_of(kind: &str, position: usize, total: usize) -> String {
 pub fn card_page(m: &Match, position: usize, total: usize, said_not: bool) -> Page<CardAction> {
     let step = step_of("Port", position, total);
     let mut p = base(&step.to_lowercase(), &step, "Is this the right port?");
-    p.card = Some(Card { art: m.art.clone(), title: m.port_name.clone(), lines: m.lines() });
+    p.card = Some(Card { art: m.art.clone(), qr: None, title: m.port_name.clone(), lines: m.lines() });
     if said_not {
         p.paragraphs = vec!["You said this is not a port. Yes or Pick another port takes that back.".to_string()];
     } else if !m.strong {

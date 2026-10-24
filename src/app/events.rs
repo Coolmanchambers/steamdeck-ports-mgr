@@ -74,6 +74,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             AppEvent::SaveBackupProgress { name } => show_progress(app, |tr| tr.invoke_progress_backing_up_named(name.into())),
             AppEvent::InstallDone { key, tag, pin_version } => {
                 finish_operation(app, router, &key);
+                super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::UpdateBackup); // Fork: the update's save backup
                 let port = app.find_port(&key);
                 if let Some(port) = &port {
                     app.grid_nav.card_image_cache.borrow_mut().remove(&port.folder);
@@ -145,6 +146,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             }
             AppEvent::InstallError { key, message } => {
                 finish_operation(app, router, &key);
+                super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::UpdateBackup); // Fork: a backup may have been made before it failed
                 // A failed update must not lock the player out of the game that is already installed.
                 if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
                     if let Some(port) = app.find_port(&key) {
@@ -212,6 +214,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 // Fork: name the installed ports whose catalog entry gives no Linux save folder.
                 let summary = format!("{summary}{}", crate::fork::save_notes::no_linux_folder_note(&no_linux_folder));
                 open_message_dialog(app, router, &tr.invoke_dialog_title_saves_backup(), &summary);
+                super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::SaveBackup); // Fork: copy it to the cloud
             }
             AppEvent::BringToForeground => chrome::restore_window(app.window().window()),
             AppEvent::DeckReadyFetched(outcome) => super::deck_ready_screen::on_fetched(app, *outcome),

@@ -450,6 +450,7 @@ fn back_up(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
             let Some(result) = job.take() else { return };
             BACKUP_TIMER.with(slint::Timer::stop);
             s.stage.set(Stage::Notice);
+            super::cloud_screen::trigger(&app, crate::fork::cloud::hooks::Why::FinderBackup); // Fork: copy it to the cloud
             let (title, text) = match &result {
                 Ok(Ok(Some(_))) => ("Backup made", format!("Backed up to Saves Backup / Update Backups / {folder}. Restore saves lists it as \"Before update\".")),
                 Ok(Ok(None)) => ("Nothing to back up", "The folder holds no saves yet, so there was nothing to copy.".to_string()),

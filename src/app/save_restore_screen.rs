@@ -133,7 +133,7 @@ pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
 
 // -- One port ---------------------------------------------------------------------------------------
 
-fn show_port(app: &Rc<AppState>, router: &Router, port: &Port, back: Back) {
+pub(crate) fn show_port(app: &Rc<AppState>, router: &Router, port: &Port, back: Back) {
     let Some(targets) = targets_for(app, port) else {
         return message(app, router, &port_title(port), "This port's folder name is not usable, so its saves cannot be restored.");
     };
@@ -297,6 +297,7 @@ fn start_restore(app: &Rc<AppState>, router: &Router, port: Port, backup: Backup
                 RESTORE_TIMER.with(slint::Timer::stop);
                 RESTORE_RUNNING.with(|r| r.set(false));
                 app.install_runtime.installing.borrow_mut().remove(&key);
+                super::cloud_screen::trigger(&app, crate::fork::cloud::hooks::Why::RestoreBackup); // Fork: the safety backup made before the restore
                 if matches!(&*app.dialog_nav.dialogs.borrow(), DialogSlot::Progress(_)) {
                     close_current_dialog(&app, &router);
                 }

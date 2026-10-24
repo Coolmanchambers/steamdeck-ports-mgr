@@ -366,14 +366,15 @@ pub fn list_all_backups(saves_backup_dir: &Path) -> BTreeMap<String, Vec<Backup>
 
 // -- Leftovers ---------------------------------------------------------------------------------------
 
-/// Scratch folders a restore makes inside `Saves Backup` (`_restore_*`, `_restore_backup_*`) are removed
+/// Scratch folders a restore makes inside `Saves Backup` (`_restore_*`, `_restore_backup_*`, and the cloud
+/// download's `_cloud_download_*`) are removed
 /// when the restore ends; one left by a crash is removed here once it is a day old. They only ever hold
 /// copies (of current saves already zipped, or of an unpacked backup). Nothing else is touched.
 pub fn sweep_stale_staging(saves_backup_dir: &Path, now: SystemTime) {
     const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
     let Ok(read) = fs::read_dir(saves_backup_dir) else { return };
     for entry in read.filter_map(|e| e.ok()) {
-        let ours = entry.file_name().to_str().is_some_and(|n| n.starts_with("_restore_"));
+        let ours = entry.file_name().to_str().is_some_and(|n| n.starts_with("_restore_") || n.starts_with("_cloud_download_"));
         let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
         let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|age| age > DAY);
         if ours && is_dir && old {

@@ -672,13 +672,14 @@ enum SettingsEntry {
     ArtSources,
     BackupSaves,
     RestoreSaves,
+    CloudBackup,
     CheckUpdates,
     ForceUpdate,
     DiscordRpc,
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 16] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 17] = [
     SettingsEntry::SetupWizard,
     SettingsEntry::Themes,
     SettingsEntry::Language,
@@ -691,6 +692,7 @@ const SETTINGS_ENTRIES: [SettingsEntry; 16] = [
     SettingsEntry::ArtSources,
     SettingsEntry::BackupSaves,
     SettingsEntry::RestoreSaves,
+    SettingsEntry::CloudBackup,
     SettingsEntry::CheckUpdates,
     SettingsEntry::ForceUpdate,
     SettingsEntry::DiscordRpc,
@@ -716,6 +718,7 @@ fn settings_labels(app: &AppState) -> Vec<String> {
             SettingsEntry::ArtSources => "Artwork sources...".into(),
             SettingsEntry::BackupSaves => tr.invoke_label_backup_saves(),
             SettingsEntry::RestoreSaves => "Restore saves...".into(),
+            SettingsEntry::CloudBackup => "Cloud backup...".into(),
             SettingsEntry::CheckUpdates if state.release_sync => tr.invoke_label_check_updates_on(),
             SettingsEntry::CheckUpdates => tr.invoke_label_check_updates_off(),
             SettingsEntry::ForceUpdate => tr.invoke_label_force_update(),
@@ -769,6 +772,7 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                         SettingsEntry::ArtSources => super::art_screens::open_art_sources(&app, &router),
                         SettingsEntry::BackupSaves => start_save_backup(&app, &router),
                         SettingsEntry::RestoreSaves => super::save_restore_screen::open_from_settings(&app, &router),
+                        SettingsEntry::CloudBackup => super::cloud_screen::open_from_settings(&app, &router),
                         SettingsEntry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
                         _ => launch_self_update(&app, &router),
                     }

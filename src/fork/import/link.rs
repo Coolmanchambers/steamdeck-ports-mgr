@@ -103,7 +103,7 @@ pub fn confirm_card(checked: &Checked) -> Page<CardAction> {
         title: "Is this the project?".to_string(),
         ..Page::default()
     };
-    p.card = Some(Card { art: None, title: checked.name.clone(), lines });
+    p.card = Some(Card { art: None, qr: None, title: checked.name.clone(), lines });
     p.options = vec![
         PageOption { title: "Yes, use this".to_string(), detail: "It is added to your port list when the move starts".to_string(), choice: None, enabled: true, recommended: true, action: CardAction::UseIt },
         PageOption { title: "Change the link".to_string(), detail: "Go back and type another".to_string(), choice: None, enabled: true, recommended: false, action: CardAction::ChangeLink },

@@ -123,6 +123,12 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-24 | `.github/workflows/ci.yml` | The release build step gets `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` from repository secrets, only for a push to main (never branches, pull requests or the upstream-sync build) |
 | 2026-10-24 | `src/fork/mod.rs` | One line registering `cloud` |
 | 2026-10-24 | `Cargo.toml`, `Cargo.lock` | Added `sha2` and `qrcode` (default features off) for cloud backup; the lock gained eight crates, all MIT or Apache-2.0 |
+| 2026-10-24 | `src/app/dialogs.rs`, `src/app/mod.rs` | Settings gets "Cloud backup..." (`SettingsEntry::CloudBackup`, opens `cloud_screen::open_from_settings`); one module line |
+| 2026-10-24 | `src/app/events.rs` | `cloud_screen::trigger` after Backup Saves finishes and after an install finishes or fails (the update backup), so a backup is copied to the cloud when signed in |
+| 2026-10-24 | `src/app/save_restore_screen.rs`, `src/app/save_finder_screen.rs` | `show_port` made `pub(crate)` (the cloud screens hand a copied backup to Restore saves); `cloud_screen::trigger` after a restore's safety backup and after the save finder's Back up now |
+| 2026-10-24 | `src/fork/save_restore/mod.rs` | The stale-scratch sweep also removes `_cloud_download_*` folders a crash left in `Saves Backup` (a day old) |
+| 2026-10-24 | `src/fork/page.rs`, `src/fork/import/cards.rs`, `src/fork/import/link.rs`, `src/app/page_dialog.rs` | `Card.qr`: a QR code drawn where the cover goes (the cloud sign-in page); the two other `Card` constructors pass `None`; `PageHandle::is_open` |
+| 2026-10-24 | `src/main.rs` | One line: `cloud_screen::at_start` (the catch-up pass and the ten-minute check; nothing runs unless signed in) |
 
 Files added by this fork:
 
@@ -219,6 +225,7 @@ Files added by this fork:
 | 2026-10-24 | `src/fork/save_restore/mod.rs`, `src/fork/save_restore/broad.rs`, `src/core/save_backup.rs` | Save guards (branch `save-guards`): Restore checks where a linked save folder leads (`link_problem`) before the safety backup copies anything; `backup_before_update` refuses a save folder that holds many apps' files and a link that leads to one (no copy, no staging); `userdata` and Flatpak roots (`~/.var/app/<id>`, its `data`/`config`/`cache`) join the refused folders; the ports library is passed to `folder_problem`/`container_reason` explicitly |
 | 2026-10-24 | `README.md` | One line in the note at the top linking `PRIVACY.md` (new file, the fork's own) |
 | 2026-10-24 | `src/fork/cloud/` | Cloud backup of the save backups to Google Drive (branch `cloud-backup`): `tokens` (`cloud-tokens.json`, mode 0600), `record` (`cloud-backup.json`), `local`/`plan`/`sync` (what to upload and one pass), `service` (the trait and failure kinds; no delete), `net`/`oauth` (HTTPS client, device-code sign-in and refresh), `build` (the Google client compiled in from CI secrets), `sha256`, `log` |
+| 2026-10-24 | `src/app/cloud_screen.rs` | Settings > Cloud backup: the pages, the sign-in, the status card, the restore list and the passes the hooks start |
 
 ## Add to Steam (Settings menu)
 

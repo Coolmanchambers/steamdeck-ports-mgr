@@ -39,6 +39,8 @@ pub struct PageButton<A> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
     pub art: Option<ArtRef>,
+    /// A QR code shown where the cover goes (the cloud sign-in page); wins over `art`.
+    pub qr: Option<crate::fork::cloud::qr::QrMatrix>,
     pub title: String,
     pub lines: Vec<String>,
 }
@@ -345,7 +347,7 @@ mod tests {
     fn the_covers_of_a_page_are_listed_once_each_card_first() {
         let art = |f: &str| Some(ArtRef { folder: f.into(), url: None });
         let mut p = card_page();
-        p.card = Some(Card { art: art("dusk"), title: "Dusklight".into(), lines: vec![] });
+        p.card = Some(Card { art: art("dusk"), qr: None, title: "Dusklight".into(), lines: vec![] });
         p.tiles = vec![
             Tile::shown(art("soh"), "SoH"),
             Tile::shown(art("dusk"), "Dusklight"),

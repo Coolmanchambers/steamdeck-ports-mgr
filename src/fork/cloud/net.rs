@@ -152,6 +152,7 @@ fn classify_transport(e: &ureq::Error) -> ServiceError {
     }
 }
 
+#[derive(Clone)]
 pub struct Net {
     agent: ureq::Agent,
     plain_http_to_this_machine: bool,

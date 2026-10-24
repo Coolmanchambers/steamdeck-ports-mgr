@@ -1,6 +1,7 @@
 
 pub mod art_screens;
 pub mod cards;
+pub mod cloud_screen;
 pub mod deck_ready_screen;
 pub mod dialogs;
 pub mod events;

@@ -71,6 +71,12 @@ fn to_image(thumb: &crate::fork::art::thumbs::Thumb) -> slint::Image {
     slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&thumb.rgba, thumb.width, thumb.height))
 }
 
+/// The QR code of a card as a picture: 6 pixels a square and a white border of 4 squares around it.
+fn qr_image(qr: &crate::fork::cloud::qr::QrMatrix) -> slint::Image {
+    let (width, height, rgba) = qr.rgba(6, 4);
+    slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, width, height))
+}
+
 fn model<T: Clone + 'static>(items: Vec<T>) -> slint::ModelRc<T> {
     slint::ModelRc::new(slint::VecModel::from(items))
 }
@@ -83,7 +89,7 @@ fn image_of(images: &HashMap<String, Option<slint::Image>>, art: &Option<ArtRef>
 fn apply_art<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, images: &HashMap<String, Option<slint::Image>>) {
     if let Some(card) = &page.card {
         d.set_card(WizardCard {
-            image: image_of(images, &card.art),
+            image: card.qr.as_ref().map_or_else(|| image_of(images, &card.art), qr_image),
             title: card.title.clone().into(),
             lines: model(card.lines.iter().map(|l| l.clone().into()).collect::<Vec<slint::SharedString>>()),
         });
@@ -202,6 +208,11 @@ pub(crate) struct PageHandle<A> {
 }
 
 impl<A: Clone + 'static> PageHandle<A> {
+    /// True while the window is still on screen (nothing else replaced it).
+    pub(crate) fn is_open(&self) -> bool {
+        self.weak.upgrade().is_some_and(|d| d.window().is_visible())
+    }
+
     /// Draws `page` in the same window; the cursor stays where it was when that place still exists. False when the
     /// window is gone (something else replaced it), so the owner can stop updating.
     pub(crate) fn update(&self, page: Page<A>) -> bool {

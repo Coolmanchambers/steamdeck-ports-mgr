@@ -51,12 +51,16 @@ fn entries(dir: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-fn consider(scan: &mut Scan, rel: String, path: PathBuf, now: u64, min_age: u64) {
+fn consider(scan: &mut Scan, rel: String, path: PathBuf, now: u64, min_age: u64, known: &dyn Fn(&str, u64, u64) -> bool) {
     let Ok(meta) = fs::symlink_metadata(&path) else { return };
     if !meta.file_type().is_file() || meta.len() == 0 {
         return;
     }
     let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+    // Already uploaded and unchanged: not looked at again (no need to open every old zip on every pass).
+    if known(&rel, meta.len(), mtime) {
+        return;
+    }
     // A time in the future counts as new: the clock moved, not the file.
     let age = now.saturating_sub(mtime);
     let too_new = mtime > now || age < min_age;
@@ -73,13 +77,14 @@ fn consider(scan: &mut Scan, rel: String, path: PathBuf, now: u64, min_age: u64)
     }
 }
 
-pub fn scan(saves_backup_dir: &Path, now: u64, min_age: u64) -> Scan {
+/// `known(path, size, modified)` says a zip is already uploaded unchanged; such a zip is left out of the scan.
+pub fn scan(saves_backup_dir: &Path, now: u64, min_age: u64, known: &dyn Fn(&str, u64, u64) -> bool) -> Scan {
     let mut scan = Scan::default();
     let zip_name = |name: &str| plain_name(name) && name.len() > 4 && name.ends_with(".zip");
     let global = saves_backup_dir.join(GLOBAL_DIR);
     if is_real_dir(&global) {
         for (name, path) in entries(&global).into_iter().filter(|(n, _)| zip_name(n)) {
-            consider(&mut scan, format!("{GLOBAL_DIR}/{name}"), path, now, min_age);
+            consider(&mut scan, format!("{GLOBAL_DIR}/{name}"), path, now, min_age, known);
         }
     }
     for top in [UPDATE_DIR, RESTORE_DIR] {
@@ -89,7 +94,7 @@ pub fn scan(saves_backup_dir: &Path, now: u64, min_age: u64) -> Scan {
         }
         for (folder, folder_path) in entries(&top_dir).into_iter().filter(|(n, p)| plain_name(n) && is_real_dir(p)) {
             for (name, path) in entries(&folder_path).into_iter().filter(|(n, _)| zip_name(n)) {
-                consider(&mut scan, format!("{top}/{folder}/{name}"), path, now, min_age);
+                consider(&mut scan, format!("{top}/{folder}/{name}"), path, now, min_age, known);
             }
         }
     }
@@ -161,6 +166,10 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::*;
     use super::*;
+
+    fn scan(dir: &Path, now: u64, min_age: u64) -> Scan {
+        super::scan(dir, now, min_age, &|_, _, _| false)
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("dpm_cloud_local_{}_{}", std::process::id(), name));
@@ -264,6 +273,19 @@ mod tests {
         fs::create_dir_all(dir.join("Update Backups")).unwrap();
         std::os::unix::fs::symlink(&other, dir.join("Update Backups/linked")).unwrap();
         assert!(scan(&dir, NOW, 60).zips.is_empty());
+    }
+
+    #[test]
+    fn an_already_uploaded_zip_is_left_out_without_being_opened() {
+        let dir = temp_dir("known");
+        let p = dir.join("Global Backups/a.zip");
+        write_zip(&p, "a", b"data");
+        old(&p);
+        let size = fs::metadata(&p).unwrap().len();
+        let known = |rel: &str, s: u64, m: u64| rel == "Global Backups/a.zip" && s == size && m == NOW - 3_600;
+        assert_eq!(super::scan(&dir, NOW, 60, &known), Scan::default());
+        let changed = |rel: &str, s: u64, _m: u64| rel == "Global Backups/a.zip" && s == size + 1;
+        assert_eq!(super::scan(&dir, NOW, 60, &changed).zips.len(), 1, "a different size is looked at again");
     }
 
     #[test]

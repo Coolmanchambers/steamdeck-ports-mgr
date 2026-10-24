@@ -10,21 +10,31 @@
 //! - `local`, `plan`, `sync`: which zips are candidates, what to upload, and one pass that does it.
 //! - `service`: the trait every cloud service implements, and the failure kinds the screens speak of.
 //! - `net`, `oauth`: the HTTPS client and the device-code sign-in with refresh.
-//! - `build`: the Google client id and secret a build was compiled with (CI secrets), or "not set up".
-//!
-//! Google Drive itself, the screens and the hooks that start a pass come in the next modules.
+//! - `build`, `endpoints`: the Google client id and secret a build was compiled with (CI secrets) or "not set
+//!   up", and where the calls go (Google; a mock server or a demo folder only in test and debug builds).
+//! - `store`: the two files under one lock, shared by the screens and the upload pass.
+//! - `hooks`: when a pass runs. `restore`: copying a backup back into `Saves Backup`, never over a local file.
+//! - `view`, `qr`: the pages of Settings > Cloud backup as data, and the sign-in QR code.
 
 pub mod build;
-pub mod log;
+#[cfg(any(test, debug_assertions))]
+pub mod demo;
+pub mod endpoints;
+pub mod hooks;
 pub mod local;
+pub mod log;
 pub mod net;
 pub mod oauth;
 pub mod plan;
+pub mod qr;
 pub mod record;
+pub mod restore;
 pub mod service;
 pub mod sha256;
+pub mod store;
 pub mod sync;
 pub mod tokens;
+pub mod view;
 
 #[cfg(test)]
 pub mod fake;

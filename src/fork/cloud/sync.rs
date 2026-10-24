@@ -2,13 +2,13 @@
 //! it, and write what happened in the record after every file (so an interrupted pass loses nothing).
 //!
 //! A pass stops at the first failure of the service and says why; the caller decides when to try again.
-//! Several services run one after the other with a pass each (`run_all`), so one failing never stops the
+//! Several services run one after the other with a pass each (`run_services`), so one failing never stops the
 //! other, and each keeps its own times and error in its own part of the record.
 
 use super::local::{self, LocalZip};
 use super::plan::{self, Candidate, Step};
 use super::record::{ServiceRecord, Uploaded};
-use super::service::{CloudService, ErrorKind, ServiceError};
+use super::service::{CloudService, ErrorKind, ServiceError, ServiceId};
 use super::sha256::file_sha256;
 use std::fs;
 use std::path::Path;
@@ -58,7 +58,7 @@ pub fn run_pass(
     save: &mut dyn FnMut(&ServiceRecord),
 ) -> PassReport {
     let mut report = PassReport::default();
-    let scan = local::scan(input.saves_backup_dir, input.now, input.min_age);
+    let scan = local::scan(input.saves_backup_dir, input.now, input.min_age, &|rel, size, mtime| rec.uploaded.get(rel).is_some_and(|u| u.size == size && u.mtime == mtime));
     report.deferred = scan.deferred;
     report.broken = scan.broken;
     let to_check: Vec<&LocalZip> = scan.zips.iter().filter(|z| plan::needs_check(z, rec)).collect();
@@ -144,30 +144,21 @@ fn finish(rec: &mut ServiceRecord, input: &PassInput, report: PassReport, save: 
     report
 }
 
-/// What a signed-in service needs to run a pass: its service object and its part of the record.
-pub struct Job {
-    pub service: Box<dyn CloudService>,
-}
-
-/// Every service in turn. A failure of one is in its report; the next still runs.
-pub fn run_all(
-    jobs: &mut [Job],
-    record: &mut super::record::Record,
+/// Every service in turn, each with its own part of the record (`load` reads it, `persist` writes it after
+/// every file). A failure of one is in its report; the next still runs.
+pub fn run_services(
+    services: &mut [Box<dyn CloudService>],
+    load: &dyn Fn(ServiceId) -> ServiceRecord,
+    persist: &mut dyn FnMut(ServiceId, &ServiceRecord),
     input: &PassInput,
     cancel: &dyn Fn() -> bool,
     say: &mut dyn FnMut(&str),
-    save: &mut dyn FnMut(&super::record::Record),
-) -> Vec<(super::service::ServiceId, PassReport)> {
+) -> Vec<(ServiceId, PassReport)> {
     let mut out = Vec::new();
-    for job in jobs.iter_mut() {
-        let id = job.service.id();
-        let mut part = record.service(id);
-        let report = run_pass(job.service.as_mut(), &mut part, input, cancel, say, &mut |p| {
-            record.set_service(id, p.clone());
-            save(record);
-        });
-        record.set_service(id, part);
-        save(record);
+    for service in services.iter_mut() {
+        let id = service.id();
+        let mut part = load(id);
+        let report = run_pass(service.as_mut(), &mut part, input, cancel, say, &mut |p| persist(id, p));
         out.push((id, report));
     }
     out

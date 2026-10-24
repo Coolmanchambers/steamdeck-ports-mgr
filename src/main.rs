@@ -240,6 +240,7 @@ fn main() {
     let _steam_queue_watch = app::steam_screens::start_queue_watch(&app, &router); // Fork: Steam changes queued from Game Mode
     app::ports_folder_screen::startup_check(&app, &router, ports_folder); // Fork: ports folder missing (SD card out?)
     app::setup_wizard_screen::start_if_first_run(&app, &router); // Fork: the first-run setup wizard
+    app::cloud_screen::at_start(&app); // Fork: cloud backup catch-up and its timers (nothing happens unless signed in)
 
     // Fork: with no tray host (Game Mode) the tray is skipped and Close quits instead of hiding.
     let _tray = start_tray(&app, &router);
