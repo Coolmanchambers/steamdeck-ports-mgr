@@ -189,7 +189,7 @@ pub fn confirm_page(c: &Checked, index: usize, count: usize) -> Page<ConfirmActi
         large: true,
         header: crate::fork::import::cards::HEADER.to_string(),
         step_text: format!("Port {} of {count}", index + 1),
-        title: format!("Does {} start from its new place?", c.copy.name),
+        title: "Does it start from its new place?".to_string(),
         ..Page::default()
     };
     p.card = Some(Card {
@@ -315,7 +315,8 @@ mod tests {
     fn the_confirm_card_shows_the_port_and_starts_on_yes() {
         let c = waiting("Ocarina of Time", Readiness::StartOnce);
         let p = confirm_page(&c, 1, 3);
-        assert_eq!(p.title, "Does Ocarina of Time start from its new place?");
+        assert_eq!(p.title, "Does it start from its new place?");
+        assert_eq!(p.card.as_ref().unwrap().title, "Ocarina of Time", "the port is named on its card");
         assert_eq!((p.step_text.as_str(), p.window_title.as_str()), ("Port 2 of 3", "Import ports: old copies: does it start"));
         assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [ConfirmAction::Yes, ConfirmAction::NotYet]);
         assert_eq!(p.options[0].title, "Yes, it starts and my saves are there");

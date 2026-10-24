@@ -316,7 +316,7 @@ pub fn not_ready_reason(entry: &OldCopy, readiness: Readiness) -> Option<String>
 }
 
 /// The latest record for the same old copy (a confirm or a launch may have been recorded since `entry` was read).
-fn current(entry: &OldCopy, config_dir: &Path) -> OldCopy {
+pub fn current(entry: &OldCopy, config_dir: &Path) -> OldCopy {
     load(config_dir).ok().and_then(|list| list.into_iter().find(|e| e.old_path == entry.old_path)).unwrap_or_else(|| entry.clone())
 }
 

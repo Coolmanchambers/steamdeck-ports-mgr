@@ -960,8 +960,10 @@ impl RemovalParts {
         )
     }
 
+    /// Read from the record as it is now (a yes or a long enough run may have been recorded since `entry` was read).
     fn readiness(&self, entry: &OldCopy) -> old_copies::Readiness {
-        old_copies::readiness(entry, &old_copies::steam_view(entry, &self.home, &self.config_dir))
+        let entry = old_copies::current(entry, &self.config_dir);
+        old_copies::readiness(&entry, &old_copies::steam_view(&entry, &self.home, &self.config_dir))
     }
 }
 
