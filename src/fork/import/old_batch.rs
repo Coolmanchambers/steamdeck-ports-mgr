@@ -71,16 +71,47 @@ pub enum ConfirmAction {
 
 pub const WINDOW_TITLE: &str = "Import ports: old copies";
 
+/// Where the page was opened from, for its header and window title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Origin {
+    /// After an import (and the setup wizard, whose header replaces this one).
+    #[default]
+    Import,
+    /// Settings > Ports folder: after a move, "Finish switching", or an entry chosen in Old copies.
+    PortsFolder,
+}
+
+impl Origin {
+    pub fn header(self) -> &'static str {
+        match self {
+            Origin::Import => crate::fork::import::cards::HEADER,
+            Origin::PortsFolder => "Ports folder",
+        }
+    }
+
+    pub fn window_title(self) -> &'static str {
+        match self {
+            Origin::Import => WINDOW_TITLE,
+            Origin::PortsFolder => "Ports folder: old copies",
+        }
+    }
+}
+
 /// Said on the last page of the setup wizard when no old copy is ready yet.
 pub const KEPT_UNTIL_CHECKED: &str = "Old copies are kept until each port has been checked.";
 
 pub struct Batch {
     pub items: Vec<Checked>,
+    pub origin: Origin,
 }
 
 impl Batch {
     pub fn new(items: Vec<Checked>) -> Batch {
-        Batch { items }
+        Batch { items, origin: Origin::Import }
+    }
+
+    pub fn from(items: Vec<Checked>, origin: Origin) -> Batch {
+        Batch { items, origin }
     }
 
     pub fn removable(&self) -> Vec<&Checked> {
@@ -156,7 +187,7 @@ impl Batch {
     pub fn page(&self) -> Page<BatchAction> {
         let removable = self.removable();
         let n = removable.len();
-        let mut p = Page::<BatchAction> { window_title: WINDOW_TITLE.to_string(), large: true, header: crate::fork::import::cards::HEADER.to_string(), ..Page::default() };
+        let mut p = Page::<BatchAction> { window_title: self.origin.window_title().to_string(), large: true, header: self.origin.header().to_string(), ..Page::default() };
         p.facts = self.items.iter().map(Checked::status_line).collect();
         p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
         p.initial = Focus::Option(0);
@@ -183,11 +214,11 @@ impl Batch {
 }
 
 /// "Does Majora's Mask start from its new place?": one card, `index` of `count`.
-pub fn confirm_page(c: &Checked, index: usize, count: usize) -> Page<ConfirmAction> {
+pub fn confirm_page(c: &Checked, index: usize, count: usize, origin: Origin) -> Page<ConfirmAction> {
     let mut p = Page::<ConfirmAction> {
-        window_title: format!("{WINDOW_TITLE}: does it start"),
+        window_title: format!("{}: does it start", origin.window_title()),
         large: true,
-        header: crate::fork::import::cards::HEADER.to_string(),
+        header: origin.header().to_string(),
         step_text: format!("Port {} of {count}", index + 1),
         title: "Does it start from its new place?".to_string(),
         ..Page::default()
@@ -314,13 +345,23 @@ mod tests {
     #[test]
     fn the_confirm_card_shows_the_port_and_starts_on_yes() {
         let c = waiting("Ocarina of Time", Readiness::StartOnce);
-        let p = confirm_page(&c, 1, 3);
+        let p = confirm_page(&c, 1, 3, Origin::Import);
         assert_eq!(p.title, "Does it start from its new place?");
         assert_eq!(p.card.as_ref().unwrap().title, "Ocarina of Time", "the port is named on its card");
         assert_eq!((p.step_text.as_str(), p.window_title.as_str()), ("Port 2 of 3", "Import ports: old copies: does it start"));
         assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [ConfirmAction::Yes, ConfirmAction::NotYet]);
         assert_eq!(p.options[0].title, "Yes, it starts and my saves are there");
         assert!(p.card.as_ref().unwrap().lines[0].contains("check that your saves are there"));
+    }
+
+    #[test]
+    fn from_settings_the_page_says_ports_folder_not_import_ports() {
+        let c = waiting("SoH", Readiness::StartOnce);
+        let p = Batch::from(vec![c.clone()], Origin::PortsFolder).page();
+        assert_eq!((p.header.as_str(), p.window_title.as_str()), ("Ports folder", "Ports folder: old copies"));
+        let card = confirm_page(&c, 0, 1, Origin::PortsFolder);
+        assert_eq!((card.header.as_str(), card.window_title.as_str()), ("Ports folder", "Ports folder: old copies: does it start"));
+        assert_eq!(Batch::new(vec![c]).page().header, "Import ports");
     }
 
     #[test]

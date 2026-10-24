@@ -460,7 +460,7 @@ fn old_copies_step(app: &Rc<AppState>, router: &Router) {
     close_current_dialog(app, router);
     let copies: std::collections::VecDeque<_> = old_copies_now(app).into();
     OLD_COPIES_NOTE.with(|n| *n.borrow_mut() = None);
-    super::ports_folder_screen::prompt_old_copies_batch_then(app, router, copies, String::new(), |app, router, text| {
+    super::ports_folder_screen::prompt_old_copies_batch_then(app, router, copies, String::new(), super::ports_folder_screen::Origin::Import, |app, router, text| {
         if let Some(text) = text.filter(|t| t.contains(super::ports_folder_screen::CHECK_FAILED)) {
             OLD_COPIES_NOTE.with(|n| *n.borrow_mut() = Some(text));
         }

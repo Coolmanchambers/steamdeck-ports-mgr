@@ -1116,7 +1116,7 @@ fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, co
     // In the setup wizard the old copies are asked about once, on its own page near the end.
     let copies = if ctx.from_wizard { VecDeque::new() } else { copies };
     let ctx = ctx.clone();
-    prompt_old_copies_batch_then(app, router, copies, text, move |app, router, text| match text {
+    prompt_old_copies_batch_then(app, router, copies, text, super::ports_folder_screen::Origin::Import, move |app, router, text| match text {
         Some(text) => conclude(app, router, &ctx, text, &keys, wants_game_files, outcome.clone()),
         // The questions were abandoned because another dialog took the screen: nothing more is shown here.
         None => ctx.finish_quiet(app, router),

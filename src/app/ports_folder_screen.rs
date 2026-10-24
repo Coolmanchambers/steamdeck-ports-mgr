@@ -909,7 +909,7 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
 
 /// The old copies page for `copies` (nothing is removed unless chosen there), then `summary` with what happened.
 fn show_old_copies_then_summary(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String) {
-    prompt_old_copies_batch_then(app, router, copies, summary, |app, router, text| {
+    prompt_old_copies_batch_then(app, router, copies, summary, Origin::PortsFolder, |app, router, text| {
         if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
             message(app, router, &text);
         }
@@ -919,7 +919,7 @@ fn show_old_copies_then_summary(app: &Rc<AppState>, router: &Router, copies: Vec
 // -- Old copies -----------------------------------------------------------------------------------
 
 mod batch;
-pub(crate) use batch::{note_launch_end, prompt_old_copies_batch_then, CHECK_FAILED};
+pub(crate) use batch::{note_launch_end, prompt_old_copies_batch_then, Origin, CHECK_FAILED};
 
 /// Everything the removal check needs, owned, so it can also run on the worker thread.
 struct RemovalParts {
@@ -998,7 +998,7 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
                 );
             }
             // The old copies page for this one: its status, "It starts fine..." and, when ready, Remove.
-            prompt_old_copies_batch_then(app, router, VecDeque::from([entry.clone()]), String::new(), |app, router, text| {
+            prompt_old_copies_batch_then(app, router, VecDeque::from([entry.clone()]), String::new(), Origin::PortsFolder, |app, router, text| {
                 match text.filter(|t| !t.trim().is_empty()) {
                     Some(text) => {
                         let (app2, router2) = (app.clone(), router.clone());

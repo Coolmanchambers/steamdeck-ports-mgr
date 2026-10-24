@@ -13,6 +13,7 @@
 use super::*;
 use crate::fork::art::thumbs::ArtRef;
 use crate::fork::import::old_batch::{confirm_page, Batch, BatchAction, Checked, ConfirmAction};
+pub(crate) use crate::fork::import::old_batch::Origin;
 use crate::app::page_dialog::{show_page, Handlers};
 
 /// Said when the old copies could not be checked at all (the setup wizard shows that text once, on its last page).
@@ -27,7 +28,7 @@ fn art_of(app: &AppState, key: &str) -> Option<ArtRef> {
 }
 
 /// Asks about `copies` on one page, then `then(Some(summary + what happened))`.
-pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String, then: impl Fn(&Rc<AppState>, &Router, Option<String>) + 'static) {
+pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String, origin: Origin, then: impl Fn(&Rc<AppState>, &Router, Option<String>) + 'static) {
     let then: Then = Rc::new(then);
     if copies.is_empty() {
         return then(app, router, Some(summary));
@@ -90,7 +91,7 @@ pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, 
             match result {
                 Ok(checked) => {
                     let items = checked.into_iter().map(|(copy, check, ready)| Checked { art: art_of(&app2, &copy.port_key), copy, check, ready }).collect();
-                    ask(&app2, &router2, Rc::new(Batch::new(items)), summary, then);
+                    ask(&app2, &router2, Rc::new(Batch::from(items, origin)), summary, then);
                 }
                 Err(e) => then(&app2, &router2, Some(format!("{summary}\n\nThe old copies {CHECK_FAILED} ({e}), so they stay. Remove them later in Settings, Ports folder, Old copies.").trim_start().to_string())),
             }
@@ -171,11 +172,12 @@ fn confirm_cards(app: &Rc<AppState>, router: &Router, asks: Rc<Vec<Checked>>, in
             close_current_dialog(app, router);
             let copies: VecDeque<OldCopy> = batch.items.iter().map(|c| c.copy.clone()).collect();
             let then = then.clone();
-            prompt_old_copies_batch_then(app, router, copies, summary.as_ref().clone(), move |app, router, text| then(app, router, text));
+            let origin = batch.origin;
+            prompt_old_copies_batch_then(app, router, copies, summary.as_ref().clone(), origin, move |app, router, text| then(app, router, text));
         }
     };
     let Some(item) = asks.get(index) else { return again(app, router) };
-    let page = confirm_page(item, index, asks.len());
+    let page = confirm_page(item, index, asks.len(), batch.origin);
     let page = if crate::app::setup_wizard_screen::active() { page.in_wizard(4, crate::fork::setup_wizard::flow::Step::COUNTED) } else { page };
     let back: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(again.clone());
     let handlers = Handlers {
