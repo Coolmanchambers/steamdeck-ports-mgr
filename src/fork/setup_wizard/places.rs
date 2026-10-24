@@ -27,19 +27,24 @@ pub struct QuickChoice {
     pub title: String,
     /// The folder, and what is known about it ("new folder", free space, a file system that cannot hold ports).
     pub detail: String,
+    /// What is known about it in plain words, without the folder: "58 GB free", "a new folder will be made".
+    pub note: String,
     pub path: PathBuf,
     pub kind: Kind,
     /// False for a drive whose file system cannot hold ports (exFAT, FAT, NTFS): shown, not selectable.
     pub usable: bool,
 }
 
-fn notes(path: &Path, fs_type: Option<&str>) -> String {
-    let note = match fs_type {
+fn plain_note(path: &Path, fs_type: Option<&str>) -> Option<String> {
+    match fs_type {
         Some(fs) if is_non_linux_fs(fs) => Some(format!("{} cannot hold ports", fs_label(fs))),
-        _ if !path.is_dir() => Some("new folder".to_string()),
+        _ if !path.is_dir() => Some("a new folder will be made".to_string()),
         _ => free_bytes(path).map(|free| format!("{} free", human_bytes(free))),
-    };
-    note.map(|n| format!(" - {n}")).unwrap_or_default()
+    }
+}
+
+fn notes(path: &Path, fs_type: Option<&str>) -> String {
+    plain_note(path, fs_type).map(|n| format!(" - {}", n.replace("a new folder will be made", "new folder"))).unwrap_or_default()
 }
 
 /// Usable drives first (SD cards before USB drives, as `removable_drives` sorts them), then the internal
@@ -56,6 +61,7 @@ pub fn quick_choices(current: &Path, internal_default: &Path, drives: &[Drive], 
         let choice = QuickChoice {
             title: if can_hold { drive.title() } else { format!("{} (can't be used)", drive.title()) },
             detail: detail(&path, Some(&drive.fs_type)),
+            note: plain_note(&path, Some(&drive.fs_type)).unwrap_or_default(),
             path,
             kind: if drive.kind == "SD card" { Kind::SdCard } else { Kind::OtherDrive },
             usable: can_hold,
@@ -66,7 +72,7 @@ pub fn quick_choices(current: &Path, internal_default: &Path, drives: &[Drive], 
         if usable.iter().chain(unusable.iter()).any(|c| c.path == path) {
             return;
         }
-        usable.push(QuickChoice { title: title.to_string(), detail: detail(path, None), path: path.to_path_buf(), kind, usable: true });
+        usable.push(QuickChoice { title: title.to_string(), detail: detail(path, None), note: plain_note(path, None).unwrap_or_default(), path: path.to_path_buf(), kind, usable: true });
     };
     add("Internal storage", internal_default, Kind::Internal);
     add("Current folder", current, Kind::Current);
@@ -167,5 +173,23 @@ mod tests {
         let internal = t.path().join("Library");
         let choices = quick_choices(&internal, &internal, &[], Some(&internal));
         assert_eq!(choices.iter().map(|c| &c.path).collect::<Vec<_>>(), [&internal]);
+    }
+
+    #[test]
+    fn each_choice_has_a_plain_note_without_the_folder() {
+        let t = temp();
+        let sd = t.path().join("SD");
+        fs::create_dir_all(&sd).unwrap();
+        let internal = t.path().join("Library");
+        fs::create_dir_all(&internal).unwrap();
+        let bad = t.path().join("EXFAT");
+        fs::create_dir_all(&bad).unwrap();
+        let drives = [drive(&sd, "SD card", "SD", "ext4"), drive(&bad, "SD card", "EXFAT", "exfat")];
+        let choices = quick_choices(&internal, &internal, &drives, None);
+        let notes: Vec<(&str, &str)> = choices.iter().map(|c| (c.title.as_str(), c.note.as_str())).collect();
+        assert_eq!(notes[0], ("SD card (SD)", "a new folder will be made"));
+        assert!(notes[1].1.ends_with(" free"), "{notes:?}");
+        assert!(notes[2].1.contains("exFAT cannot hold ports"), "{notes:?}");
+        assert!(choices.iter().all(|c| !c.note.contains('/')), "no path in a note");
     }
 }

@@ -181,6 +181,18 @@ thread_local! {
     /// Cancels the import that is running (Close and Quit ask for this first).
     static IMPORT_CANCEL: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
     static QUIT_AFTER_IMPORT: Cell<bool> = const { Cell::new(false) };
+    /// The user went back from the first page of the wizard's Import ports (not skip, not finished).
+    static WENT_BACK: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Noted by the first page when B is pressed in the setup wizard: the wizard goes back to its question before.
+pub(super) fn note_went_back() {
+    WENT_BACK.with(|w| w.set(true));
+}
+
+/// Whether the last visit ended with B on the first page; read once.
+pub(crate) fn take_went_back() -> bool {
+    WENT_BACK.with(|w| w.replace(false))
 }
 
 /// True while the scan or the import runs on its worker thread, including after B closed its progress list and the
@@ -947,6 +959,8 @@ fn offer_link(app: &Rc<AppState>, router: &Router, requests: Vec<MoveRequest>, p
 /// in (`rom_screens::after_ports_added_then`, which shows the summary at the top of its list when it has
 /// something to look for), else the summary alone, or Continue in the wizard.
 fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, copies: VecDeque<old_copies::OldCopy>, keys: Vec<String>, wants_game_files: bool, outcome: Outcome) {
+    // In the setup wizard the old copies are asked about once, on its own page near the end.
+    let copies = if ctx.from_wizard { VecDeque::new() } else { copies };
     let ctx = ctx.clone();
     prompt_old_copies_batch_then(app, router, copies, text, move |app, router, text| match text {
         Some(text) => conclude(app, router, &ctx, text, &keys, wants_game_files, outcome.clone()),

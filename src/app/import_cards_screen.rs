@@ -108,7 +108,13 @@ pub(super) fn show_found(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
     };
     let back = {
         let ctx = ctx.clone();
-        move |app: &Rc<AppState>, router: &Router| leave(app, router, &ctx)
+        move |app: &Rc<AppState>, router: &Router| {
+            // In the setup wizard this page is the first of its Your ports step: B goes back to the question before.
+            if ctx.from_wizard {
+                super::import_screen::note_went_back();
+            }
+            leave(app, router, &ctx)
+        }
     };
     show_or_end(app, router, ctx, page, handlers(ctx, act, back));
 }

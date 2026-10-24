@@ -1,5 +1,5 @@
 //! The setup wizard's screen: one page per view (`ui/fork/setup-wizard.slint`: header with the step
-//! count and a progress bar, a title, wrapped text, a summary card, a few real options and a footer of
+//! count and a progress bar, a title, a sentence or two, a summary card, up to three big choices and a footer of
 //! buttons), drawn from `crate::fork::setup_wizard::text::Page` by `page_dialog::show_page`.
 //!
 //! It opens by itself at the first start (`start_if_first_run`, called once from `main.rs`) and any
@@ -51,8 +51,8 @@ thread_local! {
     static QUIET: Cell<u32> = const { Cell::new(0) };
     /// The folder an earlier build recorded, offered in this run only.
     static EARLIER: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
-    /// The ports folder when this wizard run started.
-    static STARTED: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    /// The old copies already listed when this wizard run started: only the ones added since are asked about.
+    static OLD_AT_START: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
 }
 
 fn settings_path(app: &AppState) -> PathBuf {
@@ -64,6 +64,11 @@ fn settings_path(app: &AppState) -> PathBuf {
 /// Called once at start: opens the wizard when setup was never finished (new installs and installs
 /// from before the wizard existed). It waits while another startup dialog (the missing ports folder
 /// message, which the Steam queue offer waits for too) is due or open.
+/// A wizard run is open (the screens it hands over to keep their old copies for its last question).
+pub(crate) fn active() -> bool {
+    SESSION.with(|s| s.borrow().is_some())
+}
+
 pub(crate) fn start_if_first_run(app: &Rc<AppState>, router: &Router) {
     if !crate::fork::setup_wizard::opens_at_start(&settings_path(app)) {
         return;
@@ -98,7 +103,7 @@ pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
 fn begin(app: &Rc<AppState>, router: &Router, mode: Mode) {
     let session: Session = Rc::new(RefCell::new(Wizard::new(mode)));
     EARLIER.with(|e| *e.borrow_mut() = take_earlier_choice(app));
-    STARTED.with(|s| *s.borrow_mut() = Some(app.paths.library_dir()));
+    OLD_AT_START.with(|o| *o.borrow_mut() = old_copy_paths(app));
     SESSION.with(|s| *s.borrow_mut() = Some(session.clone()));
     QUIET.with(|q| q.set(0));
     start_watch(app, router);
@@ -129,7 +134,7 @@ fn with_wizard(app: &Rc<AppState>, router: &Router, f: impl FnOnce(&mut Wizard, 
 /// is left alone.
 pub(crate) fn resume_instead_of_menu(app: &Rc<AppState>, router: &Router, menu: Menu) -> bool {
     let waiting = SESSION.with(|s| {
-        s.borrow().as_ref().is_some_and(|w| w.try_borrow().is_ok_and(|w| w.handoff.is_some_and(|h| flow::menu_returns_to_wizard(h, menu))))
+        s.borrow().as_ref().is_some_and(|w| w.try_borrow().is_ok_and(|w| w.handoff.as_ref().is_some_and(|h| flow::menu_returns_to_wizard(h, menu))))
     });
     if waiting {
         with_wizard(app, router, |w, ui| flow::resume(w, ui));
@@ -175,13 +180,11 @@ fn context(app: &AppState) -> Context {
     let internal_default = crate::fork::ports_folder::default_dir(&app.paths.config_dir);
     let drives = removable_drives(&system_mounts(), &default_media_roots());
     let earlier = EARLIER.with(|e| e.borrow().clone());
-    let started_with = STARTED.with(|s| s.borrow().clone()).unwrap_or_else(|| current.clone());
     Context {
         quick: places::quick_choices(&current, &internal_default, &drives, earlier.as_deref()),
         current_is_default: current == internal_default,
-        started_with,
         ports_folder: current,
-        rom_folder: rom_folder(app),
+        rom_folder_set: rom_folder(app).is_some(),
     }
 }
 
@@ -221,13 +224,25 @@ impl Adapters for Ui {
         ports_folder_step(&self.app, &self.router, chosen);
     }
 
+    fn ports_folder(&mut self) -> PathBuf {
+        self.app.paths.library_dir()
+    }
+
     fn import_step(&mut self) {
         import_step(&self.app, &self.router);
+    }
+
+    fn import_went_back(&mut self) -> bool {
+        super::import_screen::take_went_back()
     }
 
     fn rom_folder_step(&mut self) {
         close_current_dialog(&self.app, &self.router);
         super::rom_screens::open_folder_chooser(&self.app, &self.router);
+    }
+
+    fn rom_folder_set(&mut self) -> bool {
+        rom_folder(&self.app).is_some()
     }
 
     fn steam_step(&mut self) {
@@ -238,6 +253,14 @@ impl Adapters for Ui {
     fn art_sources_step(&mut self) {
         close_current_dialog(&self.app, &self.router);
         super::art_screens::open_art_sources(&self.app, &self.router);
+    }
+
+    fn kept_old_copies(&mut self) -> usize {
+        new_old_copies(&self.app).len()
+    }
+
+    fn old_copies_step(&mut self) {
+        old_copies_step(&self.app, &self.router);
     }
 
     fn installed_count(&mut self) -> usize {
@@ -259,6 +282,30 @@ fn installed_count(app: &AppState) -> usize {
 
 fn rom_folder(app: &AppState) -> Option<PathBuf> {
     RomLibraryStore::load(&app.paths.config_dir.join("rom_library.json")).ok().and_then(|s| s.rom_dir().map(Path::to_path_buf))
+}
+
+// -- Old copies ---------------------------------------------------------------------------------------
+
+fn old_copy_paths(app: &AppState) -> Vec<PathBuf> {
+    crate::fork::port_mover::old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().map(|o| o.old_path).collect()
+}
+
+/// The old copies this wizard run kept: the ones listed now that were not listed when it started.
+fn new_old_copies(app: &AppState) -> Vec<crate::fork::port_mover::old_copies::OldCopy> {
+    let before = OLD_AT_START.with(|o| o.borrow().clone());
+    crate::fork::port_mover::old_copies::load(&app.paths.config_dir).unwrap_or_default().into_iter().filter(|o| !before.contains(&o.old_path)).collect()
+}
+
+/// The one page about the old copies this run kept (the same page Import ports used to show after its move):
+/// Keep them is the default and B. The wizard goes on whichever way it is left.
+fn old_copies_step(app: &Rc<AppState>, router: &Router) {
+    close_current_dialog(app, router);
+    let copies: std::collections::VecDeque<_> = new_old_copies(app).into();
+    super::ports_folder_screen::prompt_old_copies_batch_then(app, router, copies, String::new(), |app, router, _text| {
+        let (app, router) = (app.clone(), router.clone());
+        // After this dialog's own closing step has finished.
+        slint::Timer::single_shot(Duration::from_millis(0), move || with_wizard(&app, &router, |w, ui| flow::resume_old_copies(w, ui)));
+    });
 }
 
 // -- The import step -----------------------------------------------------------------------------------

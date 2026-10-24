@@ -743,6 +743,10 @@ impl RemovalParts {
 /// "Remove the old copy now?" for each entry in turn, then `summary` (with what was removed or kept).
 /// Nothing is removed without the user choosing "Remove old copy" for that entry; Keep is preselected.
 pub(crate) fn prompt_old_copies(app: &Rc<AppState>, router: &Router, mut copies: VecDeque<OldCopy>, summary: String) {
+    // In the setup wizard the old copies of a move are kept and asked about once, on its own page near the end.
+    if super::setup_wizard_screen::active() && !copies.is_empty() {
+        copies.clear();
+    }
     let Some(entry) = copies.pop_front() else {
         if !summary.is_empty() {
             message(app, router, &summary);

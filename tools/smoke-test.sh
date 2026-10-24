@@ -62,13 +62,16 @@ check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; fi; 
 # A folder with no fork-settings.json is a first start (and so is an old install that never ran the
 # wizard). The wizard must open by itself; quitting it half-way must leave setup unfinished so it comes
 # back; Skip setup (confirmed) must end it and leave the main window. The pages are driven by keyboard:
-# the primary button has the focus at first, Left moves to Skip, B (Escape) goes back.
+# each page asks one question and the cursor starts on its recommended (or kept) choice, Return chooses,
+# Down moves to the next choice, and B (Escape) goes back one page (on the first page it asks to skip).
+# The runs use an empty home folder, so Import ports finds nothing there.
 FRESH_DIR="$(mktemp -d)" || setup_fail "mktemp"
+mkdir -p "$FRESH_DIR/home"
 cp "$APP_DIR/ports_launcher" "$APP_DIR/7zzs" "$FRESH_DIR/"
 for f in ports.json themes.json; do [ -f "$APP_DIR/$f" ] && cp "$APP_DIR/$f" "$FRESH_DIR/"; done
 FRESH=""
 start_fresh() {
-    env -i HOME="$HOME" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$FRESH_DIR" RUST_BACKTRACE=1 \
+    env -i HOME="$FRESH_DIR/home" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$FRESH_DIR" RUST_BACKTRACE=1 \
         "$FRESH_DIR/ports_launcher" >>"$OUT/fresh-app.log" 2>&1 &
     FRESH=$!
 }
@@ -86,80 +89,58 @@ press_keys() {  # $1 = window id, then the keys. Without a window manager a dial
     xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
     xdotool key --delay 150 "$@"
 }
+# Import ports opens by itself on the second step; its first page is "found" or "nothing found".
+# Skip is the second choice of the first and the third of the second.
+skip_import() {
+    local w; w=$(find_window '^Import ports: (nothing found|found)$') || return 1
+    case "$(xdotool getwindowname "$w")" in
+        *"nothing found") press_keys "$w" Down Down Return ;;
+        *) press_keys "$w" Down Return ;;
+    esac
+}
 
 start_fresh
 wiz=$(find_window '^Setup wizard') || wiz=""
 import -window root "$OUT/fresh-wizard.png" 2>/dev/null
 check "a fresh start opens the setup wizard by itself" '[ -n "$wiz" ] && kill -0 "$FRESH" 2>/dev/null && ! grep -q "panicked" "$OUT/fresh-app.log"'
-check "the wizard opens on the welcome page" '[ "$(xdotool getwindowname "$wiz" 2>/dev/null)" = "Setup wizard: welcome" ]'
+check "the wizard opens on the ports folder question (no welcome page)" '[ "$(xdotool getwindowname "$wiz" 2>/dev/null)" = "Setup wizard: Ports folder" ]'
 if [ -n "$wiz" ]; then
-    # Park the pointer where the next page will have an option row. A pointer that merely rests there must
-    # not take the highlight from the keyboard, so Return on the primary button must still move on.
+    # Park the pointer over the second choice. A pointer that merely rests there must not take the highlight
+    # from the keyboard, so Return on the first choice (the folder in use, kept) must go on to Import ports.
     eval "$(xdotool getwindowgeometry --shell "$wiz")"
-    xdotool mousemove $((X + WIDTH / 2)) $((Y + 377))
-    press_keys "$wiz" Return      # the primary button (Start setup) has the focus at first
-    next=$(find_window '^Setup wizard: Ports folder') || next=""
-    sleep 1
-    import -window root "$OUT/fresh-ports-folder.png" 2>/dev/null
-    check "Return on the primary button moves to the next step" '[ -n "$next" ]'
-    if [ -n "$next" ]; then
-        press_keys "$next" Return   # still the primary button ("Keep this folder"), though the pointer rests on an option
-        resting=$(find_window '^Setup wizard: Ports you already have') || resting=""
-        check "a pointer resting over an option does not move the highlight (Return goes to the next step)" '[ -n "$resting" ] && [ -z "$(xdotool search --onlyvisible --name "^Choose the ports folder" 2>/dev/null)" ]'
-        if [ -n "$resting" ]; then
-            # "Find ports I already have..." (the only option) opens the real Import ports screen; B on it
-            # hands control back to the wizard's import step.
-            press_keys "$resting" Up Return
-            imp=$(find_window '^Import ports: ') || imp=""
-            import -window root "$OUT/fresh-import-screen.png" 2>/dev/null
-            check "the wizard's import step opens the Import ports screen" '[ -n "$imp" ]'
-            if [ -n "$imp" ]; then
-                sleep 3; imp=$(find_window '^Import ports: ') || imp=""   # the scan list gives way to the main list
-                press_keys "$imp" Escape
-                resting=$(find_window '^Setup wizard: Ports you already have') || resting=""
-                check "B on the Import ports screen returns to the wizard's import step" '[ -n "$resting" ]'
+    xdotool mousemove $((X + WIDTH / 2)) $((Y + 315))
+    press_keys "$wiz" Return
+    imp=$(find_window '^Import ports: ') || imp=""
+    import -window root "$OUT/fresh-import-screen.png" 2>/dev/null
+    check "keeping the folder goes on to Import ports (a resting pointer does not move the highlight)" '[ -n "$imp" ] && [ -z "$(xdotool search --onlyvisible --name "^Choose the ports folder" 2>/dev/null)" ]'
+    if [ -n "$imp" ]; then
+        imp=$(find_window '^Import ports: (nothing found|found)$') || imp=""   # the scan gives way to its first page
+        press_keys "$imp" Escape
+        next=$(find_window '^Setup wizard: Ports folder') || next=""
+        check "B on the first Import ports page goes back to the ports folder question" '[ -n "$next" ]'
+        if [ -n "$next" ]; then
+            # Positive control: the pointer still rests over the second choice. A few small real moves must now
+            # take the highlight, so Return opens the folder picker. If the layout ever shifted so the pointer was
+            # nowhere near a choice, the check above would pass for the wrong reason and this one fails.
+            for _ in 1 2 3; do xdotool mousemove_relative -- 6 0; sleep 0.3; done
+            press_keys "$next" Return
+            picker=$(find_window '^Choose the ports folder') || picker=""
+            import -window root "$OUT/fresh-ports-picker.png" 2>/dev/null
+            check "moving the pointer over a choice does take the highlight (positive control: Pick a folder opens the picker)" '[ -n "$picker" ]'
+            if [ -n "$picker" ]; then
+                press_keys "$picker" Escape
+                next=$(find_window '^Setup wizard: Ports folder') || next=""
+                check "cancelling the picker returns to the same question (not a Settings menu)" '[ -n "$next" ] && [ -z "$(xdotool search --onlyvisible --name "^Ports folder$" 2>/dev/null)" ]'
             fi
-            press_keys "$resting" Escape   # B goes back to the ports folder step
-            next=$(find_window '^Setup wizard: Ports folder') || next=""
         fi
-    if [ -n "$next" ]; then
-        # Positive control: the pointer still rests over an option of this page. A few small real moves must
-        # now take the highlight, so Return opens the picker. If the layout ever shifted so the pointer was
-        # nowhere near an enabled option, the check above would pass for the wrong reason and this one fails.
-        for _ in 1 2 3; do xdotool mousemove_relative -- 6 0; sleep 0.3; done
-        press_keys "$next" Return
-        moved=$(find_window '^Choose the ports folder') || moved=""
-        check "moving the pointer over an option does take the highlight (positive control)" '[ -n "$moved" ]'
-        if [ -n "$moved" ]; then
-            press_keys "$moved" Escape
-            next=$(find_window '^Setup wizard: Ports folder') || next=""
-        fi
-    fi
-    fi
-    if [ -n "$next" ]; then
-        # "Choose another folder..." (the last option) opens the app's shared folder picker; Escape in the
-        # picker (its Cancel) brings the wizard back on the same step.
-        press_keys "$next" Up Return
-        picker=$(find_window '^Choose the ports folder') || picker=""
-        import -window root "$OUT/fresh-ports-picker.png" 2>/dev/null
-        check "the ports folder step opens the shared folder picker" '[ -n "$picker" ]'
-        if [ -n "$picker" ]; then
-            press_keys "$picker" Escape
-            next=$(find_window '^Setup wizard: Ports folder') || next=""
-            check "cancelling the picker returns to the wizard page (not a Settings menu)" '[ -n "$next" ] && [ -z "$(xdotool search --onlyvisible --name "^Ports folder$" 2>/dev/null)" ]'
-        fi
-    fi
-    if [ -n "$next" ]; then
-        press_keys "$next" Escape  # B is Back
-        wiz=$(find_window '^Setup wizard: welcome') || wiz=""
-        check "B goes back one step" '[ -n "$wiz" ]'
+        wiz="$next"
     fi
 fi
 if [ -n "$wiz" ]; then
-    press_keys "$wiz" Left Return   # Skip setup...
+    press_keys "$wiz" Escape   # B on the first page
     ask=$(find_window '^Setup wizard: skip setup\?') || ask=""
     import -window root "$OUT/fresh-skip-question.png" 2>/dev/null
-    check "Skip setup asks before skipping" '[ -n "$ask" ]'
+    check "B on the first page asks before skipping setup" '[ -n "$ask" ]'
 fi
 kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
 check "quitting half-way leaves setup unfinished" '! grep -qs "setup_done" "$FRESH_DIR/fork-settings.json"'
@@ -168,10 +149,10 @@ start_fresh
 wiz=$(find_window '^Setup wizard') || wiz=""
 check "the wizard comes back at the next start" '[ -n "$wiz" ]'
 if [ -n "$wiz" ]; then
-    press_keys "$wiz" Left Return
+    press_keys "$wiz" Escape
     ask=$(find_window '^Setup wizard: skip setup\?') || ask=""
     if [ -n "$ask" ]; then
-        press_keys "$ask" Right Return   # Skip setup (the right button; the cursor starts on Keep going)
+        press_keys "$ask" Down Return   # Skip setup (the second choice; the cursor starts on Keep going)
         for _ in $(seq 1 50); do grep -qs '"setup_done": true' "$FRESH_DIR/fork-settings.json" && break; sleep 0.2; done
     fi
 fi
@@ -182,19 +163,34 @@ check "no wizard window is left after Skip setup" '[ -z "$(xdotool search --only
 check "the main window is still there after Skip setup" 'kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Ports Launcher$" >/dev/null 2>&1'
 kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
 
-# Walk the whole wizard with the primary button (Return) to Finish: setup_done is written, the wizard
-# closes and the main window stays.
+# Walk the whole wizard to Finish: keep the folder, skip each question, Finish. setup_done is written, the
+# wizard closes and the main window stays. B on the last page goes back one page (to Steam).
 rm -f "$FRESH_DIR/fork-settings.json"
 start_fresh
 walked=yes
-for page in 'welcome' 'Ports folder' 'Ports you already have' 'Game files' 'Steam' 'all done'; do
+w=$(find_window '^Setup wizard: Ports folder$') || walked="no (never saw the ports folder question)"
+[ "$walked" = yes ] && press_keys "$w" Return                      # keep the folder in use
+[ "$walked" = yes ] && { skip_import || walked="no (never saw Import ports)"; }
+for page in 'Game files' 'Steam'; do
+    [ "$walked" = yes ] || break
     w=$(find_window "^Setup wizard: $page\$") || { walked="no (never saw '$page')"; break; }
-    [ "$page" = "all done" ] && import -window root "$OUT/fresh-last-page.png" 2>/dev/null
-    press_keys "$w" Return
+    case "$page" in
+        'Game files') press_keys "$w" Down Return ;;               # Skip for now
+        *) press_keys "$w" Down Down Return ;;                     # Skip
+    esac
 done
+[ "$walked" = yes ] && { w=$(find_window '^Setup wizard: all done$') || walked="no (never saw the last page)"; }
+if [ "$walked" = yes ]; then
+    import -window root "$OUT/fresh-last-page.png" 2>/dev/null
+    press_keys "$w" Escape
+    back=$(find_window '^Setup wizard: Steam$') || back=""
+    check "B on the last page goes back one page" '[ -n "$back" ]'
+    [ -n "$back" ] && { press_keys "$back" Down Down Return; w=$(find_window '^Setup wizard: all done$') || walked="no (never came back to the last page)"; }
+fi
+check "walking every page reaches the last page ($walked)" '[ "$walked" = yes ]'
+[ "$walked" = yes ] && press_keys "$w" Return                      # Finish
 for _ in $(seq 1 50); do grep -qs '"setup_done": true' "$FRESH_DIR/fork-settings.json" && break; sleep 0.2; done
 sleep 1
-check "walking every page with the primary button reaches the last page ($walked)" '[ "$walked" = yes ]'
 check "Finish writes setup_done" 'grep -qs "\"setup_done\": true" "$FRESH_DIR/fork-settings.json"'
 check "the wizard is gone and the main window is there after Finish" '[ -z "$(xdotool search --onlyvisible --name "^Setup wizard" 2>/dev/null)" ] && kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Ports Launcher$" >/dev/null 2>&1'
 kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
