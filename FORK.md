@@ -116,7 +116,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-23 | `src/fork/custom_repo/`, `src/fork/import/{link,cards,old_batch}.rs`, `src/app/import_cards_screen.rs` | Simple setup stages 3-4: cards for folders that fit several ports or none (tiles you choose, a filterable list of other ports), "Not a port" kept in `fork-settings.json` (`import_ignored`, listed in Details, Ask again clears it), Use a GitHub link (`custom_repo::check` asks GitHub's API for the project and its newest release through `art::net::Fetch`, two calls; `entry` builds the user's own port list entry, written by the import just before the move and taken off if the port does not move; test switch `DPM_GITHUB_REPLAY=<folder>` answers from saved files), the old-copies page Details |
 | 2026-10-24 | `src/core/installer.rs` | Versioned program files (branch `versioned-files`): superseded AppImages are no longer deleted after an install and `follow_favorite_exe` is gone; `extract` returns the release's top-level names; `apply_archive` (now `pub(crate)`) records the folder's names and launch target before unpacking and hands both to `fork::versioned::record_installed` after a successful unpack. Nothing is moved inside the installer; tests changed to match, 2 new (pending record, failed unpack leaves nothing to finish) |
 | 2026-10-24 | `src/core/executable_detect.rs` | A folder named `.previous` (superseded releases kept by `fork::versioned`) is never searched for launch candidates; 1 test |
-| 2026-10-24 | `src/app/events.rs` | After an install, `versioned_update::after_install` replaces the favorite-follow block; its summary ("Updated to v1.1. The old version is kept in .previous.") is shown when no launch is pending, before the game file search |
+| 2026-10-24 | `src/app/events.rs` | After an install, `versioned_update::after_install` replaces the favorite-follow block; its summary is shown when no launch is pending, before the game file search; when Play started the update it is told so (`launching`) and keeps the note for later |
 | 2026-10-24 | `src/app/mod.rs` | One module line, `versioned_update` |
 
 Files added by this fork:
@@ -777,28 +777,52 @@ AppImages and left the Steam shortcut pointing at a missing file. Now, for any p
   the same kind (file or folder). Of several new files of one family, the closest name wins (fewest
   differing parts, so `-aarch64` follows `-aarch64`); a tie leaves the old file with a reason.
 - **What moves:** program files (`.AppImage`, `.x86_64`, `.x86`, `.sh`, `.run`, or an ELF or `#!` script
-  by content; never `.bin`) and versioned release folders that hold no link, `saves*` or `mods` folder,
-  `.o2r`/`.otr`, settings file or game file. Never a save folder (`save`/`save2` as resolved on this
-  system), anything holding one, hidden names, or names the new release also has. When the saves are
-  the game folder itself, program files still move but folders stay.
-- **Order:** the old launch target (favorite, else what the app found before the update) must have its
-  counterpart in the new release, or nothing moves. Steam shortcuts are repointed first
-  (`port_mover::steam::repoint_everywhere`: every account, app ID kept, backup first, never while Steam
-  runs; queued in `steam-queue.json` while it does or in Game Mode). An entry any shortcut still points at
-  stays where it is; when the queued change is applied, `after_queued_repoint` moves it. Then each entry
-  goes to `.previous/<old version>/` (`-2`, `-3` when the name is taken; moved, never deleted).
-- **After:** top-level `.sh` launchers that are not part of the release and name a moved file get the
-  new name; the original is kept as `.previous/<version>/<script>.before-update`. Nothing is ever
-  deleted: every superseded version stays in `.previous/`, and when older versions are there the
-  summary adds "Older versions in .previous use N MB; remove them from the port's folder if you need
-  the room." There is no delete button. The favorite follows the new file; one is set when the app
-  would not find the new program on its own.
+  by content; never `.bin`). A versioned release folder moves only when (a) every save field of the
+  port resolves to a known folder on this system (none listed, or one unknown on Linux such as
+  `%APPDATA%`, keeps every folder in place, since the saves may be inside), (b) it holds at least one
+  program file, and (c) it holds no link, no `saves*` or `mods` folder and no file of the keep list
+  (settings `ini cfg conf json toml yaml yml xml`; saves and keys `sav srm mcr mcd sol db keys dat`; game
+  data, archives and disc images `o2r otr bin img iso cue chd gcm rvz wbfs pbp pkg wad cia 3ds zip 7z rar`;
+  ROMs `z64 n64 v64 nds gba gbc gb sfc smc nes xci nsp`). Never moved: a save folder (`save`/`save2` as
+  resolved here), anything holding one, hidden names, names the new release also has. When the saves
+  are the game folder itself, program files still move but folders stay.
+- **Which updates:** when the old launch target (favorite, else what the app found before the update)
+  is itself superseded, its counterpart in the new release must exist or nothing moves. When the launch
+  target is not superseded (a launcher script as favorite, or several programs so the app had to ask),
+  superseded files still move, because that is exactly the case where the old file would otherwise stay
+  and keep being started (by the script, or by a Steam shortcut to it).
+- **Order:** for each superseded entry, queued repoints of the port that still end at it are
+  re-aimed at its successor (`steam_queue::retarget_repoints`; a change that cancels out is dropped), so
+  a change queued by an earlier update never points Steam into `.previous`. Then Steam shortcuts are
+  repointed (`port_mover::steam::repoint_everywhere`: every account, app ID kept, backup first, never
+  while Steam runs; queued in `steam-queue.json` while it does or in Game Mode; a release folder is
+  repointed only when it holds the launch target). An entry any shortcut still points at stays where it
+  is: when its change is really in the queue it waits, and `after_queued_repoint` moves it (and updates
+  launcher scripts) when the change is applied; otherwise the summary names the shortcut. Then each
+  entry goes to `.previous/<old version>/` (`-2`, `-3` when the name is taken; moved, never deleted).
+- **After:** top-level `.sh` launchers that are not part of the release get the new name wherever the
+  old one stands alone as a name in the port folder (at the start, after a separator or quote, `./`,
+  `$VAR/`, `${VAR}/` or `"$(...)"/`, and with no name character after it), so
+  `~/.local/share/Game-v1.0`, `Game-v1.0-saves` and `Game-v1.0.cfg` are left alone; the original is kept
+  as `.previous/<version>/<script>.before-update`. Nothing is ever deleted: every superseded version
+  stays in `.previous/`. The favorite follows the new file; one is set when the app would not find the
+  new program on its own.
+- **What Tim reads:** "Dusklight is now v2.0.4. The version you had (v2.0.3) is kept in a hidden folder
+  (.previous) inside the dusklight folder; to go back, use Info > Select version." While Steam runs:
+  "Steam is running, so the shortcut change waits. Close Steam (or come back to Desktop Mode) and this
+  app will ask to apply it; until then Steam starts the old version, which stays in place." When older
+  versions are there: "Older versions in .previous use N MB (in Desktop Mode's file manager, Ctrl+H shows
+  hidden folders); remove them from the port's folder if you need the room." (GB above 1000 MB). Kept
+  entries are named by version, not file name. When Play started the update the game launches at once,
+  so a summary that needs attention (something waits, was kept, or Steam skipped a shortcut) is saved in
+  `update-notes.json` and shown once no game runs and the window is in view (after the game exits, or at
+  the next start), before the "Steam changes queued" offer. No delete button.
 - **Going back:** Info > Select version installs an older release; the same steps keep the newer one in
   `.previous/`. Offline, by hand: in Desktop Mode move the file out of `.previous/<version>/` into the
   port folder and pick it in Info > Favorite executable (`.previous` is never searched otherwise).
 - **Known limits:** a catalog `executable` naming a versioned file is not rewritten (the favorite
   covers it); launcher scripts in subfolders are not rewritten; a release folder holding a settings
-  file stays beside the new one (listed in the summary).
+  file, or of a port whose save folder is unknown here, stays beside the new one (named in the summary).
 
 ## Fixes to upstream behavior
 
