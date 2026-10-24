@@ -207,6 +207,7 @@ pub fn apply(old: &ServiceTokens, new: Tokens, now: u64) -> ServiceTokens {
         access_token: Some(new.access_token),
         access_expires_at: now + new.expires_in,
         email: new.email.or_else(|| old.email.clone()),
+        signin: old.signin.clone(),
     }
 }
 
@@ -294,10 +295,11 @@ mod tests {
 
     #[test]
     fn applying_tokens_keeps_what_the_service_did_not_replace() {
-        let old = ServiceTokens { refresh_token: Some("R1".into()), access_token: Some("A1".into()), access_expires_at: 1, email: Some("a@b.c".into()) };
+        let old = ServiceTokens { refresh_token: Some("R1".into()), access_token: Some("A1".into()), access_expires_at: 1, email: Some("a@b.c".into()), signin: Some("S1".into()) };
         let kept = apply(&old, Tokens { access_token: "A2".into(), expires_in: 100, refresh_token: None, email: None }, 1_000);
         assert_eq!((kept.refresh_token.as_deref(), kept.access_token.as_deref(), kept.access_expires_at, kept.email.as_deref()), (Some("R1"), Some("A2"), 1_100, Some("a@b.c")));
         let rotated = apply(&old, Tokens { access_token: "A3".into(), expires_in: 50, refresh_token: Some("R2".into()), email: Some("x@y.z".into()) }, 2_000);
         assert_eq!((rotated.refresh_token.as_deref(), rotated.email.as_deref()), (Some("R2"), Some("x@y.z")));
+        assert_eq!((kept.signin.as_deref(), rotated.signin.as_deref()), (Some("S1"), Some("S1")), "a refresh keeps the sign-in's name");
     }
 }

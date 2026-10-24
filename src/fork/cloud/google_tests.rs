@@ -516,6 +516,35 @@ fn a_download_streams_the_file_and_makes_a_new_one_only() {
 }
 
 #[test]
+fn a_download_larger_than_the_size_drive_reported_is_stopped_and_leaves_nothing() {
+    let mut r = rig("toobig", 256 * 1024, 256 * 1024);
+    r.state.lock().unwrap().seed("deck", "Global Backups/a.zip", &vec![7u8; 50_000]);
+    let all = r.drive.list_all().unwrap();
+    // Drive said the file is 10 bytes; the body that arrives is 50,000: nothing of it is written.
+    let liar = RemoteFile { size: 10, ..all[0].clone() };
+    let dest = r.dir.join("liar.zip");
+    let err = r.drive.download(&liar, &dest, &mut |_, _| {}).unwrap_err();
+    assert!(err.detail.contains("larger than it should be"), "{err}");
+    assert!(!dest.exists(), "the partial file is removed");
+    // The right size still downloads.
+    r.drive.download(&all[0], &r.dir.join("ok.zip"), &mut |_, _| {}).unwrap();
+}
+
+#[test]
+fn no_upload_session_address_reaches_an_error_a_detail_or_a_log_line() {
+    let mut r = rig("redact", 256 * 1024, 512 * 1024);
+    r.state.lock().unwrap().faults = (0..20).map(|_| Fault::Status(503)).collect();
+    super::log::take_captured();
+    let (path, _) = file(&r.dir, "big.zip", 900_000);
+    let err = r.drive.upload("deck", "Global Backups/big.zip", &path, 900_000, &mut |_, _| {}).unwrap_err();
+    let shown = format!("{err} {err:?} {}", super::log::scrub(&err.detail));
+    let logged = super::log::take_captured().join("\n");
+    for text in [&shown, &logged] {
+        assert!(!text.contains("SECRET-SESSION-KEY") && !text.contains("upload_id") && !text.contains("/upload/session/"), "{text}");
+    }
+}
+
+#[test]
 fn a_download_after_a_401_refreshes_once_and_a_missing_file_leaves_nothing() {
     let mut r = rig("download401", 256 * 1024, 256 * 1024);
     r.state.lock().unwrap().seed("deck", "Global Backups/a.zip", b"hello zip");

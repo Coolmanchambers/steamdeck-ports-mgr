@@ -85,8 +85,10 @@ impl DownloadError {
     }
 }
 
+/// Texts here may carry a file name from a zip or a message from the system: control characters, web addresses and
+/// length are dealt with before a person sees them.
 fn refused(text: impl Into<String>) -> DownloadError {
-    DownloadError::Refused(text.into())
+    DownloadError::Refused(super::log::scrub(&text.into()))
 }
 
 fn with_cloud_suffix(name: &str, n: usize) -> String {
@@ -106,7 +108,11 @@ fn mtime_secs(path: &Path) -> u64 {
 /// name; where links are not possible (exFAT) the name is checked first.
 fn place_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
     match fs::hard_link(from, to) {
-        Ok(()) => fs::remove_file(from),
+        // The file is in place once the link exists; the scratch copy goes with its folder if this fails.
+        Ok(()) => {
+            let _ = fs::remove_file(from);
+            Ok(())
+        }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
         Err(_) => {
             if to.exists() {
@@ -191,7 +197,13 @@ pub fn missing_locally<'a>(remote: &'a [RemoteFile], saves_backup_dir: &Path) ->
         .filter(|f| Place::parse(&f.path).is_some())
         .filter(|f| {
             let local = f.path.split('/').fold(saves_backup_dir.to_path_buf(), |p, part| p.join(part));
-            fs::metadata(&local).map_or(true, |m| !m.is_file() || m.len() != f.size)
+            match fs::metadata(&local) {
+                Ok(m) if m.is_file() && m.len() == f.size => {
+                    // Same name and size: when the cloud gives a checksum, the content has to match too.
+                    f.sha256.as_deref().is_some_and(|h| file_sha256(&local).map_or(true, |mine| !mine.eq_ignore_ascii_case(h)))
+                }
+                _ => true,
+            }
         })
         .collect();
     out.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
@@ -366,6 +378,25 @@ mod tests {
         assert!(matches!(&err, DownloadError::Service(e) if e.kind == ErrorKind::Offline));
         assert!(will_pass(&err));
         assert!(names_under(&dir).is_empty());
+    }
+
+    #[test]
+    fn same_name_and_size_with_other_content_counts_as_missing_when_the_cloud_has_a_checksum() {
+        let dir = temp_dir("samesize");
+        fs::create_dir_all(dir.join("Global Backups")).unwrap();
+        fs::write(dir.join("Global Backups/a.zip"), b"AAAA").unwrap();
+        let mut f = RemoteFile { device: "d".into(), path: "Global Backups/a.zip".into(), size: 4, sha256: Some(sha256_hex(b"BBBB")), id: "i".into(), modified: Some(1) };
+        assert_eq!(missing_locally(&[f.clone()], &dir).len(), 1, "a different file of the same size is not the same file");
+        f.sha256 = Some(sha256_hex(b"AAAA").to_uppercase());
+        assert!(missing_locally(&[f.clone()], &dir).is_empty(), "the same content, whatever the case of the hex");
+        f.sha256 = None;
+        assert!(missing_locally(&[f], &dir).is_empty(), "no checksum: size and name are all there is");
+    }
+
+    #[test]
+    fn refusal_texts_lose_control_characters_and_addresses() {
+        let e = refused("bad name \u{7}evil\nline https://example.com/x?key=SECRET");
+        assert_eq!(e.text(), "bad name  evil line [address]");
     }
 
     #[test]

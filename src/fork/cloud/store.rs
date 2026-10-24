@@ -5,11 +5,13 @@
 //! Network calls never happen under the lock.
 
 use super::oauth::{self, OAuthConfig, Tokens};
-use super::record::{Record, ServiceRecord};
+use super::record::{Record, ServiceRecord, Uploaded};
 use super::service::{ErrorKind, ServiceError, ServiceId};
 use super::tokens::{self, CloudTokens, ServiceTokens};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 static LOCK: Mutex<()> = Mutex::new(());
@@ -18,17 +20,31 @@ fn lock() -> MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Who is signed in, for the screens: the services with a refresh token, and each one's email.
+/// A name for a new sign-in: unique for this machine and moment, nothing to do with the account.
+fn new_signin_name() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let seed = format!("{nanos}-{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
+    super::sha256::sha256_hex(seed.as_bytes())[..16].to_string()
+}
+
+/// Who is signed in, for the screens: the services with a refresh token, and each one's email. Read without
+/// touching the file (the screens look every second).
 pub fn signed_in(tokens_path: &Path) -> Vec<(ServiceId, Option<String>)> {
     let _g = lock();
-    let tokens = CloudTokens::load(tokens_path);
+    let tokens = CloudTokens::peek(tokens_path);
     tokens.signed_in_services().into_iter().map(|id| (id, tokens.get(id).and_then(|t| t.email.clone()))).collect()
 }
 
 /// The stored tokens of one service, or `None` (also for a damaged file).
 pub fn tokens_of(tokens_path: &Path, id: ServiceId) -> Option<ServiceTokens> {
     let _g = lock();
-    CloudTokens::load(tokens_path).get(id).cloned()
+    CloudTokens::peek(tokens_path).get(id).cloned()
+}
+
+/// The name of the current sign-in of `id` (see `ServiceTokens::signin`); a pass takes it when it starts.
+pub fn signin_name(tokens_path: &Path, id: ServiceId) -> Option<String> {
+    tokens_of(tokens_path, id).filter(ServiceTokens::signed_in).and_then(|t| t.signin)
 }
 
 pub fn record_of(record_path: &Path, id: ServiceId) -> ServiceRecord {
@@ -44,14 +60,42 @@ pub fn with_record(record_path: &Path, change: impl FnOnce(&mut Record)) -> io::
     record.save()
 }
 
-/// Writes one service's part of the record, only while that service is still signed in.
-pub fn persist_service(record_path: &Path, tokens_path: &Path, id: ServiceId, part: &ServiceRecord) -> io::Result<()> {
+/// True while `id` is signed in under the sign-in named `signin` (a pass or a copy that began under that sign-in
+/// may write into its record; one that outlived a sign-out, or a sign-in as someone else, may not).
+fn still_that_sign_in(tokens_path: &Path, id: ServiceId, signin: &str) -> bool {
+    let tokens = CloudTokens::peek(tokens_path);
+    tokens.signed_in(id) && tokens.get(id).and_then(|t| t.signin.as_deref()) == Some(signin)
+}
+
+/// Writes what a pass learned into one service's part of the record, merging with what is there (a copy back
+/// from the cloud may have added entries meanwhile; they are kept), and only while the pass's own sign-in is
+/// still the current one.
+pub fn persist_service(record_path: &Path, tokens_path: &Path, id: ServiceId, signin: &str, part: &ServiceRecord) -> io::Result<()> {
     let _g = lock();
-    if !CloudTokens::load(tokens_path).signed_in(id) {
+    if !still_that_sign_in(tokens_path, id, signin) {
         return Ok(());
     }
     let mut record = Record::load(record_path);
-    record.set_service(id, part.clone());
+    let mut merged = record.service(id);
+    merged.uploaded.extend(part.uploaded.iter().map(|(k, v)| (k.clone(), v.clone())));
+    merged.last_upload = part.last_upload.max(merged.last_upload);
+    merged.last_ok = part.last_ok;
+    merged.last_error = part.last_error;
+    record.set_service(id, merged);
+    record.save()
+}
+
+/// Adds entries (backups just copied back from the cloud, so they are not copied up again) to the record, under
+/// the same rules as [`persist_service`] and without touching its times or its other entries.
+pub fn add_uploaded(record_path: &Path, tokens_path: &Path, id: ServiceId, signin: &str, entries: BTreeMap<String, Uploaded>) -> io::Result<()> {
+    let _g = lock();
+    if !still_that_sign_in(tokens_path, id, signin) || entries.is_empty() {
+        return Ok(());
+    }
+    let mut record = Record::load(record_path);
+    let mut part = record.service(id);
+    part.uploaded.extend(entries);
+    record.set_service(id, part);
     record.save()
 }
 
@@ -64,8 +108,10 @@ pub fn sign_in(tokens_path: &Path, record_path: &Path, id: ServiceId, tokens: To
         tokens::private_check(dir).map_err(|why| io::Error::new(io::ErrorKind::PermissionDenied, why))?;
     }
     let mut store = CloudTokens::load(tokens_path);
-    let fresh = oauth::apply(&ServiceTokens::default(), tokens, now);
+    let mut fresh = oauth::apply(&ServiceTokens::default(), tokens, now);
+    fresh.signin = Some(new_signin_name());
     store.set(id, fresh)?;
+    super::log::register_secrets(&store.all_values());
     let mut record = Record::load(record_path);
     record.forget(id);
     record.save()
@@ -97,6 +143,7 @@ pub fn access_token_with(net: &super::net::Net, cfg: &OAuthConfig, tokens_path: 
         CloudTokens::load(tokens_path).get(id).filter(|t| t.signed_in()).cloned()
     };
     let Some(current) = current else { return Err(ServiceError::new(ErrorKind::SignedOut, "not signed in")) };
+    super::log::register_secrets(&[current.refresh_token.clone(), current.access_token.clone(), current.email.clone()].into_iter().flatten().collect::<Vec<_>>());
     if let Some(token) = current.fresh_access_token(now).filter(|_| !force) {
         return Ok(token.to_string());
     }
@@ -191,12 +238,53 @@ mod tests {
         let dir = temp_dir("late");
         let (t, r) = (dir.join("t.json"), dir.join("r.json"));
         sign_in(&t, &r, ServiceId::Google, tokens("REFRESH-1", 3600), 1_000).unwrap();
+        let first = signin_name(&t, ServiceId::Google).expect("a signed-in sign-in has a name");
         sign_out(&t, &r, ServiceId::Google).unwrap();
-        persist_service(&r, &t, ServiceId::Google, &uploaded()).unwrap();
+        persist_service(&r, &t, ServiceId::Google, &first, &uploaded()).unwrap();
         assert!(record_of(&r, ServiceId::Google).uploaded.is_empty());
+        // Signed in again, as someone else: the pass that began under the first sign-in still may not write.
         sign_in(&t, &r, ServiceId::Google, tokens("REFRESH-2", 3600), 2_000).unwrap();
-        persist_service(&r, &t, ServiceId::Google, &uploaded()).unwrap();
+        let second = signin_name(&t, ServiceId::Google).unwrap();
+        assert_ne!(first, second, "every sign-in has its own name");
+        persist_service(&r, &t, ServiceId::Google, &first, &uploaded()).unwrap();
+        assert!(record_of(&r, ServiceId::Google).uploaded.is_empty(), "the new account's record is untouched by the old pass");
+        add_uploaded(&r, &t, ServiceId::Google, &first, uploaded().uploaded).unwrap();
+        assert!(record_of(&r, ServiceId::Google).uploaded.is_empty(), "and so is a copy back that began under it");
+        persist_service(&r, &t, ServiceId::Google, &second, &uploaded()).unwrap();
         assert_eq!(record_of(&r, ServiceId::Google).uploaded.len(), 1);
+    }
+
+    #[test]
+    fn a_refresh_keeps_the_name_of_the_sign_in() {
+        let mock = answering(vec![Answer::json(200, r#"{"access_token":"NEW-ACCESS-yyyy","expires_in":3600,"refresh_token":"ROTATED-REFRESH"}"#)]);
+        let dir = temp_dir("name");
+        let (t, r) = (dir.join("t.json"), dir.join("r.json"));
+        sign_in(&t, &r, ServiceId::Google, tokens("REFRESH-1", 100), 1_000).unwrap();
+        let before = signin_name(&t, ServiceId::Google).unwrap();
+        access_token(&Net::local_test(), &cfg(&mock), &t, ServiceId::Google, 9_000).unwrap();
+        assert_eq!(signin_name(&t, ServiceId::Google), Some(before), "a rotated refresh token is still the same sign-in");
+    }
+
+    #[test]
+    fn a_pass_and_a_copy_back_never_undo_each_other() {
+        let dir = temp_dir("merge");
+        let (t, r) = (dir.join("t.json"), dir.join("r.json"));
+        sign_in(&t, &r, ServiceId::Google, tokens("REFRESH-1", 3600), 1_000).unwrap();
+        let name = signin_name(&t, ServiceId::Google).unwrap();
+        // The pass loaded the record (empty) at its start; a copy back adds an entry meanwhile; the pass then saves.
+        let mut pass_part = record_of(&r, ServiceId::Google);
+        let copied: BTreeMap<String, Uploaded> = [("Global Backups/copied.zip".to_string(), Uploaded { size: 5, mtime: 5, sha256: "c".repeat(64), cloud_path: "Global Backups/copied.zip".into(), at: 5 })].into();
+        add_uploaded(&r, &t, ServiceId::Google, &name, copied).unwrap();
+        pass_part.uploaded.insert("Global Backups/new.zip".into(), Uploaded { size: 1, mtime: 1, sha256: "d".repeat(64), cloud_path: "Global Backups/new.zip".into(), at: 9 });
+        pass_part.last_upload = Some(9);
+        pass_part.last_ok = Some(9);
+        persist_service(&r, &t, ServiceId::Google, &name, &pass_part).unwrap();
+        let rec = record_of(&r, ServiceId::Google);
+        assert_eq!(rec.uploaded.keys().map(String::as_str).collect::<Vec<_>>(), ["Global Backups/copied.zip", "Global Backups/new.zip"], "both survive");
+        assert_eq!((rec.last_upload, rec.last_ok), (Some(9), Some(9)));
+        // A copy back never changes the times the pass keeps.
+        add_uploaded(&r, &t, ServiceId::Google, &name, BTreeMap::new()).unwrap();
+        assert_eq!(record_of(&r, ServiceId::Google).last_ok, Some(9));
     }
 
     #[test]

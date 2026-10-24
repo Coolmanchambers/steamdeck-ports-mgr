@@ -197,7 +197,7 @@ fn no_connection_is_offline() {
 }
 
 fn stored(access_expires_at: u64) -> ServiceTokens {
-    ServiceTokens { refresh_token: Some(REFRESH.into()), access_token: Some("OLD-ACCESS-TOKEN-xxxx".into()), access_expires_at, email: Some(EMAIL.into()) }
+    ServiceTokens { refresh_token: Some(REFRESH.into()), access_token: Some("OLD-ACCESS-TOKEN-xxxx".into()), access_expires_at, email: Some(EMAIL.into()), signin: None }
 }
 
 #[test]

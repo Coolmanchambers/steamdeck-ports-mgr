@@ -51,6 +51,9 @@ pub struct ServiceTokens {
     /// Seconds since 1970 when `access_token` stops working.
     pub access_expires_at: u64,
     pub email: Option<String>,
+    /// Names this sign-in (made when the person signs in, kept when tokens are refreshed): a pass that started under
+    /// one sign-in must not write into the record of another. Not a secret and not an account identifier.
+    pub signin: Option<String>,
 }
 
 impl fmt::Debug for ServiceTokens {
@@ -60,6 +63,7 @@ impl fmt::Debug for ServiceTokens {
             .field("access_token", &self.access_token.is_some())
             .field("access_expires_at", &self.access_expires_at)
             .field("email", &self.email.is_some())
+            .field("signin", &self.signin.is_some())
             .finish()
     }
 }
@@ -86,12 +90,15 @@ impl ServiceTokens {
         if let Some(v) = &self.email {
             m.insert("email".into(), v.clone().into());
         }
+        if let Some(v) = &self.signin {
+            m.insert("signin".into(), v.clone().into());
+        }
         Value::Object(m)
     }
 
     fn from_json(v: &Value) -> ServiceTokens {
         let text = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string).filter(|s| !s.is_empty());
-        ServiceTokens { refresh_token: text("refresh_token"), access_token: text("access_token"), access_expires_at: v.get("access_expires_at").and_then(Value::as_u64).unwrap_or(0), email: text("email") }
+        ServiceTokens { refresh_token: text("refresh_token"), access_token: text("access_token"), access_expires_at: v.get("access_expires_at").and_then(Value::as_u64).unwrap_or(0), email: text("email"), signin: text("signin") }
     }
 }
 
@@ -125,6 +132,15 @@ impl CloudTokens {
     }
 
     pub fn load(path: &Path) -> CloudTokens {
+        CloudTokens::load_with(path, true)
+    }
+
+    /// Reads the file without touching it (no tightening): for the screens, which look every second.
+    pub fn peek(path: &Path) -> CloudTokens {
+        CloudTokens::load_with(path, false)
+    }
+
+    fn load_with(path: &Path, tighten: bool) -> CloudTokens {
         let blank = |problem: String| CloudTokens { path: path.to_path_buf(), services: BTreeMap::new(), writable: false, problem: Some(problem), restricted: Cell::new(None) };
         if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
             return blank(format!("{FILE_NAME} is a link; it is not used or changed. Replace it with a plain file."));
@@ -132,7 +148,7 @@ impl CloudTokens {
         let restricted = Cell::new(None);
         // Made private before it is read, so a file that was left open is never read while it is.
         let mut problem = None;
-        if fs::metadata(path).is_ok() {
+        if tighten && fs::metadata(path).is_ok() {
             match tighten_permissions(path) {
                 Ok(private) => restricted.set(private),
                 Err(e) => problem = Some(format!("could not restrict {FILE_NAME} to your account: {e}")),
@@ -254,7 +270,21 @@ mod tests {
     }
 
     fn sample() -> ServiceTokens {
-        ServiceTokens { refresh_token: Some("REFRESH-aaaaaaaaaaaa".into()), access_token: Some("ACCESS-bbbbbbbbbbbb".into()), access_expires_at: 5_000, email: Some("someone@example.com".into()) }
+        ServiceTokens { refresh_token: Some("REFRESH-aaaaaaaaaaaa".into()), access_token: Some("ACCESS-bbbbbbbbbbbb".into()), access_expires_at: 5_000, email: Some("someone@example.com".into()), signin: Some("signin-1".into()) }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn peeking_reads_without_changing_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("peek");
+        let path = dir.join(FILE_NAME);
+        fs::write(&path, r#"{"google":{"refresh_token":"REFRESH-aaaaaaaaaaaa"}}"#).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(CloudTokens::peek(&path).signed_in(ServiceId::Google));
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o644, "peek leaves the mode alone");
+        assert!(CloudTokens::load(&path).signed_in(ServiceId::Google));
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600, "load tightens it");
     }
 
     #[test]

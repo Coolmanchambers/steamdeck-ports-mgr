@@ -148,7 +148,7 @@ fn classify_transport(e: &ureq::Error) -> ServiceError {
     }
     match e {
         ureq::Error::Io(_) | ureq::Error::Timeout(_) | ureq::Error::HostNotFound | ureq::Error::ConnectionFailed => ServiceError::new(ErrorKind::Offline, "no connection"),
-        other => ServiceError::new(ErrorKind::Other, format!("the connection failed ({other})")),
+        other => ServiceError::new(ErrorKind::Other, format!("the connection failed ({})", super::log::scrub(&other.to_string()))),
     }
 }
 
@@ -223,8 +223,9 @@ impl Net {
     }
 
     /// Streams a successful body into `out`, calling `progress(bytes so far, total or 0)`. A reply that is not
-    /// a success comes back as `Err(reply)` with its (small) body, for the caller to classify.
-    pub fn download(&self, req: Request, out: &mut dyn Write, progress: &mut dyn FnMut(u64, u64)) -> Result<Result<(), Reply>, ServiceError> {
+    /// a success comes back as `Err(reply)` with its (small) body, for the caller to classify. With `limit`, a
+    /// body that announces or delivers more bytes than that is stopped before the extra is written.
+    pub fn download(&self, req: Request, out: &mut dyn Write, progress: &mut dyn FnMut(u64, u64), limit: Option<u64>) -> Result<Result<(), Reply>, ServiceError> {
         let mut resp = self.run(req)?;
         let (status, headers) = Net::head(&resp);
         if !(200..300).contains(&status) {
@@ -232,6 +233,10 @@ impl Net {
             return Ok(Err(Reply { status, headers, body }));
         }
         let total = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.parse::<u64>().ok()).unwrap_or(0);
+        let too_big = || ServiceError::other("the file from the cloud is larger than it should be; nothing was kept");
+        if limit.is_some_and(|l| total > l) {
+            return Err(too_big());
+        }
         let mut reader = resp.body_mut().as_reader();
         let mut buf = vec![0u8; 256 * 1024];
         let mut done = 0u64;
@@ -242,6 +247,9 @@ impl Net {
             })?;
             if n == 0 {
                 break;
+            }
+            if limit.is_some_and(|l| done + n as u64 > l) {
+                return Err(too_big());
             }
             out.write_all(&buf[..n]).map_err(|e| ServiceError::other(format!("could not write the file ({})", e.kind())))?;
             done += n as u64;

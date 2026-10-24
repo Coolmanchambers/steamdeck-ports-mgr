@@ -376,7 +376,8 @@ impl CloudService for GoogleDrive {
         loop {
             let token = self.auth.token(forced)?;
             let mut out = fs::OpenOptions::new().write(true).create_new(true).open(dest).map_err(|e| ServiceError::other(format!("could not write the file ({})", e.kind())))?;
-            let outcome = self.net.download(Request::get(url.clone()).bearer(&token), &mut out, progress);
+            // Drive says how big the file is: more bytes than that are never written.
+            let outcome = self.net.download(Request::get(url.clone()).bearer(&token), &mut out, progress, Some(file.size).filter(|s| *s > 0));
             drop(out);
             match outcome {
                 Ok(Ok(())) => return Ok(()),
