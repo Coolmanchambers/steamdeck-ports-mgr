@@ -129,6 +129,7 @@ Files added by this fork:
 | 2026-10-20 | `FORK.md` | This file |
 | 2026-10-21 | `src/core/contract_tests.rs` | Test-only module that pins the upstream behavior our features rely on (asset choice for our ports' real release names, update decision with a recycled tag, local-entry merge, `state.json` keys) |
 | 2026-10-20 | `STEAM_DECK.md` | How to install and test this fork on a Steam Deck |
+| 2026-10-24 | `PRIVACY.md` | Privacy policy: what the app stores and sends, and what the optional Google Drive backup touches |
 | 2026-10-20 | `tools/deck-discovery.sh` | Read-only script a user runs once on a Steam Deck to inventory installed ports, save folders, Steam shortcuts and tooling (writes only its own report file) |
 | 2026-10-20 | `tools/fork-updater.sh` | The fork's updater, shipped as `ports_launcher_updater.sh` (see Builds) |
 | 2026-10-21 | `tools/test-fork-updater.sh` | 22 checks of the updater against fake installs and releases; CI runs it. A failed check prints the copy count, the processes under the test folder and the log tail (since 2026-10-21) |
@@ -211,6 +212,7 @@ Files added by this fork:
 | 2026-10-24 | `src/core/save_backup.rs` | `backup_before_update`: a save folder outside the game folder is checked against the free room before it is copied (fork: save finder) |
 | 2026-10-24 | `src/fork/folder_picker/mod.rs`, `src/app/folder_picker_screen.rs` | `PickerRequest.cursor_off_use_this`: the cursor starts on the first sub-folder (or Cancel), never "Use this folder" (used by the save finder) |
 | 2026-10-24 | `src/fork/save_restore/mod.rs`, `src/fork/save_restore/broad.rs`, `src/core/save_backup.rs` | Save guards (branch `save-guards`): Restore checks where a linked save folder leads (`link_problem`) before the safety backup copies anything; `backup_before_update` refuses a save folder that holds many apps' files and a link that leads to one (no copy, no staging); `userdata` and Flatpak roots (`~/.var/app/<id>`, its `data`/`config`/`cache`) join the refused folders; the ports library is passed to `folder_problem`/`container_reason` explicitly |
+| 2026-10-24 | `README.md` | One line in the note at the top linking `PRIVACY.md` (new file, the fork's own) |
 
 ## Add to Steam (Settings menu)
 
