@@ -90,11 +90,11 @@ press_keys() {  # $1 = window id, then the keys. Without a window manager a dial
     xdotool key --delay 150 "$@"
 }
 # Import ports opens by itself on the second step; its first page is "found" or "nothing found".
-# Skip is the second choice of the first and the third of the second.
+# Skip is the second choice of the first page; the nothing-found page has Next highlighted.
 skip_import() {
     local w; w=$(find_window '^Import ports: (nothing found|found)$') || return 1
     case "$(xdotool getwindowname "$w")" in
-        *"nothing found") press_keys "$w" Down Down Return ;;
+        *"nothing found") press_keys "$w" Return ;;                  # Next is highlighted on a first run
         *) press_keys "$w" Down Return ;;
     esac
 }
@@ -164,7 +164,7 @@ check "the main window is still there after Skip setup" 'kill -0 "$FRESH" 2>/dev
 kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
 
 # Walk the whole wizard to Finish: keep the folder, skip Import ports, go on past Steam (the game files page is passed
-# over: no installed port needs a file; the empty home has no Steam folder, so its page is one Continue), Finish.
+# over: no installed port needs a file; the empty home has no Steam folder, so its page offers Try again, then Continue), Finish.
 # setup_done is written, the wizard closes and the main window stays. B on the last page goes back one page.
 rm -f "$FRESH_DIR/fork-settings.json"
 start_fresh
@@ -174,7 +174,7 @@ w=$(find_window '^Setup wizard: Ports folder$') || walked="no (never saw the por
 [ "$walked" = yes ] && { skip_import || walked="no (never saw Import ports)"; }
 if [ "$walked" = yes ]; then
     w=$(find_window '^Setup wizard: Steam$') || walked="no (never saw the Steam page)"
-    [ "$walked" = yes ] && press_keys "$w" Return                  # Continue
+    [ "$walked" = yes ] && press_keys "$w" Down Return             # Continue (Try again is first)
 fi
 [ "$walked" = yes ] && { w=$(find_window '^Setup wizard: all done$') || walked="no (never saw the last page)"; }
 if [ "$walked" = yes ]; then
@@ -182,7 +182,7 @@ if [ "$walked" = yes ]; then
     press_keys "$w" Escape
     back=$(find_window '^Setup wizard: Steam$') || back=""
     check "B on the last page goes back one page" '[ -n "$back" ]'
-    [ -n "$back" ] && { press_keys "$back" Return; w=$(find_window '^Setup wizard: all done$') || walked="no (never came back to the last page)"; }
+    [ -n "$back" ] && { press_keys "$back" Down Return; w=$(find_window '^Setup wizard: all done$') || walked="no (never came back to the last page)"; }
 fi
 check "walking every page reaches the last page ($walked)" '[ "$walked" = yes ]'
 [ "$walked" = yes ] && press_keys "$w" Return                      # Finish
