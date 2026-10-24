@@ -13,6 +13,7 @@
 
 pub mod flow;
 pub mod game_files;
+pub mod notice;
 pub mod places;
 pub mod progress;
 pub mod ports_pages;

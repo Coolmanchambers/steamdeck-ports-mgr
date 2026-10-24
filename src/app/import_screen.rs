@@ -23,6 +23,7 @@ use super::dialogs::{
 use super::folder_picker_screen::open_folder_picker;
 use super::page_dialog::{show_page, show_page_handle, Handlers};
 use super::ports_folder_screen::{blocked_reason, prompt_old_copies_batch_then};
+use crate::fork::setup_wizard::notice::{self, NoticeAction};
 use crate::fork::setup_wizard::ports_pages::{self, FolderAction};
 use crate::fork::setup_wizard::progress::{progress_page, ProgressAction};
 use super::state::AppState;
@@ -115,6 +116,31 @@ pub(super) fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &s
 /// Cancel so a stray press does not do the work.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, text: &str, label: &str, preselect_cancel: bool, on_confirm: impl Fn(&Rc<AppState>, &Router) + 'static, on_cancel: Step) {
+    // In the setup wizard a short notice or question is a wizard page, not a small dialog.
+    if super::setup_wizard_screen::active() && text.len() <= notice::MAX_TEXT {
+        let page = notice::notice_page(title, text, label, preselect_cancel, 2);
+        let (on_confirm, on_cancel): (Rc<dyn Fn(&Rc<AppState>, &Router)>, Step) = (Rc::new(on_confirm), on_cancel);
+        let (confirm_now, cancel_now, cancel_back, cancel_fail) = (on_confirm, on_cancel.clone(), on_cancel.clone(), on_cancel);
+        let handlers = Handlers {
+            on_action: Rc::new(move |app, router, action: NoticeAction| {
+                close_current_dialog(app, router);
+                match action {
+                    NoticeAction::Confirm => confirm_now(app, router),
+                    NoticeAction::Cancel => cancel_now(app, router),
+                }
+            }),
+            on_back: Rc::new(move |app, router| {
+                close_current_dialog(app, router);
+                cancel_back(app, router);
+            }),
+            on_exit: Rc::new(|app, router| super::setup_wizard_screen::exit_wizard(app, router)),
+            on_input: None,
+        };
+        if !show_page(app, router, page, handlers) {
+            cancel_fail(app, router);
+        }
+        return;
+    }
     open_confirm_dialog(app, router, title.into(), padded(text).into(), label.into(), on_confirm);
     if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
         if preselect_cancel {
