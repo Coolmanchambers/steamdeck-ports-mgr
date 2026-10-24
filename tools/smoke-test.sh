@@ -163,29 +163,26 @@ check "no wizard window is left after Skip setup" '[ -z "$(xdotool search --only
 check "the main window is still there after Skip setup" 'kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Ports Launcher$" >/dev/null 2>&1'
 kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
 
-# Walk the whole wizard to Finish: keep the folder, skip each question, Finish. setup_done is written, the
-# wizard closes and the main window stays. B on the last page goes back one page (to Steam).
+# Walk the whole wizard to Finish: keep the folder, skip Import ports, go on past Steam (the game files page is passed
+# over: no installed port needs a file; the empty home has no Steam folder, so its page is one Continue), Finish.
+# setup_done is written, the wizard closes and the main window stays. B on the last page goes back one page.
 rm -f "$FRESH_DIR/fork-settings.json"
 start_fresh
 walked=yes
 w=$(find_window '^Setup wizard: Ports folder$') || walked="no (never saw the ports folder question)"
 [ "$walked" = yes ] && press_keys "$w" Return                      # keep the folder in use
 [ "$walked" = yes ] && { skip_import || walked="no (never saw Import ports)"; }
-for page in 'Game files' 'Steam'; do
-    [ "$walked" = yes ] || break
-    w=$(find_window "^Setup wizard: $page\$") || { walked="no (never saw '$page')"; break; }
-    case "$page" in
-        'Game files') press_keys "$w" Down Return ;;               # Skip for now
-        *) press_keys "$w" Down Down Return ;;                     # Skip
-    esac
-done
+if [ "$walked" = yes ]; then
+    w=$(find_window '^Setup wizard: Steam$') || walked="no (never saw the Steam page)"
+    [ "$walked" = yes ] && press_keys "$w" Return                  # Continue
+fi
 [ "$walked" = yes ] && { w=$(find_window '^Setup wizard: all done$') || walked="no (never saw the last page)"; }
 if [ "$walked" = yes ]; then
     import -window root "$OUT/fresh-last-page.png" 2>/dev/null
     press_keys "$w" Escape
     back=$(find_window '^Setup wizard: Steam$') || back=""
     check "B on the last page goes back one page" '[ -n "$back" ]'
-    [ -n "$back" ] && { press_keys "$back" Down Down Return; w=$(find_window '^Setup wizard: all done$') || walked="no (never came back to the last page)"; }
+    [ -n "$back" ] && { press_keys "$back" Return; w=$(find_window '^Setup wizard: all done$') || walked="no (never came back to the last page)"; }
 fi
 check "walking every page reaches the last page ($walked)" '[ "$walked" = yes ]'
 [ "$walked" = yes ] && press_keys "$w" Return                      # Finish

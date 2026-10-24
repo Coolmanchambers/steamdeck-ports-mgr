@@ -13,7 +13,9 @@ use super::dialogs::{
     build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, open_progress_dialog,
     set_picker_items, update_progress_dialog, DialogSlot,
 };
+use super::page_dialog::{show_page_handle, Handlers};
 use super::state::AppState;
+use crate::fork::setup_wizard::progress::{progress_page, ProgressAction};
 use crate::core::path_safety::safe_join;
 use crate::fork::rom_library::{Approval, RomLibraryStore};
 use crate::fork::folder_picker::{PickerRequest, Purpose};
@@ -143,7 +145,15 @@ thread_local! {
     static ABANDON_HOOK: RefCell<Option<Back>> = const { RefCell::new(None) };
 }
 
+/// The game files scan as a wizard page: what it is reading now, and Cancel.
+fn scan_progress_page(title: &str, text: &str, cancelling: bool) -> crate::fork::page::Page<ProgressAction> {
+    let mut page = progress_page(title, "Your game files are only read, never changed or moved.", 3, text.lines().next().unwrap_or_default(), "Cancel (nothing is changed)", cancelling);
+    page.window_title = format!("Setup wizard: {}", title.to_lowercase());
+    page
+}
+
 fn stop_job_timer() {
+
     JOB_TIMER.with(|t| t.stop());
     JOB_RUNNING.with(|r| r.set(false));
 }
@@ -164,13 +174,41 @@ fn run_job<T: Send + 'static>(
     JOB_RUNNING.with(|r| r.set(true));
     let cancelling = Rc::new(Cell::new(false));
     let mut picker = None;
+    // In the setup wizard the scan's progress is a page (one line, and Cancel) instead of a list.
+    let mut page_handle = None;
+    let page_closed = Rc::new(Cell::new(false));
     let progress_mode = match &ui {
         JobUi::Progress { title, status } => {
             open_progress_dialog(app, router, title, status);
             true
         }
+        JobUi::Cancellable { title } if super::setup_wizard_screen::active() => {
+            let (cancel_job, closed_job) = (job.clone(), job.clone());
+            let (cancelling_now, closed) = (cancelling.clone(), page_closed.clone());
+            let handlers = Handlers {
+                on_action: Rc::new(move |_, _, _: ProgressAction| {
+                    cancel_job.cancel();
+                    cancelling_now.set(true);
+                }),
+                on_back: Rc::new({
+                    let closed = closed.clone();
+                    move |_, _| {
+                        closed_job.cancel();
+                        closed.set(true);
+                    }
+                }),
+                on_exit: Rc::new(move |app, router| {
+                    closed.set(true);
+                    super::setup_wizard_screen::exit_wizard(app, router);
+                }),
+                on_input: None,
+            };
+            page_handle = show_page_handle(app, router, scan_progress_page(title, "", false), handlers);
+            false
+        }
         JobUi::Cancellable { title } => {
-            if let Some(dialog) = build_picker_dialog(app, router, title, &cancel_labels("Checked 99999 files, 999.9 GB read\nA long game file name that keeps going and going.iso", false)) {
+            if let Some(dialog)
+ = build_picker_dialog(app, router, title, &cancel_labels("Checked 99999 files, 999.9 GB read\nA long game file name that keeps going and going.iso", false)) {
                 let (job, cancelling) = (job.clone(), cancelling.clone());
                 let weak = dialog.as_weak();
                 dialog.on_item_selected(move |index| {
@@ -190,13 +228,22 @@ fn run_job<T: Send + 'static>(
         }
     };
 
+    let title_text = match &ui {
+        JobUi::Cancellable { title } | JobUi::Progress { title, .. } => *title,
+    };
     let done: RefCell<Option<Box<dyn FnOnce(&Rc<AppState>, &Router, Result<T, String>)>>> = RefCell::new(Some(Box::new(done)));
     let (app, router) = (app.clone(), router.clone());
+
     let last = RefCell::new(String::new());
     let abandoned = Cell::new(false);
     JOB_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
+            if page_closed.get() && !abandoned.get() {
+                job.cancel();
+                abandoned.set(true);
+            }
             if let Some(weak) = &picker {
+
                 // The user closed the list with B: stop the work and drop its result. The timer keeps
                 // running until the worker has really stopped, so a new job cannot overlap it.
                 if !abandoned.get() && !weak.upgrade().is_some_and(|d| d.window().is_visible()) {
@@ -235,9 +282,12 @@ fn run_job<T: Send + 'static>(
                 if let DialogSlot::Progress(d) = &*app.dialog_nav.dialogs.borrow() {
                     update_progress_dialog(&app, d, &text);
                 }
+            } else if let Some(handle) = &page_handle {
+                handle.update(scan_progress_page(title_text, &text, cancelling.get()));
             } else if let Some(d) = picker.as_ref().and_then(slint::Weak::upgrade) {
                 set_picker_items(&d, &cancel_labels(&text, cancelling.get()));
             }
+
         });
     });
 }

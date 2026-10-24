@@ -21,7 +21,10 @@ use super::dialogs::{
     build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot,
 };
 use super::folder_picker_screen::open_folder_picker;
+use super::page_dialog::{show_page, show_page_handle, Handlers};
 use super::ports_folder_screen::{blocked_reason, prompt_old_copies_batch_then};
+use crate::fork::setup_wizard::ports_pages::{self, FolderAction};
+use crate::fork::setup_wizard::progress::{progress_page, ProgressAction};
 use super::state::AppState;
 use crate::fork::folder_picker::{PickerRequest, Purpose};
 use crate::fork::import::engine::{move_selected, GameFileChoice, ImportSummary, Prompter};
@@ -264,6 +267,9 @@ struct JobView {
     text: RefCell<String>,
     cancel_row: Cell<usize>,
     weak: RefCell<Option<slint::Weak<crate::ListPickerDialog>>>,
+    /// In the setup wizard the progress is a page, drawn again as the lines change.
+    page: RefCell<Option<super::page_dialog::PageHandle<ProgressAction>>>,
+    page_mode: Cell<bool>,
     /// Where the answer to the question on screen goes.
     pending_reply: RefCell<Option<mpsc::Sender<GameFileChoice>>>,
 }
@@ -279,7 +285,62 @@ impl JobView {
     }
 }
 
+/// The sentence under the title of a progress page.
+fn progress_sentence(title: &str) -> &'static str {
+    if title.starts_with("Importing") { "Each port is copied and checked. Nothing is deleted." } else { "Nothing is changed while it looks." }
+}
+
+fn progress_page_of(view: &JobView) -> crate::fork::page::Page<ProgressAction> {
+    let label = if view.cancelling.get() { "Cancelling" } else { view.cancel_label };
+    progress_page(view.title, progress_sentence(view.title), 2, &view.text.borrow(), label, view.cancelling.get())
+}
+
+/// The progress as a wizard page: Cancel stops the work (the copy in progress is removed), B closes the page like
+/// B on the list does, the title bar X also ends the wizard.
+fn show_progress_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, cancel: &Rc<dyn Fn()>) -> bool {
+    let on_cancel: Rc<dyn Fn(&Rc<AppState>, &Router)> = {
+        let (view, cancel) = (view.clone(), cancel.clone());
+        Rc::new(move |_, _| {
+            if !view.cancelling.get() {
+                cancel();
+                view.cancelling.set(true);
+                if let Some(page) = view.page.borrow().as_ref() {
+                    page.update(progress_page_of(&view));
+                }
+            }
+        })
+    };
+    let on_close: Rc<dyn Fn(&Rc<AppState>, &Router)> = {
+        let (view, cancel) = (view.clone(), cancel.clone());
+        Rc::new(move |_, _| {
+            if !view.closed.get() {
+                cancel();
+                view.closed.set(true);
+            }
+        })
+    };
+    let handlers = Handlers {
+        on_action: Rc::new({
+            let on_cancel = on_cancel.clone();
+            move |app, router, _action: ProgressAction| on_cancel(app, router)
+        }),
+        on_back: on_close.clone(),
+        on_exit: Rc::new(move |app, router| {
+            on_close(app, router);
+            super::setup_wizard_screen::exit_wizard(app, router);
+        }),
+        on_input: None,
+    };
+    let Some(handle) = show_page_handle(app, router, progress_page_of(view), handlers) else { return false };
+    view.page_mode.set(true);
+    *view.page.borrow_mut() = Some(handle);
+    true
+}
+
 fn show_list(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, cancel: &Rc<dyn Fn()>) {
+    if super::setup_wizard_screen::active() && show_progress_page(app, router, view, cancel) {
+        return;
+    }
     let rows = job_rows(&view.text.borrow(), view.cancel_label);
     view.cancel_row.set(rows.len() - 1);
     let Some(dialog) = build_picker_dialog(app, router, view.title, &rows) else { return };
@@ -312,8 +373,12 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
         let view = view.clone();
         Rc::new(move |choice: GameFileChoice| view.answer_prompt(choice))
     };
+    if super::setup_wizard_screen::active() {
+        return show_prompt_page(app, router, view, port, issues, answer);
+    }
     let named: Vec<(String, Issue)> = issues.iter().map(|i| (port.as_ref().clone(), i.clone())).collect();
     let model = game_file_issues(&named);
+
     let labels: Vec<String> = model
         .labels
         .iter()
@@ -360,6 +425,33 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
+/// The game file question inside the wizard: Skip this port (it stays, to be fixed in Settings > Game files and
+/// imported again), Move anyway, or B to stop the whole import. Several problems of one port are one question.
+fn show_prompt_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc<String>, issues: Rc<Vec<Issue>>, answer: Rc<dyn Fn(GameFileChoice)>) {
+    let first = &issues[0];
+    let file = std::path::Path::new(&first.file).file_name().map_or(first.file.clone(), |n| n.to_string_lossy().into_owned());
+    let problem = format!("{file}: {}.", first.problem.trim_end_matches('.'));
+    let page = ports_pages::game_file_page(&port, &problem, 0).in_wizard(2, crate::fork::setup_wizard::flow::Step::COUNTED);
+    let (on_action, on_back, on_exit) = (answer.clone(), answer.clone(), answer);
+    let handlers = Handlers {
+        on_action: Rc::new(move |_, _, action: FolderAction| match action {
+            FolderAction::MoveAnyway => on_action(GameFileChoice::MoveAnyway),
+            FolderAction::SkipPort => on_action(GameFileChoice::FixInGameFiles),
+            _ => on_action(GameFileChoice::Cancel),
+        }),
+        on_back: Rc::new(move |_, _| on_back(GameFileChoice::Cancel)),
+        on_exit: Rc::new(move |app, router| {
+            on_exit(GameFileChoice::Cancel);
+            super::setup_wizard_screen::exit_wizard(app, router);
+        }),
+        on_input: None,
+    };
+    view.in_detail.set(false);
+    if !show_page(app, router, page, handlers) {
+        view.answer_prompt(GameFileChoice::Cancel);
+    }
+}
+
 /// Runs `work` on a worker thread behind a list of progress rows (one per line of the worker's progress
 /// text) and a Cancel row. Closing the list (B) cancels; the result is then dropped (and `leave` runs)
 /// unless `deliver_after_close` (an import must still report what it did). `leave` is also what a notice
@@ -398,6 +490,8 @@ pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, sp
         text: RefCell::new(spec.initial),
         cancel_row: Cell::new(0),
         weak: RefCell::new(None),
+        page: RefCell::new(None),
+        page_mode: Cell::new(false),
         pending_reply: RefCell::new(None),
     });
     let cancel: Rc<dyn Fn()> = {
@@ -422,7 +516,7 @@ pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, sp
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
             // The list was closed with B (not while a question stands in for it, nor between a question
             // and the list coming back): the work is cancelled.
-            if !view.prompting.get() && !view.reshow.get() && !view.closed.get() && !view.weak.borrow().as_ref().and_then(slint::Weak::upgrade).is_some_and(|d| d.window().is_visible()) {
+            if !view.page_mode.get() && !view.prompting.get() && !view.reshow.get() && !view.closed.get() && !view.weak.borrow().as_ref().and_then(slint::Weak::upgrade).is_some_and(|d| d.window().is_visible()) {
                 cancel();
                 view.closed.set(true);
             }
@@ -480,8 +574,15 @@ pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, sp
             }
             *view.text.borrow_mut() = text.clone();
             view.cancel_row.set(job_rows(&text, view.cancel_label).len() - 1);
+            if view.page_mode.get() {
+                if let Some(page) = view.page.borrow().as_ref() {
+                    page.update(progress_page_of(&view));
+                }
+                return;
+            }
             if let Some(d) = view.weak.borrow().as_ref().and_then(slint::Weak::upgrade) {
-                let label = if view.cancelling.get() { "Cancelling (stops the copy in progress)..." } else { view.cancel_label };
+                let label = if view.cancelling.get()
+ { "Cancelling (stops the copy in progress)..." } else { view.cancel_label };
                 set_picker_items(&d, &job_rows(&text, label));
             }
         });
