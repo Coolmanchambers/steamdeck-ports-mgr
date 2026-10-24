@@ -120,7 +120,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-24 | `src/app/mod.rs` | One module line, `versioned_update` |
 | 2026-10-24 | `src/core/http.rs` | `cloud_agent(https_only)`: the agent the cloud services use (no redirects, error statuses returned as replies, long body timeouts); https-only except for tests and debug builds talking to a mock server on this machine |
 | 2026-10-24 | `src/fork/secrets.rs` | `file_is_private`, `tighten_permissions` and `write_private` made `pub(crate)` so `cloud-tokens.json` follows the same rules as `secrets.json` |
-| 2026-10-24 | `.github/workflows/ci.yml` | The release build step gets `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` from repository secrets, only for a push to main (never branches, pull requests or the upstream-sync build) |
+| 2026-10-24 | `.github/workflows/ci.yml` | The release build step gets `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` from repository secrets, only for a push to main (never branches, pull requests or the upstream-sync build); a step after it fails the job if the test-only cloud switch names (`DPM_CLOUD_TEST_BASE`, `DPM_CLOUD_DEMO_DIR`) are found in the release program |
 | 2026-10-24 | `src/fork/mod.rs` | One line registering `cloud` |
 | 2026-10-24 | `Cargo.toml`, `Cargo.lock` | Added `sha2` and `qrcode` (default features off) for cloud backup; the lock gained eight crates, all MIT or Apache-2.0 |
 | 2026-10-24 | `src/app/dialogs.rs`, `src/app/mod.rs` | Settings gets "Cloud backup..." (`SettingsEntry::CloudBackup`, opens `cloud_screen::open_from_settings`); one module line |
@@ -952,6 +952,15 @@ closed. Privacy: [PRIVACY.md](PRIVACY.md).
   comes from the id token when there is one, else from Google's userinfo address. Sign-in is refused, before a
   code is shown, when the app's folder is on a drive that cannot keep the token file private (exFAT or FAT);
   the token file is made private before it is read.
+- **Google Drive** (`google.rs`). Layout `Deck Ports Manager/<Deck name>/Saves Backup/<same folders as on the Deck>`,
+  found by name before anything is made (so a second run never makes a second copy). A file up to 5 MB goes up in
+  one multipart request, a bigger one by a resumable session in 8 MiB pieces; after a dropped connection, a 5xx or a
+  lost answer the app asks the session where it stands and carries on from there (five tries in a row without
+  progress, then it gives up with the failure's kind). The session address is a credential: it is never logged and
+  the pieces carry no token. Listing always asks for `sha256Checksum` and follows pages. A 401 makes one forced
+  token refresh and one more try; a 401 after that is signed out. Drive's code words (`storageQuotaExceeded`,
+  `rateLimitExceeded`, `userRateLimitExceeded`, `dailyLimitExceeded`) and `Retry-After` pick the failure kind. The
+  code never deletes, trashes or changes a file (a test reads the source for `DELETE`, `PATCH`, `trashed`, `/trash`).
 - **Build credentials.** `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` are compiled in from repository
   secrets for a push to `main` only (never branches, pull requests or the upstream-sync build). A build without
   them says "Cloud backup isn't set up in this build". The mock-server and demo-folder switches

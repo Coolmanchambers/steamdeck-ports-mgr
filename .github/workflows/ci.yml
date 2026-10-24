@@ -69,6 +69,14 @@ jobs:
           DPM_GOOGLE_CLIENT_SECRET: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.ref && secrets.DPM_GOOGLE_CLIENT_SECRET || '' }}
         run: cargo build --release --locked
 
+      # The test-only switches of cloud backup (a mock sign-in server, a folder standing in for the cloud) are compiled
+      # only into test and debug builds: none of their names may be in the release program.
+      - name: Test-only cloud switches are absent from the release build
+        run: |
+          for name in DPM_CLOUD_TEST_BASE DPM_CLOUD_DEMO_DIR; do
+            if grep -qa -- "$name" target/release/ports_launcher; then echo "$name is in the release build"; exit 1; fi
+          done
+
       - name: Show runtime requirements (newest glibc symbol, shared libraries)
         run: |
           objdump -T target/release/ports_launcher | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
