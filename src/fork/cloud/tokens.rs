@@ -19,6 +19,30 @@ use std::path::{Path, PathBuf};
 
 pub const FILE_NAME: &str = "cloud-tokens.json";
 
+/// Why sign-in is refused on a drive that cannot keep a file private (exFAT or FAT on an SD card).
+pub const NOT_PRIVATE: &str = "This app's folder is on a drive that can't keep your sign-in private. Move the app to the internal drive to use cloud backup.";
+
+/// Whether a token file made in `dir` would really be private to this account: a scratch file is made the
+/// way the real one is, and the drive is asked what it kept (`file_private`). Run before the first save, so a
+/// sign-in is never stored where other accounts could read it.
+pub fn private_check_with(dir: &Path, file_private: &dyn Fn(&Path) -> Option<bool>) -> Result<(), String> {
+    let probe = dir.join(format!("{FILE_NAME}.probe"));
+    let _ = fs::remove_file(&probe);
+    let made = write_private(&probe, b"{}");
+    let private = made.as_ref().ok().and_then(|()| file_private(&probe));
+    let _ = fs::remove_file(&probe);
+    match (made, private) {
+        (Ok(()), Some(false)) => Err(NOT_PRIVATE.to_string()),
+        (Ok(()), _) => Ok(()),
+        (Err(e), _) if e.kind() == io::ErrorKind::PermissionDenied => Err(NOT_PRIVATE.to_string()),
+        (Err(e), _) => Err(format!("This Deck could not write in the app's folder ({}), so the sign-in cannot be kept.", e.kind())),
+    }
+}
+
+pub fn private_check(dir: &Path) -> Result<(), String> {
+    private_check_with(dir, &file_is_private)
+}
+
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct ServiceTokens {
     /// `None`: signed out (the entry stays only to remember which account it was).
@@ -71,6 +95,15 @@ impl ServiceTokens {
     }
 }
 
+/// Every cloud secret stored in the folder of `secrets_path` (the art keys' file), for the redaction lists that
+/// already hold those keys. An empty path (keys held in memory) has no folder, so nothing.
+pub fn values_beside(secrets_path: &Path) -> Vec<String> {
+    match secrets_path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        Some(dir) => CloudTokens::load(&dir.join(FILE_NAME)).all_values(),
+        None => Vec::new(),
+    }
+}
+
 pub struct CloudTokens {
     path: PathBuf,
     services: BTreeMap<String, ServiceTokens>,
@@ -97,14 +130,17 @@ impl CloudTokens {
             return blank(format!("{FILE_NAME} is a link; it is not used or changed. Replace it with a plain file."));
         }
         let restricted = Cell::new(None);
+        // Made private before it is read, so a file that was left open is never read while it is.
+        let mut problem = None;
+        if fs::metadata(path).is_ok() {
+            match tighten_permissions(path) {
+                Ok(private) => restricted.set(private),
+                Err(e) => problem = Some(format!("could not restrict {FILE_NAME} to your account: {e}")),
+            }
+        }
         match fs::read_to_string(path) {
             Ok(text) => match serde_json::from_str::<Value>(text.strip_prefix('\u{FEFF}').unwrap_or(&text)) {
                 Ok(Value::Object(map)) => {
-                    let mut problem = None;
-                    match tighten_permissions(path) {
-                        Ok(private) => restricted.set(private),
-                        Err(e) => problem = Some(format!("could not restrict {FILE_NAME} to your account: {e}")),
-                    }
                     let services = map.iter().filter(|(k, _)| ServiceId::from_key(k).is_some()).map(|(k, v)| (k.clone(), ServiceTokens::from_json(v))).collect();
                     CloudTokens { path: path.to_path_buf(), services, writable: true, problem, restricted }
                 }
@@ -145,13 +181,15 @@ impl CloudTokens {
         })
     }
 
-    /// Signs out: every token goes and the entry with it (the account is forgotten).
+    /// Signs out: every token goes and the entry with it (the account is forgotten). When no service is left
+    /// the file itself is deleted.
     pub fn remove(&mut self, id: ServiceId) -> io::Result<()> {
         let before = self.services.remove(id.key());
         if before.is_none() {
             return Ok(());
         }
-        self.save().inspect_err(|_| {
+        let result = if self.services.is_empty() { self.delete_file() } else { self.save() };
+        result.inspect_err(|_| {
             if let Some(b) = before {
                 self.services.insert(id.key().to_string(), b);
             }
@@ -168,6 +206,22 @@ impl CloudTokens {
     /// Every stored secret, for removing them from text that might otherwise carry one.
     pub fn all_values(&self) -> Vec<String> {
         self.services.values().flat_map(|t| [t.refresh_token.clone(), t.access_token.clone(), t.email.clone()]).flatten().collect()
+    }
+
+    fn delete_file(&self) -> io::Result<()> {
+        if !self.writable {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{FILE_NAME} cannot be changed here; fix or remove the file first")));
+        }
+        if self.path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        if fs::symlink_metadata(&self.path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{FILE_NAME} is a link; it is not changed")));
+        }
+        match fs::remove_file(&self.path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
     }
 
     fn save(&self) -> io::Result<()> {
@@ -223,6 +277,49 @@ mod tests {
         let mut again = again;
         again.remove(ServiceId::Google).unwrap();
         assert!(CloudTokens::load(&path).get(ServiceId::Google).is_none());
+    }
+
+    #[test]
+    fn signing_out_the_last_service_deletes_the_file_and_another_service_keeps_it() {
+        let dir = temp_dir("delete");
+        let path = dir.join(FILE_NAME);
+        let mut t = CloudTokens::load(&path);
+        t.set(ServiceId::Google, sample()).unwrap();
+        t.set(ServiceId::Second, sample()).unwrap();
+        t.remove(ServiceId::Google).unwrap();
+        assert!(path.exists(), "another service is still signed in");
+        assert!(!CloudTokens::load(&path).signed_in(ServiceId::Google) && CloudTokens::load(&path).signed_in(ServiceId::Second));
+        t.remove(ServiceId::Second).unwrap();
+        assert!(!path.exists(), "nothing left, so the file is deleted");
+        t.remove(ServiceId::Second).unwrap();
+    }
+
+    #[test]
+    fn a_drive_that_cannot_keep_the_file_private_refuses_the_sign_in_before_anything_is_saved() {
+        let dir = temp_dir("notprivate");
+        let refused = private_check_with(&dir, &|_| Some(false)).unwrap_err();
+        assert_eq!(refused, NOT_PRIVATE);
+        assert!(refused.contains("Move the app to the internal drive"));
+        assert!(!dir.join(format!("{FILE_NAME}.probe")).exists() && !dir.join(FILE_NAME).exists(), "the probe is removed and no token file was made");
+        assert_eq!(private_check_with(&dir, &|_| Some(true)), Ok(()));
+        assert_eq!(private_check_with(&dir, &|_| None), Ok(()), "a drive that cannot tell (Windows) is not refused");
+        let missing = private_check_with(&dir.join("nope"), &|_| Some(true)).unwrap_err();
+        assert!(missing.contains("could not write"), "{missing}");
+        #[cfg(unix)]
+        assert_eq!(private_check(&dir), Ok(()), "a normal Linux folder keeps files private");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_wide_open_file_is_made_private_before_it_is_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("beforeread");
+        let path = dir.join(FILE_NAME);
+        fs::write(&path, "{ damaged").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+        let t = CloudTokens::load(&path);
+        assert!(t.problem.as_deref().is_some_and(|p| p.contains("not a JSON object")));
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600, "tightened even though the contents were unusable");
     }
 
     #[test]
@@ -315,6 +412,29 @@ mod tests {
             assert!(!text.contains(secret), "{text}");
         }
         assert!(t.all_values().iter().any(|v| v.starts_with("REFRESH")));
+    }
+
+    #[test]
+    fn the_cloud_secrets_join_the_redaction_list_of_the_art_keys() {
+        let dir = temp_dir("redact");
+        let mut t = CloudTokens::load(&dir.join(FILE_NAME));
+        t.set(ServiceId::Google, sample()).unwrap();
+        let values = values_beside(&dir.join("secrets.json"));
+        assert!(values.iter().any(|v| v.starts_with("REFRESH")) && values.iter().any(|v| v.starts_with("ACCESS")));
+        assert!(values_beside(Path::new("")).is_empty());
+        assert!(values_beside(&dir.join("elsewhere").join("secrets.json")).is_empty());
+    }
+
+    #[test]
+    fn the_bug_report_instructions_never_ask_for_the_token_file() {
+        let doc = include_str!("../../../STEAM_DECK.md");
+        let report = doc.split("## Reporting a result").nth(1).expect("the reporting section");
+        for line in report.lines() {
+            if line.contains(FILE_NAME) {
+                assert!(line.to_lowercase().contains("never attach"), "{line}");
+            }
+        }
+        assert!(report.contains("Never attach `cloud-tokens.json`"));
     }
 
     #[test]

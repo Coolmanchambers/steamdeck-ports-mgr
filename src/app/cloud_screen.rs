@@ -460,6 +460,10 @@ fn tick(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 fn start_sign_in(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let Some(setup) = endpoints::current() else { return show(app, router, s, Stage::NotSetUp, view::not_set_up_page()) };
     s.cancel_jobs();
+    // Before any code is shown: a sign-in must never be stored where other accounts could read it.
+    if let Err(why) = tokens::private_check(&app.paths.config_dir) {
+        return notice(app, router, s, "Cloud backup can't be used here", vec![why, "Nothing was changed.".into()]);
+    }
     let (cfg, net, now) = (setup.oauth(), setup.net.clone(), unix_now());
     *s.start_job.borrow_mut() = Some(Rc::new(Background::spawn(move |_| oauth::start(&net, &cfg, now))));
     show(app, router, s, Stage::GettingCode, view::getting_code_page());

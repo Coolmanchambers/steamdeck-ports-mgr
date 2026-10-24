@@ -206,6 +206,8 @@ impl Session {
     fn secret_values(&self) -> Vec<String> {
         let mut all = self.secrets.all_values();
         all.extend(self.build.all_values());
+        // Fork (cloud backup): the Google sign-in tokens and email are redacted from the same text.
+        all.extend(crate::fork::cloud::tokens::values_beside(self.secrets.path()));
         all
     }
 

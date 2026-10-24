@@ -582,3 +582,7 @@ screenshot, `/home/deck/ports_launcher.log` if you set it up, the app's `state.j
 `updater.log`, `update-failed.txt` and `BUILD_INFO` if present, the installer's log
 `~/.cache/steamdeck-ports-mgr-installer.log`, and the output of
 `echo $XDG_SESSION_TYPE $XDG_CURRENT_DESKTOP` from Konsole.
+
+Never attach `cloud-tokens.json` (your Google sign-in) or `secrets.json` (artwork keys). `cloud-backup.json`
+(what was copied to the cloud: file names, sizes and checksums, no account) is safe to send. If you added a
+GitHub or GitLab token to `state.json` by hand, remove that line before sending the file.

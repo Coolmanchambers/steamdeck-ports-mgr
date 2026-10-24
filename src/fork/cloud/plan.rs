@@ -4,7 +4,9 @@
 //! Nothing in the cloud is ever replaced. A zip whose path is new gets its own name. A zip whose path was
 //! uploaded before but whose content has changed (a second Backup Saves on the same day rewrites the day's
 //! zip) is uploaded next to the old copy, named `<stem>-<first 8 of its SHA-256>.zip`. A cloud file with the
-//! same name and size is recognised instead of uploaded again (a new Deck, or a lost record).
+//! same name, same size and the same SHA-256 is recognised instead of uploaded again (a new Deck, or a lost
+//! record). A cloud file that reports no checksum is never taken for the same file: two deflated save zips of the
+//! same size are realistic, so size alone proves nothing.
 
 use super::local::LocalZip;
 use super::record::ServiceRecord;
@@ -36,6 +38,8 @@ impl Step {
 pub struct Plan {
     /// Newest first.
     pub steps: Vec<Step>,
+    /// Zips for which every name tried was taken by a different file: not uploaded, reported.
+    pub unplaced: Vec<LocalZip>,
 }
 
 /// True when the file needs a closer look (hash, then maybe an upload): it is not recorded, or its size or
@@ -56,9 +60,10 @@ pub fn plan(candidates: &[Candidate], rec: &ServiceRecord, remote: &[RemoteFile]
     let mut ordered: Vec<&Candidate> = candidates.iter().collect();
     ordered.sort_by(|a, b| b.zip.mtime.cmp(&a.zip.mtime).then_with(|| a.zip.rel.cmp(&b.zip.rel)));
     let mut steps = Vec::new();
+    let mut unplaced = Vec::new();
     for c in ordered {
         let recorded = rec.uploaded.get(&c.zip.rel);
-        if let Some(u) = recorded.filter(|u| u.sha256 == c.sha256) {
+        if let Some(u) = recorded.filter(|u| u.sha256.eq_ignore_ascii_case(&c.sha256)) {
             // The same content with a new modified time: nothing to copy.
             steps.push(Step::Recognise { zip: c.zip.clone(), sha256: c.sha256.clone(), cloud_path: u.cloud_path.clone() });
             continue;
@@ -71,21 +76,27 @@ pub fn plan(candidates: &[Candidate], rec: &ServiceRecord, remote: &[RemoteFile]
         }
         names.push(with_suffix(&c.zip.rel, &format!("-{short}")));
         names.extend((2..50).map(|n| with_suffix(&c.zip.rel, &format!("-{short}-{n}"))));
+        let mut placed = false;
         for name in names {
             match remote.iter().find(|r| r.path == name) {
                 None => {
                     steps.push(Step::Upload { zip: c.zip.clone(), sha256: c.sha256.clone(), cloud_path: name });
+                    placed = true;
                     break;
                 }
-                Some(r) if r.size == c.zip.size && r.sha256.as_deref().is_none_or(|h| h == c.sha256) => {
+                Some(r) if r.size == c.zip.size && r.sha256.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(&c.sha256)) => {
                     steps.push(Step::Recognise { zip: c.zip.clone(), sha256: c.sha256.clone(), cloud_path: name });
+                    placed = true;
                     break;
                 }
                 Some(_) => {}
             }
         }
+        if !placed {
+            unplaced.push(c.zip.clone());
+        }
     }
-    Plan { steps }
+    Plan { steps, unplaced }
 }
 
 #[cfg(test)]
@@ -125,9 +136,32 @@ mod tests {
     }
 
     #[test]
-    fn a_cloud_file_with_the_same_name_and_size_is_recognised_not_uploaded() {
-        let p = plan(&[cand("Global Backups/a.zip", 10, 5, "aa")], &ServiceRecord::default(), &[remote("Global Backups/a.zip", 10, None)]);
+    fn a_cloud_file_with_the_same_name_size_and_hash_is_recognised_not_uploaded() {
+        let p = plan(&[cand("Global Backups/a.zip", 10, 5, "aa")], &ServiceRecord::default(), &[remote("Global Backups/a.zip", 10, Some("aa"))]);
         assert!(matches!(&p.steps[0], Step::Recognise { cloud_path, .. } if cloud_path == "Global Backups/a.zip"));
+        // The comparison ignores case (Drive reports lowercase hex, other services may not).
+        let upper = RemoteFile { sha256: Some("AA".repeat(32)), ..remote("Global Backups/a.zip", 10, Some("aa")) };
+        let p = plan(&[cand("Global Backups/a.zip", 10, 5, "aa")], &ServiceRecord::default(), &[upper]);
+        assert!(matches!(&p.steps[0], Step::Recognise { .. }));
+    }
+
+    #[test]
+    fn a_cloud_file_with_no_checksum_is_never_taken_for_the_same_file() {
+        // Same name and same size, but nothing proves the content: it is uploaded beside, not recognised.
+        let p = plan(&[cand("Global Backups/a.zip", 10, 5, "aa")], &ServiceRecord::default(), &[remote("Global Backups/a.zip", 10, None)]);
+        assert!(matches!(&p.steps[0], Step::Upload { cloud_path, .. } if cloud_path == "Global Backups/a-aaaaaaaa.zip"), "{:?}", p.steps);
+        // Two zips of the same size and name with different content are the realistic case.
+        let p = plan(&[cand("Global Backups/a.zip", 10, 5, "bb")], &ServiceRecord::default(), &[remote("Global Backups/a.zip", 10, Some("aa"))]);
+        assert!(matches!(&p.steps[0], Step::Upload { .. }));
+    }
+
+    #[test]
+    fn a_zip_that_runs_out_of_names_is_reported_not_dropped_silently() {
+        let mut taken = vec![remote("Global Backups/a.zip", 99, Some("cc")), remote("Global Backups/a-aaaaaaaa.zip", 99, Some("cc"))];
+        taken.extend((2..50).map(|n| remote(&format!("Global Backups/a-aaaaaaaa-{n}.zip"), 99, Some("cc"))));
+        let p = plan(&[cand("Global Backups/a.zip", 10, 5, "aa")], &ServiceRecord::default(), &taken);
+        assert!(p.steps.is_empty());
+        assert_eq!(p.unplaced.len(), 1);
     }
 
     #[test]
@@ -149,7 +183,7 @@ mod tests {
     fn the_versioned_name_is_recognised_on_a_later_pass_and_counted_up_when_taken() {
         let c = [cand("Global Backups/a.zip", 10, 5, "aa")];
         let taken = remote("Global Backups/a.zip", 99, None);
-        let same = remote("Global Backups/a-aaaaaaaa.zip", 10, None);
+        let same = remote("Global Backups/a-aaaaaaaa.zip", 10, Some("aa"));
         let p = plan(&c, &ServiceRecord::default(), &[taken.clone(), same]);
         assert!(matches!(&p.steps[0], Step::Recognise { cloud_path, .. } if cloud_path == "Global Backups/a-aaaaaaaa.zip"));
         let other = remote("Global Backups/a-aaaaaaaa.zip", 77, None);

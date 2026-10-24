@@ -129,6 +129,8 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-24 | `src/fork/save_restore/mod.rs` | The stale-scratch sweep also removes `_cloud_download_*` folders a crash left in `Saves Backup` (a day old) |
 | 2026-10-24 | `src/fork/page.rs`, `src/fork/import/cards.rs`, `src/fork/import/link.rs`, `src/app/page_dialog.rs` | `Card.qr`: a QR code drawn where the cover goes (the cloud sign-in page); the two other `Card` constructors pass `None`; `PageHandle::is_open` |
 | 2026-10-24 | `src/main.rs` | One line: `cloud_screen::at_start` (the catch-up pass and the ten-minute check; nothing runs unless signed in) |
+| 2026-10-24 | `src/fork/art/resolve.rs`, `src/fork/art/screen.rs` | The art sources' redaction lists also hold the cloud sign-in tokens and email (`cloud::tokens::values_beside`) |
+| 2026-10-24 | `STEAM_DECK.md` | The bug-report instructions say never to attach `cloud-tokens.json` or `secrets.json`, and that `cloud-backup.json` is safe |
 
 Files added by this fork:
 
@@ -937,11 +939,17 @@ closed. Privacy: [PRIVACY.md](PRIVACY.md).
   still does not read back after 10 minutes is called broken and never uploaded.
 - **Never replaces, never deletes.** An upload goes to a name that is not taken. A zip rewritten the same day
   (a second Backup Saves) goes up beside the old copy as `<name>-<first 8 of SHA-256>.zip`. A cloud file with the
-  same name and size is recognised, not uploaded again. The service trait offers list, upload and download only;
-  there is no delete or trash call.
+  same name, size and SHA-256 is recognised, not uploaded again; one that reports no checksum is never taken for
+  the same file (two deflated save zips of one size are realistic), so the new zip goes up beside it. The service
+  trait offers list, upload and download only; there is no delete or trash call.
 - **Sign-in.** The OAuth device flow (code and QR, finished on a phone), scopes `openid email drive.file`
   only. Signing out, or signing in again, forgets the upload record of that service (it may have been another
-  account); the next pass recognises what the cloud already holds.
+  account); the next pass recognises what the cloud already holds. Signing out deletes `cloud-tokens.json`
+  when no service is left. Only `invalid_grant` means signed out: a 401 or `invalid_client` from the token
+  endpoint is this build's own credentials being wrong and never touches the stored sign-in. The account email
+  comes from the id token when there is one, else from Google's userinfo address. Sign-in is refused, before a
+  code is shown, when the app's folder is on a drive that cannot keep the token file private (exFAT or FAT);
+  the token file is made private before it is read.
 - **Build credentials.** `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` are compiled in from repository
   secrets for a push to `main` only (never branches, pull requests or the upstream-sync build). A build without
   them says "Cloud backup isn't set up in this build". The mock-server and demo-folder switches

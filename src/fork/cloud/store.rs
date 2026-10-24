@@ -7,7 +7,7 @@
 use super::oauth::{self, OAuthConfig, Tokens};
 use super::record::{Record, ServiceRecord};
 use super::service::{ErrorKind, ServiceError, ServiceId};
-use super::tokens::{CloudTokens, ServiceTokens};
+use super::tokens::{self, CloudTokens, ServiceTokens};
 use std::io;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -60,6 +60,9 @@ pub fn persist_service(record_path: &Path, tokens_path: &Path, id: ServiceId, pa
 /// pass recognises what the cloud already holds by name and size).
 pub fn sign_in(tokens_path: &Path, record_path: &Path, id: ServiceId, tokens: Tokens, now: u64) -> io::Result<()> {
     let _g = lock();
+    if let Some(dir) = tokens_path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        tokens::private_check(dir).map_err(|why| io::Error::new(io::ErrorKind::PermissionDenied, why))?;
+    }
     let mut store = CloudTokens::load(tokens_path);
     let fresh = oauth::apply(&ServiceTokens::default(), tokens, now);
     store.set(id, fresh)?;
@@ -137,7 +140,7 @@ mod tests {
     }
 
     fn cfg(mock: &Mock) -> OAuthConfig {
-        OAuthConfig { device_code_url: mock.url("/device/code"), token_url: mock.url("/token"), client_id: "id".into(), client_secret: "secret".into(), scope: "s".into() }
+        OAuthConfig { device_code_url: mock.url("/device/code"), token_url: mock.url("/token"), client_id: "id".into(), client_secret: "secret".into(), scope: super::super::endpoints::GOOGLE_SCOPE.into(), userinfo_url: mock.url("/userinfo") }
     }
 
     fn answering(answers: Vec<Answer>) -> Mock {

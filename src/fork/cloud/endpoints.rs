@@ -16,6 +16,7 @@ pub const GOOGLE_SCOPE: &str = "openid email https://www.googleapis.com/auth/dri
 pub struct Urls {
     pub device_code: String,
     pub token: String,
+    pub userinfo: String,
     /// `.../drive/v3` (files, folders, downloads).
     pub drive_api: String,
     /// `.../upload/drive/v3` (uploads).
@@ -27,6 +28,7 @@ impl Urls {
         Urls {
             device_code: "https://oauth2.googleapis.com/device/code".into(),
             token: "https://oauth2.googleapis.com/token".into(),
+            userinfo: "https://www.googleapis.com/oauth2/v3/userinfo".into(),
             drive_api: "https://www.googleapis.com/drive/v3".into(),
             drive_upload: "https://www.googleapis.com/upload/drive/v3".into(),
         }
@@ -35,7 +37,7 @@ impl Urls {
     /// Everything under one base address (a mock server).
     pub fn under(base: &str) -> Urls {
         let base = base.trim_end_matches('/');
-        Urls { device_code: format!("{base}/device/code"), token: format!("{base}/token"), drive_api: format!("{base}/drive/v3"), drive_upload: format!("{base}/upload/drive/v3") }
+        Urls { device_code: format!("{base}/device/code"), token: format!("{base}/token"), userinfo: format!("{base}/oauth2/v3/userinfo"), drive_api: format!("{base}/drive/v3"), drive_upload: format!("{base}/upload/drive/v3") }
     }
 }
 
@@ -49,7 +51,7 @@ pub struct Setup {
 
 impl Setup {
     pub fn oauth(&self) -> OAuthConfig {
-        OAuthConfig { device_code_url: self.urls.device_code.clone(), token_url: self.urls.token.clone(), client_id: self.client.client_id.clone(), client_secret: self.client.client_secret.clone(), scope: GOOGLE_SCOPE.into() }
+        OAuthConfig { device_code_url: self.urls.device_code.clone(), token_url: self.urls.token.clone(), client_id: self.client.client_id.clone(), client_secret: self.client.client_secret.clone(), scope: GOOGLE_SCOPE.into(), userinfo_url: self.urls.userinfo.clone() }
     }
 }
 
@@ -112,16 +114,27 @@ mod tests {
     #[test]
     fn google_urls_are_all_https_and_the_scope_is_the_narrow_one() {
         let u = Urls::google();
-        for url in [&u.device_code, &u.token, &u.drive_api, &u.drive_upload] {
+        for url in [&u.device_code, &u.token, &u.userinfo, &u.drive_api, &u.drive_upload] {
             assert!(url.starts_with("https://"), "{url}");
         }
+        assert_eq!(GOOGLE_SCOPE, "openid email https://www.googleapis.com/auth/drive.file");
         assert_eq!(GOOGLE_SCOPE.split(' ').collect::<Vec<_>>(), ["openid", "email", "https://www.googleapis.com/auth/drive.file"]);
         assert!(!GOOGLE_SCOPE.contains("auth/drive ") && !GOOGLE_SCOPE.ends_with("auth/drive"), "never the full drive scope");
+    }
+
+    #[test]
+    fn the_production_sign_in_config_carries_exactly_that_scope_and_the_userinfo_address() {
+        let setup = Setup { net: Net::production(), urls: Urls::google(), client: GoogleClient { client_id: "id".into(), client_secret: "secret".into() } };
+        let cfg = setup.oauth();
+        assert_eq!(cfg.scope, GOOGLE_SCOPE);
+        assert_eq!(cfg.userinfo_url, "https://www.googleapis.com/oauth2/v3/userinfo");
+        assert_eq!(cfg.device_code_url, "https://oauth2.googleapis.com/device/code");
     }
 
     #[test]
     fn a_mock_base_puts_every_call_under_it() {
         let u = Urls::under("http://127.0.0.1:9/");
         assert_eq!((u.device_code.as_str(), u.token.as_str(), u.drive_api.as_str(), u.drive_upload.as_str()), ("http://127.0.0.1:9/device/code", "http://127.0.0.1:9/token", "http://127.0.0.1:9/drive/v3", "http://127.0.0.1:9/upload/drive/v3"));
+        assert_eq!(u.userinfo, "http://127.0.0.1:9/oauth2/v3/userinfo");
     }
 }

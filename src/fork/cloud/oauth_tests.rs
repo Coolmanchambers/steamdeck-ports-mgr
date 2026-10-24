@@ -2,7 +2,9 @@
 
 use super::mock_http::{Answer, Mock, Seen};
 use super::net::Net;
+use super::endpoints::GOOGLE_SCOPE;
 use super::oauth::{self, OAuthConfig, Poll};
+use super::store;
 use super::service::{ErrorKind, ServiceId};
 use super::tokens::{CloudTokens, ServiceTokens};
 use std::sync::Mutex;
@@ -16,7 +18,7 @@ const EMAIL: &str = "tim@example.com";
 const ID_TOKEN: &str = "h.eyJlbWFpbCI6InRpbUBleGFtcGxlLmNvbSIsInN1YiI6IjEifQ.s";
 
 fn cfg(mock: &Mock) -> OAuthConfig {
-    OAuthConfig { device_code_url: mock.url("/device/code"), token_url: mock.url("/token"), client_id: "CLIENT-ID-VALUE".into(), client_secret: CLIENT_SECRET.into(), scope: "openid email drive.file".into() }
+    OAuthConfig { device_code_url: mock.url("/device/code"), token_url: mock.url("/token"), client_id: "CLIENT-ID-VALUE".into(), client_secret: CLIENT_SECRET.into(), scope: GOOGLE_SCOPE.into(), userinfo_url: mock.url("/userinfo") }
 }
 
 fn code_answer() -> Answer {
@@ -48,7 +50,7 @@ fn start_asks_for_a_code_and_reads_it() {
     let seen = mock.seen();
     assert_eq!((seen[0].method.as_str(), seen[0].path()), ("POST", "/device/code"));
     assert_eq!(seen[0].form("client_id").as_deref(), Some("CLIENT-ID-VALUE"));
-    assert_eq!(seen[0].form("scope").as_deref(), Some("openid email drive.file"));
+    assert_eq!(seen[0].form("scope").as_deref(), Some("openid email https://www.googleapis.com/auth/drive.file"));
     assert_eq!(seen[0].form("client_secret"), None, "the code request needs no secret");
 }
 
@@ -103,6 +105,71 @@ fn denied_expired_and_a_code_that_ran_out_by_the_clock() {
 }
 
 #[test]
+fn the_email_comes_from_the_userinfo_address_when_the_answer_has_no_id_token() {
+    // No id token in the token answer (Google's device-flow docs do not list one): the access token asks userinfo.
+    let no_id = Answer::json(200, &format!(r#"{{"access_token":"{ACCESS}","expires_in":3599,"refresh_token":"{REFRESH}","token_type":"Bearer"}}"#));
+    let mock = answering(vec![code_answer(), no_id, Answer::json(200, r#"{"sub":"1","email":"tim@example.com","email_verified":true}"#)]);
+    let (net, c) = (Net::local_test(), cfg(&mock));
+    let code = oauth::start(&net, &c, 0).unwrap();
+    match oauth::poll(&net, &c, &code, 5) {
+        Poll::Approved(t) => assert_eq!(t.email.as_deref(), Some(EMAIL)),
+        other => panic!("{other:?}"),
+    }
+    let seen = mock.seen();
+    let info = seen.last().unwrap();
+    assert_eq!((info.method.as_str(), info.path()), ("GET", "/userinfo"));
+    assert_eq!(info.header("authorization"), Some(format!("Bearer {ACCESS}").as_str()));
+}
+
+#[test]
+fn an_id_token_is_enough_and_userinfo_is_not_asked() {
+    let mock = answering(vec![code_answer(), tokens_answer(true)]);
+    let (net, c) = (Net::local_test(), cfg(&mock));
+    let code = oauth::start(&net, &c, 0).unwrap();
+    assert!(matches!(oauth::poll(&net, &c, &code, 5), Poll::Approved(t) if t.email.as_deref() == Some(EMAIL)));
+    assert!(mock.seen().iter().all(|s| s.path() != "/userinfo"));
+}
+
+#[test]
+fn a_userinfo_failure_or_nonsense_still_signs_in_without_an_email() {
+    let no_id = || Answer::json(200, &format!(r#"{{"access_token":"{ACCESS}","expires_in":3599,"refresh_token":"{REFRESH}"}}"#));
+    let mock = answering(vec![code_answer(), no_id(), Answer::json(500, "{}"), no_id(), Answer::json(200, r#"{"email":"not an email"}"#), no_id(), Answer::json(200, "garbage")]);
+    let (net, c) = (Net::local_test(), cfg(&mock));
+    let code = oauth::start(&net, &c, 0).unwrap();
+    for _ in 0..3 {
+        match oauth::poll(&net, &c, &code, 5) {
+            Poll::Approved(t) => assert_eq!(t.email, None),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_refused_app_is_not_a_signed_out_person() {
+    // invalid_client (bad build credentials) comes back as 401: the stored sign-in must stay as it is.
+    let mock = answering(vec![Answer::json(401, r#"{"error":"invalid_client","error_description":"The OAuth client was not found."}"#), Answer::json(401, "{}"), Answer::json(400, r#"{"error":"unauthorized_client"}"#)]);
+    let dir = temp_dir("badclient");
+    let path = dir.join("t.json");
+    let mut store = CloudTokens::load(&path);
+    store.set(ServiceId::Google, stored(0)).unwrap();
+    for _ in 0..3 {
+        let err = store::access_token(&Net::local_test(), &cfg(&mock), &path, ServiceId::Google, 100).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Other, "{err}");
+    }
+    let still = CloudTokens::load(&path);
+    assert!(still.signed_in(ServiceId::Google), "the refresh token is kept");
+    assert_eq!(still.get(ServiceId::Google).unwrap().refresh_token.as_deref(), Some(REFRESH));
+    let err = oauth::refresh(&Net::local_test(), &cfg(&answering(vec![Answer::json(401, r#"{"error":"invalid_client"}"#)])), REFRESH).unwrap_err();
+    assert_eq!(err.detail, oauth::BAD_BUILD);
+}
+
+#[test]
+fn only_invalid_grant_means_signed_out() {
+    let mock = answering(vec![Answer::json(400, r#"{"error":"invalid_grant"}"#)]);
+    assert_eq!(oauth::refresh(&Net::local_test(), &cfg(&mock), REFRESH).unwrap_err().kind, ErrorKind::SignedOut);
+}
+
+#[test]
 fn an_approval_without_a_refresh_token_is_a_failure_not_a_half_sign_in() {
     let mock = answering(vec![code_answer(), tokens_answer(false)]);
     let (net, c) = (Net::local_test(), cfg(&mock));
@@ -139,7 +206,7 @@ fn a_fresh_access_token_is_used_without_asking_anyone() {
     let dir = temp_dir("fresh");
     let mut store = CloudTokens::load(&dir.join("t.json"));
     store.set(ServiceId::Google, stored(10_000)).unwrap();
-    let token = oauth::access_token(&Net::local_test(), &cfg(&mock), &mut store, ServiceId::Google, 1_000).unwrap();
+    let token = store::access_token(&Net::local_test(), &cfg(&mock), store.path(), ServiceId::Google, 1_000).unwrap();
     assert_eq!(token, "OLD-ACCESS-TOKEN-xxxx");
     assert!(mock.seen().is_empty());
 }
@@ -151,7 +218,7 @@ fn an_old_access_token_is_refreshed_and_the_file_is_updated() {
     let path = dir.join("t.json");
     let mut store = CloudTokens::load(&path);
     store.set(ServiceId::Google, stored(1_020)).unwrap();
-    let token = oauth::access_token(&Net::local_test(), &cfg(&mock), &mut store, ServiceId::Google, 1_000).unwrap();
+    let token = store::access_token(&Net::local_test(), &cfg(&mock), store.path(), ServiceId::Google, 1_000).unwrap();
     assert_eq!(token, ACCESS);
     let seen = mock.seen();
     assert_eq!(seen[0].form("refresh_token").as_deref(), Some(REFRESH));
@@ -168,7 +235,7 @@ fn a_rotated_refresh_token_replaces_the_old_one() {
     let path = dir.join("t.json");
     let mut store = CloudTokens::load(&path);
     store.set(ServiceId::Google, stored(0)).unwrap();
-    oauth::access_token(&Net::local_test(), &cfg(&mock), &mut store, ServiceId::Google, 100).unwrap();
+    store::access_token(&Net::local_test(), &cfg(&mock), store.path(), ServiceId::Google, 100).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("ROTATED-REFRESH-5678") && !text.contains(REFRESH), "{text}");
 }
@@ -180,7 +247,7 @@ fn a_revoked_refresh_token_signs_out_and_keeps_only_the_email() {
     let path = dir.join("t.json");
     let mut store = CloudTokens::load(&path);
     store.set(ServiceId::Google, stored(0)).unwrap();
-    let err = oauth::access_token(&Net::local_test(), &cfg(&mock), &mut store, ServiceId::Google, 100).unwrap_err();
+    let err = store::access_token(&Net::local_test(), &cfg(&mock), store.path(), ServiceId::Google, 100).unwrap_err();
     assert_eq!(err.kind, ErrorKind::SignedOut);
     let again = CloudTokens::load(&path);
     assert!(!again.signed_in(ServiceId::Google));
@@ -194,16 +261,16 @@ fn a_service_outage_during_refresh_keeps_the_sign_in() {
     let dir = temp_dir("outage");
     let mut store = CloudTokens::load(&dir.join("t.json"));
     store.set(ServiceId::Google, stored(0)).unwrap();
-    let err = oauth::access_token(&Net::local_test(), &cfg(&mock), &mut store, ServiceId::Google, 100).unwrap_err();
+    let err = store::access_token(&Net::local_test(), &cfg(&mock), store.path(), ServiceId::Google, 100).unwrap_err();
     assert_eq!(err.kind, ErrorKind::ServiceDown);
-    assert!(store.signed_in(ServiceId::Google));
+    assert!(CloudTokens::load(store.path()).signed_in(ServiceId::Google));
 }
 
 #[test]
 fn not_signed_in_is_signed_out() {
     let mock = answering(vec![]);
-    let mut store = CloudTokens::in_memory();
-    let err = oauth::access_token(&Net::local_test(), &cfg(&mock), &mut store, ServiceId::Google, 0).unwrap_err();
+    let store = CloudTokens::in_memory();
+    let err = store::access_token(&Net::local_test(), &cfg(&mock), store.path(), ServiceId::Google, 0).unwrap_err();
     assert_eq!(err.kind, ErrorKind::SignedOut);
 }
 
@@ -228,11 +295,11 @@ fn no_token_code_secret_or_email_reaches_the_log_or_a_debug_print() {
     let mut store = CloudTokens::load(&dir.join("t.json"));
     store.set(ServiceId::Google, stored(0)).unwrap();
     printed += &format!("{store:?}");
-    let e1 = oauth::access_token(&net, &c, &mut store, ServiceId::Google, 100).unwrap_err();
+    let e1 = store::access_token(&net, &c, store.path(), ServiceId::Google, 100).unwrap_err();
     printed += &format!("{e1} {e1:?}");
     let mut store2 = CloudTokens::load(&dir.join("t2.json"));
     store2.set(ServiceId::Google, stored(0)).unwrap();
-    let e2 = oauth::access_token(&net, &c, &mut store2, ServiceId::Google, 100).unwrap_err();
+    let e2 = store::access_token(&net, &c, store2.path(), ServiceId::Google, 100).unwrap_err();
     printed += &format!("{e2} {e2:?}");
     let logged = super::log::take_captured().join("\n");
     for secret in [DEVICE_CODE, ACCESS, REFRESH, CLIENT_SECRET, EMAIL, "OLD-ACCESS-TOKEN", ID_TOKEN] {

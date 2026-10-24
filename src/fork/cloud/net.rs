@@ -152,6 +152,21 @@ fn classify_transport(e: &ureq::Error) -> ServiceError {
     }
 }
 
+/// `http://127.0.0.1[:port]/...` or `http://localhost[:port]/...`, judged on the parsed authority (no
+/// user-info, so `http://localhost@evil.example/` is not this machine).
+fn is_this_machine(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://") else { return false };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.contains('@') || authority.contains('\\') {
+        return false;
+    }
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    (host == "127.0.0.1" || host == "localhost") && port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
 #[derive(Clone)]
 pub struct Net {
     agent: ureq::Agent,
@@ -173,8 +188,7 @@ impl Net {
         if url.starts_with("https://") {
             return Ok(());
         }
-        let local = ["http://127.0.0.1", "http://localhost"].iter().any(|p| url.strip_prefix(p).is_some_and(|rest| rest.starts_with([':', '/']) || rest.is_empty()));
-        if self.plain_http_to_this_machine && local {
+        if self.plain_http_to_this_machine && is_this_machine(url) {
             return Ok(());
         }
         Err(ServiceError::other("a cloud address that is not secure (https) was refused"))
@@ -298,6 +312,11 @@ mod tests {
         assert!(net.check_url("http://localhost.evil.example/x").is_err());
         assert!(net.check_url("http://127.0.0.1.evil.example/x").is_err());
         assert!(net.check_url("http://example.com/x").is_err());
+        for hostile in ["http://localhost@evil.example/x", "http://127.0.0.1@evil.example/x", "http://localhost:80@evil.example/x", "http://localhost:/x", "http://localhost:abc/x", "http://127.0.0.1\\@evil.example/", "https://localhost.evil.example/x\u{0}"] {
+            let ok = net.check_url(hostile).is_ok();
+            assert!(!ok || hostile.starts_with("https://"), "{hostile}");
+        }
+        assert!(net.check_url("http://127.0.0.1/x").is_ok() && net.check_url("http://localhost?x=1").is_ok());
     }
 
     #[test]

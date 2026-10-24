@@ -249,6 +249,7 @@ impl ArtScreen {
     pub fn records_secrets_in(&self) -> Vec<String> {
         let mut all = self.secrets.all_values();
         all.extend(self.build.all_values());
+        all.extend(crate::fork::cloud::tokens::values_beside(self.secrets.path()));
         all
     }
 

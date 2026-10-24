@@ -30,6 +30,8 @@ pub struct PassReport {
     /// Zips not ready yet (just written, not readable yet): look again soon.
     pub deferred: usize,
     pub broken: usize,
+    /// Zips whose every candidate cloud name was taken by a different file (not uploaded).
+    pub unplaced: usize,
     pub bytes: u64,
     pub cancelled: bool,
     pub error: Option<ServiceError>,
@@ -86,7 +88,12 @@ pub fn run_pass(
                     return finish(rec, input, report, save);
                 }
             };
-            let steps = plan::plan(&candidates, rec, &remote).steps;
+            let planned = plan::plan(&candidates, rec, &remote);
+            for zip in &planned.unplaced {
+                super::log::note(format!("{}: no free cloud name for {}; it was not uploaded", service.id().key(), short_name(&zip.rel)));
+            }
+            report.unplaced = planned.unplaced.len();
+            let steps = planned.steps;
             for step in steps {
                 if cancel() {
                     report.cancelled = true;

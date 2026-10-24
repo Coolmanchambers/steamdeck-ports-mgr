@@ -2,16 +2,17 @@
 //!
 //! The Deck shows a short code and a QR code; the person finishes on their phone. The app asks the service now
 //! and then whether that happened ([`poll`]); when it did, it holds an access token (an hour) and a refresh
-//! token (until revoked). [`access_token`] hands out a good access token, refreshing it when it is about to
-//! run out; when the service says the refresh token is dead (`invalid_grant`) the sign-in is marked signed
-//! out and the caller shows "Signed out of Google Drive. Sign in again."
+//! token (until revoked). `store::access_token` hands out a good access token, refreshing it when it is about to
+//! run out; only `invalid_grant` (the refresh token is dead) means signed out. A token endpoint that refuses
+//! the app itself (`invalid_client`: bad build credentials) is a plain failure that never touches the stored
+//! sign-in.
 //!
 //! The URLs are in [`OAuthConfig`], so tests point them at a mock server. Nothing here logs a token, a code
 //! or an email, and the types print no values.
 
 use super::net::{classify_status, Net, Reply, Request};
 use super::service::{ErrorKind, ServiceError, ServiceId};
-use super::tokens::{CloudTokens, ServiceTokens};
+use super::tokens::ServiceTokens;
 use serde_json::Value;
 use std::fmt;
 
@@ -22,6 +23,8 @@ pub struct OAuthConfig {
     pub client_id: String,
     pub client_secret: String,
     pub scope: String,
+    /// Where the account email is asked for when the token answer has no id token.
+    pub userinfo_url: String,
 }
 
 impl fmt::Debug for OAuthConfig {
@@ -88,9 +91,25 @@ pub fn reason_of(reply: &Reply) -> Option<String> {
     }
 }
 
+/// What the build's credentials being refused looks like to the person.
+pub const BAD_BUILD: &str = "Cloud backup isn't set up correctly in this build";
+
+/// A failed answer from the sign-in endpoints. Only `invalid_grant` is "signed out"; a 401 or `invalid_client`
+/// from the token endpoint means this build's own credentials are wrong, which says nothing about the person's
+/// sign-in.
 fn failure(reply: &Reply) -> ServiceError {
     let reason = reason_of(reply);
-    classify_status(reply.status, reason.as_deref(), reply.retry_after())
+    let mut e = classify_status(reply.status, reason.as_deref(), reply.retry_after());
+    match reason.as_deref() {
+        Some("invalid_client" | "unauthorized_client") => {
+            e.kind = ErrorKind::Other;
+            e.detail = BAD_BUILD.to_string();
+        }
+        Some("invalid_grant") => {}
+        _ if e.kind == ErrorKind::SignedOut => e.kind = ErrorKind::Other,
+        _ => {}
+    }
+    e
 }
 
 fn text(v: &Value, key: &str) -> Option<String> {
@@ -118,6 +137,7 @@ pub fn start(net: &Net, cfg: &OAuthConfig, now: u64) -> Result<DeviceCode, Servi
 fn parse_tokens(reply: &Reply) -> Result<Tokens, ServiceError> {
     let json = reply.json().ok_or_else(|| ServiceError::other("the token answer could not be read"))?;
     let access_token = text(&json, "access_token").ok_or_else(|| ServiceError::other("the token answer had no access token"))?;
+    // Google's device flow does not promise an id token; `poll` asks for the email when there is none.
     let email = text(&json, "id_token").and_then(|jwt| email_from_id_token(&jwt));
     Ok(Tokens { access_token, expires_in: json.get("expires_in").and_then(Value::as_u64).unwrap_or(3_600), refresh_token: text(&json, "refresh_token"), email })
 }
@@ -138,7 +158,12 @@ pub fn poll(net: &Net, cfg: &OAuthConfig, code: &DeviceCode, now: u64) -> Poll {
     };
     if reply.ok() {
         return match parse_tokens(&reply) {
-            Ok(t) if t.refresh_token.is_some() => Poll::Approved(t),
+            Ok(mut t) if t.refresh_token.is_some() => {
+                if t.email.is_none() {
+                    t.email = fetch_email(net, cfg, &t.access_token);
+                }
+                Poll::Approved(t)
+            }
             Ok(_) => Poll::Failed(ServiceError::other("the sign-in gave no way to stay signed in")),
             Err(e) => Poll::Failed(e),
         };
@@ -185,34 +210,18 @@ pub fn apply(old: &ServiceTokens, new: Tokens, now: u64) -> ServiceTokens {
     }
 }
 
-/// A good access token for `id`: the stored one when it has a minute left, else a refreshed one (stored). When
-/// the refresh token is dead the sign-in is marked signed out and the error says so.
-pub fn access_token(net: &Net, cfg: &OAuthConfig, store: &mut CloudTokens, id: ServiceId, now: u64) -> Result<String, ServiceError> {
-    let Some(current) = store.get(id).filter(|t| t.signed_in()).cloned() else {
-        return Err(ServiceError::new(ErrorKind::SignedOut, "not signed in"));
-    };
-    if let Some(token) = current.fresh_access_token(now) {
-        return Ok(token.to_string());
+/// The account email, from Google's userinfo endpoint with the access token. `None` on any failure: the
+/// email is only shown, never needed.
+pub fn fetch_email(net: &Net, cfg: &OAuthConfig, access_token: &str) -> Option<String> {
+    let reply = net.send(Request::get(&cfg.userinfo_url).bearer(access_token)).ok()?;
+    if !reply.ok() {
+        return None;
     }
-    let refresh_token = current.refresh_token.clone().unwrap_or_default();
-    match refresh(net, cfg, &refresh_token) {
-        Ok(new) => {
-            let updated = apply(&current, new, now);
-            let token = updated.access_token.clone().unwrap_or_default();
-            if let Err(e) = store.set(id, updated) {
-                super::log::note(format!("{}: could not save the new token ({})", id.key(), e.kind()));
-            }
-            Ok(token)
-        }
-        Err(e) => {
-            if e.kind == ErrorKind::SignedOut {
-                if let Err(io) = store.mark_signed_out(id) {
-                    super::log::note(format!("{}: could not record the sign-out ({})", id.key(), io.kind()));
-                }
-            }
-            Err(e)
-        }
-    }
+    reply.json()?.get("email").and_then(Value::as_str).map(str::to_string).filter(|e| plausible_email(e))
+}
+
+fn plausible_email(e: &str) -> bool {
+    e.contains('@') && e.len() <= 254 && !e.chars().any(|c| c.is_control() || c.is_whitespace())
 }
 
 fn b64url_decode(s: &str) -> Option<Vec<u8>> {
@@ -243,7 +252,7 @@ fn b64url_decode(s: &str) -> Option<Vec<u8>> {
 pub fn email_from_id_token(jwt: &str) -> Option<String> {
     let payload = jwt.split('.').nth(1)?;
     let json: Value = serde_json::from_slice(&b64url_decode(payload)?).ok()?;
-    json.get("email").and_then(Value::as_str).map(str::to_string).filter(|e| e.contains('@') && e.len() <= 254 && !e.chars().any(|c| c.is_control() || c.is_whitespace()))
+    json.get("email").and_then(Value::as_str).map(str::to_string).filter(|e| plausible_email(e))
 }
 
 /// "t***@gmail.com": enough to recognise the account, not enough to read it out loud to a stranger.

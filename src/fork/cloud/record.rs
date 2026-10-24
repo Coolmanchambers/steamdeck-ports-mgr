@@ -137,8 +137,9 @@ impl Record {
         let mut tmp_name = self.path.file_name().unwrap_or_default().to_os_string();
         tmp_name.push(".tmp");
         let tmp = self.path.with_file_name(tmp_name);
+        let _ = fs::remove_file(&tmp);
         let result = (|| {
-            let mut file = fs::File::create(&tmp)?;
+            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
             file.write_all(text.as_bytes())?;
             file.sync_all()?;
             drop(file);
