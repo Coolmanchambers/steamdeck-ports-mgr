@@ -118,6 +118,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-24 | `src/core/executable_detect.rs` | A folder named `.previous` (superseded releases kept by `fork::versioned`) is never searched for launch candidates; 1 test |
 | 2026-10-24 | `src/app/events.rs` | After an install, `versioned_update::after_install` replaces the favorite-follow block; its summary is shown when no launch is pending, before the game file search; when Play started the update it is told so (`launching`) and keeps the note for later |
 | 2026-10-24 | `src/app/mod.rs` | One module line, `versioned_update` |
+| 2026-10-24 | `src/core/http.rs` | `cloud_agent(https_only)`: the agent the cloud services use (no redirects, error statuses returned as replies, long body timeouts); https-only except for tests and debug builds talking to a mock server on this machine |
+| 2026-10-24 | `src/fork/secrets.rs` | `file_is_private`, `tighten_permissions` and `write_private` made `pub(crate)` so `cloud-tokens.json` follows the same rules as `secrets.json` |
+| 2026-10-24 | `.github/workflows/ci.yml` | The release build step gets `DPM_GOOGLE_CLIENT_ID` and `DPM_GOOGLE_CLIENT_SECRET` from repository secrets, only for a push to main (never branches, pull requests or the upstream-sync build) |
+| 2026-10-24 | `src/fork/mod.rs` | One line registering `cloud` |
 
 Files added by this fork:
 
@@ -213,6 +217,7 @@ Files added by this fork:
 | 2026-10-24 | `src/fork/folder_picker/mod.rs`, `src/app/folder_picker_screen.rs` | `PickerRequest.cursor_off_use_this`: the cursor starts on the first sub-folder (or Cancel), never "Use this folder" (used by the save finder) |
 | 2026-10-24 | `src/fork/save_restore/mod.rs`, `src/fork/save_restore/broad.rs`, `src/core/save_backup.rs` | Save guards (branch `save-guards`): Restore checks where a linked save folder leads (`link_problem`) before the safety backup copies anything; `backup_before_update` refuses a save folder that holds many apps' files and a link that leads to one (no copy, no staging); `userdata` and Flatpak roots (`~/.var/app/<id>`, its `data`/`config`/`cache`) join the refused folders; the ports library is passed to `folder_problem`/`container_reason` explicitly |
 | 2026-10-24 | `README.md` | One line in the note at the top linking `PRIVACY.md` (new file, the fork's own) |
+| 2026-10-24 | `src/fork/cloud/` | Cloud backup of the save backups to Google Drive (branch `cloud-backup`): `tokens` (`cloud-tokens.json`, mode 0600), `record` (`cloud-backup.json`), `local`/`plan`/`sync` (what to upload and one pass), `service` (the trait and failure kinds; no delete), `net`/`oauth` (HTTPS client, device-code sign-in and refresh), `build` (the Google client compiled in from CI secrets), `sha256`, `log` |
 
 ## Add to Steam (Settings menu)
 

@@ -230,20 +230,20 @@ impl Secrets {
 }
 
 #[cfg(unix)]
-fn file_is_private(path: &Path) -> Option<bool> {
+pub(crate) fn file_is_private(path: &Path) -> Option<bool> {
     use std::os::unix::fs::PermissionsExt;
     fs::metadata(path).ok().map(|m| mode_is_private(m.permissions().mode()))
 }
 
 #[cfg(not(unix))]
-fn file_is_private(_path: &Path) -> Option<bool> {
+pub(crate) fn file_is_private(_path: &Path) -> Option<bool> {
     None
 }
 
 /// Sets the file to 0600 if it is wider, then checks it took: `Some(false)` means the drive keeps every
 /// file open to everyone whatever is asked of it.
 #[cfg(unix)]
-fn tighten_permissions(path: &Path) -> io::Result<Option<bool>> {
+pub(crate) fn tighten_permissions(path: &Path) -> io::Result<Option<bool>> {
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(path)?.permissions().mode();
     if !mode_is_private(mode) {
@@ -253,12 +253,12 @@ fn tighten_permissions(path: &Path) -> io::Result<Option<bool>> {
 }
 
 #[cfg(not(unix))]
-fn tighten_permissions(_path: &Path) -> io::Result<Option<bool>> {
+pub(crate) fn tighten_permissions(_path: &Path) -> io::Result<Option<bool>> {
     Ok(None)
 }
 
 /// Writes `bytes` to `path` through a sibling temp file that is private from its first byte.
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(".tmp");
     let tmp = path.with_file_name(tmp_name);

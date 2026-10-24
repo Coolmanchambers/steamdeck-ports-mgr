@@ -15,6 +15,7 @@ pub mod app_id;
 pub mod art;
 pub mod artwork;
 pub mod backups;
+pub mod cloud;
 pub mod deck_ready;
 pub mod folder_picker;
 pub mod custom_repo;

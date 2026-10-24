@@ -60,7 +60,13 @@ jobs:
       - name: Updater tests
         run: bash tools/test-fork-updater.sh
 
+      # The Google client for cloud backup is compiled in from repository secrets (`fork::cloud::build`), only for a
+      # push to main: a branch's artifact is downloadable by anyone, and the sync workflow builds upstream's code.
+      # Without them (branches, pull requests, forks) the build says cloud backup is not set up.
       - name: Release build
+        env:
+          DPM_GOOGLE_CLIENT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.ref && secrets.DPM_GOOGLE_CLIENT_ID || '' }}
+          DPM_GOOGLE_CLIENT_SECRET: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.ref && secrets.DPM_GOOGLE_CLIENT_SECRET || '' }}
         run: cargo build --release --locked
 
       - name: Show runtime requirements (newest glibc symbol, shared libraries)
