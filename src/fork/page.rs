@@ -69,6 +69,13 @@ impl<A> Tile<A> {
     }
 }
 
+/// A text box in the page (a link to paste, a name to filter by): what it shows when empty, and what it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputBox {
+    pub placeholder: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page<A> {
     /// The window's title (also its name to the window system, which the smoke test looks for).
@@ -87,6 +94,8 @@ pub struct Page<A> {
     /// Lines of the summary box (what is set, what was found).
     pub facts: Vec<String>,
     pub card: Option<Card>,
+    /// A text box under the text. It is the first thing the cursor can be on; Down or A leaves it for the choices.
+    pub input: Option<InputBox>,
     pub tiles: Vec<Tile<A>>,
     pub options: Vec<PageOption<A>>,
     pub footnote: String,
@@ -111,6 +120,7 @@ impl<A> Default for Page<A> {
             paragraphs: Vec::new(),
             facts: Vec::new(),
             card: None,
+            input: None,
             tiles: Vec::new(),
             options: Vec::new(),
             footnote: String::new(),
@@ -124,6 +134,8 @@ impl<A> Default for Page<A> {
 /// Something that can take focus: tile `n`, option `n`, or the button in slot `n`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
+    /// The page's text box.
+    Input,
     Tile(usize),
     Option(usize),
     Button(usize),
@@ -150,10 +162,14 @@ fn enabled_options<A>(page: &Page<A>) -> Vec<usize> {
     (0..page.options.len()).filter(|i| page.options[*i].enabled).collect()
 }
 
-/// Everything that can take focus, in order: the tiles that can be chosen, the enabled options, then the
-/// buttons that exist.
+/// Everything that can take focus, in order: the text box, the tiles that can be chosen, the enabled options,
+/// then the buttons that exist.
 pub fn focusables<A>(page: &Page<A>) -> Vec<Focus> {
-    let mut out: Vec<Focus> = tile_indexes(page).into_iter().map(Focus::Tile).collect();
+    let mut out: Vec<Focus> = Vec::new();
+    if page.input.is_some() {
+        out.push(Focus::Input);
+    }
+    out.extend(tile_indexes(page).into_iter().map(Focus::Tile));
     out.extend(enabled_options(page).into_iter().map(Focus::Option));
     out.extend((0..SLOTS).filter(|s| page.buttons[*s].is_some()).map(Focus::Button));
     out
@@ -162,6 +178,11 @@ pub fn focusables<A>(page: &Page<A>) -> Vec<Focus> {
 /// Position of `focus` in [`focusables`] (the number the window draws as selected).
 pub fn focus_number<A>(page: &Page<A>, focus: Focus) -> usize {
     focusables(page).iter().position(|f| *f == focus).unwrap_or(0)
+}
+
+/// The focus number of the text box, or -1 when the page has none.
+pub fn input_number<A>(page: &Page<A>) -> i32 {
+    focusables(page).iter().position(|f| *f == Focus::Input).map_or(-1, |n| n as i32)
 }
 
 /// The focus number of tile `index`, or -1 when it cannot be chosen.
@@ -203,11 +224,15 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
     let enabled = enabled_options(page);
     let present: Vec<usize> = (0..SLOTS).filter(|s| page.buttons[*s].is_some()).collect();
     let to_buttons = || page.primary.filter(|s| present.contains(s)).or_else(|| present.last().copied()).map(Focus::Button);
+    let input = page.input.is_some().then_some(Focus::Input);
+    let first_below_input = || tiles.first().map(|t| Focus::Tile(*t)).or_else(|| enabled.first().map(|o| Focus::Option(*o))).or_else(to_buttons);
     let target = match here {
+        Focus::Input if dy > 0 => first_below_input(),
         Focus::Tile(i) if dx != 0 => {
             let at = tiles.iter().position(|t| *t == i).unwrap_or(0) as i32 + dx.signum();
             (at >= 0).then(|| tiles.get(at as usize)).flatten().map(|t| Focus::Tile(*t))
         }
+        Focus::Tile(_) if dy < 0 => input,
         Focus::Tile(_) if dy > 0 => enabled.first().map(|o| Focus::Option(*o)).or_else(to_buttons),
         Focus::Option(i) if dy > 0 => match enabled.iter().find(|o| **o > i) {
             Some(next) => Some(Focus::Option(*next)),
@@ -215,9 +240,9 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
         },
         Focus::Option(i) if dy < 0 => match enabled.iter().rev().find(|o| **o < i) {
             Some(prev) => Some(Focus::Option(*prev)),
-            None => tiles.first().map(|t| Focus::Tile(*t)),
+            None => tiles.first().map(|t| Focus::Tile(*t)).or(input),
         },
-        Focus::Button(_) if dy < 0 => enabled.last().map(|o| Focus::Option(*o)).or_else(|| tiles.first().map(|t| Focus::Tile(*t))),
+        Focus::Button(_) if dy < 0 => enabled.last().map(|o| Focus::Option(*o)).or_else(|| tiles.first().map(|t| Focus::Tile(*t))).or(input),
         Focus::Button(slot) if dx != 0 => {
             let at = present.iter().position(|s| *s == slot).unwrap_or(0) as i32;
             let next = at + dx.signum();
@@ -231,6 +256,7 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
 /// What choosing the focused item does.
 pub fn action_at<A: Clone>(page: &Page<A>, number: usize) -> Option<A> {
     match focus_at(page, number)? {
+        Focus::Input => None,
         Focus::Tile(i) => page.tiles.get(i).and_then(|t| t.action.clone()),
         Focus::Option(i) => page.options.get(i).map(|o| o.action.clone()),
         Focus::Button(s) => page.buttons[s].as_ref().map(|b| b.action.clone()),
@@ -357,5 +383,38 @@ mod tests {
         let down = move_focus(&p, initial_focus(&p), 0, 1);
         assert_eq!(focus_at(&p, down), Some(Focus::Button(LEFT)));
         assert_eq!(focus_at(&p, move_focus(&p, down, 0, -1)), Some(Focus::Tile(0)));
+    }
+
+    fn input_page() -> Page<Act> {
+        let mut p = card_page();
+        p.input = Some(InputBox { placeholder: "github.com/owner/project".into(), text: String::new() });
+        p.initial = Focus::Input;
+        p
+    }
+
+    #[test]
+    fn a_page_with_a_text_box_starts_on_it_and_the_box_has_no_action() {
+        let p = input_page();
+        assert_eq!(focusables(&p)[0], Focus::Input);
+        assert_eq!(input_number(&p), 0);
+        assert_eq!(input_number(&card_page()), -1);
+        assert_eq!(option_number(&p, 0), 1, "the options follow the box");
+        assert_eq!(focus_at(&p, initial_focus(&p)), Some(Focus::Input));
+        assert_eq!(action_at(&p, 0), None, "A on the box is not a choice; the screen moves on to the choices");
+    }
+
+    #[test]
+    fn down_leaves_the_box_for_the_choices_and_up_comes_back_to_it() {
+        let p = input_page();
+        let down = move_focus(&p, 0, 0, 1);
+        assert_eq!(focus_at(&p, down), Some(Focus::Option(0)));
+        assert_eq!(move_focus(&p, down, 0, -1), 0, "up from the first choice is the box again");
+        assert_eq!(move_focus(&p, 0, 0, -1), 0, "nothing above the box");
+        assert_eq!(move_focus(&p, 0, 1, 0), 0, "left and right stay in the text");
+        let mut bare = input_page();
+        bare.options.clear();
+        let down = move_focus(&bare, 0, 0, 1);
+        assert_eq!(focus_at(&bare, down), Some(Focus::Button(LEFT)));
+        assert_eq!(move_focus(&bare, down, 0, -1), 0, "up from the footer reaches the box when there is nothing between");
     }
 }

@@ -200,6 +200,7 @@ fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
         // The title bar's X, or the window system's own close: leave the wizard. Setup stays unfinished, so it
         // returns at the next start.
         on_exit: Rc::new(end_session),
+        on_input: None,
     };
     show_page(app, router, page, handlers);
 }

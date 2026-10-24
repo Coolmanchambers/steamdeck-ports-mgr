@@ -33,11 +33,13 @@ pub(crate) struct Handlers<A> {
     pub on_back: Rc<dyn Fn(&Rc<AppState>, &Router)>,
     /// The title bar's X, or the window system's own close.
     pub on_exit: Rc<dyn Fn(&Rc<AppState>, &Router)>,
+    /// The text box was edited (pages with one): the page as it should read now, or `None` to leave it.
+    pub on_input: Option<Rc<dyn Fn(&Rc<AppState>, &Router, &str) -> Option<Page<A>>>>,
 }
 
 impl<A> Clone for Handlers<A> {
     fn clone(&self) -> Self {
-        Handlers { on_action: self.on_action.clone(), on_back: self.on_back.clone(), on_exit: self.on_exit.clone() }
+        Handlers { on_action: self.on_action.clone(), on_back: self.on_back.clone(), on_exit: self.on_exit.clone(), on_input: self.on_input.clone() }
     }
 }
 
@@ -93,21 +95,23 @@ fn apply_art<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, images: &HashMap<S
 
 /// Shows what is cached now, asks for the rest and, while covers are still on their way, swaps them in as
 /// they arrive. One timer serves the page on screen; a new page replaces it.
-fn load_art<A: Clone + 'static>(app: &Rc<AppState>, d: &SetupWizardDialog, page: &Rc<Page<A>>) {
+fn load_art<A: Clone + 'static>(app: &Rc<AppState>, d: &SetupWizardDialog, cur: &Current<A>) {
+    let page = page_now(cur);
     let refs = page.art_refs();
     let pending = |images: &HashMap<String, Option<slint::Image>>| refs.iter().any(|r| !images.contains_key(&r.folder));
     let still = with_art(app, |s| {
-        apply_art(d, page, &s.images);
+        apply_art(d, &page, &s.images);
         s.loader.request(&refs);
         pending(&s.images)
     });
     if !still {
         return ART_TIMER.with(|t| t.stop());
     }
-    let (app, weak, page) = (app.clone(), d.as_weak(), page.clone());
+    let (app, weak, cur) = (app.clone(), d.as_weak(), cur.clone());
     ART_TIMER.with(|t| {
         t.start(slint::TimerMode::Repeated, ART_TICK, move || {
             let Some(d) = weak.upgrade() else { return ART_TIMER.with(|t| t.stop()) };
+            let page = page_now(&cur);
             let refs = page.art_refs();
             let done = with_art(&app, |s| {
                 for loaded in s.loader.drain() {
@@ -131,6 +135,32 @@ fn fill<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_step_count(page.step_count as i32);
     d.set_step_index(page.step_number as i32 - 1);
     d.set_page_title(page.title.clone().into());
+    d.set_has_input(page.input.is_some());
+    fill_body(d, page);
+}
+
+/// Marks focus number `n` as selected: the window draws it, and scrolls to it when it is an option.
+fn select<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, focus: &Cell<usize>, n: usize) {
+    focus.set(n);
+    let option = match page::focus_at(page, n) {
+        Some(Focus::Option(i)) => i as i32,
+        _ => -1,
+    };
+    d.set_selected_option(option);
+    d.set_selected_index(n as i32);
+}
+
+/// The page on screen. Pages with a text box replace it as the text changes (a filtered list), so everything
+/// that reads the page reads it from here at the moment it needs it.
+type Current<A> = Rc<RefCell<Rc<Page<A>>>>;
+
+fn page_now<A>(cur: &Current<A>) -> Rc<Page<A>> {
+    cur.borrow().clone()
+}
+
+/// Fills the part of the window that follows the text: the paragraphs, the facts, the card, the tiles, the
+/// options, the footer. (`fill` also sets the window's own texts, which do not change with the text box.)
+fn fill_body<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_paragraphs(model(page.paragraphs.iter().map(|p| p.clone().into()).collect::<Vec<slint::SharedString>>()));
     d.set_facts(model(page.facts.iter().map(|f| f.clone().into()).collect::<Vec<slint::SharedString>>()));
     d.set_has_card(page.card.is_some());
@@ -160,64 +190,62 @@ fn fill<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_focus_middle(page::button_number(page, page::MIDDLE));
     d.set_focus_extra(page::button_number(page, page::EXTRA));
     d.set_focus_right(page::button_number(page, page::RIGHT));
-}
-
-/// Marks focus number `n` as selected: the window draws it, and scrolls to it when it is an option.
-fn select<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, focus: &Cell<usize>, n: usize) {
-    focus.set(n);
-    let option = match page::focus_at(page, n) {
-        Some(Focus::Option(i)) => i as i32,
-        _ => -1,
-    };
-    d.set_selected_option(option);
-    d.set_selected_index(n as i32);
+    d.set_input_focus(page::input_number(page));
 }
 
 /// Opens the page, replacing whatever dialog is open. False when the window could not be made.
 pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, page: Page<A>, handlers: Handlers<A>) -> bool {
-    let page = Rc::new(page);
+    let cur: Current<A> = Rc::new(RefCell::new(Rc::new(page)));
     let Some(dialog) = build_setup_wizard_dialog(app, router) else { return false };
     let focus = Rc::new(Cell::new(0usize));
-    fill(&dialog, &page);
-    load_art(app, &dialog, &page);
-    select(&dialog, &page, &focus, page::initial_focus(&page));
+    {
+        let first = page_now(&cur);
+        fill(&dialog, &first);
+        if let Some(input) = &first.input {
+            dialog.set_input_placeholder(input.placeholder.clone().into());
+            dialog.set_input_text(input.text.clone().into());
+        }
+        load_art(app, &dialog, &cur);
+        select(&dialog, &first, &focus, page::initial_focus(&first));
+    }
 
     {
-        let (app, router, page, h) = (app.clone(), router.clone(), page.clone(), handlers.clone());
+        let (app, router, cur, h) = (app.clone(), router.clone(), cur.clone(), handlers.clone());
         dialog.on_option_requested(move |i| {
             // A disabled option does nothing.
-            if let Some(option) = page.options.get(i as usize).filter(|o| o.enabled) {
+            if let Some(option) = page_now(&cur).options.get(i as usize).filter(|o| o.enabled) {
                 (h.on_action)(&app, &router, option.action.clone());
             }
         });
     }
     {
-        let (app, router, page, h) = (app.clone(), router.clone(), page.clone(), handlers.clone());
+        let (app, router, cur, h) = (app.clone(), router.clone(), cur.clone(), handlers.clone());
         dialog.on_tile_requested(move |i| {
-            if let Some(action) = page.tiles.get(i as usize).and_then(|t| t.action.clone()) {
+            if let Some(action) = page_now(&cur).tiles.get(i as usize).and_then(|t| t.action.clone()) {
                 (h.on_action)(&app, &router, action);
             }
         });
     }
     {
-        let (app, router, page, h) = (app.clone(), router.clone(), page.clone(), handlers.clone());
+        let (app, router, cur, h) = (app.clone(), router.clone(), cur.clone(), handlers.clone());
         dialog.on_button_requested(move |slot| {
-            if let Some(button) = page.buttons.get(slot as usize).and_then(Option::as_ref) {
+            if let Some(button) = page_now(&cur).buttons.get(slot as usize).and_then(Option::as_ref) {
                 (h.on_action)(&app, &router, button.action.clone());
             }
         });
     }
     {
-        let (weak, page, focus) = (dialog.as_weak(), page.clone(), focus.clone());
+        let (weak, cur, focus) = (dialog.as_weak(), cur.clone(), focus.clone());
         dialog.on_nav_hovered(move |n| {
             if let (Some(d), true) = (weak.upgrade(), n >= 0) {
-                select(&d, &page, &focus, n as usize);
+                select(&d, &page_now(&cur), &focus, n as usize);
             }
         });
     }
     {
-        let (weak, page, focus) = (dialog.as_weak(), page.clone(), focus.clone());
+        let (weak, cur, focus) = (dialog.as_weak(), cur.clone(), focus.clone());
         dialog.on_move_requested(move |dx, dy| {
+            let page = page_now(&cur);
             let next = page::move_focus(&page, focus.get(), dx, dy);
             if let Some(d) = weak.upgrade() {
                 select(&d, &page, &focus, next);
@@ -225,11 +253,33 @@ pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router,
         });
     }
     {
-        let (app, router, page, focus, h) = (app.clone(), router.clone(), page.clone(), focus.clone(), handlers.clone());
+        let (app, router, cur, focus, h, weak) = (app.clone(), router.clone(), cur.clone(), focus.clone(), handlers.clone(), dialog.as_weak());
         dialog.on_activate_requested(move || {
-            if let Some(action) = page::action_at(&page, focus.get()) {
+            let page = page_now(&cur);
+            // A on the text box is not a choice: it moves on to the choices.
+            if page::focus_at(&page, focus.get()) == Some(Focus::Input) {
+                let next = page::move_focus(&page, focus.get(), 0, 1);
+                if let Some(d) = weak.upgrade() {
+                    select(&d, &page, &focus, next);
+                }
+            } else if let Some(action) = page::action_at(&page, focus.get()) {
                 (h.on_action)(&app, &router, action);
             }
+        });
+    }
+    {
+        // Every edit of the text box goes to the owner, which may answer with the page as it should now read.
+        let (app, router, cur, focus, h, weak) = (app.clone(), router.clone(), cur.clone(), focus.clone(), handlers.clone(), dialog.as_weak());
+        dialog.on_input_edited(move |text| {
+            let Some(on_input) = &h.on_input else { return };
+            let Some(new_page) = on_input(&app, &router, text.as_str()) else { return };
+            let Some(d) = weak.upgrade() else { return };
+            let new_page = Rc::new(new_page);
+            *cur.borrow_mut() = new_page.clone();
+            fill_body(&d, &new_page);
+            load_art(&app, &d, &cur);
+            // The cursor stays in the box, and the list below starts from the top again.
+            select(&d, &new_page, &focus, page::input_number(&new_page).max(0) as usize);
         });
     }
     {

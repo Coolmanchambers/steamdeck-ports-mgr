@@ -4,12 +4,12 @@
 
 use super::cards::{CardAction, HEADER};
 use crate::fork::custom_repo::check::Checked;
-use crate::fork::page::{Card, Focus, Page, PageOption};
+use crate::fork::page::{Card, Focus, InputBox, Page, PageButton, PageOption, LEFT};
 
 pub const PLACEHOLDER: &str = "github.com/owner/project";
 pub const WINDOW_TITLE: &str = "Import ports: GitHub link";
 
-/// The rows under the text box.
+/// What the choices under the text box do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkRow {
     Check,
@@ -19,18 +19,13 @@ pub enum LinkRow {
     Cancel,
 }
 
-/// The rows, with the keyboard row only where it can help (Game Mode).
-pub fn rows(game_mode: bool) -> Vec<(LinkRow, &'static str)> {
-    let mut rows = vec![(LinkRow::Check, "Check this link")];
-    if game_mode {
-        rows.push((LinkRow::ShowKeyboard, "Show keyboard"));
-    }
-    rows.push((LinkRow::Help, "What should I look for?"));
-    rows.push((LinkRow::Cancel, "Cancel"));
-    rows
-}
+/// What to look for on GitHub, in the words of someone who has not been there. Both lines are on the page itself.
+pub const LOOK_FOR: [&str; 2] = [
+    "Open the project's GitHub page and copy its address, like github.com/owner/project.",
+    "It needs a Releases section with a Linux download (.AppImage, .tar.gz or .zip).",
+];
 
-/// What to look for on GitHub, in the words of someone who has not been there.
+/// More help, behind a choice for anyone who wants it.
 pub const HELP: &str = "Find the project's GitHub page. Its address looks like github.com/owner/project.\n\n\
 It should have a Releases section (on the right of the page) with a download for Linux: a file ending in .AppImage, .tar.gz or .zip.\n\n\
 Paste that address here, or type it. We only need that link: we check that the newest release has a Linux file, and nothing is downloaded yet.\n\n\
@@ -39,7 +34,30 @@ In Game Mode, press Steam + X to bring up the keyboard.";
 /// The text under the text box when Steam's keyboard could not be raised.
 pub const KEYBOARD_HINT: &str = "If no keyboard appeared, press the Steam button and X together.";
 
-/// Notes for the text box page: where the text goes and what is checked.
+/// The text box page: the two lines of guidance, the box (with the Steam + X hint inside it in Game Mode), then
+/// the choices. B and Cancel leave it; whatever was typed stays in `text`.
+pub fn entry_page(text: &str, game_mode: bool) -> Page<LinkRow> {
+    let mut p = Page::<LinkRow> {
+        window_title: WINDOW_TITLE.to_string(),
+        large: true,
+        header: HEADER.to_string(),
+        title: entry_title().to_string(),
+        paragraphs: LOOK_FOR.iter().map(|l| l.to_string()).collect(),
+        ..Page::default()
+    };
+    let placeholder = if game_mode { "Press Steam + X to type" } else { PLACEHOLDER };
+    p.input = Some(InputBox { placeholder: placeholder.to_string(), text: text.to_string() });
+    let option = |title: &str, detail: &str, action: LinkRow, recommended: bool| PageOption { title: title.to_string(), detail: detail.to_string(), choice: None, enabled: true, recommended, action };
+    p.options.push(option("Check this link", "Asks GitHub. Nothing is downloaded yet", LinkRow::Check, true));
+    if game_mode {
+        p.options.push(option("Show keyboard", "", LinkRow::ShowKeyboard, false));
+    }
+    p.options.push(option("More help", "What to look for on GitHub", LinkRow::Help, false));
+    p.buttons[LEFT] = Some(PageButton { label: "Cancel".to_string(), action: LinkRow::Cancel });
+    p.initial = Focus::Input;
+    p
+}
+
 pub fn entry_title() -> &'static str {
     "Use a GitHub link"
 }
@@ -94,12 +112,27 @@ mod tests {
     }
 
     #[test]
-    fn the_rows_offer_the_keyboard_only_in_game_mode() {
-        let desktop: Vec<&str> = rows(false).iter().map(|r| r.1).collect();
-        assert_eq!(desktop, ["Check this link", "What should I look for?", "Cancel"]);
-        let game: Vec<(LinkRow, &str)> = rows(true);
-        assert_eq!(game.iter().map(|r| r.1).collect::<Vec<_>>(), ["Check this link", "Show keyboard", "What should I look for?", "Cancel"]);
-        assert_eq!(game[0].0, LinkRow::Check, "the first row is the one a stray A should do");
+    fn the_page_shows_the_guidance_the_box_and_big_choices() {
+        let p = entry_page("", false);
+        assert_eq!(p.title, "Use a GitHub link");
+        assert!(p.large);
+        assert_eq!(p.paragraphs, LOOK_FOR);
+        assert!(p.paragraphs.len() == 2 && p.paragraphs.iter().all(|l| l.len() < 90), "two short lines");
+        let input = p.input.as_ref().unwrap();
+        assert_eq!((input.placeholder.as_str(), input.text.as_str()), (PLACEHOLDER, ""));
+        assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["Check this link", "More help"]);
+        assert!(p.options[0].recommended);
+        assert_eq!(p.buttons[LEFT].as_ref().map(|b| b.action), Some(LinkRow::Cancel));
+        assert_eq!(p.initial, Focus::Input);
+    }
+
+    #[test]
+    fn game_mode_adds_the_keyboard_and_the_hint_in_the_box_and_keeps_typed_text() {
+        let p = entry_page("github.com/a/b", true);
+        assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["Check this link", "Show keyboard", "More help"]);
+        let input = p.input.unwrap();
+        assert!(input.placeholder.contains("Steam + X"));
+        assert_eq!(input.text, "github.com/a/b");
     }
 
     #[test]

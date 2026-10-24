@@ -310,6 +310,12 @@ export component SetupWizardDialog inherits Window {
     in property <bool> has-card: false;
     in property <WizardCard> card;
     in property <[WizardTile]> tiles: [];
+    // A text box in the page: what it shows when empty, what it holds, and its focus number (-1: none). The page
+    // owner is told of every edit; Down, Up, A and Return leave the box through move-requested.
+    in property <bool> has-input: false;
+    in property <string> input-placeholder: "";
+    in-out property <string> input-text: "";
+    in property <int> input-focus: -1;
     in property <[WizardOption]> options: [];
     in property <string> footnote: "";
     // The footer, left to right: left (Back), middle (Skip), extra (Close the wizard in a rerun), right
@@ -330,6 +336,7 @@ export component SetupWizardDialog inherits Window {
 
     callback option-requested(int);
     callback tile-requested(int);
+    callback input-edited(string);
     callback button-requested(int);
     callback nav-hovered(int);
     callback close-requested();
@@ -381,6 +388,15 @@ export component SetupWizardDialog inherits Window {
             root.pointer-armed = true;
         }
         root.nav-hovered(id);
+    }
+
+    // The text box takes the keyboard while it is the selected item, and gives it back to the page when not.
+    changed selected-index => {
+        if (root.has-input && root.selected-index == root.input-focus) {
+            text-in.focus();
+        } else {
+            key-handler.focus();
+        }
     }
 
     // Keep the focused option in view when the body scrolls.
@@ -531,6 +547,53 @@ export component SetupWizardDialog inherits Window {
                                 font-size: root.body-font;
                                 wrap: word-wrap;
                             }
+                        }
+                    }
+                    input-box := Rectangle {
+                        height: root.has-input ? root.option-height : 0px;
+                        visible: root.has-input;
+                        background: Theme.search-background;
+                        border-width: root.selected-index == root.input-focus ? root.border-px * 2 : root.border-px;
+                        border-color: root.selected-index == root.input-focus ? SemanticColors.selection-border : Theme.border-color;
+                        text-in := TextInput {
+                            x: root.body-font * 0.8;
+                            width: parent.width - root.body-font * 1.6;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            single-line: true;
+                            font-size: root.body-font;
+                            color: Theme.list-text;
+                            text <=> root.input-text;
+                            edited => { root.input-edited(self.text); }
+                            changed has-focus => {
+                                if (self.has-focus && root.selected-index != root.input-focus) {
+                                    root.nav-hovered(root.input-focus);
+                                }
+                            }
+                            key-pressed(event) => {
+                                if (event.text == Key.Escape) {
+                                    root.close-requested();
+                                    accept
+                                } else if (event.text == Key.UpArrow) {
+                                    root.move-requested(0, -1);
+                                    accept
+                                } else if (event.text == Key.DownArrow || event.text == Key.Return) {
+                                    root.move-requested(0, 1);
+                                    accept
+                                } else {
+                                    reject
+                                }
+                            }
+                        }
+                        if root.has-input && root.input-text == "": Text {
+                            x: root.body-font * 0.8;
+                            width: parent.width - root.body-font * 1.6;
+                            height: parent.height;
+                            text: root.input-placeholder;
+                            color: Theme.search-text;
+                            font-size: root.body-font;
+                            vertical-alignment: center;
+                            overflow: elide;
                         }
                     }
                     if root.has-card: CardBox {

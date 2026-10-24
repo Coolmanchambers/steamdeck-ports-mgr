@@ -137,6 +137,7 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
         },
         on_back: keep.clone(),
         on_exit: keep,
+        on_input: None,
     };
     if !show_page(app, router, batch.page(), handlers) {
         // The page could not be built: nothing is removed, and the flow goes on.

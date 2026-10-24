@@ -16,7 +16,7 @@
 //! brings them back. The folder itself is never touched. A port picked for a folder is kept for the rest of
 //! the screen's life, so a new scan does not ask again.
 
-use super::dialogs::{build_text_entry_dialog, close_current_dialog, finish_dialog_open, DialogSlot};
+use super::dialogs::close_current_dialog;
 use super::folder_picker_screen::open_folder_picker;
 use super::import_screen::{Outcome,
     build_plans, confirm_back, end_notice, home_dir, notice_back, run_job, save_folders, settings_path, show_folders, start_move, start_scan, Ctx, FoldersState, JobSpec, Step, TITLE,
@@ -40,8 +40,6 @@ use crate::fork::rom_screens::util::ellipsize;
 use crate::fork::screens::short_path;
 use crate::fork::settings::ForkSettings;
 use crate::ui::gamepad_router::GamepadRouter;
-use crate::PickerItem;
-use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -57,13 +55,13 @@ fn leave(app: &Rc<AppState>, router: &Router, ctx: &Ctx) {
 }
 
 /// A page's handlers: `act` says what each item does; B goes `back`; the X leaves.
-fn handlers(ctx: &Ctx, act: impl Fn(&Rc<AppState>, &Router, CardAction) + 'static, back: impl Fn(&Rc<AppState>, &Router) + 'static) -> Handlers<CardAction> {
+fn handlers<A>(ctx: &Ctx, act: impl Fn(&Rc<AppState>, &Router, A) + 'static, back: impl Fn(&Rc<AppState>, &Router) + 'static) -> Handlers<A> {
     let ctx = ctx.clone();
-    Handlers { on_action: Rc::new(act), on_back: Rc::new(back), on_exit: Rc::new(move |app, router| leave(app, router, &ctx)) }
+    Handlers { on_action: Rc::new(act), on_back: Rc::new(back), on_exit: Rc::new(move |app, router| leave(app, router, &ctx)), on_input: None }
 }
 
 /// If the page cannot be built nothing is lost: the flow ends as if the user had left.
-fn show_or_end(app: &Rc<AppState>, router: &Router, ctx: &Ctx, page: Page<CardAction>, handlers: Handlers<CardAction>) {
+fn show_or_end<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, ctx: &Ctx, page: Page<A>, handlers: Handlers<A>) {
     if !show_page(app, router, page, handlers) {
         ctx.finish_quiet(app, router);
     }
@@ -285,7 +283,7 @@ fn show_card(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, ind
                 confirm_back(app, router, TITLE, &text, "Leave it alone", true, move |app, router| not_a_port(app, router, &ctx2, screen2.clone(), index, again2.clone()), again.clone());
             }
             CardAction::NotAPort => not_a_port(app, router, &ctx, screen.clone(), index, again.clone()),
-            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), index, again.clone()),
+            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), index, again.clone(), String::new()),
             CardAction::Details => {
                 let text = {
                     let s = screen.borrow();
@@ -323,7 +321,7 @@ fn show_which(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, in
                     choose_port(app, router, &ctx, screen.clone(), index, maybe.key.clone(), again.clone());
                 }
             }
-            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), index, again.clone()),
+            CardAction::PickAnother => show_port_list(app, router, &ctx, screen.clone(), index, again.clone(), String::new()),
             CardAction::GithubLink => show_github(app, router, &ctx, screen.clone(), Target::Folder { index }, again.clone(), String::new()),
             CardAction::NotAPort => not_a_port(app, router, &ctx, screen.clone(), index, again.clone()),
             CardAction::Details => {
@@ -345,29 +343,17 @@ fn show_which(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, in
 
 // -- Another port ---------------------------------------------------------------------------------------
 
-/// What the last rows of the port list are: the keyboard (Game Mode only), then the GitHub link.
-fn extra_rows(game_mode: bool) -> usize {
-    if game_mode { 2 } else { 1 }
-}
-
-/// The rows of the port list: the ports that match the filter, Show keyboard (Game Mode), the GitHub link row.
-fn port_rows(list: &PortListScreen, shown: &[usize], game_mode: bool) -> Vec<String> {
-    let mut rows: Vec<String> = shown.iter().map(|i| ellipsize(&list.ports[*i].label(), 90)).collect();
-    if game_mode {
-        rows.push("Show keyboard".to_string());
+/// Asks Steam for its on-screen keyboard. Unverified on a Deck, so a failure says how to bring it up by hand.
+fn open_keyboard(app: &Rc<AppState>, router: &Router, again: Again) {
+    let opened = std::process::Command::new("xdg-open").arg("steam://open/keyboard").spawn().is_ok();
+    if !opened {
+        notice_back(app, router, link::KEYBOARD_HINT, again);
     }
-    rows.push("Use a GitHub link...".to_string());
-    rows
-}
-
-/// Asks Steam for its on-screen keyboard. Unverified on a Deck, so the pages also say how to bring it up by hand.
-fn show_keyboard() -> bool {
-    std::process::Command::new("xdg-open").arg("steam://open/keyboard").spawn().is_ok()
 }
 
 /// "Pick another port": the ports not in the ports folder yet, the ones named like the folder first, with a
-/// text box to filter and "Use a GitHub link..." as the last row. B goes back to the page it came from.
-fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, back: Again) {
+/// text box in the page to filter and "Use a GitHub link..." beside Back. B goes back to the page it came from.
+fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, index: usize, back: Again, filter: String) {
     let path = match screen.borrow().cards.item(index) {
         Some(item) => item.path().to_path_buf(),
         None => return,
@@ -375,57 +361,41 @@ fn show_port_list(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen
     let game_mode = crate::fork::steam_queue::game_mode_from_env();
     let target = ChoiceTarget { path, could_be: Vec::new() };
     let list = Rc::new(PortListScreen::new(&screen.borrow(), &target));
-    let shown = Rc::new(RefCell::new(list.matching("")));
-    let placeholder = if game_mode { "Type to filter. Steam + X brings up the keyboard" } else { "Type to filter the list" };
-    let Some(dialog) = build_text_entry_dialog(app, router, "Pick another port", placeholder, "", &port_rows(&list, &shown.borrow(), game_mode), false) else { return back(app, router) };
-    {
-        let (app, weak, list, shown) = (app.clone(), dialog.as_weak(), list.clone(), shown.clone());
-        dialog.on_search_changed(move |query| {
-            let Some(d) = weak.upgrade() else { return };
-            *shown.borrow_mut() = list.matching(query.as_str());
-            let items: Vec<PickerItem> = port_rows(&list, &shown.borrow(), game_mode).into_iter().map(|label| PickerItem { label: label.into() }).collect();
-            d.set_items(slint::ModelRc::new(slint::VecModel::from(items)));
-            d.set_selected_index(0);
-            app.dialog_nav.picker_index.set(0);
-        });
-    }
-    {
-        let (app, router, ctx, screen, list, shown, back) = (app.clone(), router.clone(), ctx.clone(), screen.clone(), list.clone(), shown.clone(), back.clone());
-        dialog.on_item_selected(move |row| {
-            let row = row.max(0) as usize;
-            let (count, picked) = {
-                let shown = shown.borrow();
-                (shown.len() + extra_rows(game_mode), shown.get(row).copied())
-            };
-            // A row from before the list was filtered shorter is not a row any more.
-            if row >= count {
-                return;
-            }
-            match picked {
-                Some(i) => choose_port(&app, &router, &ctx, screen.clone(), index, list.ports[i].key.clone(), back.clone()),
-                None if game_mode && row == count - 2 => {
-                    show_keyboard();
+    let page_for = {
+        let list = list.clone();
+        move |filter: &str| {
+            let matching = list.matching(filter);
+            let rows: Vec<(usize, String)> = matching.iter().take(cards::MAX_LIST_ROWS).map(|i| (*i, ellipsize(&list.ports[*i].label(), 90))).collect();
+            cards::port_list_page(&rows, matching.len(), filter, game_mode)
+        }
+    };
+    let page = page_for(&filter);
+    let typed = Rc::new(RefCell::new(filter));
+    let again: Again = {
+        let (ctx, screen, back, typed) = (ctx.clone(), screen.clone(), back.clone(), typed.clone());
+        Rc::new(move |app, router| show_port_list(app, router, &ctx, screen.clone(), index, back.clone(), typed.borrow().clone()))
+    };
+    let act = {
+        let (ctx, screen, list, back, again) = (ctx.clone(), screen.clone(), list.clone(), back.clone(), again.clone());
+        move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
+            CardAction::ListPort(i) => {
+                if let Some(port) = list.ports.get(i) {
+                    choose_port(app, router, &ctx, screen.clone(), index, port.key.clone(), back.clone());
                 }
-                None => show_github(&app, &router, &ctx, screen.clone(), Target::Folder { index }, back.clone(), String::new()),
             }
-        });
-    }
-    {
-        let (b_app, b_router, b_back) = (app.clone(), router.clone(), back.clone());
-        dialog.on_close_requested(move || {
-            close_current_dialog(&b_app, &b_router);
-            b_back(&b_app, &b_router);
-        });
-        // The title bar X only hides the window; it goes where B goes.
-        let (app, router) = (app.clone(), router.clone());
-        dialog.window().on_close_requested(move || {
-            close_current_dialog(&app, &router);
-            back(&app, &router);
-            slint::CloseRequestResponse::HideWindow
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::SearchList(dialog));
+            CardAction::GithubLink => show_github(app, router, &ctx, screen.clone(), Target::Folder { index }, again.clone(), String::new()),
+            CardAction::ShowKeyboard => open_keyboard(app, router, again.clone()),
+            CardAction::Back => back(app, router),
+            _ => {}
+        }
+    };
+    let b = back.clone();
+    let mut h = handlers(ctx, act, move |app, router| b(app, router));
+    h.on_input = Some(Rc::new(move |_, _, text| {
+        *typed.borrow_mut() = text.to_string();
+        Some(page_for(text))
+    }));
+    show_or_end(app, router, ctx, page, h);
 }
 
 /// The user picked port `key` for the folder at `index`: it is measured on the worker (size, Steam shortcuts),
@@ -555,56 +525,31 @@ fn github() -> Box<dyn Fetch> {
 /// The text box: paste or type the project address. Rows under it: Check this link, Show keyboard (Game
 /// Mode), What should I look for?, Cancel. B and the X go back to where the user came from (`back`).
 fn show_github(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, back: Again, text: String) {
-    let rows = link::rows(crate::fork::steam_queue::game_mode_from_env());
-    let labels: Vec<String> = rows.iter().map(|r| r.1.to_string()).collect();
-    let Some(dialog) = build_text_entry_dialog(app, router, link::WINDOW_TITLE, link::PLACEHOLDER, &text, &labels, false) else { return back(app, router) };
+    let page = link::entry_page(&text, crate::fork::steam_queue::game_mode_from_env());
     let typed = Rc::new(RefCell::new(text));
-    {
-        let typed = typed.clone();
-        dialog.on_search_changed(move |query| *typed.borrow_mut() = query.to_string());
-    }
     let again: Again = {
         let (ctx, screen, back, typed) = (ctx.clone(), screen.clone(), back.clone(), typed.clone());
         Rc::new(move |app, router| show_github(app, router, &ctx, screen.clone(), target, back.clone(), typed.borrow().clone()))
     };
-    {
-        let (app, router, ctx, screen, back, typed, again) = (app.clone(), router.clone(), ctx.clone(), screen.clone(), back.clone(), typed.clone(), again.clone());
-        dialog.on_item_selected(move |row| {
-            let Some((action, _)) = rows.get(row as usize) else { return };
-            match action {
-                LinkRow::Check => check_link(&app, &router, &ctx, screen.clone(), target, &back, &typed.borrow(), again.clone()),
-                LinkRow::ShowKeyboard => {
-                    // Slint does not raise the Steam keyboard by itself; ask Steam to. Unverified on a Deck, so the
-                    // help text also says how to bring it up by hand.
-                    let opened = std::process::Command::new("xdg-open").arg("steam://open/keyboard").spawn().is_ok();
-                    if !opened {
-                        notice_back(&app, &router, link::KEYBOARD_HINT, again.clone());
-                    }
-                }
-                LinkRow::Help => details_text(&app, &router, "What should I look for?", link::HELP, again.clone()),
-                LinkRow::Cancel => {
-                    close_current_dialog(&app, &router);
-                    back(&app, &router);
-                }
+    let act = {
+        let (ctx, screen, back, typed, again) = (ctx.clone(), screen.clone(), back.clone(), typed.clone(), again.clone());
+        move |app: &Rc<AppState>, router: &Router, action: LinkRow| match action {
+            LinkRow::Check => {
+                let text = typed.borrow().clone();
+                check_link(app, router, &ctx, screen.clone(), target, &back, &text, again.clone());
             }
-        });
-    }
-    {
-        let (b_app, b_router, b_back) = (app.clone(), router.clone(), back.clone());
-        dialog.on_close_requested(move || {
-            close_current_dialog(&b_app, &b_router);
-            b_back(&b_app, &b_router);
-        });
-        // The title bar X only hides the window; it goes where B goes.
-        let (app, router) = (app.clone(), router.clone());
-        dialog.window().on_close_requested(move || {
-            close_current_dialog(&app, &router);
-            back(&app, &router);
-            slint::CloseRequestResponse::HideWindow
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::SearchList(dialog));
+            LinkRow::ShowKeyboard => open_keyboard(app, router, again.clone()),
+            LinkRow::Help => details_text(app, router, "What should I look for?", link::HELP, again.clone()),
+            LinkRow::Cancel => back(app, router),
+        }
+    };
+    let b = back.clone();
+    let mut h = handlers(ctx, act, move |app, router| b(app, router));
+    h.on_input = Some(Rc::new(move |_, _, text| {
+        *typed.borrow_mut() = text.to_string();
+        None
+    }));
+    show_or_end(app, router, ctx, page, h);
 }
 
 /// Reads the text; a bad one gets its reason. A good one is asked about on the worker (a project already in

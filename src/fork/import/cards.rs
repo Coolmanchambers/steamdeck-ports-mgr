@@ -21,7 +21,7 @@ use super::scan::{Confidence, Found, ImportScan, Size};
 use crate::core::models::Port;
 use crate::fork::adopt::MatchKind;
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::page::{Card, Focus, Page, PageButton, PageOption, Tile, LEFT, MIDDLE};
+use crate::fork::page::{Card, Focus, InputBox, Page, PageButton, PageOption, Tile, EXTRA, LEFT, MIDDLE};
 use crate::fork::port_mover::old_copies;
 use crate::fork::rom_screens::util::human_bytes;
 use crate::fork::screens::short_path;
@@ -436,6 +436,10 @@ pub enum CardAction {
     AskAgain,
     /// Open the list of scan folders.
     ScanFolders,
+    /// The port at this position of the full port list (the filterable page) is the one.
+    ListPort(usize),
+    /// Ask Steam for its on-screen keyboard.
+    ShowKeyboard,
 }
 
 fn base(window: &str, step_text: &str, title: &str) -> Page<CardAction> {
@@ -593,6 +597,33 @@ pub fn which_page(u: &Unsure, position: usize, total: usize, said_not: bool) -> 
     ];
     p.buttons[LEFT] = details_button();
     p.initial = if u.could_be.is_empty() { Focus::Option(0) } else { Focus::Tile(0) };
+    p
+}
+
+/// How many ports of the filtered list are drawn at once; the rest need a longer filter.
+pub const MAX_LIST_ROWS: usize = 40;
+
+/// "Pick another port": the box to filter by, the ports that match (`rows`: position in the full list and its
+/// label, at most [`MAX_LIST_ROWS`] drawn), a GitHub link for a port that is not on the list, and the keyboard
+/// in Game Mode. `matching` counts every port that matches the text.
+pub fn port_list_page(rows: &[(usize, String)], matching: usize, filter: &str, game_mode: bool) -> Page<CardAction> {
+    let mut p = base("pick another port", "", "Pick another port");
+    p.paragraphs = vec!["Choose the port this folder is. Type part of its name to narrow the list.".to_string()];
+    p.input = Some(InputBox { placeholder: if game_mode { "Press Steam + X to type".to_string() } else { "Type to filter the list".to_string() }, text: filter.to_string() });
+    p.options = rows.iter().take(MAX_LIST_ROWS).map(|(i, label)| option(label, "", CardAction::ListPort(*i), false)).collect();
+    p.footnote = if rows.is_empty() {
+        format!("No port is called \"{}\". Try fewer letters, or use a GitHub link.", filter.trim())
+    } else if matching > MAX_LIST_ROWS {
+        format!("Showing {MAX_LIST_ROWS} of {matching}. Type more of the name to narrow the list.")
+    } else {
+        String::new()
+    };
+    p.buttons[LEFT] = footer("Back", CardAction::Back);
+    p.buttons[MIDDLE] = footer("Use a GitHub link...", CardAction::GithubLink);
+    if game_mode {
+        p.buttons[EXTRA] = footer("Show keyboard", CardAction::ShowKeyboard);
+    }
+    p.initial = Focus::Input;
     p
 }
 
@@ -1292,5 +1323,32 @@ mod tests {
             let t = all_text(page);
             assert!(!t.contains('/') && !t.contains("~/") && !t.to_lowercase().contains("json"), "{t}");
         }
+    }
+    #[test]
+    fn the_port_list_page_has_a_box_the_ports_and_the_link_beside_back() {
+        let rows: Vec<(usize, String)> = (0..3).map(|i| (i * 2, format!("Port {i}"))).collect();
+        let p = port_list_page(&rows, 3, "po", false);
+        assert_eq!(p.title, "Pick another port");
+        assert_eq!(p.window_title, "Import ports: pick another port");
+        assert_eq!(p.input.as_ref().unwrap().text, "po");
+        assert_eq!(p.initial, Focus::Input);
+        assert_eq!(p.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::ListPort(0), CardAction::ListPort(2), CardAction::ListPort(4)]);
+        assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Back);
+        assert_eq!(p.buttons[MIDDLE].as_ref().unwrap().action, CardAction::GithubLink);
+        assert!(p.buttons[EXTRA].is_none() && p.footnote.is_empty());
+        assert!(!all_text(&p).contains("Steam"));
+    }
+
+    #[test]
+    fn the_port_list_page_says_when_nothing_matches_or_the_list_is_cut_and_offers_the_keyboard_in_game_mode() {
+        let none = port_list_page(&[], 0, " zzz ", true);
+        assert!(none.options.is_empty());
+        assert!(none.footnote.contains("No port is called \"zzz\""), "{}", none.footnote);
+        assert_eq!(none.buttons[EXTRA].as_ref().unwrap().action, CardAction::ShowKeyboard);
+        assert!(none.input.unwrap().placeholder.contains("Steam + X"));
+        let many: Vec<(usize, String)> = (0..MAX_LIST_ROWS + 5).map(|i| (i, i.to_string())).collect();
+        let cut = port_list_page(&many, 300, "", false);
+        assert_eq!(cut.options.len(), MAX_LIST_ROWS);
+        assert!(cut.footnote.contains("Showing 40 of 300"), "{}", cut.footnote);
     }
 }
