@@ -131,6 +131,8 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-24 | `src/main.rs` | One line: `cloud_screen::at_start` (the catch-up pass and the ten-minute check; nothing runs unless signed in) |
 | 2026-10-24 | `src/fork/art/resolve.rs`, `src/fork/art/screen.rs` | The art sources' redaction lists also hold the cloud sign-in tokens and email (`cloud::tokens::values_beside`) |
 | 2026-10-24 | `STEAM_DECK.md` | The bug-report instructions say never to attach `cloud-tokens.json` or `secrets.json`, and that `cloud-backup.json` is safe |
+| 2026-10-24 | `ui/fork/setup-wizard.slint` | `WizardCard.square`: a card's picture can be square (the cloud sign-in QR code) instead of a portrait cover |
+| 2026-10-24 | `tools/smoke-test.sh` | Opens Settings > Cloud backup... (by keyboard) and closes it again |
 
 Files added by this fork:
 
