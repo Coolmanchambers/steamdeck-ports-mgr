@@ -33,6 +33,8 @@ fn collect_candidates(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         match entry.file_type() {
+            // Fork: superseded releases kept by `fork::versioned` are never launch candidates.
+            Ok(t) if t.is_dir() && entry.file_name() == ".previous" => {}
             Ok(t) if t.is_dir() => collect_candidates(&path, out),
             Ok(t) if t.is_file() => {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
@@ -168,6 +170,15 @@ mod tests {
             Err(ExecutableSelectionError::Ambiguous(candidates)) => assert_eq!(candidates.len(), 2),
             other => panic!("attendu Ambiguous, obtenu {other:?}"),
         }
+    }
+
+    #[test]
+    fn autodetect_ignore_les_anciennes_versions_gardees_dans_previous() {
+        let dir = temp_dir("autodetect_previous");
+        let game = write_candidate(&dir, "game");
+        std::fs::create_dir_all(dir.join(".previous").join("v1.0")).unwrap();
+        write_candidate(&dir.join(".previous").join("v1.0"), "old");
+        assert_eq!(autodetect_executable(&dir).unwrap(), game);
     }
 
     #[test]

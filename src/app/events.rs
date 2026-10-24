@@ -80,24 +80,21 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 }
                 {
                     let mut state = app.state.borrow_mut();
-                    state.mark_installed(&key, tag);
-                    let game_dir = port.as_ref().and_then(|p| crate::core::path_safety::safe_join(&app.paths.library_dir(), &p.folder).ok());
-                    let moved_favorite = game_dir.and_then(|dir| {
-                        let favorite = state.get(&key).and_then(|info| info.favorite_exe.clone())?;
-                        crate::core::installer::follow_favorite_exe(&dir, &favorite)
-                    });
-                    if moved_favorite.is_some() {
-                        state.set_favorite_exe(&key, moved_favorite);
-                    }
+                    state.mark_installed(&key, tag.clone());
                     if pin_version {
                         state.set_port_update(&key, false);
                     }
                 }
+                // Fork: a release named with its version replaced the old file; launch target, favorite and
+                // Steam follow the new one and the old one goes to .previous/ (fork::versioned).
+                let versioned = super::versioned_update::after_install(app, &key, tag.as_deref());
                 app.refresh_current_view();
                 if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
                     if let Some(port) = port {
                         launch_flow(app, router, &port);
                     }
+                } else if let (Some(text), Some(port)) = (versioned, &port) {
+                    open_message_dialog(app, router, port.display_name(), &text);
                 } else {
                     // Fork: look for the port's game files in the ROM folder (once per port).
                     super::rom_screens::after_install(app, router, &key);

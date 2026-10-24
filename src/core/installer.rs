@@ -198,55 +198,10 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
-fn is_appimage(name: &str) -> bool {
-    name.to_ascii_lowercase().ends_with(".appimage")
-}
-
-// Two AppImage names are one product when only their version numbers differ ("Game-v2.0.2-x86_64" and "Game-v2.0.3-x86_64").
-fn appimage_family(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut in_number = false;
-    for c in name.to_lowercase().chars() {
-        let number_char = c.is_ascii_digit() || (c == '.' && in_number);
-        if number_char {
-            if !in_number {
-                out.push('#');
-            }
-        } else {
-            out.push(c);
-        }
-        in_number = number_char;
-    }
-    out
-}
-
-fn top_level_appimages(dir: &Path) -> Vec<String> {
+// Fork: the release's own top-level names; `fork::versioned` uses them to tell which old files it supersedes.
+fn top_level_names(dir: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|name| is_appimage(name))
-        .collect()
-}
-
-// An AppImage is installed as a plain versioned file, so an update would leave the old one beside the new one.
-fn remove_superseded_appimages(dest_dir: &Path, installed: &[String]) {
-    let families: Vec<String> = installed.iter().map(|name| appimage_family(name)).collect();
-    for old in top_level_appimages(dest_dir) {
-        if !installed.contains(&old) && families.contains(&appimage_family(&old)) {
-            let _ = fs::remove_file(dest_dir.join(&old));
-        }
-    }
-}
-
-pub fn follow_favorite_exe(game_dir: &Path, favorite: &str) -> Option<String> {
-    if !is_appimage(favorite) || favorite.contains(['/', '\\']) || fs::symlink_metadata(game_dir.join(favorite)).is_ok() {
-        return None;
-    }
-    let family = appimage_family(favorite);
-    let mut successors: Vec<String> = top_level_appimages(game_dir).into_iter().filter(|name| appimage_family(name) == family).collect();
-    if successors.len() == 1 { successors.pop() } else { None }
+    entries.filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -387,14 +342,15 @@ fn extract_to_staging(archive: &Path, staging: &Path, exe_is_archive: Option<&st
     }
 }
 
-fn extract(archive: &Path, dest_dir: &Path, library_dir: &Path, exe_is_archive: Option<&str>, on_progress: &mut dyn FnMut(&str)) -> Result<(), InstallError> {
+// Fork: returns the release's top-level names. Superseded versioned files are no longer deleted here; the
+// app moves them to `.previous/` after the update is verified (`fork::versioned`).
+fn extract(archive: &Path, dest_dir: &Path, library_dir: &Path, exe_is_archive: Option<&str>, on_progress: &mut dyn FnMut(&str)) -> Result<Vec<String>, InstallError> {
     on_progress("Extracting...");
     let staging = with_path(tempfile::Builder::new().prefix("_staging_").tempdir_in(library_dir), library_dir).install_err()?;
     let merge_root = extract_to_staging(archive, staging.path(), exe_is_archive)?;
-    let installed_appimages = top_level_appimages(&merge_root);
+    let release = top_level_names(&merge_root);
     merge_into(&merge_root, dest_dir).install_err()?;
-    remove_superseded_appimages(dest_dir, &installed_appimages);
-    Ok(())
+    Ok(release)
 }
 
 fn temp_dir_in(library_dir: &Path, prefix: &str) -> Result<tempfile::TempDir, InstallError> {
@@ -541,7 +497,7 @@ pub fn install_port(
     Ok(installed_tag)
 }
 
-fn apply_archive(
+pub(crate) fn apply_archive(
     port: &Port,
     paths: InstallPaths,
     archive_path: &Path,
@@ -552,8 +508,10 @@ fn apply_archive(
     let InstallPaths { library_dir, saves_backup_dir } = paths;
     save_backup::backup_before_update(port, saves_backup_dir, dest_dir, stamp, on_progress)
         .map_err(|e| InstallError::Message(format!("Couldn't back up the saves before installing ({e}) -- nothing was changed.")))?;
-    extract(archive_path, dest_dir, library_dir, port.exe_is_archive.as_deref(), on_progress)?;
+    let before = crate::fork::versioned::before_update(port, dest_dir);
+    let release = extract(archive_path, dest_dir, library_dir, port.exe_is_archive.as_deref(), on_progress)?;
     save_backup::restore_all_after_install(port, saves_backup_dir, dest_dir);
+    crate::fork::versioned::record_installed(dest_dir, before, release);
     Ok(())
 }
 
@@ -965,33 +923,21 @@ mod tests {
     }
 
     #[test]
-    fn appimage_family_ignore_seulement_les_numeros_de_version() {
-        assert_eq!(appimage_family("Dusklight-v2.0.2-linux-x86_64.AppImage"), appimage_family("Dusklight-v2.0.13-linux-x86_64.AppImage"));
-        assert_ne!(appimage_family("Dusklight-v2.0.2-linux-x86_64.AppImage"), appimage_family("Dusklight-v2.0.2-linux-arm64.AppImage"));
-        assert_ne!(appimage_family("Dusklight-v2.0.2-linux-x86_64.AppImage"), appimage_family("Other-v2.0.2-linux-x86_64.AppImage"));
-        assert_ne!(appimage_family("Game-v2.0.AppImage"), appimage_family("Game-v2.0-rc1.AppImage"));
-    }
-
-    #[test]
-    fn extract_remplace_l_ancien_appimage_et_laisse_le_reste_intact() {
+    fn extract_garde_l_ancien_appimage_et_rend_les_noms_de_la_version() {
+        // Fork: nothing is deleted here any more; `fork::versioned` moves superseded files after the update is verified.
         let dir = temp_dir("appimage_update");
         let dest_dir = dir.join("dusklight");
         put(&dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage"), b"old");
-        put(&dest_dir.join("Dusklight-v2.0.2-linux-arm64.AppImage"), b"other architecture");
-        put(&dest_dir.join("Mine.AppImage"), b"not a Dusklight build");
         put(&dest_dir.join("saves").join("slot1.dat"), b"precious");
-        put(&dest_dir.join("notes.txt"), b"mine");
         let archive_path = dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage");
         fs::write(&archive_path, b"new").unwrap();
 
-        extract(&archive_path, &dest_dir, &dir, None, &mut no_progress).unwrap();
+        let release = extract(&archive_path, &dest_dir, &dir, None, &mut no_progress).unwrap();
 
-        assert!(!dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage").exists());
+        assert_eq!(release, ["Dusklight-v2.0.3-linux-x86_64.AppImage"]);
+        assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage")).unwrap(), b"old");
         assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage")).unwrap(), b"new");
-        assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.2-linux-arm64.AppImage")).unwrap(), b"other architecture");
-        assert_eq!(fs::read(dest_dir.join("Mine.AppImage")).unwrap(), b"not a Dusklight build");
         assert_eq!(fs::read(dest_dir.join("saves").join("slot1.dat")).unwrap(), b"precious");
-        assert_eq!(fs::read(dest_dir.join("notes.txt")).unwrap(), b"mine");
     }
 
     #[test]
@@ -1008,60 +954,41 @@ mod tests {
         assert_eq!(fs::read(dest_dir.join("data.bin")).unwrap(), b"new data");
     }
 
-    // Reproduction (branch versioned-files): a release that names its file with the version.
     #[test]
-    fn repro_versioned_appimage_update_keeps_the_old_release_in_previous() {
-        let dir = temp_dir("repro_versioned_appimage");
+    fn apply_archive_note_l_etat_d_avant_pour_la_suite_sans_rien_deplacer() {
+        let dir = temp_dir("versioned_pending");
         let library_dir = dir.join("Library");
         let dest_dir = library_dir.join("game");
-        put(&dest_dir.join("Game-v1.0-linux-x86_64.AppImage"), b"\x7fELF old");
+        put(&dest_dir.join("Game-v1.0-linux-x86_64.AppImage"), b"ELF old");
         let port = port_with_save("game", None);
         let archive_path = dir.join("Game-v1.1-linux-x86_64.AppImage");
-        fs::write(&archive_path, b"\x7fELF new").unwrap();
+        fs::write(&archive_path, b"ELF new").unwrap();
         let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &dir.join("Saves Backup") };
 
         apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress).unwrap();
 
-        assert_eq!(fs::read(dest_dir.join("Game-v1.1-linux-x86_64.AppImage")).unwrap(), b"\x7fELF new");
-        assert_eq!(fs::read(dest_dir.join(".previous").join("v1.0").join("Game-v1.0-linux-x86_64.AppImage")).ok().as_deref(), Some(b"\x7fELF old".as_slice()), "the old release must be kept, not deleted");
+        assert!(dest_dir.join("Game-v1.0-linux-x86_64.AppImage").is_file(), "nothing moves inside the installer");
+        let pending = crate::fork::versioned::take_installed(&dest_dir).expect("the update is waiting to be finished");
+        assert_eq!(pending.before.entries, ["Game-v1.0-linux-x86_64.AppImage"]);
+        assert_eq!(pending.before.target.as_deref(), Some("Game-v1.0-linux-x86_64.AppImage"));
+        assert_eq!(pending.release, ["Game-v1.1-linux-x86_64.AppImage"]);
     }
 
     #[test]
-    fn repro_versioned_program_without_extension_leaves_two_programs_to_choose_from() {
-        let dir = temp_dir("repro_versioned_elf");
+    fn apply_archive_qui_echoue_ne_laisse_rien_a_terminer() {
+        let dir = temp_dir("versioned_failed");
         let library_dir = dir.join("Library");
         let dest_dir = library_dir.join("game");
-        put(&dest_dir.join("Game-v1.0-linux-x86_64"), b"\x7fELF old");
+        put(&dest_dir.join("Game-v1.0-linux-x86_64.AppImage"), b"ELF old");
         let port = port_with_save("game", None);
-        let archive_path = dir.join("update.zip");
-        build_archive("zip", &[("Game-v1.1-linux-x86_64", b"\x7fELF new".as_slice()), ("README.txt", b"r".as_slice())], &archive_path);
+        let archive_path = dir.join("Game-v1.1.zip");
+        fs::write(&archive_path, b"not a real zip").unwrap();
         let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &dir.join("Saves Backup") };
 
-        apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress).unwrap();
+        assert!(apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress).is_err());
 
-        assert!(dest_dir.join("Game-v1.1-linux-x86_64").is_file());
-        assert!(!dest_dir.join("Game-v1.0-linux-x86_64").exists(), "the old release still sits beside the new one");
-    }
-
-    #[test]
-    fn follow_favorite_exe_suit_le_nouvel_appimage_de_la_meme_famille() {
-        let dir = temp_dir("favorite_follows");
-        put(&dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage"), b"new");
-        put(&dir.join("Dusklight-v2.0.3-linux-arm64.AppImage"), b"other architecture");
-        let moved = follow_favorite_exe(&dir, "Dusklight-v2.0.2-linux-x86_64.AppImage");
-        assert_eq!(moved.as_deref(), Some("Dusklight-v2.0.3-linux-x86_64.AppImage"));
-    }
-
-    #[test]
-    fn follow_favorite_exe_ne_change_rien_si_le_favori_existe_encore_ou_est_ambigu() {
-        let dir = temp_dir("favorite_stays");
-        put(&dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage"), b"new");
-        assert_eq!(follow_favorite_exe(&dir, "Dusklight-v2.0.3-linux-x86_64.AppImage"), None);
-        assert_eq!(follow_favorite_exe(&dir, "launch"), None);
-        assert_eq!(follow_favorite_exe(&dir, "sub/Dusklight-v2.0.2-linux-x86_64.AppImage"), None);
-        assert_eq!(follow_favorite_exe(&dir, "Other-v1-linux-x86_64.AppImage"), None);
-        put(&dir.join("Dusklight-v2.0.4-linux-x86_64.AppImage"), b"newer");
-        assert_eq!(follow_favorite_exe(&dir, "Dusklight-v2.0.2-linux-x86_64.AppImage"), None);
+        assert!(crate::fork::versioned::take_installed(&dest_dir).is_none());
+        assert_eq!(fs::read(dest_dir.join("Game-v1.0-linux-x86_64.AppImage")).unwrap(), b"ELF old");
     }
 
     fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
@@ -1241,7 +1168,8 @@ mod tests {
 
         apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
 
-        assert!(!dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage").exists());
+        // Fork: the old file is moved to .previous/ by the app once the update is verified (fork::versioned).
+        assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage")).unwrap(), b"old");
         assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.3-linux-x86_64.AppImage")).unwrap(), b"new");
         assert_eq!(snapshot(&external_save), save_before);
         let backup = saves_backup_dir.join("Update Backups").join("dusklight").join("2026-10-20_12-00-00.zip");

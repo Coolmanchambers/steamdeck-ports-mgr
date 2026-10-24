@@ -57,7 +57,7 @@ impl QueuedKind {
     /// How lists name it.
     fn label(self) -> &'static str {
         match self {
-            QueuedKind::Repoint => "moved to a new folder",
+            QueuedKind::Repoint => "moved to a new folder or version",
             other => other.as_str(),
         }
     }
@@ -645,6 +645,10 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
                     }
                     if let Some(name) = backup.as_ref().and_then(|b| b.file_name()) {
                         text.push_str(&format!("\nBackup of the old list: {}", name.to_string_lossy()));
+                    }
+                    // A queued switch to a port's new versioned file: the old one is kept in .previous/ now.
+                    if let Some(note) = super::versioned::after_queued_repoint(Path::new(from), Path::new(to), inputs.library_dir, inputs.catalog, inputs.home) {
+                        text.push_str(&format!("\n{note}"));
                     }
                     sections.push(text);
                 }

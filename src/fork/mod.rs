@@ -38,3 +38,4 @@ pub mod steam_sync;
 pub mod steam_user;
 pub mod store;
 pub mod vdf;
+pub mod versioned;

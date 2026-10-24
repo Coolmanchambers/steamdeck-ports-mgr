@@ -114,6 +114,10 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-23 | `src/core/image_cache.rs` | Simple setup: `cache_image` reads at most 20 MB of a cover (a cover is a few hundred KB), instead of whatever the server sends |
 | 2026-10-23 | `src/fork/import/{scan,screen,plan,engine,fallback}.rs`, `src/app/import_screen.rs` | Simple setup stages 3-4 on top of import-match's files (fork-owned, listed for the record): `Choices::remove` / `clear_not_a_port`; the old list screens (`ImportScreen` lines, the chooser lists, `confirm_text`, the plan list) are gone, `ImportScreen` now holds the cards; `short_problems` / `short_steam` for the closing page; `fallback::link_instead` links a Deck-ready only port from its own entry and reports a port that is in no list; the import's closing text is a card page (`Outcome`), and `Ctx.extra` keeps projects added from a GitHub link while the screen is open |
 | 2026-10-23 | `src/fork/custom_repo/`, `src/fork/import/{link,cards,old_batch}.rs`, `src/app/import_cards_screen.rs` | Simple setup stages 3-4: cards for folders that fit several ports or none (tiles you choose, a filterable list of other ports), "Not a port" kept in `fork-settings.json` (`import_ignored`, listed in Details, Ask again clears it), Use a GitHub link (`custom_repo::check` asks GitHub's API for the project and its newest release through `art::net::Fetch`, two calls; `entry` builds the user's own port list entry, written by the import just before the move and taken off if the port does not move; test switch `DPM_GITHUB_REPLAY=<folder>` answers from saved files), the old-copies page Details |
+| 2026-10-24 | `src/core/installer.rs` | Versioned program files (branch `versioned-files`): superseded AppImages are no longer deleted after an install and `follow_favorite_exe` is gone; `extract` returns the release's top-level names; `apply_archive` (now `pub(crate)`) records the folder's names and launch target before unpacking and hands both to `fork::versioned::record_installed` after a successful unpack. Nothing is moved inside the installer; tests changed to match, 2 new (pending record, failed unpack leaves nothing to finish) |
+| 2026-10-24 | `src/core/executable_detect.rs` | A folder named `.previous` (superseded releases kept by `fork::versioned`) is never searched for launch candidates; 1 test |
+| 2026-10-24 | `src/app/events.rs` | After an install, `versioned_update::after_install` replaces the favorite-follow block; its summary ("Updated to v1.1. The old version is kept in .previous.") is shown when no launch is pending, before the game file search |
+| 2026-10-24 | `src/app/mod.rs` | One module line, `versioned_update` |
 
 Files added by this fork:
 
@@ -197,6 +201,8 @@ Files added by this fork:
 | 2026-10-22 | `src/fork/port_mover/` | The move engine: copy with permission bits, links and times, verify (list, sizes, bits, links, hashes), game file check before and after, Steam repoint (written or queued, app IDs kept), ROM records follow, old copies recorded in `port-moves.json` and removed only on request |
 | 2026-10-22 | `src/app/ports_folder_screen.rs` | Settings > Ports folder, the "not available" message at startup, the move with progress and Cancel, and the "Remove the old copy now?" prompts |
 | 2026-10-22 | `src/fork/ports_folder_view.rs` | The lists of the ports folder screens (labels, row actions, preselected row), tested without UI |
+| 2026-10-24 | `src/fork/versioned/` | Versioned program files: family and version from a name (reuses `adopt::release_tokens`), the plan of what a new release supersedes, the finish step (launch target, favorite, Steam repoint or queue, move to `.previous/<version>/`, launcher scripts, pruning) and `after_queued_repoint` |
+| 2026-10-24 | `src/app/versioned_update.rs` | Runs the finish step on the UI thread after an install and sets the favorite |
 
 ## Add to Steam (Settings menu)
 
@@ -755,6 +761,42 @@ has no way to put one back. Info > **Restore saves...** and Settings > **Restore
   dialog that cannot be cancelled. Hard links inside a port are copied as separate files. Folder times
   are best effort. Ownership is not copied (same user). Launch options naming the old folder keep it
   (the old copy is not removable) until edited in Steam. English only.
+
+
+## Versioned program files (`src/fork/versioned/`, `src/app/versioned_update.rs`)
+
+Some releases put the version in the file name (`Dusklight-v2.0.3-linux-x86_64.AppImage`). An update
+lands the new file beside the old one. Upstream left both; until 2026-10-24 this fork deleted older
+AppImages and left the Steam shortcut pointing at a missing file. Now, for any port:
+
+- **When:** after the update is unpacked and the saves are back (`apply_archive` records the folder's
+  names and launch target from before), the app finishes it on the UI thread. A failed unpack records
+  nothing, so nothing moves.
+- **Same family:** the same words once version and platform words are dropped (`adopt::release_tokens`),
+  both names with a real version (`v1`, `1.0`, `v2.0.3`; a bare `2` or a `(1)` copy is not one), and
+  the same kind (file or folder). Of several new files of one family, the closest name wins (fewest
+  differing parts, so `-aarch64` follows `-aarch64`); a tie leaves the old file with a reason.
+- **What moves:** program files (`.AppImage`, `.x86_64`, `.x86`, `.sh`, `.run`, or an ELF or `#!` script
+  by content; never `.bin`) and versioned release folders that hold no link, `saves*` or `mods` folder,
+  `.o2r`/`.otr`, settings file or game file. Never a save folder (`save`/`save2` as resolved on this
+  system), anything holding one, hidden names, or names the new release also has. When the saves are
+  the game folder itself, program files still move but folders stay.
+- **Order:** the old launch target (favorite, else what the app found before the update) must have its
+  counterpart in the new release, or nothing moves. Steam shortcuts are repointed first
+  (`port_mover::steam::repoint_everywhere`: every account, app ID kept, backup first, never while Steam
+  runs; queued in `steam-queue.json` while it does or in Game Mode). An entry any shortcut still points at
+  stays where it is; when the queued change is applied, `after_queued_repoint` moves it. Then each entry
+  goes to `.previous/<old version>/` (`-2`, `-3` when the name is taken; moved, never deleted).
+- **After:** top-level `.sh` launchers that are not part of the release and name a moved file get the
+  new name; the original is kept as `.previous/<version>/<script>.before-update`. Other versions in
+  `.previous/` are removed only when they hold program files alone. The favorite follows the new file;
+  one is set when the app would not find the new program on its own.
+- **Going back:** Info > Select version installs an older release; the same steps keep the newer one in
+  `.previous/`. Offline, by hand: in Desktop Mode move the file out of `.previous/<version>/` into the
+  port folder and pick it in Info > Favorite executable (`.previous` is never searched otherwise).
+- **Known limits:** a catalog `executable` naming a versioned file is not rewritten (the favorite
+  covers it); launcher scripts in subfolders are not rewritten; a release folder holding a settings
+  file stays beside the new one (listed in the summary).
 
 ## Fixes to upstream behavior
 
