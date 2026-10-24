@@ -230,6 +230,11 @@ pub(crate) fn close_current_dialog(app: &Rc<AppState>, router: &Router) {
     app.dialog_nav.info_dialog_port_key.replace(None);
     let slot = app.dialog_nav.dialogs.replace(DialogSlot::None);
     let Some(window) = slot.window() else { return };
+    // Fork: the guided page window waits a moment for the next page instead of closing (one window, page_dialog::park).
+    if matches!(&slot, DialogSlot::SetupWizard(d) if super::page_dialog::park(app, d)) {
+        router.borrow_mut().pop_target();
+        return;
+    }
     let _ = window.hide();
     if let Some(native) = chrome::native_window(app.window().window()) {
         chrome::force_foreground_window(native);

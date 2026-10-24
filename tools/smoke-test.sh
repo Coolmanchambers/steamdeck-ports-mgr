@@ -15,7 +15,8 @@
 #     setting, the copy (program bits), the kept old copies and their records, and a relaunch;
 #   - a fresh start (no fork-settings.json) opens the setup wizard by itself, Skip setup leaves the
 #     main window, and quitting the wizard half-way leaves setup unfinished; every other run seeds
-#     setup_done so it goes straight to the main window;
+#     setup_done so it goes straight to the main window; the wizard's pages (Import ports included) stay in
+#     one window;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
@@ -116,9 +117,11 @@ if [ -n "$wiz" ]; then
     check "keeping the folder goes on to Import ports (a resting pointer does not move the highlight)" '[ -n "$imp" ] && [ -z "$(xdotool search --onlyvisible --name "^Choose the ports folder" 2>/dev/null)" ]'
     if [ -n "$imp" ]; then
         imp=$(find_window '^Import ports: (nothing found|found)$') || imp=""   # the scan gives way to its first page
+        check "Import ports pages are drawn in the wizard's own window (one window, no new window per page)" '[ -n "$imp" ] && [ "$imp" = "$wiz" ]'
         press_keys "$imp" Escape
         next=$(find_window '^Setup wizard: Ports folder') || next=""
         check "B on the first Import ports page goes back to the ports folder question" '[ -n "$next" ]'
+        check "B comes back in that same window" '[ -n "$next" ] && [ "$next" = "$wiz" ]'
         if [ -n "$next" ]; then
             # Positive control: the pointer still rests over the second choice. A few small real moves must now
             # take the highlight, so Return opens the folder picker. If the layout ever shifted so the pointer was

@@ -392,6 +392,20 @@ export component SetupWizardDialog inherits Window {
         root.nav-hovered(id);
     }
 
+    // A new page drawn in this same window (src/app/page_dialog.rs keeps one window from page to page): the body
+    // starts at the top, a resting pointer has to really move again before it takes the highlight, and the
+    // keyboard goes to the page, or to its text box when that is where the cursor starts.
+    public function page-shown() {
+        root.pointer-armed = false;
+        root.seen-id = -2;
+        body.content-y = 0px;
+        if (root.has-input && root.selected-index == root.input-focus) {
+            text-in.focus();
+        } else {
+            key-handler.focus();
+        }
+    }
+
     // The text box takes the keyboard while it is the selected item, and gives it back to the page when not.
     changed selected-index => {
         if (root.has-input && root.selected-index == root.input-focus) {
