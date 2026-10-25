@@ -71,7 +71,7 @@ fn request_for(app: &AppState, local: &LocalEntries, port: &Port, mappings: Vec<
 /// them until a file in its folder carries the title or a connection is recorded (Home shows that one without red:
 /// `port_files_state`).
 pub(crate) fn port_missing_game_files(app: &AppState, port: &Port) -> bool {
-    port_files_state(app, port) != Some(FilesState::Have)
+    FilesState::counts_as_missing(port_files_state(app, port))
 }
 
 /// Home's view: `None` when the port is not installed or needs no game files, else the state (red only for `Missing`).

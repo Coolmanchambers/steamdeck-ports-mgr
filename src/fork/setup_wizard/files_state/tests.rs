@@ -150,3 +150,11 @@ fn a_title_with_no_significant_words_is_never_found_by_name() {
     write(&dir.join("anything.iso"), b"d");
     assert_ne!(files_state(&p, &dir, tmp.path()), FilesState::Have);
 }
+
+#[test]
+fn only_a_port_that_needs_files_and_lacks_them_counts_as_missing_for_the_wizard() {
+    assert!(!FilesState::counts_as_missing(None), "a port that needs no game files is never missing");
+    assert!(!FilesState::counts_as_missing(Some(FilesState::Have)));
+    assert!(FilesState::counts_as_missing(Some(FilesState::Missing)));
+    assert!(FilesState::counts_as_missing(Some(FilesState::Unverifiable)));
+}

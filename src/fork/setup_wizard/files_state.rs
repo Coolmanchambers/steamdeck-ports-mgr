@@ -28,6 +28,14 @@ pub enum FilesState {
     Unverifiable,
 }
 
+impl FilesState {
+    /// What the wizard counts as "has no game files yet": `None` (not installed, or the port needs none) is never
+    /// missing; a title that cannot be checked counts, so the wizard still offers to look for it.
+    pub fn counts_as_missing(state: Option<FilesState>) -> bool {
+        matches!(state, Some(FilesState::Missing | FilesState::Unverifiable))
+    }
+}
+
 /// Words in a title that say nothing about the game: regions, formats, filler.
 const TITLE_FILLER: [&str; 24] = [
     "pal", "ntsc", "ntscu", "ntscj", "usa", "us", "europe", "eur", "japan", "jpn", "world", "australia", "korea", "or", "and", "the", "of", "iso", "disc",
