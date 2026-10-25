@@ -1,0 +1,93 @@
+// Fork: the main window's dim layer while a page or dialog is open (src/app/dialog_layer.rs). The app behind stays
+// readable through it; one line says what is open ("Settings is open") and the button brings it back. A, Return,
+// Space, a click or a tap anywhere on the layer all do the same: `pressed`.
+
+import { SemanticColors, Theme } from "../shared.slint";
+import { FocusLook, FocusRing } from "setup-wizard.slint";
+
+export component DialogLayer inherits Rectangle {
+    in property <string> text: "";
+    in property <length> font-px: 14px;
+    callback pressed();
+    // Gives the layer the keyboard (the main window's search box must not take typing meant for nothing).
+    public function grab() { keys.focus(); }
+
+    property <length> pad: root.font-px;
+    background: #00000090;
+
+    keys := FocusScope {
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.pressed();
+                accept
+            } else {
+                // Escape, arrows, letters: nothing here; above all, never the search box behind.
+                accept
+            }
+        }
+    }
+
+    // Above the key catcher, so every click and tap lands here (the card below has no touch area of its own).
+    TouchArea {
+        clicked => { root.pressed(); }
+    }
+
+    // The note sits low on the screen, so the middle of the app behind can still be read.
+    card := Rectangle {
+        width: min(root.width - root.pad * 2, max(line.preferred-width, button.width) + root.pad * 3);
+        height: line.preferred-height + button.height + hint.preferred-height + root.pad * 3;
+        x: (root.width - self.width) / 2;
+        y: max(root.pad, root.height * 0.72 - self.height / 2);
+        background: Theme.list-background;
+        border-width: 1px;
+        border-color: Theme.border-color;
+        border-radius: root.font-px * 0.4;
+
+        line := Text {
+            text: root.text;
+            color: Theme.list-text;
+            font-size: root.font-px * 1.3;
+            font-weight: 700;
+            horizontal-alignment: center;
+            overflow: elide;
+            x: root.pad;
+            width: parent.width - root.pad * 2;
+            y: root.pad;
+        }
+
+        button := Rectangle {
+            width: label.preferred-width + root.pad * 3;
+            height: root.font-px * 2.8;
+            x: (parent.width - self.width) / 2;
+            y: line.y + line.preferred-height + root.pad * 0.8;
+            background: FocusLook.accent;
+            border-radius: root.font-px * 0.3;
+
+            label := Text {
+                text: "Go back to it";
+                color: SemanticColors.text-on-accent;
+                font-size: root.font-px * 1.15;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+
+            FocusRing {
+                ring-px: max(3px, 4px / Theme.scale-factor);
+            }
+        }
+
+        hint := Text {
+            text: "A, click or tap";
+            color: Theme.list-text;
+            font-size: root.font-px * 0.85;
+            horizontal-alignment: center;
+            x: root.pad;
+            width: parent.width - root.pad * 2;
+            y: button.y + button.height + root.pad * 0.5;
+        }
+    }
+}

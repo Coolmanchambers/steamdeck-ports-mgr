@@ -7,7 +7,7 @@ export struct PickerItem {
 
 export component ListPickerDialog inherits Window {
     no-frame: true;
-    title: root.dialog-title;
+    title: root.dialog-title == "" ? "Deck Ports Manager" : "Deck Ports Manager: " + root.dialog-title; // Fork (one window): named in the taskbar
     background: Theme.list-background;
     in property <length> initial-width: 400px;
     in property <length> initial-height: 300px;
@@ -112,7 +112,7 @@ export component ListPickerDialog inherits Window {
 
 export component SearchListDialog inherits Window {
     no-frame: true;
-    title: root.dialog-title;
+    title: root.dialog-title == "" ? "Deck Ports Manager" : "Deck Ports Manager: " + root.dialog-title; // Fork (one window): named in the taskbar
     background: Theme.list-background;
     in property <length> initial-width: 400px;
     in property <length> initial-height: 300px;

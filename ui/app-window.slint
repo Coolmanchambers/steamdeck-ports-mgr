@@ -8,6 +8,8 @@ import { DeckReadyList, DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog } from "
 import { SetupWizardDialog, WizardCard, WizardFact, WizardOption, WizardTile } from "fork/setup-wizard.slint";
 // Fork: the home screen.
 import { HomeView, HomeTile } from "fork/home.slint";
+// Fork: the dim layer while a page or dialog is open (src/app/dialog_layer.rs).
+import { DialogLayer } from "fork/dialog-layer.slint";
 export { AppTray } from "tray.slint";
 
 export struct PortItem {
@@ -86,7 +88,8 @@ export component AppWindow inherits Window {
     in property <int> grid-selected-row: -1;
 
     in property <bool> refocus-trigger: false;
-    changed refocus-trigger => { search-input.focus(); }
+    // Fork (one window): while a page or dialog is open the keyboard belongs to the dim layer, not the search box.
+    changed refocus-trigger => { if (root.dialog-layer-shown) { dialog-layer.grab(); } else { search-input.focus(); } }
     in property <bool> scroll-trigger: false;
 
     // Fork: the Deck-ready list replaces the port list or card grid while deck-ready-mode is on.
@@ -117,6 +120,17 @@ export component AppWindow inherits Window {
     callback home-setup-requested();
     callback home-add-requested();
     callback home-empty-hovered(int);
+    // Fork: the dim layer while a page or dialog is open ("Settings is open", "Go back to it"): src/app/dialog_layer.rs.
+    in property <bool> dialog-layer-shown: false;
+    in property <string> dialog-layer-text: "";
+    callback dialog-layer-pressed();
+    changed dialog-layer-shown => {
+        if (root.dialog-layer-shown) {
+            dialog-layer.grab();
+        } else {
+            search-input.focus();
+        }
+    }
 
     init => { search-input.focus(); }
 
@@ -705,5 +719,17 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
+
+    // Fork: over everything but the title bar (moving, minimizing and closing the window work as before).
+    dialog-layer := DialogLayer {
+        visible: root.dialog-layer-shown;
+        x: 0px;
+        y: root.border-px + root.title-bar-height;
+        width: root.width;
+        height: root.height - self.y;
+        text: root.dialog-layer-text;
+        font-px: root.item-font-px * (root.big-mode ? 1.25 : 1.0);
+        pressed => { root.dialog-layer-pressed(); }
     }
 }

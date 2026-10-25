@@ -4,7 +4,7 @@ import { DialogButton, DialogChrome, DialogNavKeyHandler } from "chrome.slint";
 
 export component MessageDialog inherits Window {
     no-frame: true;
-    title: root.dialog-title;
+    title: root.dialog-title == "" ? "Deck Ports Manager" : "Deck Ports Manager: " + root.dialog-title; // Fork (one window): named in the taskbar
     background: Theme.list-background;
     in property <length> initial-width: 400px;
     in property <length> initial-height: 200px;
@@ -61,7 +61,7 @@ export component MessageDialog inherits Window {
 
 export component ConfirmDialog inherits Window {
     no-frame: true;
-    title: root.dialog-title;
+    title: root.dialog-title == "" ? "Deck Ports Manager" : "Deck Ports Manager: " + root.dialog-title; // Fork (one window): named in the taskbar
     background: Theme.list-background;
     in property <length> initial-width: 400px;
     in property <length> initial-height: 220px;
@@ -152,7 +152,7 @@ export component ConfirmDialog inherits Window {
 
 export component ErrorDialog inherits Window {
     no-frame: true;
-    title: root.dialog-title;
+    title: root.dialog-title == "" ? "Deck Ports Manager" : "Deck Ports Manager: " + root.dialog-title; // Fork (one window): named in the taskbar
     background: Theme.list-background;
     in property <length> initial-width: 400px;
     in property <length> initial-height: 260px;
@@ -243,7 +243,7 @@ export component ErrorDialog inherits Window {
 
 export component ProgressDialog inherits Window {
     no-frame: true;
-    title: root.dialog-title;
+    title: root.dialog-title == "" ? "Deck Ports Manager" : "Deck Ports Manager: " + root.dialog-title; // Fork (one window): named in the taskbar
     background: Theme.list-background;
     in property <length> initial-width: 400px;
     in property <length> initial-height: 180px;

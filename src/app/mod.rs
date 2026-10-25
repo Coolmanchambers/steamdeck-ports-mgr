@@ -5,6 +5,7 @@ pub mod cards;
 pub mod checkup_screen;
 pub mod cloud_screen;
 pub mod deck_ready_screen;
+pub mod dialog_layer; // Fork: the main window's layer while a page or dialog is open
 pub mod dialogs;
 pub mod events;
 pub mod folder_picker_screen;

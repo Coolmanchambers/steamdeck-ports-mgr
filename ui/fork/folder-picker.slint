@@ -12,7 +12,7 @@ export struct FolderRow {
 
 export component FolderPickerDialog inherits Window {
     no-frame: true;
-    title: root.dialog-title;
+    title: root.dialog-title == "" ? "Deck Ports Manager" : "Deck Ports Manager: " + root.dialog-title; // Fork (one window): named in the taskbar
     background: Theme.list-background;
     in property <length> initial-width: 640px;
     in property <length> initial-height: 480px;

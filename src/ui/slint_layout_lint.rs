@@ -12,6 +12,7 @@ const SLINT_FILES: &[(&str, &str)] = &[
     ("fork/folder-picker.slint", include_str!("../../ui/fork/folder-picker.slint")),
     ("fork/setup-wizard.slint", include_str!("../../ui/fork/setup-wizard.slint")),
     ("fork/home.slint", include_str!("../../ui/fork/home.slint")),
+    ("fork/dialog-layer.slint", include_str!("../../ui/fork/dialog-layer.slint")),
 ];
 
 struct Frame {

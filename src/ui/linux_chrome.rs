@@ -183,6 +183,49 @@ pub fn force_foreground_window(window: NativeWindow) {
     });
 }
 
+// Fork (one window): the X11 window the window manager says is active; `None` when it can't say.
+fn x11_active_window() -> Option<u32> {
+    with_conn(|s| -> Option<u32> {
+        let active_atom = cached_atom(&s.conn, "_NET_ACTIVE_WINDOW")?;
+        let reply = s.conn.get_property(false, s.root, active_atom, AtomEnum::WINDOW, 0, 1).ok()?.reply().ok()?;
+        let active = reply.value32()?.next();
+        active
+    })
+    .flatten()
+}
+
+/// Fork (one window): whether `window` is the one in front with the keyboard. `None` when nobody can say
+/// (no window manager, gamescope).
+pub fn window_in_front(window: &slint::Window) -> Option<bool> {
+    use slint::winit_030::WinitWindowAccessor;
+    match native_window(window)? {
+        NativeWindow::X11(win) => x11_active_window().filter(|&w| w != 0).map(|active| active == win),
+        NativeWindow::Wayland => window.with_winit_window(|w| w.has_focus()),
+    }
+}
+
+/// Fork (one window): brings `window` back in front and gives it the keyboard, for a direct user action (the
+/// main window's "Go back to it"). X11: un-minimize, then `_NET_ACTIVE_WINDOW` with source 2 ("a direct user
+/// action", which KWin's focus-stealing prevention honors); Wayland: winit's focus request. What was asked, for the log.
+pub fn bring_back(window: &slint::Window) -> String {
+    use slint::winit_030::WinitWindowAccessor;
+    window.set_minimized(false);
+    match native_window(window) {
+        Some(NativeWindow::X11(win)) => {
+            with_conn(|s| -> Option<()> {
+                let atom = cached_atom(&s.conn, "_NET_ACTIVE_WINDOW")?;
+                send_root_message(&s.conn, s.root, win, atom, [2, 0, 0, 0, 0])
+            });
+            format!("x11 window 0x{win:x}")
+        }
+        Some(NativeWindow::Wayland) => {
+            window.with_winit_window(|w| w.focus_window());
+            "wayland focus request".into()
+        }
+        None => "no native window".into(),
+    }
+}
+
 /// `None` when the X server can't say (no connection, or no `_NET_ACTIVE_WINDOW`, as under gamescope).
 fn x11_foreground_is_ours() -> Option<bool> {
     with_conn(|s| -> Option<bool> {

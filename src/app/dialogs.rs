@@ -237,6 +237,8 @@ pub(crate) fn close_current_dialog(app: &Rc<AppState>, router: &Router) {
         return;
     }
     let _ = window.hide();
+    // Fork (one window): the main window's "... is open" layer goes with the dialog.
+    super::dialog_layer::sync(app);
     if let Some(native) = chrome::native_window(app.window().window()) {
         chrome::force_foreground_window(native);
     }
@@ -255,6 +257,8 @@ pub(crate) fn finish_dialog_open(app: &Rc<AppState>, router: &Router, slot: Dial
     }
     *app.dialog_nav.dialogs.borrow_mut() = slot;
     router.borrow_mut().push_target(Rc::new(DialogGamepadTarget { app: app.clone() }));
+    // Fork (one window): the main window shows "... is open" and "Go back to it" while this is open.
+    super::dialog_layer::sync(app);
 
     let app = app.clone();
     slint::Timer::single_shot(std::time::Duration::from_millis(50), move || {
@@ -265,7 +269,10 @@ pub(crate) fn finish_dialog_open(app: &Rc<AppState>, router: &Router, slot: Dial
         chrome::apply_window_icon(native);
         chrome::force_normal_window_visibility(native);
         if let Some(main_native) = chrome::native_window(app.window().window()) {
-            chrome::own_window(native, main_native);
+            // Fork (one window): in Desktop Mode the dialog keeps its own taskbar entry (an owned window has none).
+            if super::dialog_layer::keep_owner() {
+                chrome::own_window(native, main_native);
+            }
             window.set_position(slint::WindowPosition::Physical(position));
         }
         chrome::force_foreground_window(native);
@@ -593,10 +600,21 @@ pub(crate) fn build_setup_wizard_dialog(app: &Rc<AppState>, router: &Router) -> 
     let dialog = SetupWizardDialog::new().ok()?;
     style_dialog!(dialog, app, fonts);
     // Fork (polish): in big mode and in Game Mode the page fills the screen, with no title bar.
-    let full = big || crate::fork::steam_queue::game_mode_from_env();
+    let game_mode = crate::fork::steam_queue::game_mode_from_env();
+    let full = big || game_mode;
     let (dw, dh, x, y) = if full { (work_w, work_h, wx, wy) } else { (dw, dh, x, y) };
+    // Fork (one window): in Desktop Mode a full screen main window gets a full screen page (the same screen), so the
+    // page is in front of everything while it is the active window, as the main window is.
+    let fullscreen = big && !game_mode;
+    let (dw, dh, x, y) = match main_window_rect(app).filter(|_| fullscreen) {
+        Some((mx, my, mw, mh)) => (mw, mh, mx, my),
+        None => (dw, dh, x, y),
+    };
     dialog.set_full(full);
     position_dialog!(dialog, app, dw, dh, x, y);
+    if fullscreen {
+        chrome::set_fullscreen(dialog.window(), true);
+    }
     Some(dialog)
 }
 

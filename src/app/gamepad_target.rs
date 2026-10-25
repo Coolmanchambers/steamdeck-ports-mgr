@@ -165,20 +165,34 @@ pub(crate) struct DialogGamepadTarget {
     pub(crate) app: Rc<AppState>,
 }
 
+// Fork (one window): while the main window, with its "... is open" layer, is in front of the open dialog (Desktop
+// Mode), A brings the dialog back (src/app/dialog_layer.rs) and nothing else reaches a page the user cannot see.
 impl GamepadTarget for DialogGamepadTarget {
     fn move_selection(&self, dx: i32, dy: i32) {
+        if super::dialog_layer::main_in_front(&self.app) {
+            return;
+        }
         dialog_move_selection(&self.app, dx, dy);
     }
 
     fn activate_selection(&self) {
+        if super::dialog_layer::main_in_front(&self.app) {
+            return super::dialog_layer::go_back(&self.app);
+        }
         dialog_activate(&self.app);
     }
 
     fn reject(&self) {
+        if super::dialog_layer::main_in_front(&self.app) {
+            return;
+        }
         dialog_reject(&self.app);
     }
 
     fn show_info_for_selection(&self) {
+        if super::dialog_layer::main_in_front(&self.app) {
+            return;
+        }
         if let DialogSlot::Error(d) = current_dialog(&self.app) {
             d.invoke_info_requested();
         }

@@ -129,6 +129,22 @@ pub fn gamepad_input_allowed(_windows: &[&slint::Window]) -> bool {
     foreground_window_belongs_to_us()
 }
 
+// Fork (one window): same signatures as linux_chrome.
+pub fn window_in_front(window: &slint::Window) -> Option<bool> {
+    native_window(window).map(|hwnd| unsafe { GetForegroundWindow() } == hwnd)
+}
+
+pub fn bring_back(window: &slint::Window) -> String {
+    window.set_minimized(false);
+    match native_window(window) {
+        Some(hwnd) => {
+            force_foreground_window(hwnd);
+            format!("hwnd {:?}", hwnd.0)
+        }
+        None => "no native window".into(),
+    }
+}
+
 pub fn tray_host_available() -> bool {
     true
 }

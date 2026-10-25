@@ -534,6 +534,8 @@ pub(crate) fn park(app: &Rc<AppState>, dialog: &SetupWizardDialog) -> bool {
         if !HOST.with(|h| h.borrow_mut().expire(token)) {
             return;
         }
+        // The main window's layer waited through the park; now it follows whatever is open (nothing, or a hand-off).
+        super::dialog_layer::sync(&app);
         let Some((_, dialog)) = WIN.with(|w| w.borrow_mut().take()) else { return };
         let _ = dialog.window().hide();
         ART_TIMER.with(|t| t.stop());
@@ -550,6 +552,11 @@ pub(crate) fn park(app: &Rc<AppState>, dialog: &SetupWizardDialog) -> bool {
         }
     });
     true
+}
+
+/// True while the page window waits for its next page (see [`park`]); the main window's layer stays as it was meanwhile.
+pub(crate) fn parked() -> bool {
+    HOST.with(|h| h.borrow().parked.is_some())
 }
 
 fn same_window(a: &SetupWizardDialog, b: &SetupWizardDialog) -> bool {
@@ -621,6 +628,7 @@ impl<A: Clone + 'static> PageHandle<A> {
         load_art(&self.app, &d, &self.cur);
         let n = self.focus.get().min(page::focusables(&page).len().saturating_sub(1));
         select(&d, &page, &self.focus, n);
+        super::dialog_layer::sync(&self.app);
         true
     }
 }
@@ -655,6 +663,8 @@ pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &
         finish_dialog_open(app, router, DialogSlot::SetupWizard(dialog.clone_strong()));
         wire_window_close(&dialog, serial);
     }
+    // The main window's layer names the page now on screen.
+    super::dialog_layer::sync(app);
     Some(PageHandle { app: app.clone(), weak: dialog.as_weak(), cur, focus, generation })
 }
 

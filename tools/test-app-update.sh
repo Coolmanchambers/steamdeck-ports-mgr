@@ -171,8 +171,8 @@ count_pids() {
     echo "$n"
 }
 main_win() { xdotool search --name '^Ports Launcher$' 2>/dev/null | head -1; }
-settings_win() { xdotool search --onlyvisible --name '^Settings$' 2>/dev/null | tail -1; }
-updates_win() { xdotool search --onlyvisible --name '^Settings: Updates$' 2>/dev/null | tail -1; }
+settings_win() { xdotool search --onlyvisible --name '^Deck Ports Manager: Settings$' 2>/dev/null | tail -1; }
+updates_win() { xdotool search --onlyvisible --name '^Deck Ports Manager: Settings: Updates$' 2>/dev/null | tail -1; }
 last_line() { tail -n 1 "$APP/updater.log" 2>/dev/null; }
 
 launch() {  # $1 = DPM_RELEASE_BASE; a bare session like Game Mode: no D-Bus, so no tray host
@@ -199,7 +199,7 @@ open_settings_and_force_update() {
     xdotool mousemove 0 0   # park the pointer so hovering can't move the list selection
     shot settings
     echo "settings dialog window: ${dlg:-none} ($(xdotool getwindowname "$dlg" 2>/dev/null))"
-    [ -n "$dlg" ] && [ "$(xdotool getwindowname "$dlg" 2>/dev/null)" = "Settings" ] || return 1
+    [ -n "$dlg" ] && [ "$(xdotool getwindowname "$dlg" 2>/dev/null)" = "Deck Ports Manager: Settings" ] || return 1
     xdotool windowfocus "$dlg"; sleep 0.4
     local keys="" i
     for i in $(seq 1 "$GROUP_DOWNS"); do keys="$keys Down"; done
