@@ -130,6 +130,13 @@ pub fn while_pad<R>(f: impl FnOnce() -> R) -> R {
     out
 }
 
+/// Runs `f`, which invokes dialog callbacks itself as the result of a press already let through (A on a message
+/// dialog calls its close callback): those callbacks are not a second key press, so they neither act twice nor leave
+/// a phantom press that would swallow the next real one.
+pub fn not_a_key<R>(f: impl FnOnce() -> R) -> R {
+    while_pad(f)
+}
+
 /// The keyboard side: Return (choose) or Escape (back) that is about to act. Always true for the pad's own press.
 pub fn key(press: Press) -> bool {
     PAD_DISPATCH.with(Cell::get) || allow(Source::Key, press)
@@ -247,6 +254,13 @@ mod tests {
         let new = h.begin();
         assert!(!h.expire(old));
         assert!(h.expire(new));
+    }
+
+    #[test]
+    fn a_callback_invoked_by_the_app_itself_leaves_no_phantom_press() {
+        assert!(key(Press::Choose), "Return on a message dialog");
+        assert!(not_a_key(|| key(Press::Back)), "which closes it through its close callback");
+        assert!(pad(Press::Back), "so a real B right after still counts");
     }
 
     #[test]

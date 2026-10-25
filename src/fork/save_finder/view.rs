@@ -56,6 +56,8 @@ pub fn ask_page(name: &str) -> Page<Act> {
         option("This game has no saves", "The warning goes away and stays away.", false, Act::NoSaves),
     ];
     page.buttons[LEFT] = button("Cancel", Act::Cancel);
+    // B cancels here too; the hint bar says so.
+    page.back_hint = "Cancel".to_string();
     page
 }
 
@@ -81,6 +83,8 @@ pub fn searching_page(name: &str, progress: &str) -> Page<Act> {
         page.facts = vec![progress.to_string()];
     }
     page.buttons[LEFT] = button("Cancel", Act::Cancel);
+    // B cancels here too; the hint bar says so.
+    page.back_hint = "Cancel".to_string();
     page.initial = Focus::Button(LEFT);
     page.primary = Some(LEFT);
     page

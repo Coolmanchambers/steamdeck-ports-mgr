@@ -371,7 +371,7 @@ fn notice_then(app: &Rc<AppState>, router: &Router, text: &str, then: &Option<Ba
     open_confirm_dialog(app, router, TITLE.into(), format!("{text}\n").into(), "Continue".into(), move |app, router| on_confirm(app, router));
     if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
         let (app, router, then) = (app.clone(), router.clone(), then.clone());
-        d.on_close_requested(move || {
+        d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             close_current_dialog(&app, &router);
             then(&app, &router);
         });
@@ -434,7 +434,7 @@ fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items
     // B on the list is Done too.
     if let (Some(then), DialogSlot::Picker(d)) = (then_for_close, &*app.dialog_nav.dialogs.borrow()) {
         let (app, router) = (app.clone(), router.clone());
-        d.on_close_requested(move || {
+        d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             close_current_dialog(&app, &router);
             then(&app, &router);
         });

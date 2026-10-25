@@ -810,8 +810,12 @@ export component SetupWizardDialog inherits Window {
                                 } else if (event.text == Key.UpArrow) {
                                     root.move-requested(0, -1);
                                     accept
-                                } else if (event.text == Key.DownArrow || event.text == Key.Return) {
+                                } else if (event.text == Key.DownArrow) {
                                     root.move-requested(0, 1);
+                                    accept
+                                } else if (event.text == Key.Return) {
+                                    // Like A on the box (it moves on to the choices), through the same one-press filter.
+                                    root.activate-requested();
                                     accept
                                 } else {
                                     reject

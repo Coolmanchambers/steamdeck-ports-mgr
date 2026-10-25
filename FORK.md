@@ -240,6 +240,9 @@ Files added by this fork:
 | 2026-10-25 | `src/app/dialogs.rs` | Polish: `build_setup_wizard_dialog` fills the work area and sets `full` in big mode and in Game Mode (4 lines) |
 | 2026-10-25 | `ui/dialogs/chrome.slint` | Polish: `DialogChrome` draws its title bar only when `bar-height` is above zero (the guided pages full screen have none; every other dialog is unchanged) |
 | 2026-10-25 | `ui/app-window.slint` | Polish: `WizardFact` imported and exported next to the other wizard types |
+| 2026-10-25 | `src/app/gamepad_target.rs` | Polish review: `dialog_activate` runs inside `press_echo::not_a_key` (the close callback it invokes for A on a message is not a second key) |
+| 2026-10-25 | `src/app/dialogs.rs`, `src/app/events.rs` | Polish review: the theme picker's and the after-Play version picker's own close callbacks ask `press_echo::key` first |
+| 2026-10-25 | `ui/app-window.slint`, `src/main.rs` | Polish review: Escape in the Deck-ready list also goes through `escape-pressed` (filtered, acts at once); big mode Escape waits 300 ms like Close; the held Escape does nothing when a dialog opened meanwhile |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -293,8 +296,14 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
   presses from one source always count. Asked by the pad dispatch, the page window's Return/Escape, the upstream
   dialogs' keyboard wiring and the main list. Escape on the main list in the windowed view (Close) waits 300 ms; a
   pad B in that time drops it and counts as the one B (coordinator ruling 2026-10-25), so B on the main list never
-  closes the app even when Steam's Escape arrives first. Not covered: D-pad arrows (Steam may also type arrow keys;
-  watch for double moves on the Deck), and dialogs that wire their own close callbacks.
+  closes the app even when Steam's Escape arrives first. Escape in big mode (leave big mode) waits the same way;
+  Escape in the Deck-ready list (leave it) acts at once through the filter. Dialogs that wire their own close
+  callback (13 of them: art sources, theme picker, the version picker after a Play, the folder picker and its New
+  folder box, the import's confirm/game-file/detail dialogs, the ports-folder dialogs, the game files lists) ask the
+  filter too. Callbacks the app invokes itself after a press already let through (A on a message dialog closes it
+  through its close callback) run inside `press_echo::not_a_key`, so they leave no phantom key press. Return in a
+  page's text box goes through the same check. Not covered: D-pad arrows (Steam may also type arrow keys; watch for
+  double moves on the Deck).
 
 ## Guided pages: full screen on the Deck, status marks, progress bars
 

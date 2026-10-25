@@ -411,10 +411,12 @@ impl<A: Clone + 'static> Binding for Bound<A> {
     }
 }
 
-/// Names a page for the focus memory: the same window title, header, counter ("Port 2 of 5") and question is the
-/// same page.
+/// Names a page for the focus memory: the same window title, header, counter ("Port 2 of 5"), question and subject
+/// (the card's port, the first cover) is the same page. A card drawn again for another port is another page.
 fn page_key<A>(page: &Page<A>) -> String {
-    format!("{}\u{1f}{}\u{1f}{}\u{1f}{}", page.window_title, page.header, page.step_text, page.title)
+    let card = page.card.as_ref().map_or("", |c| c.title.as_str());
+    let tile = page.tiles.first().map_or("", |t| t.label.as_str());
+    format!("{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{card}\u{1f}{tile}", page.window_title, page.header, page.step_text, page.title)
 }
 
 /// The page on the window with this serial, when there is one (not parked, not replaced by a newer window).
@@ -797,5 +799,15 @@ mod tests {
         let mut d = a.clone();
         d.step_text = "Port 2 of 5".into();
         assert_ne!(page_key(&a), page_key(&d), "the next card with the same question is another page");
+        // "Pick another port" on a card, then the card drawn again for the port picked: the cursor starts on that
+        // page's own choice (Yes), not where it was for the old port.
+        let mut card = a.clone();
+        card.card = Some(crate::fork::page::Card { art: None, qr: None, title: "Dusklight".into(), lines: vec![] });
+        let mut other = card.clone();
+        other.card.as_mut().unwrap().title = "Ship of Harkinian".into();
+        assert_ne!(page_key(&card), page_key(&other));
+        clear();
+        remember((page_key(&card), 1));
+        assert_eq!(starting_focus(&other), page::initial_focus(&other));
     }
 }

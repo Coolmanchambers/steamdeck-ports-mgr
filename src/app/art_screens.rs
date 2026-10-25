@@ -189,7 +189,7 @@ fn ask(app: &Rc<AppState>, router: &Router, title: &str, placeholder: &str, init
     }
     {
         let (app, router, done) = (app.clone(), router.clone(), done);
-        dialog.on_close_requested(move || done(&app, &router, Entry::Cancel));
+        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) { done(&app, &router, Entry::Cancel) });
     }
     let _ = dialog.show();
     finish_dialog_open(app, router, DialogSlot::SearchList(dialog));

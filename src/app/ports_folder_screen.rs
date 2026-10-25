@@ -94,7 +94,7 @@ fn confirm_or(app: &Rc<AppState>, router: &Router, title: &str, text: String, co
     open_confirm_dialog(app, router, title.into(), format!("{text}\n").into(), confirm.into(), on_confirm);
     if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
         let (app, router) = (app.clone(), router.clone());
-        d.on_close_requested(move || {
+        d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             close_current_dialog(&app, &router);
             on_cancel(&app, &router);
         });
@@ -257,7 +257,7 @@ fn show_missing(app: &Rc<AppState>, router: &Router, again: bool) {
         return;
     };
     let (app, router) = (app.clone(), router.clone());
-    dialog.on_close_requested(move || done(&app, &router));
+    dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) { done(&app, &router) });
 }
 
 // -- The menu -------------------------------------------------------------------------------------
@@ -698,7 +698,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
         }
         {
             let (job, cancelling) = (job.clone(), cancelling.clone());
-            dialog.on_close_requested(move || {
+            dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
                 job.cancel();
                 cancelling.set(true);
             });

@@ -68,6 +68,11 @@ pub(crate) fn dialog_reject(app: &AppState) {
 }
 
 pub(crate) fn dialog_activate(app: &AppState) {
+    // Fork: what this invokes is the result of a press already let through, not a second key (crate::fork::press_echo).
+    crate::fork::press_echo::not_a_key(|| dialog_activate_now(app));
+}
+
+fn dialog_activate_now(app: &AppState) {
     let nav = &app.dialog_nav;
     match current_dialog(app) {
         DialogSlot::Message(d) => d.invoke_close_requested(),

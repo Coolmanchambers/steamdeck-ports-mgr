@@ -767,7 +767,8 @@ pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines
     }
     p.buttons[LEFT] = details_button();
     p.initial = Focus::Option(0);
-    p
+    // B leaves, like Done / Continue setup.
+    p.b_does(&CardAction::Leave)
 }
 
 /// What will happen to each port, step by step, as plain text behind Details of the move page. `texts` is one
@@ -1396,6 +1397,7 @@ mod tests {
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH"]);
         assert_eq!(p.facts, ["Steam shortcuts: 1 followed the move."]);
         assert_eq!(p.mark_of(0), crate::fork::page::Mark::Done, "a drawn mark, not a text glyph");
+        assert_eq!(p.back_hint, "Done", "B leaves, and the hint bar says so");
         assert_eq!(p.options.len(), 1, "no Cancel");
         assert_eq!((p.options[0].title.as_str(), p.options[0].action.clone(), p.options[0].recommended), ("Done", CardAction::Leave, true));
         assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Details);

@@ -294,7 +294,7 @@ export component AppWindow inherits Window {
                                     key-pressed(event) => {
                                         if (root.key-intercepted(event.text, event.modifiers.control || event.modifiers.alt || event.modifiers.meta || event.modifiers.shift, event.repeat)) {
                                             accept
-                                        } else if (event.text == Key.Tab || (root.deck-ready-mode && event.text == Key.Escape)) {
+                                        } else if (event.text == Key.Tab) {
                                             root.deck-ready-toggle-requested();
                                             accept
                                         } else if (event.text == Key.Escape) {

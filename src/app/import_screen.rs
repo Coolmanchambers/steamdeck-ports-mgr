@@ -153,7 +153,7 @@ pub(super) fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, tex
         }
         let (app, router) = (app.clone(), router.clone());
         let (b_app, b_router, b_cancel) = (app.clone(), router.clone(), on_cancel.clone());
-        d.on_close_requested(move || {
+        d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             close_current_dialog(&b_app, &b_router);
             b_cancel(&b_app, &b_router);
         });
@@ -473,7 +473,7 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
     }
     {
         let answer = answer.clone();
-        dialog.on_close_requested(move || answer(GameFileChoice::Cancel));
+        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) { answer(GameFileChoice::Cancel) });
     }
     let _ = dialog.show();
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
@@ -795,7 +795,7 @@ pub(super) fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state
     app.dialog_nav.picker_index.set(first);
     {
         let (app, router, ctx, state) = (app.clone(), router.clone(), ctx.clone(), state.clone());
-        dialog.on_close_requested(move || {
+        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             close_current_dialog(&app, &router);
             folders_back(&app, &router, &ctx, &state);
         });

@@ -290,14 +290,27 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     // moment for a B (crate::fork::press_echo).
     window.on_activate_requested(with!(app, router => move || if fork::press_echo::key(fork::press_echo::Press::Choose) { activate_selection(&app, &router) }));
     window.on_escape_pressed(with!(app => move || {
-        if app.window().get_big_mode() {
+        let window = app.window();
+        // Leaving the Deck-ready list is undone by nothing: it acts at once, and an echo of a pad B is dropped.
+        if window.get_deck_ready_mode() {
             if fork::press_echo::key(fork::press_echo::Press::Back) {
-                app.toggle_fullscreen();
+                window.invoke_deck_ready_toggle_requested();
             }
-        } else {
-            let weak = app.window().as_weak();
-            fork::press_echo::hold_main_escape(move || if let Some(w) = weak.upgrade() { w.invoke_close_requested() });
+            return;
         }
+        // Leaving big mode, or Close: waits a moment; a pad B in that time is the press instead (B does neither).
+        let big = window.get_big_mode();
+        let (app, weak) = (app.clone(), window.as_weak());
+        fork::press_echo::hold_main_escape(move || {
+            if dialog_is_open(&app) {
+                return;
+            }
+            if big {
+                app.toggle_fullscreen();
+            } else if let Some(w) = weak.upgrade() {
+                w.invoke_close_requested();
+            }
+        });
     }));
     window.on_reveal_folder_requested(with!(app => move || reveal_selected_folder(&app)));
     window.on_discord_requested(|| core::launch::open_url(DISCORD_URL));

@@ -109,7 +109,7 @@ fn show(app: &Rc<AppState>, router: &Router, session: Rc<Session>, selected: usi
     {
         let (app, router) = (app.clone(), router.clone());
         let session = session.clone();
-        dialog.on_close_requested(move || finish(&app, &router, &session, None));
+        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) { finish(&app, &router, &session, None) });
     }
     CURRENT.with(|c| *c.borrow_mut() = Some(session));
     let _ = dialog.show();
@@ -227,7 +227,7 @@ fn ask_new_folder(app: &Rc<AppState>, router: &Router, session: Rc<Session>) {
     }
     {
         let (app, router) = (app.clone(), router.clone());
-        dialog.on_close_requested(move || {
+        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             let select = session_for_close.picker.borrow().row_of(Row::NewFolder).unwrap_or(0);
             show(&app, &router, session_for_close.clone(), select);
         });

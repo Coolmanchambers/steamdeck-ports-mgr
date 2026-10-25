@@ -121,7 +121,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                     if was_play {
                         if let DialogSlot::Picker(d) = &*app.dialog_nav.dialogs.borrow() {
                             let (app, router) = (app.clone(), router.clone());
-                            d.on_close_requested(move || {
+                            d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
                                 close_current_dialog(&app, &router);
                                 launch_flow(&app, &router, &installed);
                             });

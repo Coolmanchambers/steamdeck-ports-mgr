@@ -920,7 +920,7 @@ fn open_search_list_dialog(
     wire_keyboard_nav!(dialog, app, vertical);
     {
         let (app, router) = (app.clone(), router.clone());
-        dialog.on_close_requested(move || {
+        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             if let Some(preview) = preview.as_ref() {
                 (preview.on_cancel)(&app);
             }

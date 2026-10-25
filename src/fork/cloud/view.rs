@@ -89,6 +89,8 @@ pub fn getting_code_page() -> Page<Act> {
     let mut page = base("Getting a sign-in code...");
     page.paragraphs = vec!["Asking Google for a short code. This takes a moment.".into()];
     page.buttons[LEFT] = button("Cancel", Act::Cancel);
+    // B cancels here too; the hint bar says so.
+    page.back_hint = "Cancel".to_string();
     page.initial = Focus::Button(LEFT);
     page
 }
@@ -112,6 +114,8 @@ pub fn signing_in_page(service: ServiceId, user_code: &str, qr: Option<QrMatrix>
     });
     page.footnote = "If you press Cancel, a sign-in approved later on your phone is ignored.".into();
     page.buttons[LEFT] = button("Cancel", Act::Cancel);
+    // B cancels here too; the hint bar says so.
+    page.back_hint = "Cancel".to_string();
     page.buttons[MIDDLE] = button("New code", Act::NewCode);
     if desktop {
         page.buttons[crate::fork::page::EXTRA] = button("Open on this Deck", Act::OpenOnDeck);
@@ -239,6 +243,8 @@ pub fn listing_page(service: ServiceId) -> Page<Act> {
     let mut page = base(format!("Looking at {}...", service.name()));
     page.paragraphs = vec!["Getting the list of backups. This takes a moment.".into()];
     page.buttons[LEFT] = button("Cancel", Act::Cancel);
+    // B cancels here too; the hint bar says so.
+    page.back_hint = "Cancel".to_string();
     page.initial = Focus::Button(LEFT);
     page
 }
@@ -333,6 +339,8 @@ pub fn copying_back_page(what: &str, progress: &str) -> Page<Act> {
         page.facts = vec![progress.to_string()];
     }
     page.buttons[LEFT] = button("Cancel", Act::Cancel);
+    // B cancels here too; the hint bar says so.
+    page.back_hint = "Cancel".to_string();
     page.initial = Focus::Button(LEFT);
     page
 }
