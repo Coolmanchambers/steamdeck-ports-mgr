@@ -8,7 +8,7 @@
 //! screens.
 
 use super::dialogs::{
-    build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_info_dialog, open_message_dialog, open_progress_dialog, open_settings_dialog,
+    build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_info_dialog, open_message_dialog, open_progress_dialog,
     update_progress_dialog, DialogSlot,
 };
 use super::playtime::is_port_running;
@@ -110,7 +110,7 @@ pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
     open_list(app, router, TITLE, labels, 0, move |app, router, index| {
         if index == back_index {
             close_current_dialog(app, router);
-            return open_settings_dialog(app, router);
+            return super::settings_menu_screen::open_group(app, router, crate::fork::settings_menu::Group::Saves);
         }
         match rows.get(index) {
             Some((_, Some(port), _)) => {

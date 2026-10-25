@@ -669,78 +669,8 @@ pub(crate) fn open_picker_dialog(
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
-#[derive(Clone, Copy)]
-enum SettingsEntry {
-    SetupWizard,
-    Themes,
-    Language,
-    Files,
-    Library,
-    PortsFolder,
-    AddToSteam,
-    ImportPorts,
-    GameFiles,
-    ArtSources,
-    BackupSaves,
-    RestoreSaves,
-    CloudBackup,
-    CheckUpdates,
-    ForceUpdate,
-    DiscordRpc,
-    Version,
-}
-
-const SETTINGS_ENTRIES: [SettingsEntry; 17] = [
-    SettingsEntry::SetupWizard,
-    SettingsEntry::Themes,
-    SettingsEntry::Language,
-    SettingsEntry::Files,
-    SettingsEntry::Library,
-    SettingsEntry::PortsFolder,
-    SettingsEntry::AddToSteam,
-    SettingsEntry::ImportPorts,
-    SettingsEntry::GameFiles,
-    SettingsEntry::ArtSources,
-    SettingsEntry::BackupSaves,
-    SettingsEntry::RestoreSaves,
-    SettingsEntry::CloudBackup,
-    SettingsEntry::CheckUpdates,
-    SettingsEntry::ForceUpdate,
-    SettingsEntry::DiscordRpc,
-    SettingsEntry::Version,
-];
-
-fn settings_labels(app: &AppState) -> Vec<String> {
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    let state = app.state.borrow();
-    SETTINGS_ENTRIES
-        .iter()
-        .map(|entry| match entry {
-            SettingsEntry::SetupWizard => "Setup wizard...".into(),
-            SettingsEntry::Themes => tr.invoke_label_themes(),
-            SettingsEntry::Language => tr.invoke_label_language(),
-            SettingsEntry::Files => tr.invoke_label_files(),
-            SettingsEntry::Library => tr.invoke_label_library(),
-            SettingsEntry::PortsFolder => "Ports folder...".into(),
-            SettingsEntry::AddToSteam => "Add to Steam...".into(),
-            SettingsEntry::ImportPorts => "Import ports...".into(),
-            SettingsEntry::GameFiles => "Game files...".into(),
-            SettingsEntry::ArtSources => "Artwork sources...".into(),
-            SettingsEntry::BackupSaves => tr.invoke_label_backup_saves(),
-            SettingsEntry::RestoreSaves => "Restore saves...".into(),
-            SettingsEntry::CloudBackup => "Cloud backup...".into(),
-            SettingsEntry::CheckUpdates if state.release_sync => tr.invoke_label_check_updates_on(),
-            SettingsEntry::CheckUpdates => tr.invoke_label_check_updates_off(),
-            SettingsEntry::ForceUpdate => tr.invoke_label_force_update(),
-            SettingsEntry::DiscordRpc if state.discord_rpc_enabled => tr.invoke_label_discord_rpc_on(),
-            SettingsEntry::DiscordRpc => tr.invoke_label_discord_rpc_off(),
-            SettingsEntry::Version => tr.invoke_version_tag(crate::core::version::APP_VERSION.replace('-', ".").into()),
-        })
-        .map(|label| label.to_string())
-        .collect()
-}
-
+// Fork: Settings is a page of groups (src/app/settings_menu_screen.rs, what they say is src/fork/settings_menu.rs), not
+// the old 17-row list. This opens it; `run_settings_entry` below is what each entry of the old list did, unchanged.
 pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
@@ -749,54 +679,33 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
     if super::setup_wizard_screen::resume_instead_of_menu(app, router, crate::fork::setup_wizard::flow::Menu::Settings) {
         return;
     }
-    let title = tr!(app).invoke_dialog_title_settings();
-    let Some(dialog) = build_picker_dialog(app, router, &title, &settings_labels(app)) else { return };
-    {
-        let (app, router) = (app.clone(), router.clone());
-        let weak = dialog.as_weak();
-        dialog.on_item_selected(move |index| {
-            let Some(&entry) = SETTINGS_ENTRIES.get(index as usize) else { return };
-            match entry {
-                SettingsEntry::CheckUpdates => {
-                    let value = !app.state.borrow().release_sync;
-                    app.state.borrow_mut().set_release_sync(value);
-                }
-                SettingsEntry::DiscordRpc => {
-                    let value = !app.state.borrow().discord_rpc_enabled;
-                    app.state.borrow_mut().set_discord_rpc_enabled(value);
-                }
-                // Fork: entries that read or write saves wait while a save restore runs.
-                SettingsEntry::BackupSaves | SettingsEntry::RestoreSaves | SettingsEntry::ForceUpdate
-                    if super::save_restore_screen::refuse_while_restoring(&app, &router) => {}
-                _ => {
-                    close_current_dialog(&app, &router);
-                    match entry {
-                        SettingsEntry::SetupWizard => super::setup_wizard_screen::open_from_settings(&app, &router),
-                        SettingsEntry::Themes => open_theme_picker(&app, &router),
-                        SettingsEntry::Language => open_language_picker(&app, &router),
-                        SettingsEntry::Files => open_files_picker(&app, &router),
-                        SettingsEntry::Library => open_folder(&app.paths.library_dir()),
-                        SettingsEntry::PortsFolder => super::ports_folder_screen::open_menu(&app, &router),
-                        SettingsEntry::AddToSteam => super::steam_screens::open_steam_screen(&app, &router),
-                        SettingsEntry::ImportPorts => super::import_screen::open(&app, &router, false),
-                        SettingsEntry::GameFiles => super::rom_screens::open_game_files(&app, &router),
-                        SettingsEntry::ArtSources => super::art_screens::open_art_sources(&app, &router),
-                        SettingsEntry::BackupSaves => start_save_backup(&app, &router),
-                        SettingsEntry::RestoreSaves => super::save_restore_screen::open_from_settings(&app, &router),
-                        SettingsEntry::CloudBackup => super::cloud_screen::open_from_settings(&app, &router),
-                        SettingsEntry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
-                        _ => launch_self_update(&app, &router),
-                    }
-                    return;
-                }
-            }
-            if let Some(d) = weak.upgrade() {
-                set_picker_items(&d, &settings_labels(&app));
-            }
-        });
+    super::settings_menu_screen::open(app, router);
+}
+
+/// Fork: what a Settings entry does when it is chosen (the entries of the old list, each as it was; the two switches are
+/// flipped by the Settings screen itself, and the save-restore refusal guard is asked there first).
+pub(crate) fn run_settings_entry(app: &Rc<AppState>, router: &Router, entry: crate::fork::settings_menu::Entry) {
+    use crate::fork::settings_menu::Entry;
+    close_current_dialog(app, router);
+    match entry {
+        Entry::SetupWizard => super::setup_wizard_screen::open_from_settings(app, router),
+        Entry::Themes => open_theme_picker(app, router),
+        Entry::Language => open_language_picker(app, router),
+        Entry::Files => open_files_picker(app, router),
+        Entry::OpenPortsFolder => open_folder(&app.paths.library_dir()),
+        Entry::PortsFolder => super::ports_folder_screen::open_menu(app, router),
+        Entry::AddToSteam => super::steam_screens::open_steam_screen(app, router),
+        Entry::ImportPorts => super::import_screen::open(app, router, false),
+        Entry::GameFiles => super::rom_screens::open_game_files(app, router),
+        Entry::ArtSources => super::art_screens::open_art_sources(app, router),
+        Entry::BackupSaves => start_save_backup(app, router),
+        Entry::RestoreSaves => super::save_restore_screen::open_from_settings(app, router),
+        Entry::CloudBackup => super::cloud_screen::open_from_settings(app, router),
+        Entry::Version => open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
+        Entry::ForceUpdate => launch_self_update(app, router),
+        Entry::AddPort => super::add_port_screen::open(app, router, true),
+        Entry::CheckUpdates | Entry::DiscordRpc => {}
     }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
 /// Fork: the search dialog used as a one-line text entry (the Artwork sources screen asks for keys with

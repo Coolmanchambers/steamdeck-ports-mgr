@@ -135,6 +135,19 @@ pub(super) fn show_found(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
     show_or_end(app, router, ctx, page, handlers(ctx, act, back));
 }
 
+/// The first page of "From a GitHub link" on the Add a port page: the link page itself. B and Cancel leave Import ports and
+/// run `back` (the Add a port page again).
+pub(super) fn show_link_first(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, back: super::import_screen::Step) {
+    let leave_to: Again = {
+        let ctx = ctx.clone();
+        Rc::new(move |app, router| {
+            leave(app, router, &ctx);
+            back(app, router);
+        })
+    };
+    show_github(app, router, ctx, screen, Target::NewFolder, leave_to, String::new());
+}
+
 /// Details of the found page: where it looked, what it left out, the folders said not to be ports (with a way to
 /// ask again) and the scan folders.
 fn show_details(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen) {

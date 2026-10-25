@@ -103,6 +103,50 @@ impl Mark {
     }
 }
 
+/// A small picture drawn at the left of an option (a card for a group of things: Ports, Steam, Saves). Drawn as paths
+/// by the window, so it never depends on a font.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Icon {
+    #[default]
+    None,
+    /// A grid of four squares: every port there is.
+    Browse,
+    /// A handheld with a check: ports that run on the Deck.
+    DeckReady,
+    /// An arrow into a tray: bring in what is already here.
+    Import,
+    /// A chain link.
+    Link,
+    /// A folder.
+    Folder,
+    /// A screen with a play triangle: launching from Steam.
+    Steam,
+    /// A floppy disk: saves.
+    Saves,
+    /// A gear.
+    Gear,
+    /// An arrow circling: updates.
+    Update,
+}
+
+impl Icon {
+    /// The number the window draws by (0 none, then in declaration order).
+    pub fn code(self) -> i32 {
+        match self {
+            Icon::None => 0,
+            Icon::Browse => 1,
+            Icon::DeckReady => 2,
+            Icon::Import => 3,
+            Icon::Link => 4,
+            Icon::Folder => 5,
+            Icon::Steam => 6,
+            Icon::Saves => 7,
+            Icon::Gear => 8,
+            Icon::Update => 9,
+        }
+    }
+}
+
 /// A progress bar under the summary box: how far in thousandths, when the work knows, or a moving bar when it
 /// does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +198,10 @@ pub struct Page<A> {
     pub input: Option<InputBox>,
     pub tiles: Vec<Tile<A>>,
     pub options: Vec<PageOption<A>>,
+    /// The picture before each option (missing ones are `Icon::None`).
+    pub icons: Vec<Icon>,
+    /// An On or Off switch at the right of each option that is one (missing ones are `None`: not a switch).
+    pub toggles: Vec<Option<bool>>,
     pub footnote: String,
     /// Left, middle, extra, right.
     pub buttons: [Option<PageButton<A>>; SLOTS],
@@ -185,6 +233,8 @@ impl<A> Default for Page<A> {
             input: None,
             tiles: Vec::new(),
             options: Vec::new(),
+            icons: Vec::new(),
+            toggles: Vec::new(),
             footnote: String::new(),
             buttons: [None, None, None, None],
             primary: None,
@@ -236,6 +286,34 @@ impl<A> Page<A> {
     /// The mark of line `i` of the summary box.
     pub fn mark_of(&self, i: usize) -> Mark {
         self.marks.get(i).copied().unwrap_or_default()
+    }
+
+    /// Gives option `index` a picture.
+    pub fn icon(mut self, index: usize, icon: Icon) -> Page<A> {
+        if self.icons.len() <= index {
+            self.icons.resize(index + 1, Icon::None);
+        }
+        self.icons[index] = icon;
+        self
+    }
+
+    /// The picture before option `i`.
+    pub fn icon_of(&self, i: usize) -> Icon {
+        self.icons.get(i).copied().unwrap_or_default()
+    }
+
+    /// Makes option `index` an On or Off switch showing `on`.
+    pub fn toggle(mut self, index: usize, on: bool) -> Page<A> {
+        if self.toggles.len() <= index {
+            self.toggles.resize(index + 1, None);
+        }
+        self.toggles[index] = Some(on);
+        self
+    }
+
+    /// The switch of option `i`: `Some(on)`, or `None` when it is not a switch.
+    pub fn toggle_of(&self, i: usize) -> Option<bool> {
+        self.toggles.get(i).copied().flatten()
     }
 
     /// Says what B does on this page, for the hint bar ("Cancel", "Keep them").
@@ -569,6 +647,15 @@ mod tests {
         assert_eq!(p.facts.len(), 3);
         assert_eq!((p.mark_of(0), p.mark_of(1), p.mark_of(2), p.mark_of(9)), (Mark::None, Mark::Done, Mark::Problem, Mark::None));
         assert_eq!((Mark::None.code(), Mark::Done.code(), Mark::Problem.code()), (0, 1, 5));
+    }
+
+    #[test]
+    fn options_can_carry_a_picture_and_an_on_off_switch() {
+        let p = card_page().icon(1, Icon::Folder).toggle(2, true);
+        assert_eq!((p.icon_of(0), p.icon_of(1), p.icon_of(2), p.icon_of(9)), (Icon::None, Icon::Folder, Icon::None, Icon::None));
+        assert_eq!((p.toggle_of(0), p.toggle_of(1), p.toggle_of(2), p.toggle_of(9)), (None, None, Some(true), None));
+        assert_eq!(p.clone().toggle(2, false).toggle_of(2), Some(false), "a switch can be turned over");
+        assert_eq!((Icon::None.code(), Icon::Browse.code(), Icon::Update.code()), (0, 1, 9));
     }
 
     #[test]

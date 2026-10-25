@@ -75,11 +75,14 @@ pub(super) struct Ctx {
     pub(super) choices: Rc<RefCell<Choices>>,
     /// Projects added from a GitHub link (the port and what importing writes first), kept while the screen is open.
     pub(super) extra: Rc<RefCell<Vec<(crate::core::models::Port, crate::fork::import::targets::NewEntry)>>>,
+    /// Opened by "From a GitHub link" on the Add a port page: no folders are scanned and the first page is the link page.
+    /// The step is where B (and Cancel) go back to.
+    pub(super) link_first: Option<Step>,
 }
 
 impl Ctx {
     pub(super) fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
-        Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default(), extra: Rc::default() }
+        Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default(), extra: Rc::default(), link_first: None }
     }
 
     /// Whether the wizard is waiting for this screen.
@@ -204,6 +207,20 @@ pub(crate) fn open_with(app: &Rc<AppState>, router: &Router, from_wizard: bool, 
     }
     let folders = ScanFolders::on_this_device(&ForkSettings::load(&settings_path(app)));
     start_scan(app, router, &Ctx::new(from_wizard, finish), folders);
+}
+
+/// "From a GitHub link" on the Add a port page: straight to the page for the link, with no folder scan first (the port
+/// matching only needs the lists the app already has). `back` runs when the user leaves the link page or the short
+/// preparation with B or Cancel. What follows the link is Import ports' own flow: confirm the project, pick the folder it
+/// is in, then the move.
+pub(crate) fn open_link(app: &Rc<AppState>, router: &Router, back: Step) {
+    if dialog_is_open(app) {
+        return;
+    }
+    let mut ctx = Ctx::new(false, None);
+    ctx.link_first = Some(back.clone());
+    let folders = ScanFolders::on_this_device(&ForkSettings::load(&settings_path(app)));
+    scan(app, router, &ctx, folders, Some(back));
 }
 
 // -- Background jobs ---------------------------------------------------------------------------------
@@ -672,7 +689,9 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
     };
     let settings = ForkSettings::load(&settings_path(app));
     let ports = ports_folder(&app.paths.library_dir());
-    let roots = folders.roots(&home, &ports);
+    // The link page needs the port lists, not the folders: nothing is looked through (and no list is fetched) for it.
+    let link_first = ctx.link_first.is_some();
+    let roots = if link_first { Vec::new() } else { folders.roots(&home, &ports) };
     let catalog = app.catalog.borrow().clone();
     let saved_index = super::deck_ready_screen::index_for_import(app);
     let cache_dir = app.paths.cache_dir.clone();
@@ -684,8 +703,8 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
         app,
         router,
         JobSpec {
-            title: "Looking for ports",
-            initial: "Looking in your scan folders...".into(),
+            title: if link_first { "Getting ready" } else { "Looking for ports" },
+            initial: if link_first { "Getting the port lists ready...".into() } else { "Looking in your scan folders...".into() },
             cancel_label: "Cancel",
             deliver_after_close: false,
             leave,
@@ -695,8 +714,8 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
                 let shortcuts = read_shortcuts(&work_home, &settings);
                 // The Deck-ready list adds download names and projects the catalog lacks; fetched once if
                 // it was never saved (a failure only means matching by the catalog alone).
-                let index = saved_index.or_else(|| fetch_deck_ready(&cache_dir, ctl));
-                let deck_ready_note = index.is_none().then(|| {
+                let index = saved_index.or_else(|| if link_first { None } else { fetch_deck_ready(&cache_dir, ctl) });
+                let deck_ready_note = (index.is_none() && !link_first).then(|| {
                     "The Deck-ready list couldn't be loaded, so ports only on that list (like Severed Chains) aren't recognised. Connect to the internet and Scan again.".to_string()
                 });
                 let mut t = targets::build(&catalog, index.as_ref(), &work_ports);
@@ -720,7 +739,7 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
                     choices,
                     deck_ready_note,
                 };
-                run_scan(&input, &|| ctl.cancelled(), &|t| ctl.set_progress(t))
+                run_scan(&input, &|| ctl.cancelled(), &|t| if !link_first { ctl.set_progress(t) })
             }),
         },
         move |app, router, result| match result {
@@ -729,7 +748,10 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
                 let ignored = crate::fork::import::cards::ignored_paths(&ForkSettings::load(&settings_path(app)));
                 let cards = Cards::from_scan(&scan, &ignored, &ports);
                 let screen = Rc::new(RefCell::new(ImportScreen::new(&home, &ports, folders, scan, cards, ctx2.from_wizard)));
-                super::import_cards_screen::show_found(app, router, &ctx2, screen);
+                match ctx2.link_first.clone() {
+                    Some(back) => super::import_cards_screen::show_link_first(app, router, &ctx2, screen, back),
+                    None => super::import_cards_screen::show_found(app, router, &ctx2, screen),
+                }
             }
             Err(e) => end_notice(app, router, &ctx2, TITLE, &e),
         },

@@ -3,7 +3,8 @@
 //! "Your ports" as cover tiles for the installed ports, each with one status badge read from the sources the app
 //! already keeps: the update check (the same one Play runs, made once per start in the background), the game files
 //! records, the Steam queue and the save finder. A Continue tile comes first for the port played last (the app's play
-//! record or Steam's, whichever is later). With nothing installed, one card: Set up (the setup wizard) or Browse ports.
+//! record or Steam's, whichever is later), and an "Add a port" tile (a big plus) comes last: A opens the Add a port page
+//! (`add_port_screen`). With nothing installed, one card: Set up (the setup wizard) or Add a port.
 //!
 //! The lists: L1/R1, Tab and the footer button go Home, All ports, Deck-ready, then Home again (`next_list`). All ports
 //! is upstream's own list (or card grid in big mode), unchanged. Typing on Home goes to All ports with what was typed.
@@ -89,7 +90,7 @@ pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
     }
     {
         let (app, router) = (app.clone(), router.clone());
-        window.on_home_browse_requested(move || browse(&app, &router));
+        window.on_home_add_requested(move || open_add(&app, &router));
     }
     start(app);
 }
@@ -142,12 +143,17 @@ pub(crate) fn back(app: &Rc<AppState>, router: &Router) {
     }
 }
 
-/// "Browse ports" on the empty card: a list of ports to install (All ports windowed; in big mode, where All ports
-/// shows only installed ports, the Deck-ready list).
-fn browse(app: &Rc<AppState>, router: &Router) {
+/// The "Add a port" tile and the empty card's second button: the Add a port page. B on it returns here, the cursor still
+/// on the tile.
+fn open_add(app: &Rc<AppState>, router: &Router) {
     if !dialog_is_open(app) {
-        go_to(app, router, List::browse(app.window().get_big_mode()));
+        super::add_port_screen::open(app, router, false);
     }
+}
+
+/// The Add a port page's "Browse all ports" and "Deck-ready ports": show that list now.
+pub(crate) fn show_list(app: &Rc<AppState>, router: &Router, list: List) {
+    go_to(app, router, list);
 }
 
 fn go_to(app: &Rc<AppState>, router: &Router, next: List) {
@@ -208,7 +214,7 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
                 .iter()
                 .map(|t| {
                     let image = by_key.get(t.key.as_str()).map(|p| super::cards::load_cached_card_image(&app.grid_nav.card_image_cache, &app.paths.cache_dir, &p.folder)).unwrap_or_default();
-                    let badge = if t.kind == TileKind::Setup { String::new() } else { t.badge.label().to_string() };
+                    let badge = if matches!(t.kind, TileKind::Setup | TileKind::Add) { String::new() } else { t.badge.label().to_string() };
                     HomeTile {
                         title: t.title.clone().into(),
                         image,
@@ -218,6 +224,7 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
                             TileKind::Port => 0,
                             TileKind::Continue => 1,
                             TileKind::Setup => 2,
+                            TileKind::Add => 3,
                         },
                     }
                 })
@@ -283,22 +290,25 @@ pub(crate) fn move_selection(app: &AppState, dx: i32, dy: i32) {
     }
 }
 
-/// The port of the focused tile (Info, Open folder); `None` on the Setup tile and the empty card.
+/// The port of the focused tile (Info, Open folder); `None` on the Setup and Add a port tiles and the empty card.
 pub(crate) fn selected_port(app: &AppState) -> Option<Port> {
     if app.home.empty.get() {
         return None;
     }
-    let key = app.home.tiles.borrow().get(app.home.selected.get()).filter(|t| t.kind != TileKind::Setup).map(|t| t.key.clone())?;
+    let key = app.home.tiles.borrow().get(app.home.selected.get()).filter(|t| !matches!(t.kind, TileKind::Setup | TileKind::Add)).map(|t| t.key.clone())?;
     app.catalog.borrow().iter().find(|p| p.key() == key).cloned()
 }
 
-/// A on Home: play the port (Continue too), set up on the Setup tile; on the empty card, Set up or Browse ports.
+/// A on Home: play the port (Continue too), set up on the Setup tile, the Add a port page on the plus tile; on the empty
+/// card, Set up or Add a port.
 pub(crate) fn activate(app: &Rc<AppState>, router: &Router) {
     if app.home.empty.get() {
-        return if app.home.selected.get() == 0 { open_setup(app, router) } else { next_list(app, router) };
+        return if app.home.selected.get() == 0 { open_setup(app, router) } else { open_add(app, router) };
     }
-    if focused_kind(app) == Some(TileKind::Setup) {
-        return open_setup(app, router);
+    match focused_kind(app) {
+        Some(TileKind::Setup) => return open_setup(app, router),
+        Some(TileKind::Add) => return open_add(app, router),
+        _ => {}
     }
     if let Some(port) = selected_port(app) {
         activate_port(app, router, &port);

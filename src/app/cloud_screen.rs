@@ -10,7 +10,7 @@
 //! cloud, Sign out); the restore list; "Copied" with the hand-off to Restore saves; the sign-out question.
 //! Nothing is written to Google until the person signs in, and nothing in the cloud is ever deleted.
 
-use super::dialogs::{close_current_dialog, open_settings_dialog};
+use super::dialogs::close_current_dialog;
 use super::page_dialog::{show_page_handle, Handlers, PageHandle};
 use super::state::AppState;
 use crate::core::models::Port;
@@ -381,7 +381,7 @@ fn leave(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     FLOW_TIMER.with(slint::Timer::stop);
     s.cancel_jobs();
     close_current_dialog(app, router);
-    open_settings_dialog(app, router);
+    super::settings_menu_screen::open_group(app, router, crate::fork::settings_menu::Group::Saves);
 }
 
 /// The first page, from what is known: not set up, the intro, or the status.

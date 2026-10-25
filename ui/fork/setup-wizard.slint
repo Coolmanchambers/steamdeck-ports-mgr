@@ -42,6 +42,36 @@ export struct WizardOption {
     recommended: bool,
     // the focus number of this option (-1 when it cannot take focus)
     focus: int,
+    // a picture before the title: 0 none, else fork::page::Icon::code
+    icon: int,
+    // an On/Off switch at the right: 0 none, 1 off, 2 on
+    toggle: int,
+}
+
+// The pictures of `WizardOption.icon`, drawn as paths in a 100 by 100 box.
+component OptionIcon inherits Rectangle {
+    in property <int> icon: 0;
+    in property <color> ink: Theme.list-text;
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: root.ink;
+        stroke-width: root.width * 0.065;
+        fill: transparent;
+        commands:
+            root.icon == 1 ? "M 14 14 H 44 V 44 H 14 Z M 56 14 H 86 V 44 H 56 Z M 14 56 H 44 V 86 H 14 Z M 56 56 H 86 V 86 H 56 Z"
+            : root.icon == 2 ? "M 8 28 H 92 V 72 H 8 Z M 30 52 L 44 64 L 70 38"
+            : root.icon == 3 ? "M 50 10 V 58 M 30 40 L 50 62 L 70 40 M 14 62 V 88 H 86 V 62"
+            : root.icon == 4 ? "M 42 32 H 28 A 18 18 0 0 0 28 68 H 42 M 58 32 H 72 A 18 18 0 0 1 72 68 H 58 M 34 50 H 66"
+            : root.icon == 5 ? "M 8 22 H 40 L 48 32 H 92 V 82 H 8 Z"
+            : root.icon == 6 ? "M 8 16 H 92 V 84 H 8 Z M 40 33 L 68 50 L 40 67 Z"
+            : root.icon == 7 ? "M 12 12 H 76 L 88 24 V 88 H 12 Z M 28 12 V 38 H 68 V 12 M 28 88 V 58 H 72 V 88"
+            : root.icon == 8 ? "M 32 50 A 18 18 0 1 1 68 50 A 18 18 0 1 1 32 50 Z M 50 10 V 26 M 50 74 V 90 M 10 50 H 26 M 74 50 H 90 M 22 22 L 33 33 M 67 67 L 78 78 M 78 22 L 67 33 M 33 67 L 22 78"
+            : root.icon == 9 ? "M 82 40 A 34 34 0 1 0 84 62 M 84 14 V 42 H 56"
+            : "";
+    }
 }
 
 // One port shown big: its cover (an empty image shows the name instead), its name and a few short lines.
@@ -206,6 +236,8 @@ component OptionRow inherits Rectangle {
     in property <bool> chosen: false;
     in property <bool> enabled: true;
     in property <bool> recommended: false;
+    in property <int> icon: 0;
+    in property <int> toggle: 0;
     in property <bool> selected: false;
     in property <length> border-px: 1px;
     in property <length> ring-px: 4px;
@@ -229,7 +261,13 @@ component OptionRow inherits Rectangle {
     }
 
     property <length> mark-size: root.font-size * 1.1;
-    property <length> text-x: root.kind == 1 ? root.font-size * 0.9 + root.mark-size + root.font-size * 0.7 : root.font-size * 0.9;
+    // A picture before the title (the cards of Settings and Add a port), and an On/Off switch at the right.
+    property <length> icon-size: min(root.height * 0.58, root.font-size * 2.2);
+    property <length> icon-pad: root.icon > 0 ? root.icon-size + root.font-size * 0.8 : 0px;
+    property <length> pill-w: root.font-size * 3.4;
+    property <length> pill-h: root.font-size * 1.8;
+    property <length> pill-room: root.toggle > 0 ? root.pill-w + root.font-size * 0.7 : 0px;
+    property <length> text-x: (root.kind == 1 ? root.font-size * 0.9 + root.mark-size + root.font-size * 0.7 : root.font-size * 0.9) + root.icon-pad;
     property <color> text-color: Theme.list-text;
     // "Recommended": a small tag at the right of the title and an accent edge on the left. Never a fill: a fill
     // looked like focus.
@@ -286,10 +324,38 @@ component OptionRow inherits Rectangle {
             background: root.text-color;
         }
     }
+    if root.icon > 0: OptionIcon {
+        x: root.font-size * 0.9;
+        y: (root.height - self.height) / 2;
+        width: root.icon-size;
+        height: root.icon-size;
+        icon: root.icon;
+        ink: root.text-color;
+    }
+    if root.toggle > 0: Rectangle {
+        x: root.width - root.pill-w - root.font-size * 0.9;
+        y: (root.height - self.height) / 2;
+        width: root.pill-w;
+        height: root.pill-h;
+        border-radius: self.height / 2;
+        background: root.toggle == 2 ? FocusLook.accent : transparent;
+        border-width: max(1.5px, 2px / Theme.scale-factor);
+        border-color: root.toggle == 2 ? FocusLook.accent : Theme.search-text;
+        Text {
+            text: root.toggle == 2 ? "On" : "Off";
+            color: root.toggle == 2 ? SemanticColors.text-on-accent : Theme.list-text;
+            font-size: root.font-size * 0.9;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+    }
     Text {
         x: root.text-x;
         y: root.title-y;
-        width: root.width - root.text-x - root.font-size * 0.9 - (root.recommended ? root.tag-w + root.font-size * 0.6 : 0px);
+        width: root.width - root.text-x - root.font-size * 0.9 - root.pill-room - (root.recommended ? root.tag-w + root.font-size * 0.6 : 0px);
         height: root.title-h;
         text: root.title;
         color: root.text-color;
@@ -301,7 +367,7 @@ component OptionRow inherits Rectangle {
     if root.detail != "": Text {
         x: root.text-x;
         y: root.height * 0.52;
-        width: root.width - root.text-x - root.font-size * 0.9;
+        width: root.width - root.text-x - root.font-size * 0.9 - root.pill-room;
         height: root.height * 0.4;
         text: root.detail;
         color: root.text-color;
@@ -884,6 +950,8 @@ export component SetupWizardDialog inherits Window {
                             chosen: o.chosen;
                             enabled: o.enabled;
                             recommended: o.recommended;
+                            icon: o.icon;
+                            toggle: o.toggle;
                             selected: o.enabled && root.selected-index == o.focus;
                             border-px: root.border-px;
                             ring-px: root.ring;

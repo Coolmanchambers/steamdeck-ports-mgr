@@ -10,6 +10,7 @@
 // Parts of the library (a few helpers, the 64-bit grid IDs) have no caller yet; the tests exercise them.
 #![allow(dead_code)]
 
+pub mod add_port;
 pub mod adopt;
 pub mod app_id;
 pub mod art;
@@ -35,6 +36,7 @@ pub mod screens;
 pub mod self_update;
 pub mod secrets;
 pub mod settings;
+pub mod settings_menu;
 pub mod setup_wizard;
 pub mod shortcuts;
 pub mod steam_close;

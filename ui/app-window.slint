@@ -115,7 +115,7 @@ export component AppWindow inherits Window {
     callback home-tile-activated(int);
     callback home-tile-hovered(int);
     callback home-setup-requested();
-    callback home-browse-requested();
+    callback home-add-requested();
     callback home-empty-hovered(int);
 
     init => { search-input.focus(); }
@@ -638,7 +638,7 @@ export component AppWindow inherits Window {
                             tile-hovered(i) => { root.home-tile-hovered(i); }
                             settings-requested => { root.settings-requested(); }
                             setup-requested => { root.home-setup-requested(); }
-                            browse-requested => { root.home-browse-requested(); }
+                            add-requested => { root.home-add-requested(); }
                             empty-hovered(i) => { root.home-empty-hovered(i); }
                         }
 

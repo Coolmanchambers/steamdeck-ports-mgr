@@ -13,7 +13,7 @@
 //! shown masked, and never written to a log or to `state.json`.
 
 use super::dialogs::{
-    build_picker_dialog, build_text_entry_dialog, close_current_dialog, finish_dialog_open, open_message_dialog, open_settings_dialog, set_picker_items, DialogSlot,
+    build_picker_dialog, build_text_entry_dialog, close_current_dialog, finish_dialog_open, open_message_dialog, set_picker_items, DialogSlot,
 };
 use super::state::AppState;
 use crate::fork::art::net::Net;
@@ -84,7 +84,7 @@ fn show_menu(app: &Rc<AppState>, router: &Router, screen: Screen) {
                 }
                 Line::Back => {
                     close_current_dialog(&app, &router);
-                    open_settings_dialog(&app, &router);
+                    super::settings_menu_screen::open_group(&app, &router, crate::fork::settings_menu::Group::Steam);
                 }
             }
         });

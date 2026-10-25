@@ -75,6 +75,8 @@ pub enum TileKind {
     Port,
     /// "Finish setting up": shown first while setup was never finished (ports are installed already).
     Setup,
+    /// "Add a port": always the last tile; opens the Add a port page.
+    Add,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +107,8 @@ pub fn continue_pick(ports: &[PortFacts]) -> Option<usize> {
 }
 
 /// The home screen for these installed ports. With none, the empty card. Otherwise: a Setup tile first while setup
-/// is not done, then Continue (the port played last, not repeated below), then every other port by name.
+/// is not done, then Continue (the port played last, not repeated below), then every other port by name, and last the
+/// "Add a port" tile.
 pub fn build(ports: &[PortFacts], setup_done: bool) -> Home {
     if ports.is_empty() {
         return Home::Empty;
@@ -122,6 +125,7 @@ pub fn build(ports: &[PortFacts], setup_done: bool) -> Home {
     let mut rest: Vec<&PortFacts> = ports.iter().enumerate().filter(|(i, _)| Some(*i) != first).map(|(_, p)| p).collect();
     rest.sort_by_key(|p| p.name.to_lowercase());
     tiles.extend(rest.into_iter().map(|p| Tile { kind: TileKind::Port, key: p.key.clone(), title: p.name.clone(), badge: badge(p) }));
+    tiles.push(Tile { kind: TileKind::Add, key: String::new(), title: "Add a port".into(), badge: Badge::Ready });
     Home::Tiles(tiles)
 }
 
@@ -132,6 +136,7 @@ pub fn hints(focused: Option<TileKind>) -> String {
     match focused {
         None => ["A Choose", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(TileKind::Setup) => ["A Set up", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
+        Some(TileKind::Add) => ["A Add a port", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(_) => ["A Play", "X Info", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
     }
 }
@@ -277,9 +282,10 @@ mod tests {
         ports[3].steam_waiting = true;
         let Home::Tiles(tiles) = build(&ports, true) else { panic!("tiles") };
         assert_eq!(tiles[0], Tile { kind: TileKind::Continue, key: "soh".into(), title: "SOH".into(), badge: Badge::Ready });
-        let rest: Vec<(&str, Badge)> = tiles[1..].iter().map(|t| (t.key.as_str(), t.badge)).collect();
+        let rest: Vec<(&str, Badge)> = tiles[1..tiles.len() - 1].iter().map(|t| (t.key.as_str(), t.badge)).collect();
         assert_eq!(rest, [("2ship", Badge::SteamWaiting), ("abuse", Badge::GameFilesMissing), ("dusk", Badge::UpdateAvailable)], "by name, Continue not repeated");
-        assert!(tiles[1..].iter().all(|t| t.kind == TileKind::Port));
+        assert!(tiles[1..tiles.len() - 1].iter().all(|t| t.kind == TileKind::Port));
+        assert_eq!(tiles.last().map(|t| (t.kind, t.title.as_str())), Some((TileKind::Add, "Add a port")), "the plus tile is always last");
     }
 
     #[test]
@@ -287,7 +293,7 @@ mod tests {
         assert_eq!(continue_pick(&[port("a", 10), port("b", 30), port("c", 20)]), Some(1));
         assert_eq!(continue_pick(&[port("a", 0), port("b", 0)]), None);
         let Home::Tiles(tiles) = build(&[port("a", 0), port("b", 0)], true) else { panic!() };
-        assert!(tiles.iter().all(|t| t.kind == TileKind::Port), "nothing played: no Continue tile");
+        assert!(tiles.iter().filter(|t| t.kind != TileKind::Add).all(|t| t.kind == TileKind::Port), "nothing played: no Continue tile");
     }
 
     #[test]
@@ -296,6 +302,7 @@ mod tests {
         assert_eq!(build(&[], false), Home::Empty);
         let Home::Tiles(tiles) = build(&[port("a", 5)], false) else { panic!() };
         assert_eq!((tiles[0].kind, tiles[1].kind), (TileKind::Setup, TileKind::Continue));
+        assert_eq!(tiles.len(), 3, "Setup, Continue, and the Add a port tile");
     }
 
     #[test]
@@ -349,6 +356,8 @@ mod tests {
         assert!(hints(Some(TileKind::Port)).starts_with("A Play"));
         assert!(hints(Some(TileKind::Continue)).contains("X Info"));
         assert!(hints(Some(TileKind::Setup)).starts_with("A Set up"));
+        assert!(hints(Some(TileKind::Add)).starts_with("A Add a port"));
+        assert!(!hints(Some(TileKind::Add)).contains("X Info"), "nothing to show Info for");
         assert!(!hints(None).contains("X Info"));
         assert!(hints(None).contains("L1/R1 Lists"));
     }

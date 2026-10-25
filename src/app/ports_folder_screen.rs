@@ -305,7 +305,7 @@ pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
         Act::UseDefault => consider(app, router, ports_folder::default_dir(&app.paths.config_dir)),
         Act::Back => {
             close_current_dialog(app, router);
-            super::dialogs::open_settings_dialog(app, router);
+            super::settings_menu_screen::open_group(app, router, crate::fork::settings_menu::Group::Ports);
         }
         _ => {}
     });

@@ -294,6 +294,8 @@ fn fill_body<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
                 enabled: o.enabled,
                 recommended: o.recommended,
                 focus: page::option_number(page, i),
+                icon: page.icon_of(i).code(),
+                toggle: page.toggle_of(i).map_or(0, |on| if on { 2 } else { 1 }),
             })
             .collect::<Vec<_>>(),
     ));
