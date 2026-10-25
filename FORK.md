@@ -625,6 +625,11 @@ The library underneath the Add to Steam screen. Rules it enforces so a later fea
   used for new entries. Newer Steam builds may assign other IDs to shortcuts added in the Steam UI.
 - Code in `src/fork/` uses English names and module docs; upstream's own tests are in French.
 - Backups (`shortcuts.vdf.bak-<local time>`) are pruned only by `backups::prune_backups`, which Add to Steam calls after a write (newest 10, never anything under an hour old).
+- An icon is read through `Shortcut::icon_path` (quote marks removed, like the program) wherever it is compared: a move
+  repoints a quoted icon inside the old folder and writes it plain (the way Steam stores it), and "still points into
+  the old copy" sees it. An Update of an existing shortcut never clears or replaces launch options it already has, and
+  never replaces an icon it has (a queued Add re-planned as an Update of the user's own shortcut used to wipe them).
+  Each repoint that is written logs the shortcut, app ID and fields it changed (`steam: repointed ...`).
 
 ## ROM library (`src/fork/rom_library/`)
 

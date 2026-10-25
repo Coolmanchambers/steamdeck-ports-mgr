@@ -64,7 +64,9 @@ pub fn repoint_doc(doc: &mut Document, from: &Path, to: &Path) -> RepointResult 
     for s in shortcuts::list(doc) {
         let exe = moved_path(s.exe_path(), from, to);
         let start_dir = moved_path(s.start_dir_path(), from, to);
-        let icon = moved_path(&s.icon, from, to);
+        // An icon stored with quote marks is unquoted first, like the program; the repointed value is written plain, the
+        // way Steam and `shortcuts::update` store an icon.
+        let icon = moved_path(s.icon_path(), from, to);
         if exe.is_none() && start_dir.is_none() && icon.is_none() {
             continue;
         }
@@ -137,7 +139,7 @@ pub fn shortcuts_pointing_into_detailed(home: &Path, dir: &Path) -> Result<Vec<(
             let inside = |p: &str| moved_path(p, dir, dir).is_some();
             // Launch options are not rewritten by a move; a path in them still needs the old copy.
             let in_options = dir.to_str().is_some_and(|d| !d.is_empty() && s.launch_options.contains(d));
-            if inside(s.exe_path()) || inside(s.start_dir_path()) || inside(&s.icon) || in_options {
+            if inside(s.exe_path()) || inside(s.start_dir_path()) || inside(s.icon_path()) || in_options {
                 names.push((s.app_name.clone(), s.app_id.is_some()));
             }
         }
@@ -171,6 +173,10 @@ pub fn write_repoint(path: &Path, from: &Path, to: &Path, steam: &dyn SteamProce
         Ok(report) => {
             if report.wrote {
                 let _ = backups::prune_backups(path, settings.backups_keep(), now);
+                // What changed, for a report from a Deck (the app's log).
+                for c in &result.changed {
+                    eprintln!("steam: repointed {} (app id {}) in {}: {} moved from {} to {}", c.name, c.app_id, path.display(), c.fields.join(", "), from.display(), to.display());
+                }
             }
             Ok((result, report.backup))
         }
@@ -276,3 +282,6 @@ pub fn repoint_everywhere(port_key: &str, port_name: &str, from: &Path, to: &Pat
     }
     report
 }
+
+#[cfg(test)]
+mod tests;

@@ -304,6 +304,32 @@ pub(crate) mod fixtures {
         )
     }
 
+    /// [`steam_entry`] with an icon and launch options, stored exactly as given (quotes and all).
+    pub fn steam_entry_with(index: usize, app_id: u32, name: &str, exe: &str, start_dir: &str, icon: &str, launch_options: &str) -> Vec<u8> {
+        object(
+            &index.to_string(),
+            &[
+                int_field("appid", app_id),
+                str_field("AppName", name.as_bytes()),
+                str_field("Exe", exe.as_bytes()),
+                str_field("StartDir", start_dir.as_bytes()),
+                str_field("icon", icon.as_bytes()),
+                str_field("ShortcutPath", b""),
+                str_field("LaunchOptions", launch_options.as_bytes()),
+                int_field("IsHidden", 0),
+                int_field("AllowDesktopConfig", 1),
+                int_field("AllowOverlay", 1),
+                int_field("OpenVR", 0),
+                int_field("Devkit", 0),
+                str_field("DevkitGameID", b""),
+                int_field("DevkitOverrideAppID", 0),
+                int_field("LastPlayTime", 1_700_000_000),
+                str_field("FlatpakAppID", b""),
+                object("tags", &[]),
+            ],
+        )
+    }
+
     /// `shortcuts` object inside the root, plus the root's end marker.
     pub fn file_of(entries: &[Vec<u8>]) -> Vec<u8> {
         let mut v = object("shortcuts", entries);

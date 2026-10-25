@@ -41,7 +41,8 @@ impl std::error::Error for ShortcutError {}
 
 /// A read-only copy of one entry, for display and matching. Text is converted lossily, so a value that
 /// is not valid UTF-8 shows replacement characters; do not write these strings back with `update`.
-/// `exe` and `start_dir` are as stored, quotes included; `icon` is a plain path.
+/// `exe`, `start_dir` and `icon` are as stored, quotes included (use the `*_path` methods for plain paths; an icon
+/// is normally stored without quotes).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shortcut {
     pub key: String,
@@ -64,6 +65,12 @@ impl Shortcut {
 
     pub fn start_dir_path(&self) -> &str {
         unquote(&self.start_dir)
+    }
+
+    /// The icon as a plain path: Steam stores it without quotes, but a value that came in with them (written by
+    /// another tool) is unquoted the same way as `exe`, so every comparison sees the same path.
+    pub fn icon_path(&self) -> &str {
+        unquote(&self.icon)
     }
 }
 

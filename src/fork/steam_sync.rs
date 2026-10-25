@@ -138,9 +138,13 @@ fn diff(existing: &Shortcut, wanted: &WantedShortcut) -> Vec<FieldChange> {
     };
     check("program", existing.exe_path(), &wanted.exe, same_text);
     check("start folder", existing.start_dir_path(), &wanted.start_dir, same_dir);
-    check("launch options", &existing.launch_options, &wanted.launch_options, same_text);
+    // Launch options the shortcut already has (the user's own, or a queued Add that was re-planned as an Update of the
+    // user's shortcut) are never cleared or replaced.
+    if existing.launch_options.is_empty() {
+        check("launch options", &existing.launch_options, &wanted.launch_options, same_text);
+    }
     // An icon the shortcut already has (Steam's own, or one the user pointed it at) is never replaced.
-    if let Some(icon) = wanted.icon.as_ref().filter(|_| existing.icon.is_empty()) {
+    if let Some(icon) = wanted.icon.as_ref().filter(|_| existing.icon_path().is_empty()) {
         check("icon", &existing.icon, icon, same_text);
     }
     changes
@@ -573,5 +577,43 @@ mod tests {
         let w = wanted_from_port(&port(json!({})), &lib, None).unwrap();
         assert!(w.exe.starts_with(lib.to_str().unwrap()), "{}", w.exe);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A queued Add re-planned as an Update of the user's own shortcut (same program) must not wipe its launch options.
+    #[test]
+    fn an_update_never_clears_or_replaces_launch_options_the_shortcut_has() {
+        let own = steam_entry_with(0, 0xAAAA_0001, "Zelda", "\"/lib/SoH/soh\"", "\"/somewhere/else\"", "", "SteamDeck=1 %command% --fullscreen");
+        let doc = Document::parse(&file_of(&[own])).unwrap();
+        let items = plan(&doc, &[wanted("Ship of Harkinian", "/lib/SoH/soh")]);
+        match &items[0].action {
+            Action::Update { changes, .. } => assert_eq!(changes.iter().map(|c| c.field).collect::<Vec<_>>(), ["start folder"], "no launch options change"),
+            other => panic!("{other:?}"),
+        }
+        let dir = temp_dir("keep_launch_options");
+        let path = dir.join("config").join("shortcuts.vdf");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, file_of(&[steam_entry_with(0, 0xAAAA_0001, "Zelda", "\"/lib/SoH/soh\"", "\"/somewhere/else\"", "", "SteamDeck=1 %command% --fullscreen")])).unwrap();
+        let mut file = ShortcutsFile::load(&path).unwrap();
+        let items = plan(&file.doc, &[wanted("Ship of Harkinian", "/lib/SoH/soh")]);
+        apply(&mut file, &items, &no_steam, &backup_stamp()).unwrap();
+        let saved = shortcuts::list(&ShortcutsFile::load(&path).unwrap().doc);
+        assert_eq!(saved[0].launch_options, "SteamDeck=1 %command% --fullscreen");
+        assert_eq!(saved[0].start_dir_path(), "/lib/SoH", "the start folder was still brought along");
+        assert_eq!(saved[0].app_name, "Zelda", "the user's name stays");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn empty_launch_options_can_still_be_filled_and_an_existing_icon_is_kept() {
+        let mut w = wanted("Ship of Harkinian", "/lib/SoH/soh");
+        w.launch_options = "--x".into();
+        w.icon = Some("/lib/SoH/icon.png".into());
+        let bare = steam_entry_with(0, 1, "Zelda", "\"/lib/SoH/soh\"", "\"/lib/SoH\"", "", "");
+        let doc = Document::parse(&file_of(&[bare])).unwrap();
+        let Action::Update { changes, .. } = &plan(&doc, &[w.clone()])[0].action else { panic!() };
+        assert_eq!(changes.iter().map(|c| c.field).collect::<Vec<_>>(), ["launch options", "icon"]);
+        let owned = steam_entry_with(0, 1, "Zelda", "\"/lib/SoH/soh\"", "\"/lib/SoH\"", "\"/mine/icon.png\"", "-mine");
+        let doc = Document::parse(&file_of(&[owned])).unwrap();
+        assert!(matches!(plan(&doc, &[w])[0].action, Action::UpToDate { .. }), "nothing to do when launch options and icon are the user's");
     }
 }
