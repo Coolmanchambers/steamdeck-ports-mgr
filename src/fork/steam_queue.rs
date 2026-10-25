@@ -325,6 +325,21 @@ pub struct LoadOutcome {
     pub unreadable: bool,
 }
 
+/// Reads the queue and changes nothing: a missing file is an empty queue; a file that cannot be opened or understood is
+/// an `Err` saying why, and is left exactly where it is (`load` moves one it can open but not understand aside). For
+/// anything that only looks (the checkup, the old copies' status).
+pub fn peek(path: &Path) -> Result<SteamQueue, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(SteamQueue::default()),
+        Err(e) => return Err(format!("could not open it ({e})")),
+    };
+    std::str::from_utf8(&bytes)
+        .map_err(|_| "it is not text".to_string())
+        .and_then(|t| serde_json::from_str::<Value>(t.strip_prefix('\u{FEFF}').unwrap_or(t)).map_err(|e| format!("it is not valid JSON ({e})")))
+        .and_then(|v| SteamQueue::from_json(&v))
+}
+
 /// Reads the queue. A missing file is an empty queue. A file that can be read but not understood is
 /// moved aside (`.corrupt-<stamp>`, never over another file) and the queue starts empty; `problem` says
 /// so. A file that cannot be opened is left as it is and `unreadable` is set.

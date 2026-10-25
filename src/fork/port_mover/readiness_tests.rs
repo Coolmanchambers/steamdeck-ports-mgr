@@ -172,6 +172,43 @@ fn a_switch_seen_without_a_recorded_time_is_noted_and_only_later_steam_starts_co
 }
 
 #[test]
+fn a_steam_start_after_the_switch_makes_the_copy_ready_without_writing_anything() {
+    let h = home();
+    // The queue was applied by hand-off long ago (no switch time in the record, as for a record that never saw the old
+    // copies page), Steam now starts the new copy, and the applying left a backup of the shortcuts.
+    old_copies::record(&h.app, OldCopy { repoint_queued: Some(true), ..h.entry() }).unwrap();
+    h.shortcut_at(&h.new, 1_000);
+    let backup = h.vdf.with_file_name("shortcuts.vdf.bak-20261024-110000");
+    fs::write(&backup, b"x").unwrap();
+    let applied = std::time::UNIX_EPOCH + std::time::Duration::from_secs(5_000);
+    fs::File::options().write(true).open(&backup).unwrap().set_modified(applied).unwrap();
+    let before = fs::read_to_string(old_copies::path(&h.app)).unwrap();
+    // Played before the backup: that may have been the old copy's.
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::StartOnce);
+    // Played from Steam after it: ready, as the page itself would say.
+    h.shortcut_at(&h.new, 9_000);
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::Ready(StartedBy::Steam));
+    assert_eq!(fs::read_to_string(old_copies::path(&h.app)).unwrap(), before, "looking wrote nothing into the record");
+    // No backup at all and no switch time: nothing says when it was switched, so it stays "start it once".
+    fs::remove_file(&backup).unwrap();
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::StartOnce);
+    // A recorded switch time is used as it is.
+    old_copies::record(&h.app, OldCopy { steam_at: Some(2_000), repoint_queued: Some(true), ..h.entry() }).unwrap();
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::Ready(StartedBy::Steam));
+}
+
+#[test]
+fn a_queue_file_that_is_not_readable_is_never_moved_aside_by_looking() {
+    let h = home();
+    let q = steam_queue::queue_path(&h.app);
+    fs::write(&q, "{ not json").unwrap();
+    assert!(h.view().waiting, "an unreadable queue keeps the copy waiting");
+    assert_eq!(fs::read_to_string(&q).unwrap(), "{ not json", "and the file is where it was");
+    assert!(steam_queue::peek(&q).is_err());
+    assert_eq!(fs::read_dir(&h.app).unwrap().filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().contains("corrupt")).count(), 0);
+}
+
+#[test]
 fn starts_and_switches_are_recorded_once_and_survive_a_reload() {
     let h = home();
     assert_eq!(mark_started(&h.app, &h.old, StartedBy::User, 111).unwrap(), 1);

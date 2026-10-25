@@ -274,9 +274,10 @@ pub struct SteamView {
 
 /// Reads the queue and every account's shortcuts for one old copy.
 pub fn steam_view(entry: &OldCopy, home: &Path, config_dir: &Path) -> SteamView {
-    let queue = super::super::steam_queue::load(&super::super::steam_queue::queue_path(config_dir));
-    let queued = queue.unreadable
-        || queue.queue.entries.iter().any(|e| {
+    // Read-only: a queue file that cannot be read keeps the copy waiting, and looking never moves it aside.
+    let queue = super::super::steam_queue::peek(&super::super::steam_queue::queue_path(config_dir));
+    let queued = queue.is_err()
+        || queue.iter().flat_map(|q| q.entries.iter()).any(|e| {
             e.kind == super::super::steam_queue::QueuedKind::Repoint
                 && (e.port_key == entry.port_key || e.repoint.as_ref().is_some_and(|(from, _)| is_within(Path::new(from), &entry.old_path) || Path::new(from) == entry.old_path))
         });
@@ -317,6 +318,30 @@ pub fn readiness_now(entry: &OldCopy, home: &Path, config_dir: &Path) -> Result<
         }
     }
     Ok(readiness(&entry, &view))
+}
+
+/// The readiness of the old copy as it is now, read only (the checkup): like [`readiness_now`] but nothing is noted in the
+/// record. When Steam is switched and no switch time is recorded, a Steam start counts only if it is later than the newest
+/// `shortcuts.vdf.bak-*` backup of any account (applying a queued change makes one, so it is at or after the switch):
+/// never earlier than the truth, so a Steam start before the switch is never taken for the new copy's.
+pub fn readiness_read_only(entry: &OldCopy, home: &Path, config_dir: &Path) -> Readiness {
+    let view = steam_view(entry, home, config_dir);
+    let mut e = entry.clone();
+    if !view.waiting && e.steam_at.is_none() && e.repoint_queued != Some(false) {
+        e.steam_at = newest_backup_time(home);
+    }
+    readiness(&e, &view)
+}
+
+/// The newest modification time (seconds since 1970) among the `shortcuts.vdf.bak-*` backups of every Steam account.
+fn newest_backup_time(home: &Path) -> Option<i64> {
+    super::steam::device_accounts(home)
+        .iter()
+        .filter_map(|a| crate::fork::backups::list_backups(&a.shortcuts).ok())
+        .flatten()
+        .filter_map(|b| b.modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .max()
 }
 
 fn mark_steam_seen(config_dir: &Path, old_path: &Path, at: i64) -> io::Result<usize> {
