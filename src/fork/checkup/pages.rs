@@ -156,12 +156,12 @@ pub fn after_page(check: Check, outcome: &Outcome, n: usize, total: usize, last:
     p.b_means(next)
 }
 
-/// The last page: how each problem that was visited stands now.
+/// The last page: how each problem the run set out to fix stands now (skipped ones count as left).
 pub fn finished_page(visited: &[(Check, Outcome)]) -> CheckupPage {
     let left = visited.iter().filter(|(_, o)| o.is_problem()).count();
     let mut p = base(if left == 0 { "All done" } else { "Done for now" });
     p.paragraphs = vec![match left {
-        0 => "Everything you went through is fixed.".to_string(),
+        0 => "Everything is fixed.".to_string(),
         1 => "1 thing is still left. You can come back to it from Settings, Fix problems.".to_string(),
         n => format!("{n} things are still left. You can come back to them from Settings, Fix problems."),
     }];

@@ -81,8 +81,6 @@ struct Session {
     /// The checks with a problem when "Fix them one by one" was chosen, and where the run is.
     order: RefCell<Vec<Check>>,
     pos: Cell<usize>,
-    /// The checks the run went through, in order (for the last page).
-    visited: RefCell<Vec<Check>>,
     /// The fix is being opened right now: a menu it opens must show, not hand control back.
     entering: Cell<bool>,
     quiet: Cell<u32>,
@@ -380,7 +378,6 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router) {
         results: RefCell::new(Results { items: Vec::new() }),
         order: RefCell::new(Vec::new()),
         pos: Cell::new(0),
-        visited: RefCell::new(Vec::new()),
         entering: Cell::new(false),
         quiet: Cell::new(0),
         job: RefCell::new(None),
@@ -498,7 +495,6 @@ fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             eprintln!("checkup: fixing {} problem(s) one by one", order.len());
             *s.order.borrow_mut() = order;
             s.pos.set(0);
-            s.visited.borrow_mut().clear();
             show_step(app, router, s);
         }
         Act::Fix | Act::TryAgain => open_fix(app, router, s),
@@ -544,9 +540,10 @@ fn advance(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 
 fn show_finished(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let results = s.results.borrow().clone();
-    let visited: Vec<(Check, Outcome)> = s.visited.borrow().iter().filter_map(|c| results.outcome(*c).map(|o| (*c, o.clone()))).collect();
-    let page = if visited.is_empty() { pages::overview_page(&results) } else { pages::finished_page(&visited) };
-    let stage = if visited.is_empty() { Stage::Overview } else { Stage::Finished };
+    // Every check the run set out to fix, as it stands now: fixed ones green, skipped and unfinished ones counted.
+    let went_through: Vec<(Check, Outcome)> = s.order.borrow().iter().filter_map(|c| results.outcome(*c).map(|o| (*c, o.clone()))).collect();
+    let page = if went_through.is_empty() { pages::overview_page(&results) } else { pages::finished_page(&went_through) };
+    let stage = if went_through.is_empty() { Stage::Overview } else { Stage::Finished };
     show(app, router, s, stage, page);
 }
 
@@ -570,12 +567,6 @@ fn port_by_key(app: &AppState, key: &str) -> Option<Port> {
 fn open_fix(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let Some(check) = current(s) else { return show_overview(app, router) };
     let Some(problem) = problem_of(s, check) else { return show_after(app, router) };
-    {
-        let mut visited = s.visited.borrow_mut();
-        if !visited.contains(&check) {
-            visited.push(check);
-        }
-    }
     eprintln!("checkup: fix for {}: {:?}", check.title(), problem.fix);
     let (n, total) = (s.pos.get() + 1, s.order.borrow().len());
     match &problem.fix {
