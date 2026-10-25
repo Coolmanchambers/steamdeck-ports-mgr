@@ -31,6 +31,32 @@ pub fn progress_text(p: &Progress<'_>, elapsed: Duration) -> String {
     format!("{line}\n{}{rest}", file_name(p.current))
 }
 
+/// How far the reading is, by bytes (by files when the files are empty); `None` while the folders are walked.
+pub fn read_fraction(p: &Progress<'_>) -> Option<f32> {
+    if p.walking || p.to_read == 0 {
+        return None;
+    }
+    Some(if p.bytes_to_read > 0 { p.bytes_hashed as f32 / p.bytes_to_read as f32 } else { p.files_read as f32 / p.to_read as f32 })
+}
+
+#[cfg(test)]
+mod fraction_tests {
+    use super::*;
+    use crate::fork::rom_library::scan::Progress;
+
+    fn p(walking: bool, to_read: usize, files_read: usize, bytes_to_read: u64, bytes_hashed: u64) -> Progress<'static> {
+        Progress { current: Path::new("x.iso"), files_done: 0, bytes_hashed, to_read, files_read, bytes_to_read, seen: 10, walking, folders: 3 }
+    }
+
+    #[test]
+    fn the_bar_follows_the_bytes_read_and_moves_while_the_folders_are_walked() {
+        assert_eq!(read_fraction(&p(true, 4, 0, 400, 0)), None, "walking: no total yet");
+        assert_eq!(read_fraction(&p(false, 0, 0, 0, 0)), None, "nothing to read");
+        assert_eq!(read_fraction(&p(false, 4, 1, 400, 100)), Some(0.25));
+        assert_eq!(read_fraction(&p(false, 4, 2, 0, 0)), Some(0.5), "empty files: by count");
+    }
+}
+
 /// What the installed ports of `input` need: the files worth reading.
 pub fn wanted_for(input: &ReportInput) -> Wanted {
     let specs: Vec<RomSpec> = input.catalog.iter().filter(|p| input.installed.contains(p.key())).map(|p| RomSpec::for_port(p, input.local_entries.get(&p.folder))).collect();
@@ -53,6 +79,10 @@ pub fn run_scan(ctl: &Ctl, store: &RomLibraryStore, root: &Path, input: &ReportI
     let started = std::time::Instant::now();
     let scan = scan_folder(root, &options, prior.as_ref(), ctl.flag(), &mut |p| {
         ctl.set_progress(progress_text(&p, started.elapsed()));
+        // Reading has a total (bytes to read); walking the folders does not, so its bar keeps moving.
+        if let Some(f) = read_fraction(&p) {
+            ctl.set_fraction(f);
+        }
     })
     .map_err(|e| format!("Could not read {}: {e}\n\nIs the drive or card plugged in? Plug it in, or choose another folder in Settings > Game files.", root.display()))?;
     if scan.cancelled || ctl.cancelled() {

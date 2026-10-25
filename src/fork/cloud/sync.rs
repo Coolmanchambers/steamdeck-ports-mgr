@@ -21,6 +21,8 @@ pub struct PassInput<'a> {
     pub now: u64,
     /// A zip changed more recently than this many seconds ago is left for the next pass.
     pub min_age: u64,
+    /// Told how far the copying is, 0 to 1 (files and their bytes), for a progress bar.
+    pub fraction: Option<&'a dyn Fn(f32)>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -94,6 +96,14 @@ pub fn run_pass(
             }
             report.unplaced = planned.unplaced.len();
             let steps = planned.steps;
+            let uploads = steps.iter().filter(|s| matches!(s, Step::Upload { .. })).count().max(1) as f32;
+            let mut uploaded_so_far = 0f32;
+            let tell = |f: f32| {
+                if let Some(t) = input.fraction {
+                    t(f.clamp(0.0, 1.0));
+                }
+            };
+            tell(0.0);
             for step in steps {
                 if cancel() {
                     report.cancelled = true;
@@ -111,7 +121,9 @@ pub fn run_pass(
                             continue;
                         }
                         say(&format!("Copying {} to {name}", short_name(&zip.rel)));
-                        let mut on_bytes = |_done: u64, _all: u64| {};
+                        let before = uploaded_so_far;
+                        uploaded_so_far += 1.0;
+                        let mut on_bytes = |done: u64, all: u64| tell((before + if all == 0 { 1.0 } else { done as f32 / all as f32 }) / uploads);
                         match service.upload(input.device, &cloud_path, &zip.path, zip.size, &mut on_bytes) {
                             Ok(file) => {
                                 if file.size != zip.size || file.sha256.as_deref().is_some_and(|h| !h.eq_ignore_ascii_case(&sha256)) {

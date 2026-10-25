@@ -27,7 +27,7 @@ use crate::fork::page::{self, Focus, Page};
 use crate::fork::press_echo::{self, Press};
 use crate::ui::chrome;
 use crate::ui::gamepad_router::GamepadRouter;
-use crate::{SetupWizardDialog, WizardCard, WizardOption, WizardTile};
+use crate::{SetupWizardDialog, WizardCard, WizardFact, WizardOption, WizardTile};
 use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -273,7 +273,13 @@ fn page_now<A>(cur: &Current<A>) -> Rc<Page<A>> {
 /// options, the footer. (`fill` also sets the window's own texts, which do not change with the text box.)
 fn fill_body<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_paragraphs(model(page.paragraphs.iter().map(|p| p.clone().into()).collect::<Vec<slint::SharedString>>()));
-    d.set_facts(model(page.facts.iter().map(|f| f.clone().into()).collect::<Vec<slint::SharedString>>()));
+    d.set_facts(model(page.facts.iter().enumerate().map(|(i, f)| WizardFact { text: f.clone().into(), mark: page.mark_of(i).code() }).collect::<Vec<_>>()));
+    let (kind, value) = match page.progress {
+        None => (0, 0.0),
+        Some(p) => p.fraction().map_or((2, 0.0), |f| (1, f)),
+    };
+    d.set_progress_kind(kind);
+    d.set_progress_value(value);
     d.set_has_card(page.card.is_some());
     d.set_options(model(
         page.options

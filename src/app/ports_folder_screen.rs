@@ -626,7 +626,11 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
         let (batch_items, batch_files): (Vec<BatchItem>, Vec<GameFiles>) = todo.into_iter().unzip();
         let names: Vec<String> = batch_items.iter().map(|i| i.port.name.clone()).collect();
         let options = |i: usize| MoveOptions { game_files: batch_files[i].clone(), accept_issues_before: accept_issues || accept_keys.contains(&batch_items[i].port.key), ..Default::default() };
-        let mut progress = |i: usize, done: u64, size: u64| ctl.set_progress(format!("Copying {} of {total}: {}\n{} of {}", i + 1, names[i], human_bytes(done), human_bytes(size)));
+        let count = names.len().max(1) as f32;
+        let mut progress = |i: usize, done: u64, size: u64| {
+            ctl.set_progress(format!("Copying {} of {total}: {}\n{} of {}", i + 1, names[i], human_bytes(done), human_bytes(size)));
+            ctl.set_fraction((i as f32 + if size == 0 { 1.0 } else { done as f32 / size as f32 }) / count);
+        };
         let result = port_mover::run_batch(&batch_items, &env, &options, &mut progress, ctl.flag());
         for outcome in result.outcomes {
             match outcome {
@@ -669,7 +673,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
             }),
             on_input: None,
         };
-        show_page_handle(app, router, ports_pages::moving_page(&shown_names, "", false, replaces), handlers)
+        show_page_handle(app, router, ports_pages::moving_page(&shown_names, "", false, replaces).with_progress(None), handlers)
 
     } else {
         None
@@ -738,7 +742,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
             if text != *last.borrow() || cancelling.get() {
                 *last.borrow_mut() = text.clone();
                 if let Some(handle) = &page_handle {
-                    handle.update(ports_pages::moving_page(&shown_names, &text, cancelling.get(), replaces));
+                    handle.update(ports_pages::moving_page(&shown_names, &text, cancelling.get(), replaces).with_progress(job.fraction()));
                 }
                 if let Some(d) = list_weak.as_ref().and_then(slint::Weak::upgrade) {
                     set_picker_items(&d, &view::progress_labels(&text, cancelling.get()));

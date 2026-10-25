@@ -203,7 +203,7 @@ fn run_job<T: Send + 'static>(
                 }),
                 on_input: None,
             };
-            page_handle = show_page_handle(app, router, scan_progress_page(title, "", false), handlers);
+            page_handle = show_page_handle(app, router, scan_progress_page(title, "", false).with_progress(None), handlers);
             false
         }
         JobUi::Cancellable { title } => {
@@ -289,7 +289,7 @@ fn run_job<T: Send + 'static>(
                     update_progress_dialog(&app, d, &text);
                 }
             } else if let Some(handle) = &page_handle {
-                handle.update(scan_progress_page(title_text, &text, cancelling.get()));
+                handle.update(scan_progress_page(title_text, &text, cancelling.get()).with_progress(job.fraction()));
             } else if let Some(d) = picker.as_ref().and_then(slint::Weak::upgrade) {
                 set_picker_items(&d, &cancel_labels(&text, cancelling.get()));
             }

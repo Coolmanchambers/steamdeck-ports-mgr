@@ -237,6 +237,9 @@ Files added by this fork:
 | 2026-10-25 | `src/ui/gamepad_router.rs` | Polish: `dispatch` asks `fork::press_echo::pad` before acting on A or B (an echo of a key Steam typed for the same press is dropped) and runs the target inside `press_echo::while_pad`, so a dialog callback the pad reaches is not taken for a key |
 | 2026-10-25 | `src/app/dialogs.rs` | Polish: `wire_keyboard_nav` (Return) and `wire_dialog_close` (Escape) ask `press_echo::key` first (2 lines) |
 | 2026-10-25 | `ui/app-window.slint`, `src/main.rs` | Polish: Escape on the main list calls a new `escape-pressed` callback; in big mode it leaves big mode (unless it echoes a pad B), in the windowed view Close waits 300 ms and a pad B in that time drops it (`press_echo::hold_main_escape`); Return on the main list asks `press_echo::key` |
+| 2026-10-25 | `src/app/dialogs.rs` | Polish: `build_setup_wizard_dialog` fills the work area and sets `full` in big mode and in Game Mode (4 lines) |
+| 2026-10-25 | `ui/dialogs/chrome.slint` | Polish: `DialogChrome` draws its title bar only when `bar-height` is above zero (the guided pages full screen have none; every other dialog is unchanged) |
+| 2026-10-25 | `ui/app-window.slint` | Polish: `WizardFact` imported and exported next to the other wizard types |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -292,6 +295,25 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
   pad B in that time drops it and counts as the one B (coordinator ruling 2026-10-25), so B on the main list never
   closes the app even when Steam's Escape arrives first. Not covered: D-pad arrows (Steam may also type arrow keys;
   watch for double moves on the Deck), and dialogs that wire their own close callbacks.
+
+## Guided pages: full screen on the Deck, status marks, progress bars
+
+- **Full screen** (big mode or Game Mode): the page window takes the whole work area (1280x800 on a Deck) with no
+  title bar and no X (`full` in `ui/fork/setup-wizard.slint`; `DialogChrome` skips a zero-height bar). The
+  "Deck Ports Manager" header line goes; the step counter ("Step 2 of 5", or the page's own header outside the
+  wizard) sits at the right of the title, under the step bar. Margins are 30 px instead of 14. Windowed desktop
+  keeps the floating window with its title bar.
+- **Status marks**: a line of the summary box can carry a `fork::page::Mark` (done, to do, waiting, skipped,
+  problem), drawn as a small picture in a coloured disc (`StatusIcon`: a check, an arrow, a clock, a dash, an
+  exclamation mark), never as a text character that a font could lack. Used by "Your setup" and the rerun's last
+  page (`rerun::StepLine::mark`), the first run's last page, the import finished page and the old copies status
+  lines. The old text glyphs (check mark, arrow) are gone.
+- **Progress bars**: `Page.progress` draws a bar under the summary box, filled when the work knows how far it is,
+  a sliding block otherwise. Background jobs say how far with `Ctl::set_fraction`. Filled: moving ports (bytes of
+  each port over the batch), the import's copy (`engine::move_selected_with`, `MoveContext.fraction`), the game
+  files scan while it reads (bytes; sliding while it walks the folders), copying back from the cloud (files and
+  bytes) and the upload pass (`PassInput.fraction`, files and bytes, shown on the Cloud backup status while a pass
+  runs). Sliding: looking for ports.
 
 ## Add to Steam (Settings menu)
 

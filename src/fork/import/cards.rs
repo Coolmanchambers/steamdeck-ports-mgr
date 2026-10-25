@@ -701,6 +701,23 @@ pub fn confirm_page(cards: &Cards, free: Option<u64>, blocked: &[(String, String
 /// (the rest were linked where they stand).
 /// The import's Steam line as it reads now: "will follow in Desktop Mode" is replaced by what is true when the
 /// page is drawn (updated, or still the old copies until the shortcuts are updated).
+/// The mark before a line of the finished page (the import summary's short lines, this module's Steam line).
+fn finished_mark(line: &str) -> crate::fork::page::Mark {
+    use crate::fork::page::Mark;
+    let l = line.to_lowercase();
+    if l.contains("you cancelled") {
+        Mark::Skipped
+    } else if l.contains("not moved") || l.contains("problem") || l.contains("could not") || l.contains("stopped") || l.contains("needs a look") {
+        Mark::Problem
+    } else if l.contains("still starts the old copies") || l.contains("will follow") {
+        Mark::Waiting
+    } else if l.starts_with("steam shortcuts:") || l.contains("linked") {
+        Mark::Done
+    } else {
+        Mark::None
+    }
+}
+
 fn steam_line_now(line: &str, steam: SteamWaiting) -> String {
     if !(line.starts_with("Steam shortcuts:") && line.contains("will follow in Desktop Mode")) {
         return line.to_string();
@@ -724,7 +741,9 @@ pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines
         "Nothing was moved".to_string()
     };
     let mut p = base("finished", "", &title);
-    p.paragraphs = lines.iter().map(|l| steam_line_now(l, steam)).collect();
+    for line in lines.iter().map(|l| steam_line_now(l, steam)) {
+        p.fact(finished_mark(&line), line);
+    }
     if steam_starting {
         p.paragraphs.push("Steam is starting...".to_string());
     }
@@ -1375,7 +1394,8 @@ mod tests {
         assert_eq!(p.title, "2 ports moved");
         assert_eq!(p.window_title, "Import ports: finished");
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH"]);
-        assert_eq!(p.paragraphs, ["Steam shortcuts: 1 followed the move."]);
+        assert_eq!(p.facts, ["Steam shortcuts: 1 followed the move."]);
+        assert_eq!(p.mark_of(0), crate::fork::page::Mark::Done, "a drawn mark, not a text glyph");
         assert_eq!(p.options.len(), 1, "no Cancel");
         assert_eq!((p.options[0].title.as_str(), p.options[0].action.clone(), p.options[0].recommended), ("Done", CardAction::Leave, true));
         assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Details);
@@ -1419,11 +1439,16 @@ mod tests {
         assert_eq!(g.paragraphs.last().unwrap(), crate::fork::steam_close::GAME_MODE_TEXT);
         // The import's Steam line says what is true when the page is drawn.
         let line = vec!["Steam shortcuts: 1 will follow in Desktop Mode.".to_string(), "Moved 1 of 1 port.".to_string()];
-        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::Desktop(1), false, 0).paragraphs[0], "Steam still starts the old copies until you update shortcuts.");
-        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::GameMode(1), false, 0).paragraphs[0], "Steam still starts the old copies until you finish in Desktop Mode.");
+        let desk = finished_page(1, &ports, &line, false, SteamWaiting::Desktop(1), false, 0);
+        assert_eq!(desk.facts[0], "Steam still starts the old copies until you update shortcuts.");
+        assert_eq!(desk.mark_of(0), crate::fork::page::Mark::Waiting);
+        assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::GameMode(1), false, 0).facts[0], "Steam still starts the old copies until you finish in Desktop Mode.");
         let after = finished_page(1, &ports, &line, false, SteamWaiting::Nothing, true, 0);
-        assert_eq!(after.paragraphs, ["Steam shortcuts: updated.", "Moved 1 of 1 port.", "Steam is starting..."]);
-        assert_eq!(finished_page(1, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false, 0).paragraphs[0], "Steam shortcuts: 1 followed the move.", "a line that is still true stays");
+        assert_eq!(after.facts, ["Steam shortcuts: updated.", "Moved 1 of 1 port."]);
+        assert_eq!(after.paragraphs, ["Steam is starting..."]);
+        let problem = finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string(), "Zelda was not started (you cancelled).".to_string()], false, SteamWaiting::Nothing, false, 0);
+        assert_eq!((problem.mark_of(0), problem.mark_of(1)), (crate::fork::page::Mark::Problem, crate::fork::page::Mark::Skipped));
+        assert_eq!(finished_page(1, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false, 0).facts[0], "Steam shortcuts: 1 followed the move.", "a line that is still true stays");
     }
 
     #[test]

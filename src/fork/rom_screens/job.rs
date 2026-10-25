@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 pub struct Ctl {
     cancel: AtomicBool,
     progress: Mutex<String>,
+    /// How far the work is, 0 to 1, when the worker knows (bytes copied of the total): a progress bar.
+    fraction: Mutex<Option<f32>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -31,6 +33,13 @@ impl Ctl {
     pub fn set_progress(&self, text: String) {
         *lock(&self.progress) = text;
     }
+
+    /// How far the work is, 0 to 1 (clamped; a value that is not a number is ignored).
+    pub fn set_fraction(&self, fraction: f32) {
+        if fraction.is_finite() {
+            *lock(&self.fraction) = Some(fraction.clamp(0.0, 1.0));
+        }
+    }
 }
 
 pub struct Background<T> {
@@ -45,7 +54,7 @@ fn panic_text(payload: Box<dyn Any + Send>) -> String {
 
 impl<T: Send + 'static> Background<T> {
     pub fn spawn(work: impl FnOnce(&Ctl) -> T + Send + 'static) -> Background<T> {
-        let ctl = Arc::new(Ctl { cancel: AtomicBool::new(false), progress: Mutex::new(String::new()) });
+        let ctl = Arc::new(Ctl { cancel: AtomicBool::new(false), progress: Mutex::new(String::new()), fraction: Mutex::new(None) });
         let result = Arc::new(Mutex::new(None));
         {
             let (ctl, result) = (ctl.clone(), result.clone());
@@ -63,6 +72,11 @@ impl<T: Send + 'static> Background<T> {
 
     pub fn progress(&self) -> String {
         lock(&self.ctl.progress).clone()
+    }
+
+    /// How far the worker said it is, when it knows.
+    pub fn fraction(&self) -> Option<f32> {
+        *lock(&self.ctl.fraction)
     }
 
     /// The finished result, once. `None` while the worker is still running (or after it was taken).
@@ -85,6 +99,19 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(10), "job never finished");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn the_worker_says_how_far_it_is_clamped() {
+        let job = Background::spawn(|ctl| {
+            ctl.set_fraction(1.5);
+            ctl.set_fraction(f32::NAN);
+        });
+        wait(&job).unwrap();
+        assert_eq!(job.fraction(), Some(1.0), "clamped, and a NaN is ignored");
+        let quiet = Background::spawn(|_| ());
+        wait(&quiet).unwrap();
+        assert_eq!(quiet.fraction(), None, "no bar when the worker never says");
     }
 
     #[test]

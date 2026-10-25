@@ -167,7 +167,8 @@ fn pass_job(config_dir: &Path, saves: &Path, why: Why, ctl: &Ctl) -> PassOutcome
     let signed: Vec<(ServiceId, String)> = store::signed_in(&tokens_file).into_iter().filter_map(|(id, _)| Some((id, store::signin_name(&tokens_file, id)?))).collect();
     let mut services: Vec<_> = signed.iter().map(|(id, _)| endpoints::service(&setup, &tokens_file, *id)).collect();
     let device = cloud::device_name();
-    let input = PassInput { saves_backup_dir: saves, device: &device, now: unix_now(), min_age: why.min_age_secs() };
+    let fraction = |f: f32| ctl.set_fraction(f);
+    let input = PassInput { saves_backup_dir: saves, device: &device, now: unix_now(), min_age: why.min_age_secs(), fraction: Some(&fraction) };
     let reports = sync::run_services(
         &mut services,
         &|id| store::record_of(&record_file, id),
@@ -206,6 +207,11 @@ fn pass_job(config_dir: &Path, saves: &Path, why: Why, ctl: &Ctl) -> PassOutcome
             })
             .collect(),
     }
+}
+
+/// How far a running pass's copying is, when it has started copying.
+fn running_fraction() -> Option<f32> {
+    RUNTIME.with(|r| r.borrow().running.as_ref().and_then(|r| r.job.fraction()))
 }
 
 /// What a running pass is doing, for the status page.
@@ -379,7 +385,9 @@ fn status_page_now(app: &AppState) -> Page<Act> {
     let record = store::record_of(&record_path(&app.paths.config_dir), SERVICE);
     let running = running_text();
     let lines = if signed { view::status_lines(&Status { service: SERVICE, record: &record, now: unix_now(), offset_secs: utc_offset(), running: running.as_deref() }) } else { vec![view::problem_text(SERVICE, ErrorKind::SignedOut)] };
-    view::status_page(&account, lines, running.is_some() && signed, !signed)
+    let page = view::status_page(&account, lines, running.is_some() && signed, !signed);
+    // While a pass runs: how far its copying is (a moving bar while it checks and looks).
+    if running.is_some() && signed { page.with_progress(running_fraction()) } else { page }
 }
 
 fn show_status(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
@@ -689,7 +697,10 @@ fn copy_job(setup: &Setup, config_dir: &Path, saves: &Path, signin: &str, files:
         // What the download learns goes into the record as entries added to it (under the store's lock), never as the
         // whole part: an upload pass may be writing the same file.
         let mut added = cloud::record::ServiceRecord::default();
-        let result = restore::download_one(service.as_mut(), &file, saves, &mut added, unix_now(), &mut |_, _| {});
+        ctl.set_fraction(i as f32 / total.max(1) as f32);
+        let result = restore::download_one(service.as_mut(), &file, saves, &mut added, unix_now(), &mut |done, all| {
+            ctl.set_fraction((i as f32 + if all == 0 { 1.0 } else { done as f32 / all as f32 }) / total.max(1) as f32);
+        });
         let stop = matches!(&result, Err(DownloadError::Service(e)) if !e.kind.retries_by_itself() || e.kind == ErrorKind::Offline);
         if result.is_ok() {
             if let Err(e) = store::add_uploaded(&record_file, &tokens_file, SERVICE, signin, added.uploaded) {
@@ -710,7 +721,7 @@ fn tick_copying(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
         let progress = if s.cancelling.get() { "Stopping after this file...".to_string() } else { job.progress() };
         if s.ticks.get() % 4 == 0 {
             if let Some(h) = s.handle.borrow().as_ref() {
-                h.update(view::copying_back_page(&s.copying_label.borrow(), &progress));
+                h.update(view::copying_back_page(&s.copying_label.borrow(), &progress).with_progress(job.fraction()));
             }
         }
         return;

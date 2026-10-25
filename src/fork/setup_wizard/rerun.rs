@@ -116,15 +116,17 @@ pub struct StepLine {
 }
 
 impl StepLine {
-    /// The line with its mark, as the page shows it.
-    pub fn marked(&self) -> String {
-        let mark = match self.state {
-            State::Done => "\u{2713}",
-            State::Pending => "\u{2192}",
-            // Nothing to do now: no mark, the words say it ("none ready yet").
-            State::Waiting => return format!("   {}", self.text),
-        };
-        format!("{mark} {}", self.text)
+    /// The mark drawn before the line: done; skipped on purpose; waiting on Steam or on a first start; else still to
+    /// do (what "Finish what's left" visits).
+    pub fn mark(&self) -> crate::fork::page::Mark {
+        use crate::fork::page::Mark;
+        match self.state {
+            State::Done => Mark::Done,
+            State::Waiting => Mark::Waiting,
+            State::Pending if self.text.ends_with(": skipped") || self.text.contains(": skipped,") => Mark::Skipped,
+            State::Pending if self.text.contains("waiting for Steam") => Mark::Waiting,
+            State::Pending => Mark::ToDo,
+        }
     }
 }
 
@@ -270,9 +272,15 @@ mod tests {
             ]
         );
         assert_eq!(pending(&l), [Step::GameFiles, Step::Steam], "the ports folder and the import are never redone");
-        assert_eq!(l[0].marked(), "\u{2713} Ports folder: SD card");
-        assert_eq!(l[2].marked(), "\u{2192} Game files: no folder set yet");
-        assert_eq!(l[4].marked(), "   Old copies: 4 kept, none ready yet");
+        use crate::fork::page::Mark;
+        assert_eq!(l[0].mark(), Mark::Done, "Ports folder: SD card");
+        assert_eq!(l[2].mark(), Mark::ToDo, "Game files: no folder set yet");
+        assert_eq!(l[3].mark(), Mark::Waiting, "Steam: 4 waiting for Steam to close");
+        assert_eq!(l[4].mark(), Mark::Waiting, "Old copies: 4 kept, none ready yet");
+        let skipped = StepLine { step: Step::GameFiles, state: State::Pending, text: "Game files: skipped, no folder set".into() };
+        assert_eq!(skipped.mark(), Mark::Skipped);
+        let skipped2 = StepLine { step: Step::YourPorts, state: State::Pending, text: "Your ports: skipped".into() };
+        assert_eq!(skipped2.mark(), Mark::Skipped);
         assert!(old_copies_waiting(&l));
     }
 

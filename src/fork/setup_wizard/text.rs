@@ -7,6 +7,7 @@
 
 use super::flow::{Action, Mode, SteamOutcome, Step, View, Wizard};
 use super::places::{Kind, QuickChoice};
+use crate::fork::page::Mark;
 pub use crate::fork::page::{Focus, EXTRA, LEFT, RIGHT};
 #[cfg(test)]
 pub use crate::fork::page::MIDDLE;
@@ -160,7 +161,9 @@ fn overview_page(w: &Wizard, ctx: &Context) -> Page {
     let lines = ctx.overview.clone().unwrap_or_default();
     let pending = super::rerun::pending(&lines);
     let mut p = uncounted(page(w, "Your setup"));
-    p.facts = lines.iter().map(super::rerun::StepLine::marked).collect();
+    for line in &lines {
+        p.fact(line.mark(), line.text.clone());
+    }
     if pending.is_empty() {
         p.paragraphs = paras(&["Everything is set up. Nothing needs doing now."]);
         p.options = vec![recommended("Close the wizard", "", Action::SkipSetup), option("Change a step...", "Do one step again", Action::ChangeStep)];
@@ -478,7 +481,9 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
     let s = &w.summary;
     // A rerun says how everything stands now, not only what this run did.
     if let (Mode::Rerun, Some(lines)) = (w.mode, &ctx.overview) {
-        p.facts = lines.iter().map(super::rerun::StepLine::marked).collect();
+        for line in lines {
+            p.fact(line.mark(), line.text.clone());
+        }
         if super::rerun::old_copies_waiting(lines) {
             p.paragraphs = vec![super::rerun::START_EACH_ONCE.to_string()];
         }
@@ -510,11 +515,29 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
             (removed, kept) => format!("{} removed, {kept} kept.", copies(removed)),
         });
     }
+    // A mark before each line: the place is always set; the others say done, skipped, waiting or still to do.
+    p.marks = p.facts.iter().enumerate().map(|(i, f)| if i == 0 { Mark::Done } else { done_line_mark(f) }).collect();
     p.footnote = "Anything you skipped can be done later from Settings. Run setup again from Settings > Setup wizard.".to_string();
     p.options = vec![recommended("Finish", "", Action::Finish)];
     nav(&mut p, w);
     start_on_the_recommended(&mut p);
     p
+}
+
+/// The mark of a line of the first run's last page, from its words (they are this file's own).
+fn done_line_mark(line: &str) -> Mark {
+    let l = line.to_lowercase();
+    if l.contains("could not") || l.contains("problem") {
+        Mark::Problem
+    } else if l.contains("skipped") {
+        Mark::Skipped
+    } else if l.contains("waiting") || l.contains("until each port has been checked") {
+        Mark::Waiting
+    } else if l.contains("not looked") || l.contains("not set up") || l.contains("no game files folder") || l.contains("not in steam yet") || l.contains("still miss") {
+        Mark::ToDo
+    } else {
+        Mark::Done
+    }
 }
 
 fn copies(n: usize) -> String {
@@ -902,10 +925,12 @@ mod tests {
         w.summary.skipped = vec![Step::YourPorts, Step::GameFiles, Step::Steam];
         let p = page_for(&w, &ctx());
         assert_eq!(p.facts, ["Ports go to internal storage.", "Your ports: skipped.", "Game files folder: skipped.", "Steam: skipped."]);
+        assert_eq!(p.marks, [Mark::Done, Mark::Skipped, Mark::Skipped, Mark::Skipped]);
         let p = pg(Step::Done);
         assert_eq!(p.facts[1], "Your ports: not looked for.");
         assert_eq!(p.facts[2], "No game files folder yet.");
         assert_eq!(p.facts[3], "Steam: not set up yet.");
+        assert_eq!(&p.marks[1..4], [Mark::ToDo, Mark::ToDo, Mark::ToDo], "not done yet, not skipped");
         // Where the ports go is told by kind, never by path.
         let mut c = ctx();
         c.ports_folder = "/run/media/deck/SD512/Ports".into();
@@ -1157,14 +1182,9 @@ mod tests {
         assert_eq!((p.title.as_str(), p.window_title.as_str()), ("Your setup", "Setup wizard: your setup"));
         assert_eq!(
             p.facts,
-            [
-                "\u{2713} Ports folder: SD card",
-                "\u{2713} Your ports: 4 moved in",
-                "\u{2192} Game files: no folder set yet",
-                "\u{2192} Steam: 4 waiting for Steam to close",
-                "   Old copies: 4 kept, none ready yet",
-            ]
+            ["Ports folder: SD card", "Your ports: 4 moved in", "Game files: no folder set yet", "Steam: 4 waiting for Steam to close", "Old copies: 4 kept, none ready yet"]
         );
+        assert_eq!(p.marks, [Mark::Done, Mark::Done, Mark::ToDo, Mark::Waiting, Mark::Waiting], "drawn marks, no text glyphs");
         assert!(p.paragraphs.contains(&crate::fork::setup_wizard::rerun::START_EACH_ONCE.to_string()));
         assert_eq!(option_actions(&p), [Action::FinishLeft, Action::ChangeStep]);
         assert_eq!(p.options[0].detail, "Game files, Steam");
@@ -1208,7 +1228,7 @@ mod tests {
         w.mode = Mode::Rerun;
         let p = page_for(&w, &Context { overview: Some(tims_lines()), ..ctx() });
         assert_eq!(p.facts.len(), 5);
-        assert_eq!(p.facts[3], "\u{2192} Steam: 4 waiting for Steam to close");
+        assert_eq!((p.facts[3].as_str(), p.mark_of(3)), ("Steam: 4 waiting for Steam to close", Mark::Waiting));
         assert_eq!(option_actions(&p), [Action::Finish]);
     }
 

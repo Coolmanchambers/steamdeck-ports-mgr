@@ -102,7 +102,9 @@ anything and run setup again later. All the pages, Import ports and the old copi
 window that changes its content; B usually lands on the choice you were on. The bar along the bottom of each page says
 what the buttons do there ("A Choose · B Back · D-pad Move", or what B does instead, such as "B Cancel"). The
 choice the cursor is on has a thick white ring; "Recommended" is a small tag on the suggested choice. One press of A
-or B acts once even when Steam also types Enter or Escape for it. Other screens it hands over to (the
+or B acts once even when Steam also types Enter or Escape for it. In big mode and in Game Mode the pages fill the
+screen with no title bar. The summary lines carry small coloured marks (done, still to do, waiting, skipped,
+problem), and copying, moving and scanning pages show a bar of how far they are. Other screens it hands over to (the
 folder picker, Settings > Game files) open on their own and the wizard window comes back after them.
 
 1. **Where should ports go?** With an SD card in, it is offered first ("Recommended", a `Ports` folder on it),

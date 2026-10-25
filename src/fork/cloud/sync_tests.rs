@@ -28,7 +28,7 @@ fn zip_at(dir: &Path, rel: &str, content: &[u8], age: u64) -> Vec<u8> {
 }
 
 fn input(dir: &Path) -> PassInput<'_> {
-    PassInput { saves_backup_dir: dir, device: DEVICE, now: NOW, min_age: 60 }
+    PassInput { saves_backup_dir: dir, device: DEVICE, now: NOW, min_age: 60, fraction: None }
 }
 
 fn pass(service: &mut dyn CloudService, rec: &mut ServiceRecord, dir: &Path) -> PassReport {
@@ -49,6 +49,23 @@ fn new_zips_are_uploaded_newest_first_and_recorded() {
     assert_eq!((rec.last_ok, rec.last_upload, rec.last_error), (Some(NOW), Some(NOW), None));
     assert_eq!(fake.files[&(DEVICE.to_string(), "Update Backups/soh/s1.zip".to_string())], fs::read(dir.join("Update Backups/soh/s1.zip")).unwrap());
     assert_eq!(rec.uploaded["Update Backups/soh/s1.zip"].sha256, sha256_hex(&fs::read(dir.join("Update Backups/soh/s1.zip")).unwrap()));
+}
+
+#[test]
+fn the_upload_says_how_far_it_is_and_ends_full() {
+    let dir = temp_dir("fraction");
+    zip_at(&dir, "Global Backups/a.zip", b"one", 7_200);
+    zip_at(&dir, "Update Backups/soh/s1.zip", b"two", 3_600);
+    let (mut fake, mut rec) = (FakeService::new(), ServiceRecord::default());
+    let seen = std::cell::RefCell::new(Vec::new());
+    let tell = |f: f32| seen.borrow_mut().push(f);
+    let input = PassInput { fraction: Some(&tell), ..input(&dir) };
+    let report = run_pass(&mut fake, &mut rec, &input, &|| false, &mut |_| {}, &mut |_| {});
+    assert_eq!(report.uploaded, 2);
+    let seen = seen.into_inner();
+    assert_eq!(seen.first(), Some(&0.0));
+    assert!(seen.windows(2).all(|w| w[0] <= w[1]), "never goes back: {seen:?}");
+    assert!(seen.iter().all(|f| (0.0..=1.0).contains(f)));
 }
 
 #[test]

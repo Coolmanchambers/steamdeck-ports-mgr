@@ -593,6 +593,10 @@ pub(crate) fn build_setup_wizard_dialog(app: &Rc<AppState>, router: &Router) -> 
     let (x, y) = (x.clamp(wx, (wx + work_w - dw).max(wx)), y.clamp(wy, (wy + work_h - dh).max(wy)));
     let dialog = SetupWizardDialog::new().ok()?;
     style_dialog!(dialog, app, fonts);
+    // Fork (polish): in big mode and in Game Mode the page fills the screen, with no title bar.
+    let full = big || crate::fork::steam_queue::game_mode_from_env();
+    let (dw, dh, x, y) = if full { (work_w, work_h, wx, wy) } else { (dw, dh, x, y) };
+    dialog.set_full(full);
     position_dialog!(dialog, app, dw, dh, x, y);
     Some(dialog)
 }

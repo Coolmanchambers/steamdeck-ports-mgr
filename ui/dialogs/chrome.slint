@@ -229,7 +229,8 @@ export component DialogChrome inherits Rectangle {
     border-width: border-px;
     border-color: Theme.border-color;
 
-    DialogTitleBar {
+    // Fork: a dialog drawn full screen (the guided pages in big mode) has no title bar at all.
+    if root.bar-height > 0px: DialogTitleBar {
         title: root.dialog-title;
         bar-height: root.bar-height;
         title-font-px: root.title-font-px;

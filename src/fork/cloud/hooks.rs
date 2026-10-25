@@ -132,7 +132,7 @@ mod tests {
             write_zip(&path, "a.sav", rel.as_bytes());
             set_mtime(&path, NOW - 10);
             let (mut fake, mut rec) = (FakeService::new(), ServiceRecord::default());
-            let input = PassInput { saves_backup_dir: &dir, device: "deck", now: NOW, min_age: why.min_age_secs() };
+            let input = PassInput { saves_backup_dir: &dir, device: "deck", now: NOW, min_age: why.min_age_secs(), fraction: None };
             let report = run_pass(&mut fake, &mut rec, &input, &|| false, &mut |_| {}, &mut |_| {});
             assert!(report.uploaded >= 1 && fake.uploads().iter().any(|u| u.ends_with(rel)), "{why:?}: {report:?}");
             let timer = PassInput { min_age: Why::Safety.min_age_secs(), ..input };

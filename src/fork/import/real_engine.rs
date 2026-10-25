@@ -98,6 +98,7 @@ impl MoveEngine for RealEngine {
                 if percent != last_percent.get() {
                     last_percent.set(percent);
                     (ctx.progress)(format!("copying, {} of {}", human_bytes(done), human_bytes(total)));
+                    (ctx.fraction)(percent as f32 / 100.0);
                 }
             };
             match prepare(&port_ref, &request.from, &request.to, &env, &options, &mut progress, ctx.cancel) {

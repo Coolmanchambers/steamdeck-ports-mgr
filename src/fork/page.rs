@@ -71,6 +71,56 @@ impl<A> Tile<A> {
     }
 }
 
+/// A mark drawn before a line of the summary box: what state that thing is in. Drawn as a small picture (a check, a
+/// clock, a dash, an exclamation mark), never a text character, so it cannot fall back to an empty box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mark {
+    #[default]
+    None,
+    /// Set and finished.
+    Done,
+    /// Still to do: the user can do it now.
+    ToDo,
+    /// Waiting on something else (Steam to close, a first start).
+    Waiting,
+    /// Skipped on purpose.
+    Skipped,
+    /// Something went wrong or needs a look.
+    Problem,
+}
+
+impl Mark {
+    /// The number the window draws by (0 none, 1 done, 2 to do, 3 waiting, 4 skipped, 5 problem).
+    pub fn code(self) -> i32 {
+        match self {
+            Mark::None => 0,
+            Mark::Done => 1,
+            Mark::ToDo => 2,
+            Mark::Waiting => 3,
+            Mark::Skipped => 4,
+            Mark::Problem => 5,
+        }
+    }
+}
+
+/// A progress bar under the summary box: how far in thousandths, when the work knows, or a moving bar when it
+/// does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    Part(u16),
+    Busy,
+}
+
+impl Progress {
+    /// 0 to 1 for the window (`None` for the moving bar).
+    pub fn fraction(self) -> Option<f32> {
+        match self {
+            Progress::Part(p) => Some(f32::from(p.min(1000)) / 1000.0),
+            Progress::Busy => None,
+        }
+    }
+}
+
 /// A text box in the page (a link to paste, a name to filter by): what it shows when empty, and what it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputBox {
@@ -95,6 +145,10 @@ pub struct Page<A> {
     pub paragraphs: Vec<String>,
     /// Lines of the summary box (what is set, what was found).
     pub facts: Vec<String>,
+    /// The mark before each line of `facts` (missing ones are `Mark::None`).
+    pub marks: Vec<Mark>,
+    /// A progress bar under the summary box.
+    pub progress: Option<Progress>,
     pub card: Option<Card>,
     /// A text box under the text. It is the first thing the cursor can be on; Down or A leaves it for the choices.
     pub input: Option<InputBox>,
@@ -125,6 +179,8 @@ impl<A> Default for Page<A> {
             title: String::new(),
             paragraphs: Vec::new(),
             facts: Vec::new(),
+            marks: Vec::new(),
+            progress: None,
             card: None,
             input: None,
             tiles: Vec::new(),
@@ -164,6 +220,24 @@ impl<A> Page<A> {
 }
 
 impl<A> Page<A> {
+    /// A bar showing how far the work is: `Some(fraction)` when it knows, `None` for a moving bar.
+    pub fn with_progress(mut self, fraction: Option<f32>) -> Page<A> {
+        self.progress = Some(fraction.map_or(Progress::Busy, |f| Progress::Part(if f.is_finite() { (f.clamp(0.0, 1.0) * 1000.0).round() as u16 } else { 0 })));
+        self
+    }
+
+    /// Adds a line to the summary box with its mark.
+    pub fn fact(&mut self, mark: Mark, text: impl Into<String>) {
+        self.marks.resize(self.facts.len(), Mark::None);
+        self.facts.push(text.into());
+        self.marks.push(mark);
+    }
+
+    /// The mark of line `i` of the summary box.
+    pub fn mark_of(&self, i: usize) -> Mark {
+        self.marks.get(i).copied().unwrap_or_default()
+    }
+
     /// Says what B does on this page, for the hint bar ("Cancel", "Keep them").
     pub fn b_means(mut self, words: impl Into<String>) -> Page<A> {
         self.back_hint = words.into();
@@ -486,6 +560,27 @@ mod tests {
         assert_eq!(focus_at(&bare, down), Some(Focus::Button(LEFT)));
         assert_eq!(move_focus(&bare, down, 0, -1), 0, "up from the footer reaches the box when there is nothing between");
     }
+    #[test]
+    fn summary_lines_keep_their_marks_even_after_unmarked_ones() {
+        let mut p = Page::<Act>::default();
+        p.facts.push("plain".into());
+        p.fact(Mark::Done, "Ports folder: SD card");
+        p.fact(Mark::Problem, "Steam: could not be read");
+        assert_eq!(p.facts.len(), 3);
+        assert_eq!((p.mark_of(0), p.mark_of(1), p.mark_of(2), p.mark_of(9)), (Mark::None, Mark::Done, Mark::Problem, Mark::None));
+        assert_eq!((Mark::None.code(), Mark::Done.code(), Mark::Problem.code()), (0, 1, 5));
+    }
+
+    #[test]
+    fn a_progress_bar_knows_its_part_or_moves() {
+        assert_eq!(Page::<Act>::default().with_progress(Some(0.25)).progress, Some(Progress::Part(250)));
+        assert_eq!(Progress::Part(250).fraction(), Some(0.25));
+        assert_eq!(Page::<Act>::default().with_progress(Some(7.0)).progress, Some(Progress::Part(1000)));
+        assert_eq!(Progress::Busy.fraction(), None);
+        assert_eq!(Page::<Act>::default().with_progress(None).progress, Some(Progress::Busy));
+        assert_eq!(Page::<Act>::default().progress, None);
+    }
+
     #[test]
     fn the_hint_bar_names_a_b_and_the_d_pad_and_what_b_does_here() {
         let bar = |parts: &[&str]| parts.join(HINT_GAP);

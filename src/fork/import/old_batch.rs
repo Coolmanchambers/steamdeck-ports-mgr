@@ -10,7 +10,7 @@
 //! asks about each port that waits for a first start, one card at a time.
 
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::page::{Card, Focus, Page, PageButton, PageOption};
+use crate::fork::page::{Card, Focus, Mark, Page, PageButton, PageOption};
 use crate::fork::port_mover::old_copies::{OldCopy, Readiness};
 use crate::fork::rom_screens::util::{ellipsize, human_bytes};
 use crate::fork::screens::short_path;
@@ -37,6 +37,16 @@ impl Checked {
             (_, r) if !r.is_ready() => format!("{}: {}", self.copy.name, r.line()),
             (Err(why), _) => format!("{} stays: {}", self.copy.name, ellipsize(why, 90)),
             (Ok(_), r) => format!("{}: {}", self.copy.name, r.line()),
+        }
+    }
+
+    /// The mark before the status line: ready to remove, waiting for Steam, start it once, or kept by a check.
+    fn status_mark(&self) -> Mark {
+        match (&self.check, self.ready) {
+            (_, Readiness::WaitingForSteam) => Mark::Waiting,
+            (_, Readiness::StartOnce) => Mark::ToDo,
+            (Err(_), _) => Mark::Problem,
+            (Ok(_), _) => Mark::Done,
         }
     }
 
@@ -197,7 +207,9 @@ impl Batch {
         let removable = self.removable();
         let n = removable.len();
         let mut p = Page::<BatchAction> { window_title: self.origin.window_title().to_string(), large: true, header: self.origin.header().to_string(), ..Page::default() };
-        p.facts = self.items.iter().map(Checked::status_line).collect();
+        for item in &self.items {
+            p.fact(item.status_mark(), item.status_line());
+        }
         p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Details".to_string(), action: BatchAction::Details });
         p.initial = Focus::Option(0);
         let one = self.items.len() == 1;
@@ -348,6 +360,7 @@ mod tests {
             p.facts,
             ["Severed Chains: Ready to remove", "Majora's Mask: Waiting for Steam to update", "Ocarina of Time: Start it once from its new place", "Twilight Princess stays: a program is running from it"]
         );
+        assert_eq!(p.marks, [Mark::Done, Mark::Waiting, Mark::ToDo, Mark::Problem], "a drawn mark for each status");
         assert_eq!(b.removable().iter().map(|c| c.copy.name.as_str()).collect::<Vec<_>>(), ["Severed Chains"]);
         assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [BatchAction::Keep, BatchAction::Remove, BatchAction::Confirm]);
         assert_eq!(b.to_confirm().iter().map(|c| c.copy.name.as_str()).collect::<Vec<_>>(), ["Ocarina of Time"]);

@@ -28,7 +28,7 @@ use crate::fork::setup_wizard::ports_pages::{self, FolderAction};
 use crate::fork::setup_wizard::progress::{progress_page, ProgressAction};
 use super::state::AppState;
 use crate::fork::folder_picker::{PickerRequest, Purpose};
-use crate::fork::import::engine::{move_selected, GameFileChoice, ImportSummary, Prompter};
+use crate::fork::import::engine::{move_selected_with, GameFileChoice, ImportSummary, Prompter};
 use crate::fork::import::fallback;
 use crate::fork::import::folders::{AddOutcome, ScanFolders};
 use crate::fork::import::plan::{build_requests, plan_all_with, steam_write_mode, MoveRequest, PlanGuards, PortPlan};
@@ -297,6 +297,8 @@ struct JobView {
     text: RefCell<String>,
     cancel_row: Cell<usize>,
     weak: RefCell<Option<slint::Weak<crate::ListPickerDialog>>>,
+    /// How far the work is, when the worker knows (the import's copy); a moving bar otherwise (looking for ports).
+    fraction: Cell<Option<f32>>,
     /// In the setup wizard the progress is a page, drawn again as the lines change.
     page: RefCell<Option<super::page_dialog::PageHandle<ProgressAction>>>,
     page_mode: Cell<bool>,
@@ -323,7 +325,7 @@ fn progress_sentence(title: &str) -> &'static str {
 fn progress_page_of(view: &JobView) -> crate::fork::page::Page<ProgressAction> {
     let label = if view.cancelling.get() { "Cancelling" } else { view.cancel_label };
     let step = if super::setup_wizard_screen::active() { 2 } else { 0 };
-    progress_page(view.title, progress_sentence(view.title), step, &view.text.borrow(), label, view.cancelling.get())
+    progress_page(view.title, progress_sentence(view.title), step, &view.text.borrow(), label, view.cancelling.get()).with_progress(view.fraction.get())
 }
 
 /// The progress as a wizard page: Cancel stops the work (the copy in progress is removed), B closes the page like
@@ -543,6 +545,7 @@ pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, sp
         cancel_row: Cell::new(0),
         weak: RefCell::new(None),
         page: RefCell::new(None),
+        fraction: Cell::new(None),
         page_mode: Cell::new(false),
         pending_reply: RefCell::new(None),
     });
@@ -621,9 +624,11 @@ pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, sp
                 return;
             }
             let text = job.progress();
-            if text.is_empty() || text == *view.text.borrow() {
+            let fraction = job.fraction();
+            if text.is_empty() || (text == *view.text.borrow() && fraction == view.fraction.get()) {
                 return;
             }
+            view.fraction.set(fraction);
             *view.text.borrow_mut() = text.clone();
             view.cancel_row.set(job_rows(&text, view.cancel_label).len() - 1);
             if view.page_mode.get() {
@@ -954,7 +959,7 @@ fn run_import(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: &Rc<RefCel
             leave: Some(back.clone()),
             prompts: Some(prompter),
             is_import: true,
-            work: Box::new(move |ctl| move_selected(engine.as_ref(), plans, ctl.flag(), &|t| ctl.set_progress(t), &worker_prompter)),
+            work: Box::new(move |ctl| move_selected_with(engine.as_ref(), plans, ctl.flag(), &|t| ctl.set_progress(t), &|f| ctl.set_fraction(f), &worker_prompter)),
         },
         move |app, router, result| {
             for k in &keys {

@@ -79,6 +79,8 @@ pub struct MoveContext<'a> {
     pub cancel: &'a AtomicBool,
     /// Says what the engine is doing now ("copying", "checking the copy"), shown after the port's name.
     pub progress: &'a dyn Fn(String),
+    /// How far the copy of this port is, 0 to 1, when the engine knows (a progress bar).
+    pub fraction: &'a dyn Fn(f32),
     pub prompts: &'a dyn Prompter,
 }
 
@@ -160,6 +162,12 @@ fn finished_text(outcome: &PortOutcome) -> &'static str {
 /// `cancel` is looked at before each port; the engine may also watch it inside a port (the copy stops and
 /// is removed). An engine can set it (the user chose Cancel at a prompt) to stop the ports after it.
 pub fn move_selected(engine: &dyn MoveEngine, plans: Vec<PortPlan>, cancel: &AtomicBool, publish: &dyn Fn(String), prompts: &dyn Prompter) -> ImportSummary {
+    move_selected_with(engine, plans, cancel, publish, &|_| {}, prompts)
+}
+
+/// [`move_selected`], also saying how far the whole import is (0 to 1) as each port is copied.
+pub fn move_selected_with(engine: &dyn MoveEngine, plans: Vec<PortPlan>, cancel: &AtomicBool, publish: &dyn Fn(String), whole: &dyn Fn(f32), prompts: &dyn Prompter) -> ImportSummary {
+    let count = plans.len().max(1) as f32;
     let board = RefCell::new(Board { names: plans.iter().map(|p| p.request.port_name.clone()).collect(), status: vec![Status::Waiting; plans.len()] });
     publish(board.borrow().render());
     let mut summary = ImportSummary { dry_run: engine.is_dry_run(), items: Vec::new(), cancelled: false };
@@ -172,15 +180,18 @@ pub fn move_selected(engine: &dyn MoveEngine, plans: Vec<PortPlan>, cancel: &Ato
         }
         board.borrow_mut().status[i] = Status::Working(String::new());
         publish(board.borrow().render());
+        whole(i as f32 / count);
+        let fraction = |f: f32| whole((i as f32 + f.clamp(0.0, 1.0)) / count);
         let progress = |note: String| {
             board.borrow_mut().status[i] = Status::Working(note);
             publish(board.borrow().render());
         };
-        let outcome = engine.move_port(&MoveContext { plan: &plan, cancel, progress: &progress, prompts });
+        let outcome = engine.move_port(&MoveContext { plan: &plan, cancel, progress: &progress, fraction: &fraction, prompts });
         board.borrow_mut().status[i] = Status::Finished(finished_text(&outcome).into());
         summary.items.push(SummaryItem { plan, outcome });
     }
     publish(board.borrow().render());
+    whole(1.0);
     summary
 }
 
@@ -413,6 +424,18 @@ mod tests {
             let steam = if ctx.plan.steam.is_empty() { SteamResult::NoShortcut } else { SteamResult::Repointed(ctx.plan.steam.len()) };
             PortOutcome::Moved { steam, notes: Vec::new() }
         }
+    }
+
+    #[test]
+    fn the_whole_import_reports_how_far_it_is_from_0_to_1() {
+        let h = fake_home("engine_fraction");
+        let seen = RefCell::new(Vec::new());
+        move_selected_with(&DryRunEngine, plans(&h, None), &NO_CANCEL, &|_| {}, &|f| seen.borrow_mut().push(f), &NoPrompts);
+        let seen = seen.into_inner();
+        assert_eq!(seen.first(), Some(&0.0));
+        assert_eq!(seen.last(), Some(&1.0));
+        assert!(seen.windows(2).all(|w| w[0] <= w[1]), "never goes back: {seen:?}");
+        assert!(seen.contains(&0.5), "the second of two ports starts half way: {seen:?}");
     }
 
     #[test]

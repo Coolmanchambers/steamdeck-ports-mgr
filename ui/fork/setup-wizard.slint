@@ -53,6 +53,102 @@ export struct WizardCard {
     lines: [string],
 }
 
+// A line of the summary box and the mark before it: 0 none, 1 done, 2 to do, 3 waiting, 4 skipped, 5 problem
+// (fork::page::Mark::code).
+export struct WizardFact {
+    text: string,
+    mark: int,
+}
+
+// The mark itself: a small drawn picture in a coloured disc, so it can never fall back to an empty box the way a
+// text character (a check mark, an arrow) can in a font that lacks it.
+component StatusIcon inherits Rectangle {
+    in property <int> mark: 0;
+    property <color> ink: SemanticColors.text-on-accent;
+    width: 20px;
+    height: 20px;
+    border-radius: self.width / 2;
+    background: root.mark == 1 ? SemanticColors.success
+        : root.mark == 2 ? SemanticColors.info.darker(0.3)
+        : root.mark == 3 ? SemanticColors.warning
+        : root.mark == 5 ? SemanticColors.danger
+        : Theme.search-text;
+    // Done: a check.
+    if root.mark == 1: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 27 52 L 44 69 L 74 34";
+        stroke: root.ink;
+        stroke-width: root.width * 0.12;
+        fill: transparent;
+    }
+    // To do: an arrow pointing on.
+    if root.mark == 2: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 26 50 L 72 50 M 54 32 L 72 50 L 54 68";
+        stroke: root.ink;
+        stroke-width: root.width * 0.12;
+        fill: transparent;
+    }
+    // Waiting: a clock.
+    if root.mark == 3: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 50 24 L 50 52 L 68 62";
+        stroke: root.ink;
+        stroke-width: root.width * 0.12;
+        fill: transparent;
+    }
+    // Skipped: a dash.
+    if root.mark == 4: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 28 50 L 72 50";
+        stroke: root.ink;
+        stroke-width: root.width * 0.12;
+        fill: transparent;
+    }
+    // Problem: an exclamation mark.
+    if root.mark == 5: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 50 24 L 50 56 M 50 70 L 50 76";
+        stroke: root.ink;
+        stroke-width: root.width * 0.13;
+        fill: transparent;
+    }
+}
+
+// How far the work is: filled up to `value` (0 to 1), or a block sliding along when `busy` (no total known).
+component ProgressBar inherits Rectangle {
+    in property <bool> busy: false;
+    in property <float> value: 0;
+    background: Theme.search-background;
+    border-width: 1px;
+    border-color: Theme.border-color;
+    border-radius: self.height / 2;
+    clip: true;
+    property <float> phase: Math.mod(animation-tick() / 1ms, 1600) / 1600;
+    Rectangle {
+        x: root.busy ? (root.width * 1.35) * root.phase - root.width * 0.35 : 0px;
+        width: root.busy ? root.width * 0.35 : root.width * max(0, min(1, root.value));
+        height: 100%;
+        border-radius: root.height / 2;
+        background: SemanticColors.info;
+    }
+}
+
 // A cover with its name under it. `focus` is the focus number when the tile can be chosen (-1: shown only).
 export struct WizardTile {
     image: image,
@@ -378,7 +474,12 @@ export component SetupWizardDialog inherits Window {
     in property <int> step-index: 0;
     in property <string> page-title: "";
     in property <[string]> paragraphs: [];
-    in property <[string]> facts: [];
+    in property <[WizardFact]> facts: [];
+    // A progress bar under the summary box: 0 none, 1 how far (`progress-value`, 0 to 1), 2 a moving bar.
+    in property <int> progress-kind: 0;
+    in property <float> progress-value: 0;
+    // Fills the screen (big mode, Game Mode): no title bar, no X, wider margins, the step counter beside the title.
+    in property <bool> full: false;
     // One port shown big (the Import ports cards), and a row of covers (found ports, ports to move).
     in property <bool> large: false;
     in property <bool> has-card: false;
@@ -432,7 +533,7 @@ export component SetupWizardDialog inherits Window {
     property <length> title-font-px: title-font-px-physical / Theme.scale-factor;
     property <length> bar-height: title-bar-height-physical / Theme.scale-factor;
     property <length> row-height: row-height-physical / Theme.scale-factor;
-    property <length> gutter: 14px / Theme.scale-factor;
+    property <length> gutter: (root.full ? 30px : 14px) / Theme.scale-factor;
     property <length> spacing: 8px / Theme.scale-factor;
     property <length> button-padding: 18px / Theme.scale-factor;
     // The Import ports cards read from further away: bigger text, taller choices, bigger covers.
@@ -540,7 +641,9 @@ export component SetupWizardDialog inherits Window {
 
         chrome := DialogChrome {
             dialog-title: root.dialog-title;
-            bar-height: root.bar-height;
+            // Full screen: no title bar and no X (B and the hint bar say how to leave).
+            bar-height: root.full ? 0px : root.bar-height;
+            closable: !root.full;
             title-font-px: root.title-font-px;
             border-px: root.border-px;
             logical-w: root.width - root.border-px * 2;
@@ -548,7 +651,9 @@ export component SetupWizardDialog inherits Window {
             close-requested => { root.exit-requested(); }
 
             property <length> inner-w: chrome.content-width - root.gutter * 2;
-            property <length> header-h: root.item-font-px * 1.7;
+            // Full screen drops the header line: the counter sits at the right of the title instead.
+            property <length> header-h: root.full ? 0px : root.item-font-px * 1.7;
+            property <string> corner-text: root.step-text != "" ? root.step-text : root.header-text;
             property <length> title-h: root.item-font-px * 2.2;
             property <length> footer-y: chrome.content-height - root.hint-h - root.gutter - root.row-height;
             property <length> body-y: root.gutter + self.header-h + root.bar-thickness + root.spacing * 2 + self.title-h;
@@ -558,7 +663,7 @@ export component SetupWizardDialog inherits Window {
             property <length> middle-x: root.gutter + self.left-w + (root.left-text == "" ? 0px : root.spacing);
             property <length> extra-x: self.middle-x + self.middle-w + (root.middle-text == "" ? 0px : root.spacing);
 
-            Text {
+            if !root.full: Text {
                 x: root.gutter;
                 y: root.gutter;
                 width: chrome.inner-w * 0.6;
@@ -570,7 +675,7 @@ export component SetupWizardDialog inherits Window {
                 vertical-alignment: center;
                 overflow: elide;
             }
-            Text {
+            if !root.full: Text {
                 x: root.gutter + chrome.inner-w * 0.6;
                 y: root.gutter;
                 width: chrome.inner-w * 0.4;
@@ -597,12 +702,24 @@ export component SetupWizardDialog inherits Window {
             Text {
                 x: root.gutter;
                 y: root.gutter + chrome.header-h + root.bar-thickness + root.spacing * 1.5;
-                width: chrome.inner-w;
+                width: root.full ? chrome.inner-w * 0.66 : chrome.inner-w;
                 height: chrome.title-h;
                 text: root.page-title;
                 color: Theme.list-text;
                 font-size: root.item-font-px * 1.5;
                 font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.full: Text {
+                x: root.gutter + chrome.inner-w * 0.66;
+                y: root.gutter + chrome.header-h + root.bar-thickness + root.spacing * 1.5;
+                width: chrome.inner-w * 0.34;
+                height: chrome.title-h;
+                text: chrome.corner-text;
+                color: Theme.search-text;
+                font-size: root.item-font-px;
+                horizontal-alignment: right;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -639,13 +756,31 @@ export component SetupWizardDialog inherits Window {
                             y: root.gutter * 0.7;
                             width: parent.width - root.gutter * 1.6;
                             spacing: root.spacing * 0.5;
-                            for f in root.facts: Text {
-                                text: f;
-                                color: Theme.list-text;
-                                font-size: root.body-font;
-                                wrap: word-wrap;
+                            for f in root.facts: HorizontalLayout {
+                                spacing: root.body-font * 0.5;
+                                if f.mark > 0: VerticalLayout {
+                                    alignment: start;
+                                    padding-top: root.body-font * 0.12;
+                                    StatusIcon {
+                                        mark: f.mark;
+                                        width: root.body-font * 1.1;
+                                        height: root.body-font * 1.1;
+                                    }
+                                }
+                                Text {
+                                    text: f.text;
+                                    color: Theme.list-text;
+                                    font-size: root.body-font;
+                                    wrap: word-wrap;
+                                    horizontal-stretch: 1;
+                                }
                             }
                         }
+                    }
+                    if root.progress-kind > 0: ProgressBar {
+                        height: root.body-font * 0.8;
+                        busy: root.progress-kind == 2;
+                        value: root.progress-value;
                     }
                     input-box := Rectangle {
                         height: root.has-input ? root.option-height : 0px;
