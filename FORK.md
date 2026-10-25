@@ -395,9 +395,10 @@ Tim, 2026-10-25, after his Deck test of Home: "we need an add new port button, b
   one-line summary that is cheap to read (Ports: place and count; Steam: changes waiting; Saves: age of the newest
   "Back up saves now" zip and the cloud state; Updates: version and whether update checks are on). A group's page has its
   actions as cards; the two switches (Check for updates, Discord) show On or Off and flip in place. B goes up one level
-  (group page, Settings, Home). Groups: Ports (Add a port, Ports you already have [Import ports], Ports folder, Game files, Library
-  [upstream's word, opens the ports folder]), Steam (Add to Steam, Artwork sources), Saves (Save Backup [upstream's word],
-  Restore saves, Cloud backup), App (Setup wizard, Themes, Language, Files, Discord), Updates (Check for updates, Update the
+  (group page, Settings, Home). Groups: Ports (Add a port, Ports you already have [Import ports], Ports folder, Game files, Open the ports folder
+  [upstream's "Library"]), Steam (Add to Steam, Artwork sources), Saves (Back up saves now [upstream's "Save Backup"],
+  Restore saves, Cloud backup; in English the two renamed cards use the plain names, in another language upstream's
+  translation: `plain_or_translated`), App (Setup wizard, Themes, Language, Files, Discord), Updates (Check for updates, Update the
   app now [Force update], Version). All 17 entries of the old list are there, each in exactly one group (a unit test), with
   the old guards: Back up saves, Restore saves and Update the app now refuse while a restore runs, and
   `setup_wizard_screen::resume_instead_of_menu` still sends a Back out of a screen the wizard opened back to the wizard.

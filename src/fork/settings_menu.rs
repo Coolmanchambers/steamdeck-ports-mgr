@@ -226,6 +226,12 @@ pub fn place_name(kind: Option<crate::fork::setup_wizard::places::Kind>) -> Opti
     }
 }
 
+/// The title of a card whose upstream word is vaguer than ours: in English (the translated label is still the English one)
+/// our plain words, in any other language the translation.
+pub fn plain_or_translated(translated: &str, english: &str, plain: &str) -> String {
+    if translated == english { plain.to_string() } else { translated.to_string() }
+}
+
 /// Whole days from `then` to `now` (seconds since 1970); 0 when the clock reads earlier.
 pub fn days_ago(then: i64, now: i64) -> u64 {
     (now.saturating_sub(then).max(0) / 86_400) as u64
@@ -301,11 +307,11 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::ImportPorts => plain("Ports you already have", "Import ports: find them on this Deck and move them in"),
         Entry::PortsFolder => Card { title: "Ports folder".into(), detail: f.ports_place.clone().unwrap_or_else(|| "Where your ports are kept".to_string()), switch: None },
         Entry::GameFiles => plain("Game files", "Connect your game files to the ports that need them"),
-        Entry::OpenPortsFolder => plain(&l.library, "Show the ports folder in the file manager"),
+        Entry::OpenPortsFolder => plain(&plain_or_translated(&l.library, "Library", "Open the ports folder"), "Show the ports folder in the file manager"),
         Entry::AddToSteam if f.steam_waiting > 0 => Card { title: "Add to Steam".into(), detail: format!("{} waiting for Steam to close", count(f.steam_waiting, "change", "changes")), switch: None },
         Entry::AddToSteam => plain("Add to Steam", "Shortcuts and art for your ports"),
         Entry::ArtSources => plain("Artwork sources", "Where covers and pictures come from"),
-        Entry::BackupSaves => plain(&l.backup_saves, "Back up every port's saves now"),
+        Entry::BackupSaves => plain(&plain_or_translated(&l.backup_saves, "Save Backup", "Back up saves now"), "Back up every port's saves now"),
         Entry::RestoreSaves => plain("Restore saves", "Put an earlier backup back"),
         Entry::CloudBackup => plain(
             "Cloud backup",
@@ -552,7 +558,13 @@ mod tests {
         assert_eq!(ports.header, "Reglages");
         assert_eq!(ports.options[1].title, "Ports you already have", "the Add a port card says the same");
         assert!(ports.options[1].detail.contains("Import ports"));
-        assert_eq!(ports.options[4].title, "Bibliotheque");
+        assert_eq!(ports.options[4].title, "Bibliotheque", "another language: upstream's translation");
+        // English keeps the plain names (the translated label is still upstream's English word).
+        let en = Labels::english("1");
+        assert_eq!(group_page(Group::Ports, &en, &f).options[4].title, "Open the ports folder");
+        assert_eq!(group_page(Group::Saves, &en, &f).options[0].title, "Back up saves now");
+        assert_eq!(plain_or_translated("Library", "Library", "Open the ports folder"), "Open the ports folder");
+        assert_eq!(plain_or_translated("Bibliothèque", "Library", "Open the ports folder"), "Bibliothèque");
         assert_eq!(group_page(Group::Saves, &l, &f).options[0].title, "Sauvegarde");
     }
 

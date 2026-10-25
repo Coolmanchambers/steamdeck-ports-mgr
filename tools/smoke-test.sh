@@ -306,6 +306,10 @@ if [ "$alive" = yes ]; then
             if [ -n "$imp" ]; then
                 xdotool windowfocus "$imp" 2>/dev/null; sleep 0.3; xdotool key Escape
                 for _wait in $(seq 1 15); do [ -z "$(xdotool search --name "^Import ports: " 2>/dev/null)" ] && break; sleep 0.2; done
+                # Import ports was opened from Settings > Ports: leaving it comes back to that page.
+                sleep 1
+                check "leaving Import ports returns to the Ports page of Settings" '[ -n "$(xdotool search --name "^Settings: Ports$" 2>/dev/null)" ]'
+                close_settings
                 xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
             fi
             # Settings > Steam > Artwork sources opens and shows its rows, and its Back row returns to the Steam page.

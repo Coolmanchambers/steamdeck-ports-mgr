@@ -112,9 +112,9 @@ All ports. The top line shows the cloud backup status (when you are signed in) a
 
 | Group | Cards |
 |---|---|
-| Ports | Add a port, Ports you already have (Import ports), Ports folder, Game files, Library (opens the ports folder) |
+| Ports | Add a port, Ports you already have (Import ports), Ports folder, Game files, Open the ports folder |
 | Steam | Add to Steam, Artwork sources |
-| Saves | Save Backup (Backup Saves), Restore saves, Cloud backup |
+| Saves | Back up saves now (Backup Saves), Restore saves, Cloud backup |
 | App | Setup wizard, Themes, Language, Files, Discord Rich Presence (On or Off) |
 | Updates | Check for Updates (On or Off), Update the app now (Force update), Version |
 

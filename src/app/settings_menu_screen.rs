@@ -108,7 +108,8 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
         Entry::OpenPortsFolder => crate::core::launch::open_folder(&app.paths.library_dir()),
         Entry::PortsFolder => super::ports_folder_screen::open_menu(app, router),
         Entry::AddToSteam => super::steam_screens::open_steam_screen(app, router),
-        Entry::ImportPorts => super::import_screen::open(app, router, false),
+        // Leaving Import ports (B, the end of an import, a notice) comes back to the Ports page.
+        Entry::ImportPorts => super::import_screen::open_back_to(app, router, Rc::new(|app, router| open_group(app, router, Group::Ports))),
         Entry::GameFiles => super::rom_screens::open_game_files(app, router),
         Entry::ArtSources => super::art_screens::open_art_sources(app, router),
         Entry::BackupSaves => start_save_backup(app, router),
