@@ -294,6 +294,7 @@ fn the_overview_line_reads_on_after_the_colon_without_breaking_names_and_numbers
     assert_eq!(words("3 icons show nothing for A"), "Steam icons: 3 icons show nothing for A");
     assert_eq!(words("SoH is fine"), "Steam icons: SoH is fine", "not a word of ours: left alone");
     assert_eq!(words("All fine"), "Steam icons: all fine");
+    assert_eq!(words("Steam still starts the old copy of A"), "Steam icons: Steam still starts the old copy of A", "Steam is a name");
     assert_eq!(words("A"), "Steam icons: A");
     assert_eq!(pages::line(Check::Updates, &Outcome::Unknown("x".into())), "Updates: could not check (x)");
 }

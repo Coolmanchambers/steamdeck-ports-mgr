@@ -51,7 +51,7 @@ pub fn line(check: Check, outcome: &Outcome) -> String {
     let words = outcome.words();
     let first: String = words.chars().take_while(|c| c.is_alphabetic()).collect();
     let plain_word = first.chars().next().is_some_and(char::is_uppercase) && first.chars().skip(1).all(char::is_lowercase) && first.chars().count() > 1;
-    let words = if plain_word && !words.starts_with("Update ready") { words.chars().flat_map(|c| c.to_lowercase()).take(1).chain(words.chars().skip(1)).collect() } else { words };
+    let words = if plain_word && !words.starts_with("Update ready") && !words.starts_with("Steam") { words.chars().flat_map(|c| c.to_lowercase()).take(1).chain(words.chars().skip(1)).collect() } else { words };
     format!("{}: {}", check.title(), words)
 }
 
