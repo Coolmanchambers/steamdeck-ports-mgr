@@ -290,12 +290,12 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     // Fork: a Return or Escape that echoes a controller A or B just acted on is dropped; Escape's Close waits a
     // moment for a B (crate::fork::press_echo).
     window.on_activate_requested(with!(app, router => move || if fork::press_echo::key(fork::press_echo::Press::Choose) { activate_selection(&app, &router) }));
-    window.on_escape_pressed(with!(app => move || {
+    window.on_escape_pressed(with!(app, router => move || {
         let window = app.window();
-        // Leaving the Deck-ready list is undone by nothing: it acts at once, and an echo of a pad B is dropped.
+        // Leaving the Deck-ready list (back to Home) is undone by nothing: it acts at once, and an echo of a pad B is dropped.
         if window.get_deck_ready_mode() {
             if fork::press_echo::key(fork::press_echo::Press::Back) {
-                window.invoke_deck_ready_toggle_requested();
+                app::home_screen::back(&app, &router);
             }
             return;
         }

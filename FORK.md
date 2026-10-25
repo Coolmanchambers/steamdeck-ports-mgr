@@ -246,7 +246,7 @@ Files added by this fork:
 | 2026-10-25 | `ui/app-window.slint` | Home screen: imports `ui/fork/home.slint`; `home-*` properties and callbacks; `HomeView` shown instead of the port list or card grid while `home-mode` is on (both of those now also check `!home-mode`); the title says "› Home" and the big-mode hint "L1 / R1  Lists"; the footer list button's text comes from `next-list-text`; `HomeTile` exported |
 | 2026-10-25 | `src/app/state.rs` | Home screen: `home` field; `current_selected_port`, `move_selection` and `refresh_current_view` hand over to Home while it is shown (3 guards); `apply_live_mode` redraws Home for the new size; `ensure_card_images_cached` made `pub(crate)` |
 | 2026-10-25 | `src/app/cards.rs`, `src/app/install_launch.rs`, `src/main.rs`, `src/app/mod.rs` | Home screen: `load_cached_card_image` made `pub(crate)`; `activate_selection` hands over to Home; `home` field initialised; one module line |
-| 2026-10-25 | `src/app/gamepad_target.rs` | Home screen: L1/R1 go round the lists (Home, All ports, Deck-ready); B in the Deck-ready list goes on to Home |
+| 2026-10-25 | `src/app/gamepad_target.rs` | Home screen: L1/R1 go round the lists (Home, All ports, Deck-ready); B in the Deck-ready list goes back to Home in both modes (`home_screen::back`) |
 | 2026-10-25 | `src/core/jobs.rs` | Home review: `run_update_check_result` tells a failed check (rate limit, no network) from "no update"; `run_update_check` and the private `update_available` now go through it (same behaviour for Play); 1 test |
 | 2026-10-25 | `src/app/install_launch.rs` | Home review: Play's "is the update check due" test is `fork::home::update_check_due`, the one the home screen uses too (same rule) |
 | 2026-10-25 | `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh` | Home screen: the new Slint file is linted; the smoke test checks the app opens on Home, All ports is one Tab away, Deck-ready the next, and Home after that |
@@ -364,7 +364,7 @@ The first thing the app shows (Tim, 2026-10-25: "want a better first impression 
 - **Lists**: L1/R1, Tab and the footer button go Home, All ports, Deck-ready, then Home. In big mode, where All ports
   is upstream's card grid of installed ports only, the order is Home, Deck-ready, All ports, so the next list after Home
   is one to install from; "Browse ports" goes to All ports windowed and to the Deck-ready list in big mode. All ports
-  itself is unchanged; B in the Deck-ready list goes on to Home. The search bar stays on Home: typing
+  itself is unchanged; B (and Escape) in the Deck-ready list goes back to Home in both modes (`List::back`). The search bar stays on Home: typing
   searches All ports (the app switches to it with what was typed).
 - **Buttons on Home**: A plays (or sets up on the Setup tile and the empty card), X opens Info, Y opens Settings, B does
   nothing; the hint bar says so ("A Play · X Info · D-pad Move · Y Settings · L1/R1 Lists").

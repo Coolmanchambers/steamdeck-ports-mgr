@@ -166,6 +166,15 @@ impl List {
         }
     }
 
+    /// Where B (or Escape) goes from this list: from the Deck-ready list back to Home, in both modes; elsewhere B does
+    /// nothing.
+    pub fn back(self) -> Option<List> {
+        match self {
+            List::DeckReady => Some(List::Home),
+            List::Home | List::AllPorts => None,
+        }
+    }
+
     /// Where "Browse ports" goes: a list of ports to install.
     pub fn browse(big_mode: bool) -> List {
         if big_mode { List::DeckReady } else { List::AllPorts }
@@ -303,6 +312,8 @@ mod tests {
         assert_eq!(List::AllPorts.next_in(true), List::Home);
         assert_eq!(List::Home.next_in(false), List::AllPorts);
         assert_eq!((List::browse(true), List::browse(false)), (List::DeckReady, List::AllPorts));
+        assert_eq!(List::DeckReady.back(), Some(List::Home), "B leaves Deck-ready for Home, also in big mode where next_in goes to All ports");
+        assert_eq!((List::Home.back(), List::AllPorts.back()), (None, None));
     }
 
     #[test]

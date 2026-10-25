@@ -132,6 +132,16 @@ pub(crate) fn next_list(app: &Rc<AppState>, router: &Router) {
     go_to(app, router, current_list(app).next_in(app.window().get_big_mode()));
 }
 
+/// B (and Escape) in a list: back to where `List::back` says (from the Deck-ready list to Home, in both modes).
+pub(crate) fn back(app: &Rc<AppState>, router: &Router) {
+    if dialog_is_open(app) {
+        return;
+    }
+    if let Some(to) = current_list(app).back() {
+        go_to(app, router, to);
+    }
+}
+
 /// "Browse ports" on the empty card: a list of ports to install (All ports windowed; in big mode, where All ports
 /// shows only installed ports, the Deck-ready list).
 fn browse(app: &Rc<AppState>, router: &Router) {
