@@ -90,7 +90,10 @@ pub fn launch(exe_path: &Path) -> io::Result<LaunchedProcess> {
         match Command::new(exe_path).current_dir(cwd).spawn() {
             Ok(child) => child,
             // Fork: a launcher script without its `#!` line is "not an executable format" (ENOEXEC); the shell runs it.
-            Err(e) if e.raw_os_error() == Some(8) => Command::new("sh").arg(exe_path).current_dir(cwd).spawn()?,
+            Err(e) if e.raw_os_error() == Some(8) => {
+                eprintln!("launch: {} has no #!, running it with sh", exe_path.display());
+                Command::new("sh").arg(exe_path).current_dir(cwd).spawn()?
+            }
             Err(e) => return Err(e),
         }
     } else {

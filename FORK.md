@@ -633,7 +633,7 @@ The library underneath the Add to Steam screen. Rules it enforces so a later fea
   significant words, never by an archive, a data file or a cartridge. In the shipped catalog it changes two entries
   (Severed Chains, Sega Superstars Tennis); entries with checksums are untouched. Home, the wizard and Settings > Game
   files use the one rule in `rom_library::title`. A program that is an extensionless text file named `launch`, `start`,
-  `run*` or `play*` (small, with the executable bit) counts even without `#!`, and is run through `sh`.
+  `run` or `play` (exactly these names; small, with the executable bit) counts even without `#!`, and is run through `sh`.
 - **Steam icons** (`src/fork/steam_icons.rs`, page in `src/app/steam_icons_screen.rs`, opened from the "Fix Steam icons..."
   row of Settings > Add to Steam). `diagnose` lists each Steam shortcut (all accounts) whose program is inside an installed
   port's folder (longest folder wins) with the state of its `icon` field; `plan` picks, for each one that shows nothing, the

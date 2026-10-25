@@ -240,7 +240,16 @@ fn a_launcher_script_that_lost_its_shebang_still_counts_when_named_like_one() {
     let launch = put(&dir, "launch", b"cd \"$(dirname \"$0\")\"\nexec jdk/bin/java -jar x.jar\n");
     put(&dir, "jdk/bin/java", &pie_program());
     assert_eq!(autodetect_executable(&dir).unwrap(), launch, "a text file named launch, with the bit, is a launcher");
-    for (name, bytes) in [("data", b"just notes\n".as_slice()), ("start.txt", b"text\n"), ("startup-log", b"text\n"), ("play", b"\x00\x01binary")] {
+    for (name, bytes) in [
+        ("data", b"just notes\n".as_slice()),
+        ("start.txt", b"text\n"),
+        ("startup-log", b"text\n"),
+        ("play", b"\x00\x01binary"),
+        ("start_here", b"Read this first.\n"),
+        ("run_me", b"notes\n"),
+        ("play_notes", b"notes\n"),
+        ("run-game", b"notes\n"),
+    ] {
         let d = temp_dir(&format!("not_launcher_{name}"));
         put(&d, name, bytes);
         assert!(!is_linux_program(&d.join(name)), "{name}");
@@ -248,7 +257,10 @@ fn a_launcher_script_that_lost_its_shebang_still_counts_when_named_like_one() {
     let big = temp_dir("big_start");
     put(&big, "start", &vec![b'a'; 70_000]);
     assert!(!is_linux_program(&big.join("start")), "a big text file named start is data");
-    assert!(launcher_name("run-game") && launcher_name("Launch") && !launcher_name("launcher.sh") && !launcher_name("running"));
+    assert!(launcher_name("Launch") && launcher_name("RUN") && launcher_name("play") && launcher_name("start"));
+    for no in ["run-game", "run_me", "start_here", "play_notes", "launcher.sh", "running", "launch2"] {
+        assert!(!launcher_name(no), "{no}");
+    }
 }
 
 #[test]

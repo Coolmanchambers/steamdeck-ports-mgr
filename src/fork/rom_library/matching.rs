@@ -172,7 +172,7 @@ fn regions(s: &str) -> Vec<&'static str> {
 
 /// A title-only alternative against a file: the file is a game image (a disc image when the entry described one) and
 /// its name has every significant word of the title. The same rule Home uses (`rom_library::title`).
-fn title_words_basis(alt: &Alt, file: &RomFile, name: &str) -> Option<Basis> {
+fn title_words_basis(alt: &Alt, file: &RomFile, name: &str, files: &[RomFile]) -> Option<Basis> {
     use super::title::{is_disc_image_extension, is_game_image_extension, needs_cue, significant_words, stem_has_words};
     if !alt.title_only || !is_game_image_extension(&file.ext) {
         return None;
@@ -180,15 +180,25 @@ fn title_words_basis(alt: &Alt, file: &RomFile, name: &str) -> Option<Basis> {
     if !alt.ext_hint.is_empty() && !is_disc_image_extension(&file.ext) {
         return None;
     }
-    if needs_cue(&file.ext) {
+    // An `.img` is a disc only next to its cue sheet (same folder, same name), as on Home.
+    if needs_cue(&file.ext) && !files.iter().any(|f| f.ext == "cue" && f.path.parent() == file.path.parent() && f.path.file_stem() == file.path.file_stem()) {
         return None;
     }
     stem_has_words(file_stem(name), &significant_words(&alt.display)).then_some(Basis::NameTitle)
 }
 
-fn name_basis(alt: &Alt, file: &RomFile) -> Option<Basis> {
+fn name_basis(alt: &Alt, file: &RomFile, files: &[RomFile]) -> Option<Basis> {
     if !extension_fits(alt, file) && alt.tokens.is_empty() {
         return None;
+    }
+    // A title-only entry is satisfied only by a game image (not an archive or a data file; an `.img` only with its cue
+    // sheet), whichever rule below matches the name.
+    if alt.title_only {
+        use super::title::{is_game_image_extension, needs_cue};
+        let has_cue = || files.iter().any(|f| f.ext == "cue" && f.path.parent() == file.path.parent() && f.path.file_stem() == file.path.file_stem());
+        if !is_game_image_extension(&file.ext) || (needs_cue(&file.ext) && !has_cue()) {
+            return None;
+        }
     }
     // A described disc ("The Legend of Dragoon .iso") is satisfied by a disc image of any kind, never by a cartridge.
     if !alt.ext_hint.is_empty() && !super::title::is_disc_image_extension(&file.ext) {
@@ -223,7 +233,7 @@ fn name_basis(alt: &Alt, file: &RomFile) -> Option<Basis> {
         }
         return Some(Basis::NameTitle);
     }
-    title_words_basis(alt, file, &file_name)
+    title_words_basis(alt, file, &file_name, files)
 }
 
 fn file_name_without_ext(name: &str) -> String {
@@ -325,7 +335,7 @@ fn status_for_slot(slot: &Slot, files: &[RomFile]) -> SlotStatus {
                 crc_hits.push((file, basis));
                 continue;
             }
-            if let Some(basis) = name_basis(alt, file) {
+            if let Some(basis) = name_basis(alt, file, files) {
                 // A name match against a requirement that lists checksums, none of which the file has.
                 if alt.crc32.is_empty() && alt.sha1.is_empty() {
                     name_hits.push((file, basis));
@@ -843,5 +853,16 @@ mod tests {
         let dir = temp_dir();
         write(&dir.path().join("The Legend of Dragoon.z64"), &random_bytes(41, 4000));
         assert_eq!(match_port("k", "SC", &spec(text), &scan_dir(dir.path())).status, PortStatus::Unverifiable, "a disc was described, a cartridge is not one");
+    }
+
+    #[test]
+    fn an_img_matches_a_title_only_with_its_cue_sheet_beside_it() {
+        let text = "Required files: Crash Team Racing";
+        let dir = temp_dir();
+        write(&dir.path().join("Crash Team Racing.img"), &random_bytes(50, 3000));
+        assert_eq!(match_port("k", "C", &spec(text), &scan_dir(dir.path())).status, PortStatus::Unverifiable, "an .img alone is not a disc");
+        write(&dir.path().join("Crash Team Racing.cue"), b"FILE \"Crash Team Racing.img\" BINARY\n");
+        let m = match_port("k", "C", &spec(text), &scan_dir(dir.path()));
+        assert!(matches!(m.slots[0].status, SlotStatus::Found(_)), "{:#?}", m.slots);
     }
 }

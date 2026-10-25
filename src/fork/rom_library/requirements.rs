@@ -947,7 +947,8 @@ mod tests {
                 described.push(name.to_string());
             }
         }
-        assert!(described.len() <= 4 && described.iter().any(|n| n.contains("Severed-Chains")), "{described:?}");
+        described.sort();
+        assert_eq!(described, ["Sega Superstars Tennis (Sega-Superstars-Tennis-ReMatch)", "The Legend of Dragoon (Severed-Chains)"], "a third entry written like this needs a look");
     }
 
     #[test]

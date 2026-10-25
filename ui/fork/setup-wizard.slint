@@ -815,16 +815,19 @@ export component SetupWizardDialog inherits Window {
                         font-size: root.body-font;
                         wrap: word-wrap;
                     }
+                    // The box is sized by its own layout (no height written here): a wrapped line only reports its real
+                    // height once the layout has given it its width, so a height computed from outside came out short
+                    // and the last lines ran under the choices below.
                     if root.facts.length > 0: Rectangle {
                         background: Theme.search-background;
                         border-width: root.border-px;
                         border-color: Theme.border-color;
-                        height: facts-layout.preferred-height + root.gutter * 1.6;
-                        facts-layout := VerticalLayout {
+                        VerticalLayout {
                             alignment: start;
-                            x: root.gutter * 0.8;
-                            y: root.gutter * 0.7;
-                            width: parent.width - root.gutter * 1.6;
+                            padding-left: root.gutter * 0.8;
+                            padding-right: root.gutter * 0.8;
+                            padding-top: root.gutter * 0.7;
+                            padding-bottom: root.gutter * 0.7;
                             spacing: root.spacing * 0.5;
                             for f in root.facts: HorizontalLayout {
                                 spacing: root.body-font * 0.5;

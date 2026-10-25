@@ -81,16 +81,13 @@ pub fn is_program_content(path: &Path) -> bool {
     }
 }
 
-/// Names a launcher script can have without an extension (`launch`, `start`, `run`, `run-game`, `play`...).
+/// The names a launcher script can have without an extension: exactly these four, in any case. `start_here`, `run_me`
+/// or `play_notes` are notes (the executable bit is always set on exFAT) and are never run on their own.
 fn launcher_name(name: &str) -> bool {
-    if name.contains('.') {
-        return false;
-    }
-    let lower = name.to_lowercase();
-    ["launch", "start", "run", "play"].iter().any(|p| lower == *p || lower.starts_with(&format!("{p}-")) || lower.starts_with(&format!("{p}_")))
+    ["launch", "start", "run", "play"].iter().any(|p| name.eq_ignore_ascii_case(p))
 }
 
-/// A launcher script that lost its `#!` line: an extensionless file named like a launcher (`launch`, `start`, `run*`)
+/// A launcher script that lost its `#!` line: an extensionless file named exactly `launch`, `start`, `run` or `play`
 /// whose first bytes are plain text (no NUL, valid UTF-8 up to a cut character) and that is small. Tim's Severed
 /// Chains folder has a top-level `launch` with no extension, and some zip tools drop the first line; run directly
 /// such a file fails, so the launcher hands it to `sh`.
