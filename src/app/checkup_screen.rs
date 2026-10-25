@@ -95,6 +95,8 @@ struct Session {
     /// The fix that is open now, and how many ports its problem was about (to tell "one of several done" from "nothing").
     fix: RefCell<Option<Fix>>,
     fix_ports: Cell<usize>,
+    /// What went wrong while a fix ran (a shortcut Steam has not finished setting up), shown on the page after it.
+    notes: RefCell<Vec<String>>,
     /// The fix is being opened right now: a menu it opens must show, not hand control back.
     entering: Cell<bool>,
     quiet: Cell<u32>,
@@ -466,6 +468,7 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router) {
         order_results: RefCell::new(None),
         fix: RefCell::new(None),
         fix_ports: Cell::new(0),
+        notes: RefCell::new(Vec::new()),
         entering: Cell::new(false),
         quiet: Cell::new(0),
         job: RefCell::new(None),
@@ -665,6 +668,7 @@ fn show_after(app: &Rc<AppState>, router: &Router) {
     let last = !order.iter().skip(s.pos.get() + 1).any(|c| s.results.borrow().outcome(*c).is_some_and(Outcome::is_problem));
     let progress = matches!(&outcome, Outcome::Problem(p) if s.fix_ports.get() > 1 && p.ports.len() < s.fix_ports.get());
     let page = pages::after_page(check, &outcome, s.pos.get() + 1, order.len(), last, progress);
+    let page = pages::with_notes(page, &std::mem::take(&mut *s.notes.borrow_mut()));
     show(app, router, &s, Stage::After, page);
 }
 
@@ -730,14 +734,29 @@ fn repoint(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, keys: &[String]
     let steam = crate::fork::store::SystemSteamCheck::new();
     let ctx = SteamCtx { home: &home, config_dir: &app.paths.config_dir, settings: &settings, steam: &steam, game_mode: steam_queue::game_mode_from_env(), now: std::time::SystemTime::now() };
     let mut queued = 0;
+    let mut notes = Vec::new();
     for key in keys {
         let name = port_by_key(app, key).map_or_else(|| key.clone(), |p| p.display_name().to_string());
-        for r in records.iter().filter(|r| r.switched && r.port_key == *key) {
+        // Only a copy whose switch was made and whose new folder is there.
+        for r in records.iter().filter(|r| r.switched && r.port_key == *key && r.new_path.is_dir()) {
             let report = repoint_everywhere(key, &name, &r.old_path, &r.new_path, &ctx);
             eprintln!("checkup: repoint {name}: wrote {}, queued {}, left alone {}, failed {}", report.changed_count(), report.queued.len(), report.skipped.len(), report.failed.len());
             queued += report.queued.len();
+            // The record learns of it the way a move's does: when it was written, so only a Steam start after it counts as the
+            // new copy's; or that it is queued, so the queue's apply stamps the time.
+            if report.changed_count() > 0 || !report.queued.is_empty() {
+                let at = chrono::Utc::now().timestamp();
+                if let Err(e) = old_copies::note_repoint(&app.paths.config_dir, &r.old_path, !report.queued.is_empty(), at) {
+                    eprintln!("checkup: could not note the repoint in the old copy's record ({e})");
+                }
+            }
+            for (shortcut, why) in &report.skipped {
+                notes.push(if why == crate::fork::port_mover::steam::NO_APP_ID { format!("Steam has not finished setting up {shortcut}; open and quit Steam once, then try again.") } else { format!("{shortcut} was left alone: {why}.") });
+            }
+            notes.extend(report.failed.iter().cloned());
         }
     }
+    *s.notes.borrow_mut() = notes;
     if queued > 0 {
         hand_off(app, router, s, Fix::CloseSteam);
     } else {

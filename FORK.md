@@ -472,7 +472,11 @@ these in the future." Spec: `docs/design/checkup-wizard.md` in the project folde
   old copy; Fix problems can point it at the new one") and its icon is repaired like any other. A record whose switch was cut short
   (`switched` false) does not count. **Point Steam at the new copy** (`Fix::Repoint`) asks first ("Its name, art, play time and launch
   options stay"), then calls `port_mover::steam::repoint_everywhere` for each such port: every account, the app ID kept, written when
-  Steam is closed, else queued as a Repoint and handed to the Close Steam flow. Add to Steam stays for "Not in Steam" only.
+  Steam is closed, else queued as a Repoint and handed to the Close Steam flow. Only a copy whose switch was made and whose new folder
+  exists is repointed. The old copy's record learns of it (`old_copies::note_repoint`: written now = the switch time, so only a Steam
+  start after it counts; queued = `repoint_queued`, the queue's apply stamps the time), and a shortcut left alone (no stored app ID)
+  is said on the page after ("Steam has not finished setting up X; open and quit Steam once, then try again"). Add to Steam stays
+  for "Not in Steam" only.
 - Upstream edits: `src/app/mod.rs` (one module line) and `tools/smoke-test.sh`.
 
 

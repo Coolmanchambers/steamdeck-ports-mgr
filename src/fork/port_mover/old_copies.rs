@@ -229,6 +229,19 @@ pub fn mark_steam_switched(config_dir: &Path, port_key: &str, from: &Path, at: i
     })
 }
 
+/// The old copy at `old_path` had its Steam shortcuts repointed some time after the move (the checkup's "Point Steam at the new
+/// copy"): written now (`queued` false) the switch time is `at`, so only a Steam start after it counts; queued, the record says so
+/// (`repoint_queued`, no time yet) and the queue's apply stamps the time (`mark_steam_switched`), as after a move with Steam open.
+pub fn note_repoint(config_dir: &Path, old_path: &Path, queued: bool, at: i64) -> io::Result<usize> {
+    update(config_dir, |e| e.old_path == old_path, |e| {
+        let (steam_at, repoint_queued) = if queued { (None, Some(true)) } else { (Some(at), e.repoint_queued) };
+        let changed = (e.steam_at, e.repoint_queued) != (steam_at, repoint_queued);
+        e.steam_at = steam_at;
+        e.repoint_queued = repoint_queued;
+        changed
+    })
+}
+
 /// The app's own launch of `port_key` from `running_from` ended after `ran_seconds`: a run long enough counts
 /// as "started from its new place" for the old copies of that port whose new copy is where it ran.
 pub fn note_launch(config_dir: &Path, port_key: &str, running_from: &Path, ran_seconds: u64, at: i64) -> io::Result<usize> {

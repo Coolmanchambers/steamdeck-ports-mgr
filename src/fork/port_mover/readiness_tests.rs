@@ -195,6 +195,40 @@ fn a_steam_start_counts_only_with_a_recorded_switch_time_and_looking_writes_noth
 
 
 #[test]
+fn a_later_repoint_resets_when_a_steam_start_counts_and_the_page_and_the_checkup_agree() {
+    let h = home();
+    let moved = local("20261024-100000") as u32;
+    // The move wrote its switch at once (so the move time would count), yet the shortcut was never switched, and the old copy was
+    // played from Steam after the move.
+    old_copies::record(&h.app, OldCopy { repoint_queued: Some(false), ..h.entry() }).unwrap();
+    h.shortcut_at(&h.old, moved + 500);
+    assert_eq!(readiness(&h.entry(), &h.view()), Readiness::WaitingForSteam, "it still starts the old copy");
+    // The checkup repoints it now: its LastPlayTime (the old copy's play) is carried to the new path, as the real write does.
+    let at = i64::from(moved) + 1_000;
+    h.shortcut_at(&h.new, moved + 500);
+    assert_eq!(old_copies::note_repoint(&h.app, &h.old, false, at).unwrap(), 1);
+    assert_eq!(h.entry().steam_at, Some(at));
+    for (name, ready) in [("the checkup", old_copies::readiness_read_only(&h.entry(), &h.home, &h.app)), ("the page", readiness_now(&h.entry(), &h.home, &h.app).unwrap())] {
+        assert_eq!(ready, Readiness::StartOnce, "{name}: a play of the OLD copy before the repoint is not the new copy's start");
+    }
+    // A Steam start after the repoint is.
+    h.shortcut_at(&h.new, (at + 100) as u32);
+    for (name, ready) in [("the checkup", old_copies::readiness_read_only(&h.entry(), &h.home, &h.app)), ("the page", readiness_now(&h.entry(), &h.home, &h.app).unwrap())] {
+        assert_eq!(ready, Readiness::Ready(StartedBy::Steam), "{name}");
+    }
+    // Queued instead (Steam running): no time yet, whatever is played; the queue's apply stamps it.
+    old_copies::record(&h.app, OldCopy { steam_at: None, repoint_queued: Some(false), ..h.entry() }).unwrap();
+    assert_eq!(old_copies::note_repoint(&h.app, &h.old, true, at).unwrap(), 1);
+    assert_eq!((h.entry().steam_at, h.entry().repoint_queued), (None, Some(true)));
+    h.shortcut_at(&h.new, (at + 100) as u32);
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::StartOnce, "not before the queue is applied");
+    mark_steam_switched(&h.app, "a/soh", &h.old, at + 200).unwrap();
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::StartOnce, "a play from before the apply");
+    h.shortcut_at(&h.new, (at + 300) as u32);
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::Ready(StartedBy::Steam));
+}
+
+#[test]
 fn a_queue_file_that_is_not_readable_is_never_moved_aside_by_looking() {
     let h = home();
     let q = steam_queue::queue_path(&h.app);

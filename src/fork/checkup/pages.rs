@@ -84,12 +84,14 @@ pub fn overview_page(results: &Results) -> CheckupPage {
     let skipped = results.skipped_count();
     let unknown = results.items.iter().filter(|(_, o)| matches!(o, Outcome::Unknown(_))).count();
     let mut p = base("Checkup");
+    let now = results.to_do_now();
     let mut text = match (n, skipped, unknown) {
         (0, 0, 0) => "Everything looks fine.".to_string(),
         (0, 0, _) => "Everything I could check looks fine.".to_string(),
         (0, s, _) => format!("Nothing new to fix. {s} skipped earlier."),
-        (1, _, _) => "I found 1 thing to fix.".to_string(),
-        (n, _, _) if results.to_do_now() == n => format!("I found {n} things to fix."),
+        (1, _, _) if now == 1 => "I found 1 thing to fix.".to_string(),
+        (n, _, _) if now == n => format!("I found {n} things to fix."),
+        (_, _, _) if now == 0 => format!("Nothing to do right now: {}.", results.split_words()),
         (n, _, _) => format!("I found {n} things to fix: {}.", results.split_words()),
     };
     if n > 0 && skipped > 0 {
@@ -192,6 +194,13 @@ pub fn after_page(check: Check, outcome: &Outcome, n: usize, total: usize, last:
         Outcome::Unknown(_) => vec![option("Check again", "", Act::CheckAgain, true), option(next, "", Act::Next, false)],
     };
     p.b_means(next)
+}
+
+/// The page with a few lines of what went wrong while the fix ran added under its title (a shortcut Steam has not finished
+/// setting up, say).
+pub fn with_notes(mut page: CheckupPage, notes: &[String]) -> CheckupPage {
+    page.paragraphs.extend(notes.iter().cloned());
+    page
 }
 
 /// The last page: how each problem the run set out to fix, and any that showed up meanwhile, stands now.

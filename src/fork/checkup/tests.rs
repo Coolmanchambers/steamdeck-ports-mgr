@@ -480,7 +480,7 @@ fn the_overview_says_skipped_and_offers_to_bring_them_back() {
     f.saves = vec![named("soh")];
     let page = pages::overview_page(&run(&f));
     assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::FixAll, Act::Unskip]);
-    assert!(page.paragraphs[0].contains("1 thing to fix") && page.paragraphs[0].contains("1 skipped earlier"));
+    assert_eq!(page.paragraphs[0], "Nothing to do right now: 1 reminder. 1 skipped earlier.");
 }
 
 #[test]
@@ -495,7 +495,7 @@ fn nudges_and_things_that_cannot_be_done_now_show_in_the_checkup_but_do_not_rais
     assert!(r.problems().iter().all(|(_, p)| p.advisory), "all three are nudges or waiting");
     assert!(r.home_tile().is_none(), "none of them raises the tile by itself");
     assert_eq!(r.summary(), "3 reminders", "but Settings' line counts them");
-    assert_eq!(pages::overview_page(&r).paragraphs, vec!["I found 3 things to fix: 3 reminders."]);
+    assert_eq!(pages::overview_page(&r).paragraphs, vec!["Nothing to do right now: 3 reminders."]);
     // A real fix next to them: the tile counts only that one.
     f.updates = vec![named("soh")];
     let tile = run(&f).home_tile().unwrap();
@@ -713,6 +713,21 @@ fn wording_of_the_game_files_and_the_settings_line() {
     f.saves = vec![named("soh")];
     assert_eq!(run(&f).summary(), "2 to do now, 1 reminder");
     assert_eq!(Check::ALL.iter().map(|c| c.key()).collect::<HashSet<_>>().len(), 10, "every check has its own key");
+}
+
+#[test]
+fn a_lone_reminder_reads_like_settings_and_a_fix_that_left_a_shortcut_alone_says_why() {
+    let mut f = fine();
+    f.saves = vec![named("soh")];
+    let r = run(&f);
+    assert_eq!(r.summary(), "1 reminder");
+    assert_eq!(pages::overview_page(&r).paragraphs, vec!["Nothing to do right now: 1 reminder."]);
+    f.updates = vec![named("soh")];
+    assert_eq!(pages::overview_page(&run(&f)).paragraphs, vec!["I found 2 things to fix: 1 to do now, 1 reminder."]);
+    f.saves.clear();
+    assert_eq!(pages::overview_page(&run(&f)).paragraphs, vec!["I found 1 thing to fix."]);
+    let page = pages::with_notes(pages::after_page(Check::SteamShortcuts, &Outcome::Ok("x".into()), 1, 1, true, false), &["Steam has not finished setting up My Abuse; open and quit Steam once, then try again.".to_string()]);
+    assert_eq!(page.paragraphs, vec!["Steam has not finished setting up My Abuse; open and quit Steam once, then try again."]);
 }
 
 #[test]
