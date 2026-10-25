@@ -710,6 +710,7 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
     let catalog = app.catalog.borrow().clone();
     let saved_index = super::deck_ready_screen::index_for_import(app);
     let cache_dir = app.paths.cache_dir.clone();
+    let raw_catalog = crate::fork::catalog_extras::RawCatalog::load(&app.paths.config_dir.join("ports.json"));
     let choices = ctx.choices.borrow().clone();
     let extra = ctx.extra.borrow().clone();
     let (work_home, work_ports, deeper) = (home.clone(), ports.clone(), folders.look_deeper);
@@ -733,7 +734,7 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
                 let deck_ready_note = (index.is_none() && !link_first).then(|| {
                     "The Deck-ready list couldn't be loaded, so ports only on that list (like Severed Chains) aren't recognised. Connect to the internet and Scan again.".to_string()
                 });
-                let mut t = targets::build(&catalog, index.as_ref(), &work_ports);
+                let mut t = targets::build_described(&catalog, index.as_ref(), &work_ports, &raw_catalog);
                 // Projects the user added from a GitHub link stay known across scans of this screen.
                 for (port, new) in extra {
                     if !t.catalog.iter().any(|p| p.key() == port.key()) {

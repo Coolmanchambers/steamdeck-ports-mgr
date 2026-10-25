@@ -11,6 +11,7 @@
 
 use crate::core::models::{port_from_value, Port};
 use crate::fork::adopt::Hints;
+use crate::fork::catalog_extras::RawCatalog;
 use crate::fork::deck_ready::entry;
 use crate::fork::deck_ready::index::{Entry, Index};
 use crate::fork::deck_ready::view::{self, KnownPort};
@@ -47,6 +48,12 @@ fn downloads(entry: &Entry) -> impl Iterator<Item = &String> {
 
 /// The catalog alone when there is no Deck-ready list (never fetched, offline).
 pub fn build(catalog: &[Port], index: Option<&Index>, library_dir: &Path) -> Targets {
+    build_described(catalog, index, library_dir, &RawCatalog::default())
+}
+
+/// [`build`], where a project the catalog turns off (or lists under another name) takes its cover, icon and notes from
+/// the raw catalog entry for its folder.
+pub fn build_described(catalog: &[Port], index: Option<&Index>, library_dir: &Path, raw: &RawCatalog) -> Targets {
     let mut targets = Targets { catalog: catalog.to_vec(), ..Targets::default() };
     let Some(index) = index else { return targets };
     let known: Vec<KnownPort> =
@@ -63,7 +70,7 @@ pub fn build(catalog: &[Port], index: Option<&Index>, library_dir: &Path) -> Tar
         }
         let taken = |f: &str| entry::folder_taken(library_dir, targets.catalog.iter().map(|p| p.folder.as_str()), f);
         let Some(folder) = entry::folder_for(e, taken) else { continue };
-        let Some(value) = entry::local_entry(e, &view::display_name(e), &folder) else { continue };
+        let Some(value) = entry::local_entry_with(e, &view::display_name(e), &folder, raw) else { continue };
         let Ok(mut port) = port_from_value(&value) else { continue };
         port.user_managed = true;
         let key = port.key().to_string();

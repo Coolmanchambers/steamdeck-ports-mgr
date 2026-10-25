@@ -294,7 +294,9 @@ fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
     let text = format!("{}\n", view::confirm_text(&entry, &folder));
     open_confirm_dialog(app, router, format!("Add {name}?").into(), text.into(), "Add and install".into(), move |app, router| {
         // Built and checked before anything is written, so a failure leaves ports.local.json alone.
-        let Some((value, mut port)) = entry::local_entry(&entry, &name, &folder).and_then(|v| crate::core::models::port_from_value(&v).ok().map(|p| (v, p))) else {
+        // Fork: the cover, icon and notes of the catalog's entry for this folder, even when upstream turned it off.
+        let raw = crate::fork::catalog_extras::RawCatalog::load(&app.paths.config_dir.join("ports.json"));
+        let Some((value, mut port)) = entry::local_entry_with(&entry, &name, &folder, &raw).and_then(|v| crate::core::models::port_from_value(&v).ok().map(|p| (v, p))) else {
             return open_message_dialog(app, router, &name, "Nothing was added: the entry could not be built from the list.\n");
         };
         let local_json = app.paths.config_dir.join("ports.local.json");

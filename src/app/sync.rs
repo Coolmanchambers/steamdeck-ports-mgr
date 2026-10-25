@@ -89,6 +89,8 @@ pub(crate) fn start_catalog_sync(app: &AppState) {
             Ok(CatalogUpdate::Updated { text, etag }) => {
                 let Ok(remote_ports) = crate::core::config::parse_catalog(&text) else { return };
                 let mut ports = crate::core::config::merge_local_catalog(remote_ports, crate::core::config::load_local_config(&ports_local_json_path));
+                // Fork: Deck-ready entries upstream turned off keep their cover, icon and notes through a catalog update.
+                crate::fork::catalog_extras::apply(&mut ports, &crate::fork::catalog_extras::RawCatalog::parse(&text));
                 // Fork (save finder): the save folders the user chose survive a catalog update.
                 crate::fork::save_finder::apply_from_file(&mut ports, &fork_settings_path);
                 let saved = crate::core::files::write_atomic(&ports_json_path, text.as_bytes()).is_ok();

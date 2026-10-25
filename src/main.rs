@@ -65,6 +65,8 @@ fn main() {
         Vec::new()
     };
     let mut catalog = core::config::merge_local_catalog(catalog, core::config::load_local_config(&bdir.join("ports.local.json")));
+    // Fork: ports added from the Deck-ready list that upstream turned off take their cover, icon and notes from its entry.
+    fork::catalog_extras::apply(&mut catalog, &fork::catalog_extras::RawCatalog::load(&ports_json_path));
     // Fork (save finder): the save folders the user chose, where the catalog has none or a wrong one.
     fork::save_finder::apply_from_file(&mut catalog, &bdir.join(fork::settings::FILE_NAME));
 

@@ -6,6 +6,7 @@
 //! ("steamdeck", "steamos"...), not the whole name, so it still matches next version's file.
 
 use super::index::{Entry, Host, Rating};
+use crate::fork::catalog_extras::{enrich_value, RawCatalog};
 use crate::fork::adopt::{read_local_file, write_backup, AdoptError};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -60,8 +61,14 @@ pub fn folder_taken<'a>(library_dir: &Path, known_folders: impl IntoIterator<Ite
         || crate::core::path_safety::safe_join(library_dir, folder).map_or(true, |p| std::fs::symlink_metadata(p).is_ok())
 }
 
-/// The JSON entry written to `ports.local.json`.
+/// The JSON entry written to `ports.local.json`, with nothing from the catalog.
 pub fn local_entry(entry: &Entry, display_name: &str, folder: &str) -> Option<Value> {
+    local_entry_with(entry, display_name, folder, &RawCatalog::default())
+}
+
+/// [`local_entry`], plus the cover, icon, game file notes, tags and save paths of the catalog's entry for this folder
+/// when it has one, enabled or turned off (`fork::catalog_extras`).
+pub fn local_entry_with(entry: &Entry, display_name: &str, folder: &str, catalog: &RawCatalog) -> Option<Value> {
     let source = source_url(entry)?;
     let mut obj = Map::new();
     obj.insert("name".into(), json!(display_name));
@@ -73,7 +80,7 @@ pub fn local_entry(entry: &Entry, display_name: &str, folder: &str) -> Option<Va
     }
     obj.insert(
         "instructions".into(),
-        json!(format!("Added from the Deck-ready list. Game files are not included; the project page says what it needs: {source}")),
+        json!(format!("{} Game files are not included; the project page says what it needs: {source}", crate::fork::catalog_extras::GENERIC_PREFIX)),
     );
     if entry.rating == Rating::DeckBuild {
         if let Some(marker) = entry.deck_assets.iter().find_map(|f| deck_marker(f)) {
@@ -81,7 +88,11 @@ pub fn local_entry(entry: &Entry, display_name: &str, folder: &str) -> Option<Va
             obj.insert("preferred_asset".into(), json!({ "linux": marker, "windows": "" }));
         }
     }
-    Some(Value::Object(obj))
+    let mut value = Value::Object(obj);
+    if let Some(raw) = catalog.for_folder(folder) {
+        enrich_value(&mut value, raw);
+    }
+    Some(value)
 }
 
 /// Appends `value` to `ports.local.json`, backing up the old file first (`<file>.bak-<stamp>`).

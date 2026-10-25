@@ -129,6 +129,7 @@ pub fn fresh_entry(config_dir: &Path, folder: &str) -> Option<Port> {
         Vec::new()
     };
     catalog = crate::core::config::merge_local_catalog(catalog, crate::core::config::load_local_config(&config_dir.join("ports.local.json")));
+    crate::fork::catalog_extras::apply(&mut catalog, &crate::fork::catalog_extras::RawCatalog::load(&config_dir.join("ports.json")));
     apply_from_file(&mut catalog, &config_dir.join(crate::fork::settings::FILE_NAME));
     catalog.into_iter().find(|p| p.folder == folder)
 }

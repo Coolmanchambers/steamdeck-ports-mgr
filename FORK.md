@@ -256,6 +256,7 @@ Files added by this fork:
 | 2026-10-25 | `tools/smoke-test.sh`, `tools/test-app-update.sh` | Add a port and Settings pages: Settings is a page of groups, so both tests open it by the title bar button and pick a group and a card by keyboard (the Down counts are read from `src/fork/settings_menu.rs`); the smoke test also checks the plus tile opens the Add a port page and B returns, and that B goes up one level (group page, Settings) |
 | 2026-10-25 | `src/core/executable_detect.rs` | Branch `deck-fixes-3` (O9, disc images offered as programs): Linux `is_candidate` asks `fork::program_detect::is_linux_program` (`.sh`/`.AppImage` by name, otherwise executable bit AND program content: `#!` or an ELF executable, not a library); new `list_candidates` (all, shallowest folder first); `autodetect_executable` keeps only the shallowest depth that has any candidate; test helper writes a script line; tests in `fork/program_detect/tests.rs` |
 | 2026-10-25 | `src/app/install_launch.rs` | O9: "Choose an executable" saves the pick as the port's favorite executable before starting it; Info's favorite picker lists `list_candidates` (every program, shallowest first, deeper ones shown with their folder) |
+| 2026-10-25 | `src/main.rs`, `src/app/sync.rs` | Branch `deck-fixes-3`: one line each, `fork::catalog_extras::apply`, after the catalog and `ports.local.json` are merged (start-up, and a catalog update): a port added from the Deck-ready list that upstream turned off (`-name`) takes its cover, icon, notes, tags and save paths from the catalog's raw entry, in memory only |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -1421,6 +1422,14 @@ Notes:
 - **In the app** (since 2026-10-21): see "The Deck-ready list in the app" below.
 
 ## The Deck-ready list in the app
+
+- **Covers and notes for projects the catalog turns off** (`src/fork/catalog_extras.rs`). Upstream turns an entry off by
+  renaming `name` to `-name`, and `parse_catalog` drops it, but the entry keeps its `image`, `icon`, `instructions`,
+  `tags` and `save`. A port added from the Deck-ready list (Add and install, or Import ports) now copies those fields
+  from the raw `ports.json` entry with the same `folder` (never `source` or the asset choice). Entries added earlier are
+  recognised by the generic text they were given and filled in memory each time the catalog loads; nothing is written
+  to `ports.local.json`, so no backup is needed and a catalog change is followed. An entry the user described
+  (different notes) or that already has an image, icon or save folder keeps its own.
 
 A second list beside All ports. L1/R1, Tab or the footer button switch lists; in the Deck-ready list
 A installs or plays, X opens Info, Y opens its Filters and B (or Escape) goes back to All ports.
