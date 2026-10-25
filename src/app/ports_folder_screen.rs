@@ -181,6 +181,11 @@ fn job_finished() -> bool {
     false
 }
 
+/// Fork (checkup): a move of ports or the removal of an old copy is running (the checkup does not look meanwhile).
+pub(crate) fn job_running() -> bool {
+    JOB_BUSY.with(Cell::get) || MOVING.with(Cell::get)
+}
+
 /// The other startup dialogs wait while this is true.
 pub(crate) fn startup_dialog_pending() -> bool {
     STARTUP_PENDING.with(Cell::get)
@@ -224,14 +229,6 @@ pub(crate) fn startup_check(app: &Rc<AppState>, router: &Router, startup: Startu
     STARTUP_PENDING.with(|p| p.set(true));
     let (app, router) = (app.clone(), router.clone());
     slint::Timer::single_shot(Duration::from_millis(300), move || show_missing(&app, &router, false));
-}
-
-/// Fork (checkup): the switches cut short (the app closed between the ports folder setting and Steam) whose new copy is in
-/// use, by port name: what Settings > Ports folder offers to finish. A read of the records, nothing more.
-pub(crate) fn unfinished_switches(app: &AppState) -> Vec<String> {
-    let old = old_copies::load(&app.paths.config_dir).unwrap_or_default();
-    let active = RemovalParts::of(app).active;
-    old.into_iter().filter(|o| !o.switched && active.contains(&o.new_path)).map(|o| o.name).collect()
 }
 
 /// The "Ports folder not available" message (also reached from the checkup): try again, choose another, or go on.
@@ -278,7 +275,7 @@ pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
         return;
     }
     // Fork (checkup): the same for a screen the Fix problems checkup opened.
-    if super::checkup_screen::resume_instead_of_menu(app, router) {
+    if super::checkup_screen::resume_instead_of_menu(app, router, crate::fork::checkup::Menu::PortsFolder) {
         return;
     }
     let dir = app.paths.library_dir();

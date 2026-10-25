@@ -64,6 +64,22 @@ impl Check {
         }
     }
 
+    /// A stable name for the settings file ("Skip this one" is remembered by it).
+    pub fn key(self) -> &'static str {
+        match self {
+            Check::PortsFolder => "ports_folder",
+            Check::SteamWaiting => "steam_waiting",
+            Check::SteamIcons => "steam_icons",
+            Check::SteamShortcuts => "steam_shortcuts",
+            Check::Programs => "programs",
+            Check::GameFiles => "game_files",
+            Check::Saves => "saves",
+            Check::OldCopies => "old_copies",
+            Check::Updates => "updates",
+            Check::Backups => "backups",
+        }
+    }
+
     /// Needs the ports folder to be there to say anything (its icons, programs, game files and saves live in it).
     fn needs_ports_folder(self) -> bool {
         matches!(self, Check::SteamIcons | Check::Programs | Check::GameFiles | Check::Saves | Check::OldCopies)
@@ -92,6 +108,31 @@ pub enum Fix {
     Cloud,
 }
 
+/// A menu an existing screen leads back to when the user backs out of it (the checkup takes over from these).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Menu {
+    /// A group's page of Settings.
+    SettingsGroup(crate::fork::settings_menu::Group),
+    /// Settings > Ports folder.
+    PortsFolder,
+}
+
+impl Fix {
+    /// Whether the screen this fix opens leads back to `menu`, so opening that menu means "the user left the fix": come back
+    /// to the checkup. Any other menu is part of the flow (the ports folder flow handing over to Game files, say) and opens
+    /// as it always did. Like `setup_wizard::flow::menu_returns_to_wizard`.
+    pub fn returns_to(&self, menu: Menu) -> bool {
+        use crate::fork::settings_menu::Group;
+        match (self, menu) {
+            (Fix::PortsFolderGone | Fix::PortsFolderMenu | Fix::GameFiles | Fix::OldCopies, Menu::SettingsGroup(Group::Ports)) => true,
+            (Fix::Cloud, Menu::SettingsGroup(Group::Saves)) => true,
+            // The old copies list's Back row opens the Ports folder menu: that is leaving it.
+            (Fix::OldCopies, Menu::PortsFolder) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
     /// `Mark::Problem` (red) only when a game will not start; the rest are things to do or wait for.
@@ -105,6 +146,20 @@ pub struct Problem {
     pub fix: Fix,
     /// What the fix card says: "Close Steam and update shortcuts".
     pub fix_label: String,
+    /// Shown in the checkup and on Settings' card, but not worth a tile on Home by itself: nothing can be done about it
+    /// right now (Steam changes in Game Mode, an old copy still waiting) or it is a nudge (saves not found, no backup).
+    /// Red problems always count.
+    pub advisory: bool,
+    /// Finishing it needs Desktop Mode (Steam cannot be closed in Game Mode): after its page, "Next problem" leads.
+    pub desktop_only: bool,
+}
+
+impl Problem {
+    /// What "Skip this one" remembers: the line and the ports it is about. When either changes (a new port, another
+    /// state) the problem is new again.
+    pub fn fingerprint(&self) -> String {
+        format!("{}|{}", self.summary, self.ports.join(","))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,21 +167,34 @@ pub enum Outcome {
     /// Fine, with a few words ("Nothing waiting").
     Ok(String),
     Problem(Problem),
+    /// The fix was made and is waiting for Steam to close (an icon repair queued while Steam runs): not fine yet, not a
+    /// problem of its own (the Steam changes line counts it). Carries what the card to finish it says.
+    Queued { summary: String, fix_label: String, desktop_only: bool },
+    /// A problem the user chose to skip, as it stood when they did: shown as skipped, not counted.
+    Skipped(Problem),
     /// Could not look, and why ("The ports folder is not there").
     Unknown(String),
 }
 
 impl Outcome {
+    /// Something to fix that is not skipped.
     pub fn is_problem(&self) -> bool {
         matches!(self, Outcome::Problem(_))
     }
 
-    /// The mark before the line: green check, the problem's own, or a dash for "could not check".
+    /// Anything but fine: a problem, a fix still queued, a skipped problem, a check that could not run.
+    pub fn is_not_fine(&self) -> bool {
+        !matches!(self, Outcome::Ok(_))
+    }
+
+    /// The mark before the line: green check, the problem's own, a clock for a queued fix, a dash for "skipped" or
+    /// "could not check".
     pub fn mark(&self) -> Mark {
         match self {
             Outcome::Ok(_) => Mark::Done,
             Outcome::Problem(p) => p.mark,
-            Outcome::Unknown(_) => Mark::Skipped,
+            Outcome::Queued { .. } => Mark::Waiting,
+            Outcome::Skipped(_) | Outcome::Unknown(_) => Mark::Skipped,
         }
     }
 
@@ -135,9 +203,22 @@ impl Outcome {
         match self {
             Outcome::Ok(w) => w.clone(),
             Outcome::Problem(p) => p.summary.clone(),
+            Outcome::Queued { summary, .. } => summary.clone(),
+            Outcome::Skipped(p) => format!("skipped ({})", p.summary),
             Outcome::Unknown(why) => format!("could not check ({why})"),
         }
     }
+}
+
+/// What "Skip this one" remembered: the check's key and the problem's fingerprint when it was skipped.
+pub type Skips = std::collections::BTreeMap<String, String>;
+
+pub fn skips_from_json(v: Option<&serde_json::Value>) -> Skips {
+    v.and_then(serde_json::Value::as_object).map(|o| o.iter().filter_map(|(k, f)| Some((k.clone(), f.as_str()?.to_string()))).collect()).unwrap_or_default()
+}
+
+pub fn skips_to_json(s: &Skips) -> serde_json::Value {
+    serde_json::Value::Object(s.iter().map(|(k, f)| (k.clone(), serde_json::Value::String(f.clone()))).collect())
 }
 
 /// An installed port: its key and the name shown.
@@ -207,7 +288,7 @@ impl CopyState {
     fn sentence(self, name: &str) -> String {
         match self {
             CopyState::Ready => format!("The old copy of {name} can be removed"),
-            CopyState::StartOnce => format!("Start {name} once from its new place"),
+            CopyState::StartOnce => format!("Start {name} once, from here or from Steam"),
             CopyState::WaitingForSteam => format!("Steam still has to update {name}"),
             CopyState::Gone => format!("The old copy of {name} is already gone"),
         }
@@ -248,6 +329,12 @@ pub struct Facts {
     pub backup_days: Option<u64>,
     /// Cloud backup is signed in and reports a problem.
     pub cloud_problem: bool,
+    /// Cloud backup is signed in and copied saves successfully recently: saves are safe without a zip here.
+    pub cloud_ok: bool,
+    /// How many installed ports have a save folder the app knows (with files in it): what "Back up saves now" can copy.
+    pub saves_known: usize,
+    /// Problems the user chose to skip, by check (what they were when skipped).
+    pub skips: Skips,
 }
 
 impl Default for Facts {
@@ -267,6 +354,9 @@ impl Default for Facts {
             updates: Vec::new(),
             backup_days: None,
             cloud_problem: false,
+            cloud_ok: false,
+            saves_known: 0,
+            skips: Skips::new(),
         }
     }
 }
@@ -295,7 +385,15 @@ fn count(n: usize, one: &str, many: &str) -> String {
 }
 
 fn problem(mark: Mark, summary: String, ports: Vec<String>, fix: Fix, fix_label: &str) -> Outcome {
-    Outcome::Problem(Problem { mark, summary, detail: Vec::new(), ports, fix, fix_label: fix_label.to_string() })
+    Outcome::Problem(Problem { mark, summary, detail: Vec::new(), ports, fix, fix_label: fix_label.to_string(), advisory: false, desktop_only: false })
+}
+
+/// A problem that is a nudge, not something worth a tile on Home (it still counts in the checkup and Settings' line).
+fn advisory(o: Outcome) -> Outcome {
+    match o {
+        Outcome::Problem(p) => Outcome::Problem(Problem { advisory: true, ..p }),
+        other => other,
+    }
 }
 
 /// The result of every check, in [`Check::ALL`] order.
@@ -305,7 +403,7 @@ pub struct Results {
 }
 
 pub fn run(f: &Facts) -> Results {
-    Results { items: Check::ALL.into_iter().map(|c| (c, check(c, f))).collect() }
+    Results { items: Check::ALL.into_iter().map(|c| (c, check(c, f))).collect() }.with_skips(&f.skips)
 }
 
 impl Results {
@@ -313,13 +411,35 @@ impl Results {
         self.items.iter().find(|(c, _)| *c == check).map(|(_, o)| o)
     }
 
-    /// The checks with something to fix, in order.
+    /// A problem the user skipped, as it stood then, shows as skipped for as long as it reads the same. Anything that
+    /// changed it (another port, another state) makes it a problem again.
+    pub fn with_skips(mut self, skips: &Skips) -> Results {
+        for (c, o) in &mut self.items {
+            if let Outcome::Problem(p) = o {
+                if skips.get(c.key()).is_some_and(|f| *f == p.fingerprint()) {
+                    *o = Outcome::Skipped(p.clone());
+                }
+            }
+        }
+        self
+    }
+
+    /// The checks with something to fix (not skipped), in order.
     pub fn problems(&self) -> Vec<(Check, &Problem)> {
         self.items.iter().filter_map(|(c, o)| if let Outcome::Problem(p) = o { Some((*c, p)) } else { None }).collect()
     }
 
     pub fn problem_count(&self) -> usize {
         self.items.iter().filter(|(_, o)| o.is_problem()).count()
+    }
+
+    pub fn skipped_count(&self) -> usize {
+        self.items.iter().filter(|(_, o)| matches!(o, Outcome::Skipped(_))).count()
+    }
+
+    /// The problems that raise Home's tile: red ones, and those with a fix that works right now.
+    pub fn home_problems(&self) -> Vec<(Check, &Problem)> {
+        self.problems().into_iter().filter(|(_, p)| p.mark == Mark::Problem || !p.advisory).collect()
     }
 
     /// A game will not start (red): the ports folder is missing, or a game file the catalog names is.
@@ -331,24 +451,28 @@ impl Results {
         self.items.iter().filter(|(_, o)| matches!(o, Outcome::Unknown(_))).count()
     }
 
-    /// The line Settings shows on its card: "2 problems", "Everything looks fine".
+    /// The line Settings shows on its card: "6 things to fix", "Everything looks fine".
     pub fn summary(&self) -> String {
+        let skipped = match self.skipped_count() {
+            0 => String::new(),
+            n => format!(", {n} skipped"),
+        };
         match self.problem_count() {
-            0 if self.unknown_count() > 0 => format!("Looks fine ({} could not be checked)", self.unknown_count()),
-            0 => "Everything looks fine".to_string(),
-            1 => "1 problem".to_string(),
-            n => format!("{n} problems"),
+            0 if self.unknown_count() > 0 => format!("Looks fine ({} could not be checked){skipped}", self.unknown_count()),
+            0 => format!("Everything looks fine{skipped}"),
+            1 => format!("1 thing to fix{skipped}"),
+            n => format!("{n} things to fix{skipped}"),
         }
     }
 
-    /// The tile Home shows: "Fix 2 problems" and what is first; `None` when there is nothing to fix.
+    /// The tile Home shows: "Fix 2 problems" and which check comes first; `None` when no problem is red or has a fix that
+    /// works now.
     pub fn home_tile(&self) -> Option<HomeTile> {
-        let problems = self.problems();
+        let problems = self.home_problems();
         let first = problems.first()?;
         let n = problems.len();
         let title = if n == 1 { "Fix 1 problem".to_string() } else { format!("Fix {n} problems") };
-        let note = if n == 1 { first.0.title().to_string() } else { format!("{} and {} more", first.0.title(), n - 1) };
-        Some(HomeTile { title, note, mark: if self.any_red() { Mark::Problem } else { Mark::ToDo } })
+        Some(HomeTile { title, note: first.0.title().to_string(), mark: if problems.iter().any(|(_, p)| p.mark == Mark::Problem) { Mark::Problem } else { Mark::ToDo } })
     }
 }
 
@@ -356,7 +480,7 @@ impl Results {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HomeTile {
     pub title: String,
-    /// The badge line: which check, "Game files and 2 more".
+    /// The badge line: the title of the first check to fix.
     pub note: String,
     /// Red only when a game will not start.
     pub mark: Mark,
@@ -389,9 +513,12 @@ fn ports_folder(f: &Facts) -> Outcome {
         Folder::Here if !f.unfinished_moves.is_empty() => {
             problem(Mark::ToDo, format!("A move did not finish: {}", names(&f.unfinished_moves)), Vec::new(), Fix::PortsFolderMenu, "Finish the move")
         }
-        Folder::Here => Outcome::Ok("It is there".to_string()),
+        Folder::Here => Outcome::Ok("Found".to_string()),
     }
 }
+
+/// What the Steam changes line says when the list of waiting changes cannot be read (never "nothing waiting").
+pub const QUEUE_UNREADABLE: &str = "Steam's change list cannot be read";
 
 fn steam_waiting(f: &Facts) -> Outcome {
     let queue = match &f.queue {
@@ -402,20 +529,21 @@ fn steam_waiting(f: &Facts) -> Outcome {
         return Outcome::Ok("Nothing waiting".to_string());
     }
     let mut ports: Vec<String> = Vec::new();
+    let mut port_keys: Vec<String> = Vec::new();
     for q in queue {
         if !ports.contains(&q.name) {
             ports.push(q.name.clone());
         }
+        if !port_keys.contains(&q.port_key) {
+            port_keys.push(q.port_key.clone());
+        }
     }
     let label = if f.game_mode { "See how to finish this" } else { "Close Steam and update shortcuts" };
     let summary = format!("{} waiting for Steam to close: {}", count(queue.len(), "change", "changes"), names(&ports));
-    let mut keys: Vec<String> = Vec::new();
-    for q in queue {
-        if !keys.contains(&q.port_key) {
-            keys.push(q.port_key.clone());
-        }
+    match problem(Mark::Waiting, summary, port_keys, Fix::CloseSteam, label) {
+        Outcome::Problem(p) if f.game_mode => Outcome::Problem(Problem { advisory: true, desktop_only: true, ..p }),
+        other => other,
     }
-    problem(Mark::Waiting, summary, keys, Fix::CloseSteam, label)
 }
 
 /// A few words for what is wrong with an icon (no path: the step page has it); the port's name follows them.
@@ -443,9 +571,24 @@ fn steam_icons(f: &Facts) -> Outcome {
         Ok(q) => q.iter().filter(|q| q.kind == QueuedKind::Icon).map(|q| q.port_key.as_str()).collect(),
         Err(_) => HashSet::new(),
     };
-    let bad: Vec<&IconFinding> = shortcuts.iter().filter(|s| s.state.needs_fix() && !repair_queued.contains(s.port_key.as_str())).collect();
+    let all_bad: Vec<&IconFinding> = shortcuts.iter().filter(|s| s.state.needs_fix()).collect();
+    let bad: Vec<&IconFinding> = all_bad.iter().copied().filter(|s| !repair_queued.contains(s.port_key.as_str())).collect();
     if bad.is_empty() {
-        return Outcome::Ok(if shortcuts.is_empty() { "No shortcuts yet".to_string() } else { "All fine".to_string() });
+        if all_bad.is_empty() {
+            return Outcome::Ok(if shortcuts.is_empty() { "No shortcuts yet".to_string() } else { "All fine".to_string() });
+        }
+        // The repair is made and waits for Steam to close: not fixed yet, and not "all fine".
+        let mut ports: Vec<String> = Vec::new();
+        for b in &all_bad {
+            if !ports.contains(&b.port_name) {
+                ports.push(b.port_name.clone());
+            }
+        }
+        return Outcome::Queued {
+            summary: format!("Queued: finishes when Steam closes ({})", names(&ports)),
+            fix_label: if f.game_mode { "See how to finish this" } else { "Close Steam and update shortcuts" }.to_string(),
+            desktop_only: f.game_mode,
+        };
     }
     let mut ports: Vec<String> = Vec::new();
     let mut port_keys: Vec<String> = Vec::new();
@@ -460,7 +603,7 @@ fn steam_icons(f: &Facts) -> Outcome {
         many => format!("{} show nothing for {}", count(many.len(), "icon", "icons"), names(&ports)),
     };
     let detail = bad.iter().take(4).map(|b| b.describe()).collect();
-    Outcome::Problem(Problem { mark: Mark::ToDo, summary, detail, ports: port_keys, fix: Fix::SteamIcons, fix_label: "Fix the icons".to_string() })
+    Outcome::Problem(Problem { mark: Mark::ToDo, summary, detail, ports: port_keys, fix: Fix::SteamIcons, fix_label: "Fix the icons".to_string(), advisory: false, desktop_only: false })
 }
 
 fn steam_shortcuts(f: &Facts) -> Outcome {
@@ -471,21 +614,37 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
     if !f.steam_found {
         return Outcome::Unknown("Steam's folder was not found".to_string());
     }
-    let in_steam: HashSet<&str> = shortcuts.iter().map(|s| s.port_key.as_str()).collect();
-    // A port still waiting to be added is counted under "Steam changes".
-    let adding: HashSet<&str> = match &f.queue {
-        Ok(q) => q.iter().filter(|q| q.kind == QueuedKind::Add).map(|q| q.port_key.as_str()).collect(),
+    // A port with any change waiting (add, repoint, icon) is already being taken care of: counted under "Steam changes".
+    let queued: HashSet<&str> = match &f.queue {
+        Ok(q) => q.iter().map(|q| q.port_key.as_str()).collect(),
         Err(_) => HashSet::new(),
     };
+    let in_steam: HashSet<&str> = shortcuts.iter().map(|s| s.port_key.as_str()).collect();
+    // A shortcut that still starts an old copy of its port (the move's repoint never applied) is in Steam, but wrong.
+    let mut at_old: Vec<Named> = Vec::new();
+    for s in shortcuts.iter().filter(|s| s.at_old_copy && !queued.contains(s.port_key.as_str())) {
+        if !at_old.iter().any(|n| n.key == s.port_key) {
+            at_old.push(Named::new(&s.port_key, &s.port_name));
+        }
+    }
+    // Nobody asked for Steam shortcuts yet (none in Steam): not a thing to nag about.
     if in_steam.is_empty() {
-        // Nobody asked for Steam shortcuts yet: not a thing to nag about.
         return Outcome::Ok("No ports in Steam yet".to_string());
     }
-    let missing: Vec<Named> = f.installed.iter().filter(|p| !in_steam.contains(p.key.as_str()) && !adding.contains(p.key.as_str())).cloned().collect();
-    if missing.is_empty() {
+    let missing: Vec<Named> = f.installed.iter().filter(|p| !in_steam.contains(p.key.as_str()) && !queued.contains(p.key.as_str())).cloned().collect();
+    if at_old.is_empty() && missing.is_empty() {
         return Outcome::Ok("Every port is in Steam".to_string());
     }
-    problem(Mark::ToDo, format!("Not in Steam: {}", named_list(&missing)), keys(&missing), Fix::AddToSteam, "Add them to Steam")
+    let mut parts = Vec::new();
+    if !at_old.is_empty() {
+        parts.push(format!("Steam still starts the old copy of {}", named_list(&at_old)));
+    }
+    if !missing.is_empty() {
+        parts.push(format!("Not in Steam: {}", named_list(&missing)));
+    }
+    let ports: Vec<Named> = at_old.iter().chain(missing.iter()).cloned().collect();
+    let label = if at_old.is_empty() { "Add them to Steam" } else { "Update the Steam shortcuts" };
+    problem(Mark::ToDo, parts.join("; "), keys(&ports), Fix::AddToSteam, label)
 }
 
 fn programs(f: &Facts) -> Outcome {
@@ -493,7 +652,7 @@ fn programs(f: &Facts) -> Outcome {
         return Outcome::Ok("Nothing to choose".to_string());
     }
     let first = f.programs[0].clone();
-    problem(Mark::ToDo, format!("Not chosen for {}", named_list(&f.programs)), keys(&f.programs), Fix::PickProgram(first.key), "Choose the program")
+    problem(Mark::ToDo, format!("Not chosen for {}", named_list(&f.programs)), keys(&f.programs), Fix::PickProgram(first.key), &format!("Choose the program for {}", first.name))
 }
 
 fn game_files(f: &Facts) -> Outcome {
@@ -504,8 +663,8 @@ fn game_files(f: &Facts) -> Outcome {
     let to_add: Vec<Named> = f.files.iter().filter(|(_, s)| *s == FilesState::Unverifiable).map(|(n, _)| n.clone()).collect();
     let summary = match (missing.is_empty(), to_add.is_empty()) {
         (false, true) => format!("Missing for {}", named_list(&missing)),
-        (false, false) => format!("Missing for {}; {} to add", named_list(&missing), named_list(&to_add)),
-        _ => format!("Tell me where they are: {}", named_list(&to_add)),
+        (false, false) => format!("Missing for {}; not connected yet: {}", named_list(&missing), named_list(&to_add)),
+        _ => format!("Not connected yet: {}", named_list(&to_add)),
     };
     let all: Vec<Named> = f.files.iter().map(|(n, _)| n.clone()).collect();
     problem(if missing.is_empty() { Mark::ToDo } else { Mark::Problem }, summary, keys(&all), Fix::GameFiles, "Find the game files")
@@ -515,7 +674,8 @@ fn saves(f: &Facts) -> Outcome {
     if f.saves.is_empty() {
         return Outcome::Ok("All found".to_string());
     }
-    problem(Mark::ToDo, format!("Not found for {}", named_list(&f.saves)), keys(&f.saves), Fix::FindSaves(f.saves[0].key.clone()), "Find the saves")
+    let first = &f.saves[0];
+    advisory(problem(Mark::ToDo, format!("Not found for {}", named_list(&f.saves)), keys(&f.saves), Fix::FindSaves(first.key.clone()), &format!("Find saves for {}", first.name)))
 }
 
 fn old_copies(f: &Facts) -> Outcome {
@@ -541,7 +701,17 @@ fn old_copies(f: &Facts) -> Outcome {
     };
     let can_act = n(CopyState::Ready) + n(CopyState::Gone) > 0;
     let detail = copies.iter().take(4).map(|c| c.state.sentence(&c.name)).collect();
-    Outcome::Problem(Problem { mark: if can_act { Mark::ToDo } else { Mark::Waiting }, summary, detail, ports: Vec::new(), fix: Fix::OldCopies, fix_label: "Look at the old copies".to_string() })
+    // Nothing to do yet (a first start, Steam still to update) is not worth a tile on Home.
+    Outcome::Problem(Problem {
+        mark: if can_act { Mark::ToDo } else { Mark::Waiting },
+        summary,
+        detail,
+        ports: Vec::new(),
+        fix: Fix::OldCopies,
+        fix_label: "Look at the old copies".to_string(),
+        advisory: !can_act,
+        desktop_only: false,
+    })
 }
 
 fn updates(f: &Facts) -> Outcome {
@@ -556,17 +726,24 @@ fn backups(f: &Facts) -> Outcome {
     if f.installed.is_empty() {
         return Outcome::Ok("No ports yet".to_string());
     }
+    // Signed in to cloud backup with a recent success: the saves are copied online, a zip here is not needed.
+    if f.cloud_ok && !f.cloud_problem {
+        return Outcome::Ok("Saves are copied to the cloud".to_string());
+    }
+    // A zip can only hold saves the app knows: with none known there is nothing to back up yet.
     let stale = match f.backup_days {
+        None if f.saves_known == 0 => None,
         None => Some("No save backup yet".to_string()),
-        Some(d) if d > BACKUP_STALE_DAYS => Some(format!("Last save backup was {d} days ago")),
+        Some(d) if d > BACKUP_STALE_DAYS && f.saves_known > 0 => Some(format!("Last save backup was {d} days ago")),
         Some(_) => None,
     };
     match (stale, f.cloud_problem) {
         (Some(words), cloud) => {
             let summary = if cloud { format!("{words}; cloud backup has a problem") } else { words };
-            problem(Mark::ToDo, summary, Vec::new(), Fix::BackUpNow, "Back up saves now")
+            advisory(problem(Mark::ToDo, summary, Vec::new(), Fix::BackUpNow, "Back up saves now"))
         }
-        (None, true) => problem(Mark::ToDo, "Cloud backup has a problem".to_string(), Vec::new(), Fix::Cloud, "Look at cloud backup"),
+        (None, true) => advisory(problem(Mark::ToDo, "Cloud backup has a problem".to_string(), Vec::new(), Fix::Cloud, "Look at cloud backup")),
+        (None, false) if f.saves_known == 0 && f.backup_days.is_none() => Outcome::Ok("No save folders known yet".to_string()),
         (None, false) => Outcome::Ok(match f.backup_days {
             Some(0) => "Backed up today".to_string(),
             Some(1) => "Backed up yesterday".to_string(),
@@ -576,7 +753,8 @@ fn backups(f: &Facts) -> Outcome {
     }
 }
 
-/// The program choice question for one port's folder: how many launch candidates it has at its shallowest depth. A walk
+
+// The program choice question for one port's folder: how many launch candidates it has at its shallowest depth. A walk
 /// that stops after `MAX_WALK` entries and `MAX_DEPTH` folders, so a huge game folder (discs, bundled Java) never makes
 /// the checkup slow. `Err` when the folder cannot be read.
 pub fn shallow_programs(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {

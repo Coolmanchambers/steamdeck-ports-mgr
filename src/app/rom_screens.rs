@@ -308,10 +308,6 @@ pub(crate) fn open_game_files(app: &Rc<AppState>, router: &Router) {
     if super::setup_wizard_screen::resume_instead_of_menu(app, router, crate::fork::setup_wizard::flow::Menu::GameFiles) {
         return;
     }
-    // Fork (checkup): the same for a screen the Fix problems checkup opened.
-    if super::checkup_screen::resume_instead_of_menu(app, router) {
-        return;
-    }
     let Some(store) = load_store(app, router) else { return };
     show_menu(app, router, store);
 }

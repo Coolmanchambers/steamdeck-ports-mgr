@@ -240,6 +240,11 @@ pub(crate) fn quit_waits_for_restore(app: &Rc<AppState>, router: &Router) -> boo
     true
 }
 
+/// Fork (checkup): a restore is running (the checkup does not look meanwhile).
+pub(crate) fn restore_running() -> bool {
+    RESTORE_RUNNING.with(Cell::get)
+}
+
 /// Settings entries that read or write saves (Backup Saves, Restore saves, Force update) ask this first.
 pub(crate) fn refuse_while_restoring(app: &Rc<AppState>, router: &Router) -> bool {
     if !RESTORE_RUNNING.with(Cell::get) {

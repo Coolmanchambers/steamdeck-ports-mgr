@@ -38,7 +38,7 @@ pub(crate) fn open_group(app: &Rc<AppState>, router: &Router, group: Group) {
         return;
     }
     // Fork (checkup): a screen the Fix problems checkup opened leads back to the checkup, not to Settings.
-    if super::checkup_screen::resume_instead_of_menu(app, router) {
+    if super::checkup_screen::resume_instead_of_menu(app, router, crate::fork::checkup::Menu::SettingsGroup(group)) {
         return;
     }
     show_group(app, router, group);

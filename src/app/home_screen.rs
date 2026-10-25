@@ -367,15 +367,6 @@ fn facts_of(app: &AppState, installed: &[Port]) -> Vec<PortFacts> {
         .collect()
 }
 
-/// Fork (checkup): the same answers Home badges with. `fresh` asks again instead of reusing what was read a few seconds ago
-/// (the checkup after a fix must show what is true now).
-pub(crate) fn file_states(app: &AppState, installed: &[Port], fresh: bool) -> HashMap<String, Option<FilesState>> {
-    if fresh {
-        app.home.files.borrow_mut().clear();
-    }
-    files_missing(app, installed)
-}
-
 /// Fork (checkup): Home would badge this installed port "Update ready" (a check found one after it was installed).
 pub(crate) fn update_ready(app: &AppState, key: &str) -> bool {
     let installed_at = app.state.borrow().get(key).map_or(0, |i| home::app_played_at(&i.installed_at));

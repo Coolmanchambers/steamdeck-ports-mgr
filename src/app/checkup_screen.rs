@@ -2,33 +2,40 @@
 //! for them, the hand-offs to the existing fix screens and the way back, and the cached answer Home's tile and
 //! Settings' card read.
 //!
-//! **Looking changes nothing.** The facts are read from the disk, Steam's files and the caches Home keeps. The disk
-//! part runs on a worker thread (`Background`), the part that needs the app's state is read on the UI thread from
-//! the same cached answers Home uses. Every fix is an existing screen that asks on its own page (or, for an update and
-//! a backup, a page of ours that asks first); the checkup itself never writes.
+//! **Looking changes nothing.** Every read of the disk (Steam's files, the waiting list, old copies, the game files and
+//! saves of each port, the program walk, the backup folder) runs on a worker thread (`Background`); only what is in
+//! memory (the installed list, the update badges, the cloud status) is read here, and the worker's answer is joined with
+//! a fresh read of that when it arrives. Every fix is an existing screen that asks on its own page (or, for an update and
+//! a backup, a page of ours that asks first); the checkup itself never writes, except that "Skip this one" is remembered
+//! in `fork-settings.json`.
 //!
 //! **Hand-off and return.** A fix closes the checkup page and opens the existing screen. Those screens do not know
 //! about the checkup, so (like the setup wizard) it waits: a half-second watcher notices that no dialog is open for a
-//! moment and comes back, and the screens that lead back to a Settings menu (`resume_instead_of_menu`) come back to the
-//! checkup instead. Coming back looks again and shows that line, green or not (`after_page`).
+//! moment and comes back, and the menus the chosen fix leads back to (`Fix::returns_to`, asked by
+//! `resume_instead_of_menu`) come back to the checkup instead. Coming back looks again and shows that line, green or not
+//! (`after_page`).
 //!
 //! **The cache.** Home's tile and Settings' card show the last answer (`CACHE`), refreshed in the background at most
-//! every few minutes and after every checkup; opening Home or Settings never waits for it.
+//! every few minutes (never while a move, install, restore or import runs) and after every checkup; opening Home or
+//! Settings never waits for it.
 
 use super::dialogs::{close_current_dialog, dialog_is_open};
 use super::page_dialog::{show_page, Handlers};
 use super::state::AppState;
 use crate::core::models::Port;
 use crate::fork::checkup::pages::{self, Act, CheckupPage};
-use crate::fork::checkup::{self, Check, CopyFact, CopyState, Facts, Fix, Folder, Named, Outcome, QueuedFact, Results};
+use crate::fork::checkup::{self, Check, CopyFact, CopyState, Facts, Fix, Folder, Named, Outcome, QueuedFact, Results, Skips};
 use crate::fork::folder_picker::mounts::{default_media_roots, system_mounts};
 use crate::fork::port_mover::old_copies;
+use crate::fork::rom_screens::find::FindRequest;
 use crate::fork::rom_screens::job::Background;
+use crate::fork::save_finder::{self as finder, SaveState};
+use crate::fork::settings::ForkSettings;
 use crate::fork::setup_wizard::files_state::FilesState;
 use crate::fork::{ports_folder, steam_icons, steam_queue};
 use crate::ui::gamepad_router::GamepadRouter;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -44,6 +51,10 @@ const QUIET_TICKS: u32 = 2;
 const CACHE_FRESH: Duration = Duration::from_secs(180);
 /// The first look after start waits a little, so the first screen is up before any of this reads the disk.
 const START_DELAY: Duration = Duration::from_secs(4);
+/// A cloud backup that copied within this long counts as the saves being safe.
+const CLOUD_RECENT_SECS: u64 = 3 * 86_400;
+/// `fork-settings.json` key of the problems the user skipped (check key to the problem's fingerprint).
+const KEY_SKIPS: &str = "checkup_skips";
 
 thread_local! {
     static SESSION: RefCell<Option<Rc<Session>>> = const { RefCell::new(None) };
@@ -59,8 +70,6 @@ struct Cache {
     results: Option<Results>,
     at: Option<Instant>,
     job: Option<Rc<Background<SysFacts>>>,
-    /// The app part of the facts read when the background look started.
-    pending: Option<AppPart>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,14 +87,18 @@ enum Stage {
 struct Session {
     stage: Cell<Stage>,
     results: RefCell<Results>,
-    /// The checks with a problem when "Fix them one by one" was chosen, and where the run is.
+    /// The checks with a problem when "Fix them one by one" was chosen, where the run is, and what the results were then
+    /// (choosing it again with nothing changed picks up where it left off).
     order: RefCell<Vec<Check>>,
     pos: Cell<usize>,
+    order_results: RefCell<Option<Results>>,
+    /// The fix that is open now, and how many ports its problem was about (to tell "one of several done" from "nothing").
+    fix: RefCell<Option<Fix>>,
+    fix_ports: Cell<usize>,
     /// The fix is being opened right now: a menu it opens must show, not hand control back.
     entering: Cell<bool>,
     quiet: Cell<u32>,
     job: RefCell<Option<Rc<Background<SysFacts>>>>,
-    app_part: RefCell<Option<AppPart>>,
     /// Bumped whenever a look is started or cancelled; a result that arrives for an older one is dropped.
     looking: Cell<u64>,
     /// What to do when the look in progress ends.
@@ -98,13 +111,18 @@ fn session() -> Option<Rc<Session>> {
 
 // -- Facts ----------------------------------------------------------------------------------------------------
 
-/// What the worker thread reads: only paths and plain values, so it never touches the UI's state.
+/// What the worker thread reads from: only paths and plain values, so it never touches the UI's state.
 struct SysInput {
     installed: Vec<Port>,
     favorites: HashMap<String, String>,
+    /// The installed ports that were ever played (a game never run has no saves to miss yet).
+    played: HashSet<String>,
+    /// The folder names of every catalog port (a switch cut short counts only when its new copy is one of them).
+    catalog_folders: Vec<String>,
     home: Option<PathBuf>,
     library: PathBuf,
     config_dir: PathBuf,
+    settings_path: PathBuf,
     saves_backup_dir: PathBuf,
     default_library: PathBuf,
 }
@@ -115,19 +133,21 @@ struct SysFacts {
     queue: Result<Vec<QueuedFact>, String>,
     shortcuts: Result<Vec<steam_icons::IconFinding>, String>,
     programs: Vec<Named>,
-    old_copies: Result<Vec<CopyFact>, String>,
-    backup_days: Option<u64>,
-}
-
-/// What needs the app's state: read on the UI thread, from the caches Home uses.
-#[derive(Clone)]
-struct AppPart {
-    installed: Vec<Named>,
     files: Vec<(Named, FilesState)>,
     saves: Vec<Named>,
+    saves_known: usize,
+    unfinished_moves: Vec<String>,
+    old_copies: Result<Vec<CopyFact>, String>,
+    backup_days: Option<u64>,
+    skips: Skips,
+}
+
+/// What is in memory: read here, quickly, when the worker's answer arrives.
+struct AppPart {
+    installed: Vec<Named>,
     updates: Vec<Named>,
     cloud_problem: bool,
-    unfinished_moves: Vec<String>,
+    cloud_ok: bool,
     game_mode: bool,
 }
 
@@ -143,51 +163,40 @@ fn named(p: &Port) -> Named {
     Named::new(p.key(), p.display_name())
 }
 
-/// `fresh`: do not reuse the answers Home remembers for a few seconds (after a fix, the line must show what is true now).
-fn app_part(app: &AppState, fresh: bool) -> AppPart {
+fn settings_path(app: &AppState) -> PathBuf {
+    app.paths.config_dir.join(crate::fork::settings::FILE_NAME)
+}
+
+/// Nothing that touches the disk beyond two small status files.
+fn app_part(app: &AppState) -> AppPart {
     let installed = installed_ports(app);
-    if fresh {
-        super::save_finder_screen::forget_states();
-    }
-    let states = super::home_screen::file_states(app, &installed, fresh);
-    let mut files = Vec::new();
-    let mut saves = Vec::new();
-    let mut updates = Vec::new();
-    for p in &installed {
-        match states.get(p.key()).copied().flatten() {
-            Some(s @ (FilesState::Missing | FilesState::Unverifiable)) => files.push((named(p), s)),
-            _ => {}
-        }
-        if super::save_finder_screen::saves_warning(app, p) {
-            saves.push(named(p));
-        }
-        if super::home_screen::update_ready(app, p.key()) {
-            updates.push(named(p));
-        }
-    }
+    let updates = installed.iter().filter(|p| super::home_screen::update_ready(app, p.key())).map(named).collect();
     AppPart {
         installed: installed.iter().map(named).collect(),
-        files,
-        saves,
         updates,
         cloud_problem: super::cloud_screen::home_status(app).0 == 5,
-        unfinished_moves: super::ports_folder_screen::unfinished_switches(app),
+        cloud_ok: super::cloud_screen::recent_success(app, CLOUD_RECENT_SECS),
         game_mode: steam_queue::game_mode_from_env(),
     }
 }
 
 fn sys_input(app: &AppState) -> SysInput {
     let installed = installed_ports(app);
-    let favorites = {
+    let (favorites, played) = {
         let state = app.state.borrow();
-        installed.iter().filter_map(|p| state.get(p.key()).and_then(|i| i.favorite_exe.clone()).map(|f| (p.key().to_string(), f))).collect()
+        let favorites = installed.iter().filter_map(|p| state.get(p.key()).and_then(|i| i.favorite_exe.clone()).map(|f| (p.key().to_string(), f))).collect();
+        let played = installed.iter().filter(|p| state.get(p.key()).is_some_and(|i| i.playtime_seconds > 0 || !i.last_played_at.is_empty())).map(|p| p.key().to_string()).collect();
+        (favorites, played)
     };
     SysInput {
         installed,
         favorites,
+        played,
+        catalog_folders: app.catalog.borrow().iter().map(|p| p.folder.clone()).collect(),
         home: home_dir(),
         library: app.paths.library_dir(),
         config_dir: app.paths.config_dir.clone(),
+        settings_path: settings_path(app),
         saves_backup_dir: app.paths.saves_backup_dir.clone(),
         default_library: ports_folder::default_dir(&app.paths.config_dir),
     }
@@ -201,24 +210,29 @@ fn sys_gather(i: SysInput) -> SysFacts {
     } else {
         Folder::from_missing(ports_folder::availability(&i.library, &system_mounts(), &default_media_roots()).as_ref())
     };
-    let queue_file = steam_queue::load(&steam_queue::queue_path(&i.config_dir));
-    let queue = match queue_file.problem {
-        Some(_) if queue_file.unreadable => Err("The list of waiting Steam changes could not be opened".to_string()),
-        _ => Ok(queue_file.queue.entries.iter().map(|e| QueuedFact { port_key: e.port_key.clone(), name: e.name.clone(), kind: e.kind }).collect()),
-    };
+    // Read only: `steam_queue::load` moves a file it cannot understand aside, and looking must not.
+    let queue = steam_queue::peek(&steam_queue::queue_path(&i.config_dir)).map(|q| q.entries.iter().map(|e| QueuedFact { port_key: e.port_key.clone(), name: e.name.clone(), kind: e.kind }).collect()).map_err(|why| {
+        eprintln!("checkup: the waiting list of Steam changes cannot be read: {why}");
+        checkup::QUEUE_UNREADABLE.to_string()
+    });
     let steam_found = i.home.as_deref().is_some_and(|h| !crate::fork::port_mover::steam::device_accounts(h).is_empty());
     let shortcuts = match i.home.as_deref() {
         Some(h) => steam_icons::diagnose(h, &i.library, &i.config_dir, &i.installed),
         None => Err("Could not find your home folder".to_string()),
     };
-    let programs = if folder == Folder::Here { programs_to_choose(&i) } else { Vec::new() };
+    let here = folder == Folder::Here;
+    let programs = if here { programs_to_choose(&i) } else { Vec::new() };
+    let files = if here { game_files_missing(&i) } else { Vec::new() };
+    let (saves, saves_known) = if here { saves_not_found(&i) } else { (Vec::new(), 0) };
     let old_copies = old_copy_facts(&i);
+    let unfinished_moves = unfinished_switches(&i);
     let backup_days = {
         let dir = i.saves_backup_dir.join(crate::fork::save_restore::GLOBAL_BACKUPS_DIR);
         let now = chrono::Utc::now().timestamp();
         crate::fork::settings_menu::newest_zip(&dir).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| crate::fork::settings_menu::days_ago(d.as_secs() as i64, now))
     };
-    SysFacts { folder, steam_found, queue, shortcuts, programs, old_copies, backup_days }
+    let skips = checkup::skips_from_json(ForkSettings::load(&i.settings_path).get(KEY_SKIPS));
+    SysFacts { folder, steam_found, queue, shortcuts, programs, files, saves, saves_known, unfinished_moves, old_copies, backup_days, skips }
 }
 
 /// The ports with more than one program to start and none remembered (the same question Play asks at the first start).
@@ -238,19 +252,63 @@ fn programs_to_choose(i: &SysInput) -> Vec<Named> {
     out
 }
 
+/// The ports whose game files are missing (a named file that is not there) or only named by title: the same answer Home's
+/// badge gives (`rom_screens::port_files_state`), read here without the app's state.
+fn game_files_missing(i: &SysInput) -> Vec<(Named, FilesState)> {
+    let locals = crate::fork::rom_library::load_local_entries(&i.config_dir.join("ports.local.json"));
+    let mut out = Vec::new();
+    for p in &i.installed {
+        if !FindRequest::new(p.clone(), true, locals.get(&p.folder), Vec::new()).needs_files() {
+            continue;
+        }
+        let state = match crate::core::path_safety::safe_join(&i.library, &p.folder) {
+            Ok(dir) => crate::fork::setup_wizard::files_state::files_state(p, &dir, &i.config_dir),
+            Err(_) => FilesState::Missing,
+        };
+        if matches!(state, FilesState::Missing | FilesState::Unverifiable) {
+            out.push((named(p), state));
+        }
+    }
+    out
+}
+
+/// The ports whose saves the app cannot find (`SaveState::warns`, the save finder's badge) and how many ports have a save
+/// folder with files in it (what "Back up saves now" can copy).
+fn saves_not_found(i: &SysInput) -> (Vec<Named>, usize) {
+    let overrides = finder::overrides(&ForkSettings::load(&i.settings_path));
+    let (mut missing, mut known) = (Vec::new(), 0);
+    for p in &i.installed {
+        let Ok(dir) = crate::core::path_safety::safe_join(&i.library, &p.folder) else { continue };
+        if !dir.is_dir() {
+            continue;
+        }
+        let state = finder::state_of(p, &dir, overrides.get(&p.folder));
+        if state == SaveState::Found {
+            known += 1;
+        }
+        if state.warns(i.played.contains(p.key())) {
+            missing.push(named(p));
+        }
+    }
+    (missing, known)
+}
+
+/// The switches cut short (the app closed between the ports folder setting and Steam) whose new copy is in use: what
+/// Settings > Ports folder offers to finish. A read of the records.
+fn unfinished_switches(i: &SysInput) -> Vec<String> {
+    let active: Vec<PathBuf> = i.catalog_folders.iter().filter_map(|f| crate::core::path_safety::safe_join(&i.library, f).ok()).collect();
+    old_copies::load(&i.config_dir).unwrap_or_default().into_iter().filter(|o| !o.switched && active.contains(&o.new_path)).map(|o| o.name).collect()
+}
+
 /// Each kept old copy and what it needs. Read only: `readiness_now`, which notes a first sighting in the record, is not
-/// used here.
+/// used here (`readiness_read_only` counts a Steam start after the switch without writing anything).
 fn old_copy_facts(i: &SysInput) -> Result<Vec<CopyFact>, String> {
     let list = old_copies::load(&i.config_dir)?;
     let home = i.home.clone().unwrap_or_default();
     Ok(list
         .iter()
         .map(|c| {
-            let state = if std::fs::symlink_metadata(&c.old_path).is_err() {
-                CopyState::Gone
-            } else {
-                CopyState::of(old_copies::readiness(c, &old_copies::steam_view(c, &home, &i.config_dir)))
-            };
+            let state = if std::fs::symlink_metadata(&c.old_path).is_err() { CopyState::Gone } else { CopyState::of(old_copies::readiness_read_only(c, &home, &i.config_dir)) };
             CopyFact { name: c.name.clone(), state }
         })
         .collect())
@@ -261,18 +319,26 @@ fn assemble(app: &AppPart, sys: SysFacts) -> Facts {
         game_mode: app.game_mode,
         installed: app.installed.clone(),
         folder: sys.folder,
-        unfinished_moves: app.unfinished_moves.clone(),
+        unfinished_moves: sys.unfinished_moves,
         steam_found: sys.steam_found,
         queue: sys.queue,
         shortcuts: sys.shortcuts,
         programs: sys.programs,
-        files: app.files.clone(),
-        saves: app.saves.clone(),
+        files: sys.files,
+        saves: sys.saves,
         old_copies: sys.old_copies,
         updates: app.updates.clone(),
         backup_days: sys.backup_days,
         cloud_problem: app.cloud_problem,
+        cloud_ok: app.cloud_ok,
+        saves_known: sys.saves_known,
+        skips: sys.skips,
     }
+}
+
+/// A move of ports, an install, a restore or an import is running: what the disk shows is half way, so nothing looks now.
+fn busy(app: &AppState) -> bool {
+    super::ports_folder_screen::job_running() || super::import_screen::import_running() || super::save_restore_screen::restore_running() || !app.install_runtime.installing.borrow().is_empty()
 }
 
 // -- The cached answer (Home's tile, Settings' card) --------------------------------------------------------
@@ -294,7 +360,7 @@ pub(crate) fn start(app: &Rc<AppState>) {
     });
 }
 
-/// The tile Home shows (`None`: nothing to fix, or no answer yet).
+/// The tile Home shows (`None`: nothing worth a tile, or no answer yet).
 pub(crate) fn home_tile() -> Option<checkup::HomeTile> {
     CACHE.with(|c| c.borrow().results.as_ref().and_then(Results::home_tile))
 }
@@ -324,33 +390,25 @@ fn store(results: Results) -> bool {
 }
 
 fn refresh_in_background(app: &Rc<AppState>) {
-    if CACHE.with(|c| c.borrow().job.is_some()) {
+    if CACHE.with(|c| c.borrow().job.is_some()) || busy(app) {
         return;
     }
-    let part = app_part(app, false);
     let job = Rc::new(Background::spawn({
         let input = sys_input(app);
         move |_| sys_gather(input)
     }));
-    CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        c.job = Some(job);
-        c.pending = Some(part);
-    });
+    CACHE.with(|c| c.borrow_mut().job = Some(job));
     let app = app.clone();
     BACKGROUND_POLL.with(|t| {
         t.start(slint::TimerMode::Repeated, Duration::from_millis(300), move || {
             let done = CACHE.with(|c| c.borrow().job.as_ref().and_then(|j| j.take()));
             let Some(done) = done else { return };
             BACKGROUND_POLL.with(slint::Timer::stop);
-            let part = CACHE.with(|c| {
-                let mut c = c.borrow_mut();
-                c.job = None;
-                c.pending.take()
-            });
-            match (done, part) {
-                (Ok(sys), Some(part)) => {
-                    let results = checkup::run(&assemble(&part, sys));
+            CACHE.with(|c| c.borrow_mut().job = None);
+            match done {
+                // What is in memory is read now, not when the worker started: ports may have come or gone meanwhile.
+                Ok(sys) if !busy(&app) => {
+                    let results = checkup::run(&assemble(&app_part(&app), sys));
                     eprintln!("checkup: background look: {}", results.summary());
                     let changed = store(results);
                     // Redrawn even under a dialog: Home is only drawn behind it, and the tile must be there when it closes.
@@ -358,14 +416,41 @@ fn refresh_in_background(app: &Rc<AppState>) {
                         app.refresh_current_view();
                     }
                 }
-                (Err(e), _) => {
+                Ok(_) => eprintln!("checkup: a job started meanwhile; this look is dropped"),
+                Err(e) => {
                     eprintln!("checkup: the background look failed ({e})");
                     CACHE.with(|c| c.borrow_mut().at = Some(Instant::now()));
                 }
-                _ => {}
             }
         });
     });
+}
+
+// -- Skips ----------------------------------------------------------------------------------------------------
+
+fn load_skips(app: &AppState) -> Skips {
+    checkup::skips_from_json(ForkSettings::load(&settings_path(app)).get(KEY_SKIPS))
+}
+
+fn save_skips(app: &AppState, skips: &Skips) {
+    let mut settings = ForkSettings::load(&settings_path(app));
+    let result = if skips.is_empty() { settings.remove(KEY_SKIPS) } else { settings.set(KEY_SKIPS, checkup::skips_to_json(skips)) };
+    if let Err(e) = result {
+        eprintln!("checkup: could not remember what was skipped ({e})");
+    }
+}
+
+/// "Skip this one": remembered until the problem reads differently, and out of the way meanwhile.
+fn skip_current(app: &Rc<AppState>, s: &Rc<Session>) {
+    let Some(check) = current(s) else { return };
+    let Some(problem) = problem_of(s, check) else { return };
+    let mut skips = load_skips(app);
+    skips.insert(check.key().to_string(), problem.fingerprint());
+    save_skips(app, &skips);
+    eprintln!("checkup: skipped {}", check.title());
+    let results = s.results.borrow().clone().with_skips(&skips);
+    store(results.clone());
+    *s.results.borrow_mut() = results;
 }
 
 // -- The checkup ----------------------------------------------------------------------------------------------
@@ -378,15 +463,20 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router) {
         results: RefCell::new(Results { items: Vec::new() }),
         order: RefCell::new(Vec::new()),
         pos: Cell::new(0),
+        order_results: RefCell::new(None),
+        fix: RefCell::new(None),
+        fix_ports: Cell::new(0),
         entering: Cell::new(false),
         quiet: Cell::new(0),
         job: RefCell::new(None),
-        app_part: RefCell::new(None),
         looking: Cell::new(0),
         then: RefCell::new(None),
     });
     SESSION.with(|x| *x.borrow_mut() = Some(s.clone()));
     eprintln!("checkup: opened");
+    if busy(app) {
+        return show(app, router, &s, Stage::Finished, pages::failed_page("A move, an install, a restore or an import is running. Try again when it has finished: looking now would show it half way."));
+    }
     look(app, router, &s, Rc::new(show_overview));
 }
 
@@ -440,7 +530,7 @@ fn show_overview(app: &Rc<AppState>, router: &Router) {
     show(app, router, &s, Stage::Overview, page);
 }
 
-/// Shows the wait, gathers the facts (disk on a worker, the rest here), and runs `then` with the answer stored.
+/// Shows the wait, gathers the facts (the disk on a worker, then what is in memory), and runs `then` with the answer stored.
 fn look(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, then: Rc<dyn Fn(&Rc<AppState>, &Router)>) {
     let first = s.results.borrow().items.is_empty();
     let mut wait = pages::looking_page();
@@ -450,7 +540,6 @@ fn look(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, then: Rc<dyn Fn(&R
     show(app, router, s, Stage::Looking, wait);
     let id = s.looking.get() + 1;
     s.looking.set(id);
-    *s.app_part.borrow_mut() = Some(app_part(app, true));
     let input = sys_input(app);
     *s.job.borrow_mut() = Some(Rc::new(Background::spawn(move |_| sys_gather(input))));
     *s.then.borrow_mut() = Some(then);
@@ -464,11 +553,10 @@ fn look(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, then: Rc<dyn Fn(&R
             let Some(done) = done else { return };
             POLL.with(slint::Timer::stop);
             *s.job.borrow_mut() = None;
-            let part = s.app_part.borrow_mut().take();
             let then = s.then.borrow_mut().take();
-            match (done, part) {
-                (Ok(sys), Some(part)) => {
-                    let results = checkup::run(&assemble(&part, sys));
+            match done {
+                Ok(sys) => {
+                    let results = checkup::run(&assemble(&app_part(&app), sys));
                     eprintln!("checkup: looked ({})", results.summary());
                     store(results.clone());
                     *s.results.borrow_mut() = results;
@@ -476,11 +564,10 @@ fn look(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, then: Rc<dyn Fn(&R
                         then(&app, &router);
                     }
                 }
-                (Err(e), _) => {
+                Err(e) => {
                     eprintln!("checkup: the look failed ({e})");
                     show(&app, &router, &s, Stage::Finished, pages::failed_page(&e));
                 }
-                _ => end(&app, &router, &s),
             }
         });
     });
@@ -492,17 +579,31 @@ fn act_on(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
         Act::Overview => show_overview(app, router),
         Act::FixAll => {
             let order: Vec<Check> = s.results.borrow().problems().iter().map(|(c, _)| *c).collect();
-            eprintln!("checkup: fixing {} problem(s) one by one", order.len());
+            // Choosing it again with nothing changed picks up where it left off.
+            let same = *s.order.borrow() == order && s.order_results.borrow().as_ref() == Some(&*s.results.borrow());
+            eprintln!("checkup: fixing {} problem(s) one by one{}", order.len(), if same { " (where it left off)" } else { "" });
+            if !same || s.pos.get() >= order.len() {
+                s.pos.set(0);
+            }
             *s.order.borrow_mut() = order;
-            s.pos.set(0);
+            *s.order_results.borrow_mut() = Some(s.results.borrow().clone());
             show_step(app, router, s);
         }
         Act::Fix | Act::TryAgain => open_fix(app, router, s),
-        Act::Skip | Act::Next => advance(app, router, s),
+        Act::Skip => {
+            skip_current(app, s);
+            advance(app, router, s);
+        }
+        Act::Next => advance(app, router, s),
         Act::CheckAgain => {
             let in_run = !s.order.borrow().is_empty() && s.stage.get() == Stage::After;
             let then: Rc<dyn Fn(&Rc<AppState>, &Router)> = if in_run { Rc::new(show_after) } else { Rc::new(show_overview) };
             look(app, router, s, then);
+        }
+        Act::Unskip => {
+            save_skips(app, &Skips::new());
+            eprintln!("checkup: skipped problems brought back");
+            look(app, router, s, Rc::new(show_overview));
         }
         Act::Yes => confirmed(app, router, s),
     }
@@ -540,8 +641,16 @@ fn advance(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 
 fn show_finished(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let results = s.results.borrow().clone();
-    // Every check the run set out to fix, as it stands now: fixed ones green, skipped and unfinished ones counted.
-    let went_through: Vec<(Check, Outcome)> = s.order.borrow().iter().filter_map(|c| results.outcome(*c).map(|o| (*c, o.clone()))).collect();
+    // Every check the run set out to fix and every problem there is now (one can appear meanwhile: a repair queued while
+    // Steam runs shows up under Steam changes), as it stands: fixed ones green, the rest counted.
+    let mut checks: Vec<Check> = s.order.borrow().clone();
+    for (c, _) in results.problems() {
+        if !checks.contains(&c) {
+            checks.push(c);
+        }
+    }
+    checks.sort_by_key(|c| Check::ALL.iter().position(|x| x == c));
+    let went_through: Vec<(Check, Outcome)> = checks.iter().filter_map(|c| results.outcome(*c).map(|o| (*c, o.clone()))).collect();
     let page = if went_through.is_empty() { pages::overview_page(&results) } else { pages::finished_page(&went_through) };
     let stage = if went_through.is_empty() { Stage::Overview } else { Stage::Finished };
     show(app, router, s, stage, page);
@@ -554,7 +663,8 @@ fn show_after(app: &Rc<AppState>, router: &Router) {
     let outcome = s.results.borrow().outcome(check).cloned().unwrap_or_else(|| Outcome::Unknown("not looked at".into()));
     let order = s.order.borrow().clone();
     let last = !order.iter().skip(s.pos.get() + 1).any(|c| s.results.borrow().outcome(*c).is_some_and(Outcome::is_problem));
-    let page = pages::after_page(check, &outcome, s.pos.get() + 1, order.len(), last);
+    let progress = matches!(&outcome, Outcome::Problem(p) if s.fix_ports.get() > 1 && p.ports.len() < s.fix_ports.get());
+    let page = pages::after_page(check, &outcome, s.pos.get() + 1, order.len(), last, progress);
     show(app, router, &s, Stage::After, page);
 }
 
@@ -566,9 +676,18 @@ fn port_by_key(app: &AppState, key: &str) -> Option<Port> {
 
 fn open_fix(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let Some(check) = current(s) else { return show_overview(app, router) };
-    let Some(problem) = problem_of(s, check) else { return show_after(app, router) };
-    eprintln!("checkup: fix for {}: {:?}", check.title(), problem.fix);
     let (n, total) = (s.pos.get() + 1, s.order.borrow().len());
+    let problem = match s.results.borrow().outcome(check).cloned() {
+        Some(Outcome::Problem(p)) => p,
+        // A repair that waits for Steam to close: the way to finish it is the Close Steam flow.
+        Some(Outcome::Queued { .. }) => {
+            eprintln!("checkup: finishing the queued {} repair", check.title());
+            return hand_off(app, router, s, Fix::CloseSteam);
+        }
+        _ => return show_after(app, router),
+    };
+    s.fix_ports.set(problem.ports.len());
+    eprintln!("checkup: fix for {}: {:?}", check.title(), problem.fix);
     match &problem.fix {
         Fix::Update(key) => {
             let name = port_by_key(app, key).map_or_else(|| key.clone(), |p| p.display_name().to_string());
@@ -594,6 +713,7 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
     close_current_dialog(app, router);
     s.stage.set(Stage::Fixing);
     s.quiet.set(0);
+    *s.fix.borrow_mut() = Some(fix.clone());
     s.entering.set(true);
     let back_here: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(|app, router| resume(app, router));
     match fix {
@@ -605,20 +725,23 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
         }
         Fix::SteamIcons => super::steam_icons_screen::open(app, router, back_here),
         Fix::AddToSteam => super::steam_screens::open_steam_screen(app, router),
-        Fix::PickProgram(key) => match port_by_key(app, &key) {
-            Some(port) => super::install_launch::open_favorite_exe_picker(app, router, port),
-            None => {}
-        },
+        Fix::PickProgram(key) => {
+            if let Some(port) = port_by_key(app, &key) {
+                super::install_launch::open_favorite_exe_picker(app, router, port);
+            }
+        }
         Fix::GameFiles => super::rom_screens::open_game_files(app, router),
-        Fix::FindSaves(key) => match port_by_key(app, &key) {
-            Some(port) => super::save_finder_screen::open(app, router, port, back_here),
-            None => {}
-        },
+        Fix::FindSaves(key) => {
+            if let Some(port) = port_by_key(app, &key) {
+                super::save_finder_screen::open(app, router, port, back_here);
+            }
+        }
         Fix::OldCopies => super::ports_folder_screen::open_old_copies(app, router),
-        Fix::Update(key) => match port_by_key(app, &key) {
-            Some(port) => super::install_launch::start_install(app, router, port, None, None),
-            None => {}
-        },
+        Fix::Update(key) => {
+            if let Some(port) = port_by_key(app, &key) {
+                super::install_launch::start_install(app, router, port, None, None);
+            }
+        }
         Fix::BackUpNow => super::dialogs::start_save_backup(app, router),
         Fix::Cloud => super::cloud_screen::open_from_settings(app, router),
     }
@@ -638,7 +761,7 @@ fn tick(app: &Rc<AppState>, router: &Router) {
     if s.stage.get() != Stage::Fixing {
         return WATCH.with(slint::Timer::stop);
     }
-    if dialog_is_open(app) || super::import_screen::import_running() || s.entering.get() {
+    if dialog_is_open(app) || busy(app) || s.entering.get() {
         s.quiet.set(0);
         return;
     }
@@ -661,12 +784,15 @@ fn resume(app: &Rc<AppState>, router: &Router) {
     look(app, router, &s, Rc::new(show_after));
 }
 
-/// A menu (Settings, Ports folder, Game files) is about to open. When the checkup is waiting for the screen it opened,
-/// and this menu is where that screen leads when the user backs out, come back to the checkup instead. True = handled.
-/// A menu the checkup itself is opening as the fix is left alone.
-pub(crate) fn resume_instead_of_menu(app: &Rc<AppState>, router: &Router) -> bool {
+/// A menu is about to open. When the checkup is waiting for the screen it opened and this menu is where that screen leads
+/// when the user backs out (`Fix::returns_to`), come back to the checkup instead. True = handled. Any other menu (the ports
+/// folder flow handing over to Game files, say), and a menu the checkup itself is opening as the fix, open as always.
+pub(crate) fn resume_instead_of_menu(app: &Rc<AppState>, router: &Router, menu: checkup::Menu) -> bool {
     let Some(s) = session() else { return false };
     if s.stage.get() != Stage::Fixing || s.entering.get() {
+        return false;
+    }
+    if !s.fix.borrow().as_ref().is_some_and(|f| f.returns_to(menu)) {
         return false;
     }
     resume(app, router);
@@ -685,29 +811,54 @@ mod tests {
         SysInput {
             installed,
             favorites: HashMap::new(),
+            played: HashSet::new(),
+            catalog_folders: Vec::new(),
             home: Some(root.join("home")),
             library: root.join("Library"),
             config_dir: root.join("config"),
+            settings_path: root.join("config").join("fork-settings.json"),
             saves_backup_dir: root.join("Saves Backup"),
             default_library: root.join("elsewhere"),
         }
     }
 
+    fn snapshot(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+            let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().filter_map(Result::ok).collect();
+            entries.sort_by_key(|e| e.file_name());
+            for e in entries {
+                let p = e.path();
+                if p.is_dir() {
+                    out.push((p.clone(), Vec::new()));
+                    walk(&p, out);
+                } else {
+                    out.push((p.clone(), std::fs::read(&p).unwrap()));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, &mut out);
+        out
+    }
+
     #[test]
-    fn looking_reads_the_disk_and_writes_nothing() {
+    fn looking_reads_the_disk_and_writes_nothing_even_with_a_corrupt_waiting_list() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("home")).unwrap();
         std::fs::create_dir_all(root.path().join("config")).unwrap();
-        let before = std::fs::read_dir(root.path()).unwrap().count();
+        // A waiting list the app cannot understand: `steam_queue::load` would move it aside; looking must leave it.
+        std::fs::write(root.path().join("config").join(steam_queue::FILE_NAME), "{ not json").unwrap();
+        let before = snapshot(root.path());
         let facts = sys_gather(input(root.path(), vec![port("a")]));
         assert_eq!(facts.folder, Folder::Gone, "a chosen ports folder that is not there");
         assert!(!facts.steam_found, "an empty home has no Steam folder");
-        assert!(matches!(&facts.queue, Ok(q) if q.is_empty()));
+        assert_eq!(facts.queue.as_ref().err().map(String::as_str), Some(checkup::QUEUE_UNREADABLE), "not 'nothing waiting'");
         assert!(matches!(&facts.shortcuts, Ok(s) if s.is_empty()));
-        assert!(facts.programs.is_empty(), "the folder is not there: no walk");
+        assert!(facts.programs.is_empty() && facts.files.is_empty() && facts.saves.is_empty(), "the folder is not there: no walks");
         assert_eq!(facts.backup_days, None);
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), before, "nothing was created next to the app's folders");
-        assert_eq!(std::fs::read_dir(root.path().join("config")).unwrap().count(), 0, "and nothing in the config folder");
+        assert_eq!(snapshot(root.path()), before, "not a file made, moved or changed (no .corrupt-* copy of the list either)");
+        let unreadable = checkup::check(Check::SteamWaiting, &assemble_for_test(facts));
+        assert_eq!(unreadable, Outcome::Unknown("Steam's change list cannot be read".into()));
     }
 
     #[test]
@@ -722,7 +873,7 @@ mod tests {
     }
 
     fn assemble_for_test(sys: SysFacts) -> Facts {
-        let part = AppPart { installed: Vec::new(), files: Vec::new(), saves: Vec::new(), updates: Vec::new(), cloud_problem: false, unfinished_moves: Vec::new(), game_mode: false };
+        let part = AppPart { installed: Vec::new(), updates: Vec::new(), cloud_problem: false, cloud_ok: false, game_mode: false };
         assemble(&part, sys)
     }
 
@@ -764,5 +915,39 @@ mod tests {
         assert_eq!(copies.iter().map(|c| (c.name.as_str(), c.state)).collect::<Vec<_>>(), [("kept", CopyState::StartOnce), ("vanished", CopyState::Gone)]);
         let record_after = std::fs::read_to_string(config.join(old_copies::FILE_NAME)).unwrap();
         assert_eq!(record_after, file.to_string(), "looking did not note anything in the record (readiness_now would have)");
+    }
+
+    #[test]
+    fn a_switch_cut_short_counts_only_when_its_new_copy_is_a_catalog_folder_in_use() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let lib = root.path().join("Library");
+        let rec = |name: &str, new: &std::path::Path, switched: bool| {
+            serde_json::json!({"port_key": name, "name": name, "old_path": root.path().join("old").join(name), "new_path": new, "bytes": 1, "moved_at": "20261024-120000", "link_only": false, "switched": switched})
+        };
+        let file = serde_json::json!({"version": 1, "old_copies": [rec("a", &lib.join("a"), false), rec("b", &lib.join("b"), true), rec("c", &root.path().join("elsewhere").join("c"), false)]});
+        std::fs::write(config.join(old_copies::FILE_NAME), file.to_string()).unwrap();
+        let mut i = input(root.path(), Vec::new());
+        i.catalog_folders = vec!["a".into(), "b".into(), "c".into()];
+        assert_eq!(unfinished_switches(&i), vec!["a".to_string()], "only the one cut short whose new copy is in the ports folder");
+    }
+
+    #[test]
+    fn the_disk_part_reads_saves_and_game_files_for_each_port_without_the_app() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = root.path().join("Library");
+        std::fs::create_dir_all(lib.join("a")).unwrap();
+        std::fs::create_dir_all(root.path().join("config")).unwrap();
+        // Told "no saves" by the user: not missing, not known.
+        std::fs::write(root.path().join("config").join("fork-settings.json"), serde_json::json!({"save_overrides": {"a": {"no_saves": true}}}).to_string()).unwrap();
+        let i = input(root.path(), vec![port("a"), port("b")]);
+        let (missing, known) = saves_not_found(&i);
+        assert_eq!(known, 0);
+        assert!(missing.is_empty(), "a is answered, b has no folder here: {missing:?}");
+        std::fs::create_dir_all(lib.join("b")).unwrap();
+        let (missing, _) = saves_not_found(&i);
+        assert_eq!(missing, vec![Named::new("b", "b")], "no save folder is known for b");
+        assert!(game_files_missing(&i).is_empty(), "these ports name no game files");
     }
 }

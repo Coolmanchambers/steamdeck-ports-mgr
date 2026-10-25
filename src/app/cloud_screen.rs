@@ -229,6 +229,17 @@ pub(crate) fn home_status(app: &AppState) -> (i32, String) {
     }
 }
 
+/// Fork (checkup): signed in, with a pass that copied (or found nothing new) within the last `within` seconds and no error
+/// since: the saves are safe online, so a zip next to the app is not needed.
+pub(crate) fn recent_success(app: &AppState, within: u64) -> bool {
+    if !store::tokens_of(&tokens_path(&app.paths.config_dir), SERVICE).is_some_and(|t| t.signed_in()) {
+        return false;
+    }
+    let record = store::record_of(&record_path(&app.paths.config_dir), SERVICE);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    record.last_error.is_none() && record.last_ok.is_some_and(|t| now.saturating_sub(t) <= within)
+}
+
 /// How far a running pass's copying is, when it has started copying.
 fn running_fraction() -> Option<f32> {
     RUNTIME.with(|r| r.borrow().running.as_ref().and_then(|r| r.job.fraction()))

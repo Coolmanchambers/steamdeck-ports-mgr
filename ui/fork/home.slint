@@ -90,7 +90,7 @@ component Tile inherits Rectangle {
             stroke: SemanticColors.info;
             stroke-width: root.font-px * 0.55;
         }
-        // Fix problems: an exclamation mark in a circle, red when a game will not start, else amber.
+        // Fix problems: an exclamation mark in a circle, red when a game will not start, else the blue of "to do".
         if root.tile.kind == 4: Path {
             width: 44%;
             height: 44%;
@@ -99,7 +99,7 @@ component Tile inherits Rectangle {
             viewbox-width: 100;
             viewbox-height: 100;
             commands: "M 6 50 A 44 44 0 1 1 94 50 A 44 44 0 1 1 6 50 Z M 50 26 V 56 M 50 70 V 72";
-            stroke: root.tile.mark == 5 ? SemanticColors.danger : SemanticColors.warning;
+            stroke: root.tile.mark == 5 ? SemanticColors.danger : SemanticColors.info;
             stroke-width: root.font-px * 0.45;
         }
         // Continue: a tag over the top of the cover.

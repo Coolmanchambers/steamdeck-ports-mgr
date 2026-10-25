@@ -2,6 +2,7 @@ use super::pages::{self, Act};
 use super::*;
 use crate::fork::page::{action_at, initial_focus, Mark};
 use crate::fork::port_mover::old_copies::StartedBy;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 fn named(key: &str) -> Named {
@@ -20,6 +21,7 @@ fn finding(port: &str, state: IconState) -> IconFinding {
         app_id: Some(7),
         stored: String::new(),
         state,
+        at_old_copy: false,
     }
 }
 
@@ -87,7 +89,7 @@ fn a_missing_ports_folder_is_red_and_the_checks_that_need_it_say_they_could_not_
     }
     assert!(matches!(r.outcome(Check::Updates), Some(Outcome::Ok(_))), "updates do not need the folder");
     assert!(r.any_red());
-    assert_eq!(r.summary(), "1 problem");
+    assert_eq!(r.summary(), "1 thing to fix");
     assert_eq!(r.home_tile().unwrap().mark, Mark::Problem);
     let line = pages::line(Check::GameFiles, r.outcome(Check::GameFiles).unwrap());
     assert_eq!(line, "Game files: could not check (the ports folder is not there)");
@@ -151,7 +153,7 @@ fn an_icon_repair_that_is_already_queued_is_counted_once_under_steam_changes() {
     let mut f = fine();
     f.shortcuts = Ok(vec![finding("soh", IconState::Empty), ok_icon("dusk")]);
     f.queue = Ok(vec![queued("soh", QueuedKind::Icon)]);
-    assert_eq!(check(Check::SteamIcons, &f), Outcome::Ok("All fine".into()));
+    assert!(matches!(check(Check::SteamIcons, &f), Outcome::Queued { .. }), "made, waiting for Steam: not fine, not a second problem");
     assert!(check(Check::SteamWaiting, &f).is_problem());
     f.queue = Ok(vec![queued("soh", QueuedKind::Repoint)]);
     assert!(check(Check::SteamIcons, &f).is_problem(), "a different kind of change does not repair the icon");
@@ -199,11 +201,11 @@ fn programs_missing_files_and_saves_name_their_ports_and_fixes() {
 
     f.files = vec![(named("dusk"), FilesState::Unverifiable)];
     let p = problem_of(check(Check::GameFiles, &f));
-    assert_eq!((p.mark, p.summary.as_str()), (Mark::ToDo, "Tell me where they are: DUSK"), "a title only is not red");
+    assert_eq!((p.mark, p.summary.as_str()), (Mark::ToDo, "Not connected yet: DUSK"), "a title only is not red");
     f.files = vec![(named("dusk"), FilesState::Unverifiable), (named("soh"), FilesState::Missing), (named("abuse"), FilesState::Missing), (named("q"), FilesState::Missing)];
     let p = problem_of(check(Check::GameFiles, &f));
     assert_eq!(p.mark, Mark::Problem, "a named file that is not there: the game will not start");
-    assert_eq!(p.summary, "Missing for SOH, ABUSE and Q; DUSK to add");
+    assert_eq!(p.summary, "Missing for SOH, ABUSE and Q; not connected yet: DUSK");
     assert_eq!(p.ports.len(), 4);
     assert!(run(&f).any_red());
     assert_eq!(run(&f).home_tile().unwrap().mark, Mark::Problem);
@@ -219,7 +221,7 @@ fn old_copies_say_what_each_needs_and_wait_unless_one_can_be_acted_on() {
     let mut f = fine();
     f.old_copies = Ok(vec![CopyFact { name: "Dusklight".into(), state: CopyState::StartOnce }]);
     let p = problem_of(check(Check::OldCopies, &f));
-    assert_eq!(p.summary, "Start Dusklight once from its new place");
+    assert_eq!(p.summary, "Start Dusklight once, from here or from Steam");
     assert_eq!(p.mark, Mark::Waiting, "nothing to do yet");
     f.old_copies = Ok(vec![
         CopyFact { name: "A".into(), state: CopyState::Ready },
@@ -247,6 +249,7 @@ fn updates_and_backups() {
     assert_eq!((p.summary.as_str(), p.fix.clone(), p.fix_label.as_str()), ("Update ready: SOH and DUSK", Fix::Update("soh".into()), "Update SOH"));
 
     f.backup_days = None;
+    f.saves_known = 1;
     let p = problem_of(check(Check::Backups, &f));
     assert_eq!((p.summary.as_str(), p.fix.clone()), ("No save backup yet", Fix::BackUpNow));
     f.backup_days = Some(BACKUP_STALE_DAYS);
@@ -270,15 +273,16 @@ fn the_summary_and_the_home_tile_count_the_checks_with_something_to_fix() {
     let mut f = fine();
     f.updates = vec![named("soh")];
     let r = run(&f);
-    assert_eq!(r.summary(), "1 problem");
+    assert_eq!(r.summary(), "1 thing to fix");
     let tile = r.home_tile().unwrap();
     assert_eq!((tile.title.as_str(), tile.note.as_str(), tile.mark), ("Fix 1 problem", "Updates", Mark::ToDo));
     f.saves = vec![named("soh")];
     f.queue = Ok(vec![queued("soh", QueuedKind::Add)]);
     let r = run(&f);
-    assert_eq!(r.summary(), "3 problems");
+    assert_eq!(r.summary(), "3 things to fix");
     let tile = r.home_tile().unwrap();
-    assert_eq!((tile.title.as_str(), tile.note.as_str()), ("Fix 3 problems", "Steam changes and 2 more"));
+    assert_eq!((tile.title.as_str(), tile.note.as_str()), ("Fix 2 problems", "Steam changes"));
+    assert_eq!(r.problem_count(), 3, "saves not found shows in the checkup but is not worth a tile by itself");
     assert_eq!(tile.mark, Mark::ToDo, "red only when a game will not start");
     assert_eq!(r.problems().iter().map(|(c, _)| *c).collect::<Vec<_>>(), [Check::SteamWaiting, Check::Saves, Check::Updates], "problems keep the design's order");
 }
@@ -311,14 +315,14 @@ fn the_overview_has_one_line_per_check_and_leads_with_fixing_when_there_is_somet
     f.shortcuts = Err("Could not read Steam".into());
     let r = run(&f);
     let page = pages::overview_page(&r);
-    assert_eq!(page.facts.len(), 10, "one line per check");
+    assert_eq!(page.facts.len(), 4, "a line for each check that needs a look, then one for the rest");
     assert_eq!(page.title, "Checkup");
-    let updates = Check::ALL.iter().position(|c| *c == Check::Updates).unwrap();
-    assert_eq!(page.facts[updates], "Updates: Update ready: SOH", "kept as it is: it reads as a title");
+    let at = |text: &str| page.facts.iter().position(|l| l == text).unwrap_or_else(|| panic!("{text}: {:?}", page.facts));
+    let updates = at("Updates: Update ready: SOH");
     assert_eq!(page.mark_of(updates), Mark::ToDo);
-    let icons = Check::ALL.iter().position(|c| *c == Check::SteamIcons).unwrap();
-    assert_eq!(page.facts[icons], "Steam icons: could not check (Could not read Steam)", "a check that cannot run says why on its own line");
-    assert_eq!(page.mark_of(icons), Mark::Skipped);
+    let icons = at("Steam icons: could not check (Could not read Steam)");
+    assert_eq!(page.mark_of(icons), Mark::Skipped, "a check that cannot run says why on its own line");
+    assert_eq!(page.facts[3], "7 other checks are fine");
     assert_eq!(page.paragraphs, vec!["I found 1 thing to fix."]);
     assert_eq!(page.options.len(), 2);
     assert_eq!((page.options[0].title.as_str(), page.options[0].recommended, page.options[0].action), ("Fix it", true, Act::FixAll));
@@ -336,8 +340,9 @@ fn the_overview_has_one_line_per_check_and_leads_with_fixing_when_there_is_somet
 fn when_everything_is_fine_the_overview_says_so_and_offers_done() {
     let page = pages::overview_page(&run(&fine()));
     assert_eq!(page.paragraphs, vec!["Everything looks fine."]);
-    assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::Done, Act::CheckAgain]);
+    assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::Done]);
     assert!(page.options[0].recommended);
+    assert_eq!(page.buttons[crate::fork::page::LEFT].as_ref().map(|b| b.action), Some(Act::CheckAgain));
     assert!((0..10).all(|i| page.mark_of(i) == Mark::Done));
 }
 
@@ -362,24 +367,24 @@ fn a_step_page_shows_the_problem_the_fix_card_and_a_way_to_skip() {
 
 #[test]
 fn after_a_fix_the_line_turns_green_or_offers_another_try() {
-    let green = pages::after_page(Check::SteamIcons, &Outcome::Ok("All fine".into()), 1, 2, false);
+    let green = pages::after_page(Check::SteamIcons, &Outcome::Ok("All fine".into()), 1, 2, false, false);
     assert_eq!(green.title, "That is fixed");
     assert_eq!(green.mark_of(0), Mark::Done);
     assert_eq!(green.facts, vec!["Steam icons: all fine"]);
     assert_eq!(green.options.len(), 1);
     assert_eq!((green.options[0].title.as_str(), green.options[0].action), ("Next problem", Act::Next));
-    let last = pages::after_page(Check::SteamIcons, &Outcome::Ok("All fine".into()), 2, 2, true);
+    let last = pages::after_page(Check::SteamIcons, &Outcome::Ok("All fine".into()), 2, 2, true, false);
     assert_eq!(last.options[0].title, "Finish");
 
     let mut f = fine();
     f.updates = vec![named("soh")];
-    let still = pages::after_page(Check::Updates, &check(Check::Updates, &f), 1, 1, true);
+    let still = pages::after_page(Check::Updates, &check(Check::Updates, &f), 1, 1, true, false);
     assert_eq!(still.title, "Not fixed yet");
     assert_eq!(still.mark_of(0), Mark::ToDo);
     assert_eq!(still.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::TryAgain, Act::CheckAgain, Act::Next]);
     assert_eq!(still.options[0].detail, "Update SOH");
 
-    let cannot = pages::after_page(Check::Saves, &Outcome::Unknown("the ports folder is not there".into()), 1, 1, true);
+    let cannot = pages::after_page(Check::Saves, &Outcome::Unknown("the ports folder is not there".into()), 1, 1, true, false);
     assert_eq!(cannot.title, "Could not check again");
     assert_eq!(cannot.mark_of(0), Mark::Skipped);
     assert_eq!(cannot.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::CheckAgain, Act::Next]);
@@ -394,7 +399,7 @@ fn the_last_page_counts_what_is_left_and_the_confirm_page_asks_first() {
     f.updates = vec![named("soh")];
     let left = pages::finished_page(&[(Check::Updates, check(Check::Updates, &f)), (Check::Saves, Outcome::Ok("All found".into()))]);
     assert_eq!(left.title, "Done for now");
-    assert!(left.paragraphs[0].starts_with("1 thing is still left"));
+    assert!(left.paragraphs[0].starts_with("Still left: 1 to fix"), "{:?}", left.paragraphs);
     assert_eq!((left.mark_of(0), left.mark_of(1)), (Mark::ToDo, Mark::Done));
 
     let ask = pages::confirm_page(Check::Updates, "Update SOH to the newest version?", vec!["Your saves are kept.".into()], "Update", 1, 1);
@@ -425,4 +430,282 @@ fn only_a_folder_walk_of_bounded_size_decides_whether_there_is_a_program_to_choo
     std::fs::create_dir_all(dir.path().join(".previous")).unwrap();
     std::fs::write(dir.path().join(".previous").join("old.sh"), b"#!/bin/sh\n").unwrap();
     assert_eq!(shallow_programs(dir.path()).unwrap().len(), 2, "superseded releases are never candidates");
+}
+
+// -- The review round: skips, advisory lines, queued repairs, old copies, backups ----------------------------
+
+fn found_saves(f: &mut Facts) {
+    f.saves_known = 2;
+}
+
+#[test]
+fn a_skipped_problem_is_out_of_the_way_until_it_reads_differently() {
+    let mut f = fine();
+    f.updates = vec![named("soh")];
+    let first = problem_of(check(Check::Updates, &f));
+    f.skips.insert(Check::Updates.key().to_string(), first.fingerprint());
+    let r = run(&f);
+    assert!(matches!(r.outcome(Check::Updates), Some(Outcome::Skipped(p)) if p.summary == first.summary));
+    assert_eq!((r.problem_count(), r.skipped_count()), (0, 1), "a skipped problem is not counted");
+    assert!(r.home_tile().is_none(), "and does not raise the tile");
+    assert_eq!(r.summary(), "Everything looks fine, 1 skipped");
+    assert_eq!(r.outcome(Check::Updates).unwrap().mark(), Mark::Skipped);
+    assert_eq!(pages::line(Check::Updates, r.outcome(Check::Updates).unwrap()), "Updates: skipped (Update ready: SOH)");
+    assert!(r.problems().is_empty(), "the run does not visit it");
+    // Another port with an update: the line changed, so it is a problem again.
+    f.updates = vec![named("soh"), named("dusk")];
+    let r = run(&f);
+    assert!(r.outcome(Check::Updates).unwrap().is_problem());
+    // Skips remembered for another check do not touch this one.
+    f.skips.clear();
+    f.skips.insert(Check::Saves.key().to_string(), "x".into());
+    assert!(run(&f).outcome(Check::Updates).unwrap().is_problem());
+    // The settings file round trip.
+    let mut skips = Skips::new();
+    skips.insert("saves".into(), "Not found for A|a".into());
+    assert_eq!(skips_from_json(Some(&skips_to_json(&skips))), skips);
+    assert_eq!(skips_from_json(None), Skips::new());
+}
+
+#[test]
+fn the_overview_says_skipped_and_offers_to_bring_them_back() {
+    let mut f = fine();
+    f.updates = vec![named("soh")];
+    f.skips.insert(Check::Updates.key().to_string(), problem_of(check(Check::Updates, &f)).fingerprint());
+    let page = pages::overview_page(&run(&f));
+    assert_eq!(page.paragraphs, vec!["Nothing new to fix. 1 skipped earlier."]);
+    assert!(page.facts.iter().any(|l| l == "Updates: skipped (Update ready: SOH)"));
+    assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::Done, Act::Unskip]);
+    f.saves = vec![named("soh")];
+    let page = pages::overview_page(&run(&f));
+    assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::FixAll, Act::Unskip, Act::NotNow]);
+    assert!(page.paragraphs[0].contains("1 thing to fix") && page.paragraphs[0].contains("1 skipped earlier"));
+}
+
+#[test]
+fn nudges_and_things_that_cannot_be_done_now_show_in_the_checkup_but_do_not_raise_the_tile() {
+    let mut f = fine();
+    f.saves = vec![named("soh")];
+    f.backup_days = Some(40);
+    found_saves(&mut f);
+    f.old_copies = Ok(vec![CopyFact { name: "A".into(), state: CopyState::StartOnce }]);
+    let r = run(&f);
+    assert_eq!(r.problem_count(), 3, "saves not found, an old backup, an old copy waiting for a first start");
+    assert!(r.problems().iter().all(|(_, p)| p.advisory), "all three are nudges or waiting");
+    assert!(r.home_tile().is_none(), "none of them raises the tile by itself");
+    assert_eq!(r.summary(), "3 things to fix", "but Settings' line counts them");
+    // A real fix next to them: the tile counts only that one.
+    f.updates = vec![named("soh")];
+    let tile = run(&f).home_tile().unwrap();
+    assert_eq!((tile.title.as_str(), tile.note.as_str(), tile.mark), ("Fix 1 problem", "Updates", Mark::ToDo));
+    // A red problem always counts, advisory or not.
+    f.updates.clear();
+    f.files = vec![(named("soh"), FilesState::Missing)];
+    let tile = run(&f).home_tile().unwrap();
+    assert_eq!((tile.title.as_str(), tile.mark), ("Fix 1 problem", Mark::Problem));
+    // An old copy that can be removed is something to do now.
+    f.files.clear();
+    f.old_copies = Ok(vec![CopyFact { name: "A".into(), state: CopyState::Ready }]);
+    assert_eq!(run(&f).home_tile().unwrap().note, "Old copies");
+    // Steam changes in Game Mode cannot be finished here: shown, no tile.
+    let mut g = fine();
+    g.game_mode = true;
+    g.queue = Ok(vec![queued("soh", QueuedKind::Add)]);
+    let r = run(&g);
+    let p = problem_of(r.outcome(Check::SteamWaiting).unwrap().clone());
+    assert!(p.advisory && p.desktop_only);
+    assert!(r.home_tile().is_none());
+    g.game_mode = false;
+    assert!(run(&g).home_tile().is_some(), "in Desktop Mode the same changes are a fix to do now");
+}
+
+#[test]
+fn save_backups_are_not_nagged_without_saves_to_back_up_or_with_the_cloud_doing_it() {
+    let mut f = fine();
+    f.backup_days = None;
+    assert_eq!(check(Check::Backups, &f), Outcome::Ok("No save folders known yet".into()), "no port has a known save folder: nothing a zip could hold");
+    f.saves_known = 2;
+    let p = problem_of(check(Check::Backups, &f));
+    assert_eq!((p.summary.as_str(), p.advisory, p.fix.clone()), ("No save backup yet", true, Fix::BackUpNow));
+    f.cloud_ok = true;
+    assert_eq!(check(Check::Backups, &f), Outcome::Ok("Saves are copied to the cloud".into()), "signed in with a recent copy");
+    f.cloud_problem = true;
+    assert!(check(Check::Backups, &f).is_problem(), "a cloud that reports a problem is not a safe place");
+    f.cloud_problem = false;
+    f.cloud_ok = false;
+    f.backup_days = Some(BACKUP_STALE_DAYS + 1);
+    assert_eq!(problem_of(check(Check::Backups, &f)).summary, "Last save backup was 15 days ago");
+    f.saves_known = 0;
+    assert_eq!(check(Check::Backups, &f), Outcome::Ok("Backed up 15 days ago".into()), "an old zip is not nagged about when nothing is known to back up");
+}
+
+#[test]
+fn an_icon_repair_waiting_for_steam_is_queued_not_fixed_and_the_page_says_so() {
+    let mut f = fine();
+    f.shortcuts = Ok(vec![finding("soh", IconState::Empty), ok_icon("dusk")]);
+    f.queue = Ok(vec![queued("soh", QueuedKind::Icon)]);
+    let o = check(Check::SteamIcons, &f);
+    let Outcome::Queued { summary, fix_label, desktop_only } = &o else { panic!("{o:?}") };
+    assert_eq!((summary.as_str(), fix_label.as_str(), *desktop_only), ("Queued: finishes when Steam closes (SOH)", "Close Steam and update shortcuts", false));
+    assert_eq!(o.mark(), Mark::Waiting);
+    assert!(!o.is_problem() && o.is_not_fine());
+    let page = pages::after_page(Check::SteamIcons, &o, 1, 1, true, false);
+    assert_eq!(page.title, "Queued, not finished", "never 'That is fixed'");
+    assert_eq!((page.options[0].title.as_str(), page.options[0].action, page.options[0].recommended), ("Close Steam and update shortcuts", Act::TryAgain, true));
+    assert_eq!(pages::line(Check::SteamIcons, &o), "Steam icons: queued: finishes when Steam closes (SOH)");
+    // The Steam changes line counts it once; the icons line is not a second problem.
+    let r = run(&f);
+    assert_eq!(r.problem_count(), 1);
+    // Game Mode: it cannot be finished here, so moving on leads.
+    f.game_mode = true;
+    let Outcome::Queued { desktop_only, fix_label, .. } = check(Check::SteamIcons, &f) else { panic!() };
+    assert!(desktop_only && fix_label == "See how to finish this");
+    let gm = pages::after_page(Check::SteamIcons, &check(Check::SteamIcons, &f), 1, 2, false, false);
+    assert_eq!((gm.options[0].action, gm.options[0].recommended), (Act::Next, true));
+}
+
+#[test]
+fn after_the_desktop_mode_page_next_problem_leads_and_one_of_several_done_chains_to_the_next() {
+    let mut f = fine();
+    f.game_mode = true;
+    f.queue = Ok(vec![queued("soh", QueuedKind::Add)]);
+    let o = check(Check::SteamWaiting, &f);
+    let page = pages::after_page(Check::SteamWaiting, &o, 1, 3, false, false);
+    assert_eq!(page.title, "Not fixed yet");
+    assert_eq!(page.options.iter().map(|o| (o.action, o.recommended)).collect::<Vec<_>>(), [(Act::Next, true), (Act::TryAgain, false), (Act::CheckAgain, false)], "Game Mode cannot finish it: no Try again on top");
+    // Several ports: the next one is named on the card, and the page says one is done.
+    let mut g = fine();
+    g.saves = vec![named("dusk"), named("abuse")];
+    let o = check(Check::Saves, &g);
+    let p = problem_of(o.clone());
+    assert_eq!((p.fix.clone(), p.fix_label.as_str()), (Fix::FindSaves("dusk".into()), "Find saves for DUSK"), "the first port that still lacks its saves");
+    let chained = pages::after_page(Check::Saves, &o, 1, 1, true, true);
+    assert_eq!(chained.title, "One done, more to go");
+    assert_eq!((chained.options[0].title.as_str(), chained.options[0].detail.as_str(), chained.options[0].action), ("Fix the next one", "Find saves for DUSK", Act::TryAgain));
+    let again = pages::after_page(Check::Saves, &o, 1, 1, true, false);
+    assert_eq!((again.title.as_str(), again.options[0].title.as_str()), ("Not fixed yet", "Try again"));
+    let mut h = fine();
+    h.programs = vec![named("severed"), named("soh")];
+    assert_eq!(problem_of(check(Check::Programs, &h)).fix_label, "Choose the program for SEVERED");
+}
+
+#[test]
+fn the_last_page_counts_what_is_left_whatever_kind() {
+    let ok = Outcome::Ok("fine".into());
+    let done = pages::finished_page(&[(Check::Updates, ok.clone())]);
+    assert_eq!((done.title.as_str(), done.paragraphs[0].as_str()), ("All done", "Everything is fixed."));
+    let mut f = fine();
+    f.updates = vec![named("soh")];
+    let problem = check(Check::Updates, &f);
+    let queued_o = Outcome::Queued { summary: "Queued: finishes when Steam closes (SOH)".into(), fix_label: "x".into(), desktop_only: false };
+    let items = [
+        (Check::SteamWaiting, Outcome::Unknown("Steam's change list cannot be read".into())),
+        (Check::SteamIcons, queued_o),
+        (Check::Updates, problem.clone()),
+        (Check::Saves, Outcome::Skipped(problem_of(problem))),
+        (Check::Backups, ok),
+    ];
+    let page = pages::finished_page(&items);
+    assert_eq!(page.title, "Done for now");
+    assert_eq!(
+        page.paragraphs[0],
+        "Still left: 1 to fix, 1 waiting for Steam to close, 1 check could not be checked, 1 skipped. You can come back to it from Settings, Fix problems."
+    );
+    assert_eq!(page.facts.len(), 5);
+    let unknown_only = pages::finished_page(&[(Check::Saves, Outcome::Unknown("the ports folder is not there".into()))]);
+    assert_eq!(unknown_only.title, "Done for now", "a card pulled mid-run is not 'everything is fixed'");
+}
+
+#[test]
+fn a_shortcut_that_still_starts_an_old_copy_is_in_steam_but_wrong_and_never_offered_as_a_duplicate_add() {
+    let mut f = fine();
+    let mut old = ok_icon("dusk");
+    old.at_old_copy = true;
+    f.shortcuts = Ok(vec![ok_icon("soh"), old]);
+    let p = problem_of(check(Check::SteamShortcuts, &f));
+    assert_eq!(p.summary, "Steam still starts the old copy of DUSK");
+    assert_eq!((p.fix.clone(), p.fix_label.as_str()), (Fix::AddToSteam, "Update the Steam shortcuts"));
+    assert_eq!(p.ports, vec!["dusk"]);
+    // Its repoint is queued: that is a Steam change, not this line's problem.
+    f.queue = Ok(vec![queued("dusk", QueuedKind::Repoint)]);
+    assert_eq!(check(Check::SteamShortcuts, &f), Outcome::Ok("Every port is in Steam".into()));
+    // A port whose only shortcut is at its old copy is not "Not in Steam" (no Add that would duplicate it).
+    let mut g = fine();
+    let mut only = ok_icon("dusk");
+    only.at_old_copy = true;
+    g.shortcuts = Ok(vec![only]);
+    g.installed = vec![named("dusk")];
+    assert!(!problem_of(check(Check::SteamShortcuts, &g)).summary.contains("Not in Steam"));
+    // Any queued kind for a port counts as in Steam.
+    for kind in [QueuedKind::Add, QueuedKind::Repoint, QueuedKind::Icon, QueuedKind::Update] {
+        let mut h = fine();
+        h.installed.push(named("abuse"));
+        h.queue = Ok(vec![queued("abuse", kind)]);
+        assert_eq!(check(Check::SteamShortcuts, &h), Outcome::Ok("Every port is in Steam".into()), "{kind:?}");
+    }
+    // A Deck with no shortcuts yet and nothing queued is not nagged.
+    let mut k = fine();
+    k.shortcuts = Ok(Vec::new());
+    assert_eq!(check(Check::SteamShortcuts, &k), Outcome::Ok("No ports in Steam yet".into()));
+    // The icon of a shortcut at an old copy is repaired like any other.
+    let mut bad = finding("dusk", IconState::InOldCopy("/old/i.png".into()));
+    bad.at_old_copy = true;
+    let mut m = fine();
+    m.shortcuts = Ok(vec![ok_icon("soh"), bad]);
+    assert!(check(Check::SteamIcons, &m).is_problem());
+}
+
+#[test]
+fn only_the_menus_the_chosen_fix_returns_to_hand_control_back() {
+    use crate::fork::settings_menu::Group;
+    let ports = Menu::SettingsGroup(Group::Ports);
+    assert!(Fix::GameFiles.returns_to(ports) && Fix::OldCopies.returns_to(ports) && Fix::PortsFolderMenu.returns_to(ports));
+    assert!(Fix::Cloud.returns_to(Menu::SettingsGroup(Group::Saves)));
+    assert!(!Fix::Cloud.returns_to(ports), "the cloud flow's own menus are not the Ports page");
+    assert!(Fix::OldCopies.returns_to(Menu::PortsFolder), "the old copies list's Back row opens the ports folder menu: that is leaving");
+    assert!(!Fix::GameFiles.returns_to(Menu::PortsFolder), "the Game files flow opening the ports folder menu is part of the flow");
+    assert!(!Fix::PortsFolderMenu.returns_to(Menu::PortsFolder), "inside the ports folder menu its own screens open it again: not a way out");
+    for fix in [Fix::CloseSteam, Fix::SteamIcons, Fix::AddToSteam, Fix::BackUpNow, Fix::Update("a".into()), Fix::FindSaves("a".into()), Fix::PickProgram("a".into())] {
+        assert!(!fix.returns_to(ports) && !fix.returns_to(Menu::PortsFolder) && !fix.returns_to(Menu::SettingsGroup(Group::Steam)), "{fix:?}");
+    }
+}
+
+#[test]
+fn the_overview_keeps_to_the_lines_that_need_a_look_and_keeps_check_again_in_the_footer() {
+    let mut f = fine();
+    f.updates = vec![named("soh")];
+    f.saves = vec![named("dusk")];
+    let page = pages::overview_page(&run(&f));
+    assert_eq!(page.facts.len(), 3, "two lines to look at and one for all the rest");
+    assert_eq!(page.facts[2], "8 other checks are fine");
+    assert_eq!(page.mark_of(2), Mark::Done);
+    assert_eq!(page.buttons[crate::fork::page::LEFT].as_ref().map(|b| b.action), Some(Act::CheckAgain));
+    let fine_page = pages::overview_page(&run(&fine()));
+    assert_eq!(fine_page.facts.len(), 10, "all fine: every line, one card, Check again below");
+    assert_eq!(fine_page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::Done]);
+    assert_eq!(fine_page.buttons[crate::fork::page::LEFT].as_ref().map(|b| b.action), Some(Act::CheckAgain));
+    assert_eq!(fine_page.facts[0], "Ports folder: found");
+}
+
+#[test]
+fn wording_of_the_game_files_and_the_settings_line() {
+    let mut f = fine();
+    f.files = vec![(named("dusk"), FilesState::Unverifiable)];
+    assert_eq!(problem_of(check(Check::GameFiles, &f)).summary, "Not connected yet: DUSK");
+    f.files.push((named("soh"), FilesState::Missing));
+    assert_eq!(problem_of(check(Check::GameFiles, &f)).summary, "Missing for SOH; not connected yet: DUSK");
+    f.files.clear();
+    f.updates = vec![named("soh")];
+    assert_eq!(run(&f).summary(), "1 thing to fix");
+    f.saves = vec![named("soh")];
+    assert_eq!(run(&f).summary(), "2 things to fix");
+    assert_eq!(Check::ALL.iter().map(|c| c.key()).collect::<HashSet<_>>().len(), 10, "every check has its own key");
+}
+
+#[test]
+fn an_unreadable_waiting_list_is_could_not_check() {
+    let mut f = fine();
+    f.queue = Err(QUEUE_UNREADABLE.into());
+    assert_eq!(check(Check::SteamWaiting, &f), Outcome::Unknown("Steam's change list cannot be read".into()));
+    assert_eq!(pages::line(Check::SteamWaiting, &check(Check::SteamWaiting, &f)), "Steam changes: could not check (Steam's change list cannot be read)");
 }
