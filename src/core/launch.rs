@@ -87,7 +87,12 @@ pub fn launch(exe_path: &Path) -> io::Result<LaunchedProcess> {
     let executable =
         mode & 0o111 != 0 || std::fs::set_permissions(exe_path, std::fs::Permissions::from_mode(mode | 0o755)).is_ok();
     let child = if executable {
-        Command::new(exe_path).current_dir(cwd).spawn()?
+        match Command::new(exe_path).current_dir(cwd).spawn() {
+            Ok(child) => child,
+            // Fork: a launcher script without its `#!` line is "not an executable format" (ENOEXEC); the shell runs it.
+            Err(e) if e.raw_os_error() == Some(8) => Command::new("sh").arg(exe_path).current_dir(cwd).spawn()?,
+            Err(e) => return Err(e),
+        }
     } else {
         Command::new("sh").arg(exe_path).current_dir(cwd).spawn()?
     };

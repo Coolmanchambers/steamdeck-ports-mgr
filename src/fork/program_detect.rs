@@ -21,6 +21,8 @@ const ET_DYN: u16 = 3;
 const PT_INTERP: u32 = 3;
 /// A real program has a handful of program headers; stop looking after this many.
 const MAX_PROGRAM_HEADERS: u64 = 64;
+/// A launcher script is small; a big extensionless text file named `start` is data.
+const MAX_LAUNCHER_BYTES: u64 = 64 * 1024;
 
 /// `libfoo.so`, `libfoo.so.1.2`: shared libraries by name, whatever their header says.
 pub fn is_library_name(name: &str) -> bool {
@@ -61,7 +63,7 @@ pub fn is_program_content(path: &Path) -> bool {
         return true;
     }
     if !head.starts_with(&ELF_MAGIC) {
-        return false;
+        return is_named_text_launcher(path, head);
     }
     if path.file_name().and_then(|n| n.to_str()).is_some_and(is_library_name) {
         return false;
@@ -77,6 +79,32 @@ pub fn is_program_content(path: &Path) -> bool {
         ET_DYN => has_interpreter(&mut file, head, little),
         _ => false,
     }
+}
+
+/// Names a launcher script can have without an extension (`launch`, `start`, `run`, `run-game`, `play`...).
+fn launcher_name(name: &str) -> bool {
+    if name.contains('.') {
+        return false;
+    }
+    let lower = name.to_lowercase();
+    ["launch", "start", "run", "play"].iter().any(|p| lower == *p || lower.starts_with(&format!("{p}-")) || lower.starts_with(&format!("{p}_")))
+}
+
+/// A launcher script that lost its `#!` line: an extensionless file named like a launcher (`launch`, `start`, `run*`)
+/// whose first bytes are plain text (no NUL, valid UTF-8 up to a cut character) and that is small. Tim's Severed
+/// Chains folder has a top-level `launch` with no extension, and some zip tools drop the first line; run directly
+/// such a file fails, so the launcher hands it to `sh`.
+fn is_named_text_launcher(path: &Path, head: &[u8]) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else { return false };
+    if !launcher_name(name) || head.is_empty() || head.contains(&0) {
+        return false;
+    }
+    let text_ok = match std::str::from_utf8(head) {
+        Ok(_) => true,
+        // A multi-byte character cut by the 64-byte window is still text.
+        Err(e) => e.error_len().is_none(),
+    };
+    text_ok && std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_LAUNCHER_BYTES)
 }
 
 /// A position-independent ELF is a program (not a library) when it names a dynamic loader (PT_INTERP).
@@ -96,7 +124,9 @@ fn has_interpreter(file: &mut File, head: &[u8], little: bool) -> bool {
         return false;
     }
     for i in 0..u64::from(count).min(MAX_PROGRAM_HEADERS) {
-        if file.seek(SeekFrom::Start(off + i * u64::from(size))).is_err() {
+        // A damaged header can hold huge numbers: an overflow is not a program.
+        let Some(at) = u64::from(size).checked_mul(i).and_then(|n| n.checked_add(off)) else { return false };
+        if file.seek(SeekFrom::Start(at)).is_err() {
             return false;
         }
         let mut kind = [0u8; 4];

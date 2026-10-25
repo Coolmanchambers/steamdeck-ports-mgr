@@ -221,3 +221,45 @@ fn remembering_the_pick_survives_a_reload_and_resolves_back() {
     let stored = reloaded.get("owner/port").unwrap().favorite_exe.clone().unwrap();
     assert_eq!(crate::core::path_safety::safe_join(&dir, &stored).unwrap(), exe);
 }
+
+#[cfg(unix)]
+#[test]
+fn severed_chains_launch_without_an_extension_wins_over_the_java_files() {
+    let dir = temp_dir("severed_launch");
+    let launch = put(&dir, "launch", b"#!/bin/sh\nexec jdk/bin/java -jar x.jar\n");
+    put(&dir, "jdk/bin/java", &pie_program());
+    put(&dir, "isos/disc1.bin", b"disc");
+    put(&dir, "isos/disc1.cue", b"cue");
+    assert_eq!(autodetect_executable(&dir).unwrap(), launch);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_launcher_script_that_lost_its_shebang_still_counts_when_named_like_one() {
+    let dir = temp_dir("no_shebang");
+    let launch = put(&dir, "launch", b"cd \"$(dirname \"$0\")\"\nexec jdk/bin/java -jar x.jar\n");
+    put(&dir, "jdk/bin/java", &pie_program());
+    assert_eq!(autodetect_executable(&dir).unwrap(), launch, "a text file named launch, with the bit, is a launcher");
+    for (name, bytes) in [("data", b"just notes\n".as_slice()), ("start.txt", b"text\n"), ("startup-log", b"text\n"), ("play", b"\x00\x01binary")] {
+        let d = temp_dir(&format!("not_launcher_{name}"));
+        put(&d, name, bytes);
+        assert!(!is_linux_program(&d.join(name)), "{name}");
+    }
+    let big = temp_dir("big_start");
+    put(&big, "start", &vec![b'a'; 70_000]);
+    assert!(!is_linux_program(&big.join("start")), "a big text file named start is data");
+    assert!(launcher_name("run-game") && launcher_name("Launch") && !launcher_name("launcher.sh") && !launcher_name("running"));
+}
+
+#[test]
+fn a_damaged_elf_header_cannot_overflow_the_arithmetic() {
+    let dir = temp_dir("overflow");
+    let mut b = pie_program();
+    b[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+    b[54..56].copy_from_slice(&u16::MAX.to_le_bytes());
+    b[56..58].copy_from_slice(&u16::MAX.to_le_bytes());
+    assert!(!is_program_content(&put(&dir, "bad", &b)));
+    let mut b = pie_program();
+    b[32..40].copy_from_slice(&(u64::MAX - 10).to_le_bytes());
+    assert!(!is_program_content(&put(&dir, "bad2", &b)));
+}

@@ -120,6 +120,8 @@ pub(crate) fn start_extra_install(app: &Rc<AppState>, router: &Router, port: Por
     });
 }
 
+const CHOOSE_PROGRAM_TITLE: &str = "Choose the program to start (remembered; change it in Info)";
+
 fn file_label(path: &Path) -> String {
     path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string()
 }
@@ -148,14 +150,22 @@ fn option_label(game_dir: &Path, path: &Path) -> String {
     }
 }
 
-fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Path) {
+/// True when the program was started.
+fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Path) -> bool {
     if is_port_running(app, port.key()) {
-        return;
+        return false;
     }
     if !exe.exists() {
-        return open_error_dialog(app, router, port.clone());
+        open_error_dialog(app, router, port.clone());
+        return false;
     }
-    let Ok(child) = crate::core::launch::launch(exe) else { return };
+    let child = match crate::core::launch::launch(exe) {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("launch: could not start {}: {e}", exe.display());
+            return false;
+        }
+    };
     let key = port.key().to_string();
     let runtime = &app.install_runtime;
     runtime.running_processes.borrow_mut().insert(key.clone(), child);
@@ -170,6 +180,7 @@ fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Pat
         window.window().set_minimized(true);
         runtime.minimized_for_game.set(true);
     }
+    true
 }
 
 pub(crate) fn launch_flow(app: &Rc<AppState>, router: &Router, port: &Port) {
@@ -193,21 +204,27 @@ pub(crate) fn launch_flow(app: &Rc<AppState>, router: &Router, port: &Port) {
     let favorite = app.state.borrow().get(port.key()).and_then(|i| i.favorite_exe.clone());
     let favorite_path = favorite.and_then(|f| crate::core::path_safety::safe_join(&game_dir, &f).ok()).filter(|p| p.exists());
     if let Some(path) = favorite_path {
-        return launch_executable(app, router, port, &path);
+        launch_executable(app, router, port, &path);
+        return;
     }
     match crate::core::executable_detect::resolve_executable(port.executable.as_ref(), &game_dir) {
-        Ok(exe) => launch_executable(app, router, port, &exe),
+        Ok(exe) => {
+            launch_executable(app, router, port, &exe);
+        }
         Err(ExecutableSelectionError::Ambiguous(candidates)) => {
             let labels = candidates.iter().map(|p| file_label(p)).collect();
             let port = port.clone();
             let game_dir = game_dir.clone();
-            open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_executable(), labels, move |app, router, idx| {
+            // Fork: the title says the choice is remembered (upstream's text is just "Choose an executable").
+            open_picker_dialog(app, router, CHOOSE_PROGRAM_TITLE, labels, move |app, router, idx| {
                 if let Some(exe) = candidates.get(idx) {
-                    // Fork: remember the pick, so the next start does not ask again (Info can set it back to "Ask every time").
-                    if let Some(rel) = crate::fork::program_detect::relative_pick(&game_dir, exe) {
-                        app.state.borrow_mut().set_favorite_exe(port.key(), Some(rel));
+                    // Fork: a pick that starts is remembered, so the next start does not ask again (Info can set it
+                    // back to "Ask every time"); one that fails to start is not.
+                    if launch_executable(app, router, &port, exe) {
+                        if let Some(rel) = crate::fork::program_detect::relative_pick(&game_dir, exe) {
+                            app.state.borrow_mut().set_favorite_exe(port.key(), Some(rel));
+                        }
                     }
-                    launch_executable(app, router, &port, exe);
                 }
             });
         }
