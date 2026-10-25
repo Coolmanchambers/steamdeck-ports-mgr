@@ -320,29 +320,14 @@ pub fn readiness_now(entry: &OldCopy, home: &Path, config_dir: &Path) -> Result<
     Ok(readiness(&entry, &view))
 }
 
-/// The readiness of the old copy as it is now, read only (the checkup): like [`readiness_now`] but nothing is noted in the
-/// record. When Steam is switched and no switch time is recorded, a Steam start counts only if it is later than the newest
-/// `shortcuts.vdf.bak-*` backup of any account (applying a queued change makes one, so it is at or after the switch):
-/// never earlier than the truth, so a Steam start before the switch is never taken for the new copy's.
+//// The readiness of the old copy as it is now, read only (the checkup): [`readiness`] over what Steam says now, with nothing
+/// noted in the record (unlike [`readiness_now`], which notes the first time Steam is seen switched). A Steam start counts only
+/// when a switch time is recorded (`steam_at`, or the move time when the move itself switched the shortcut); with none the
+/// copy is "Start it once": removal must never look closer than it is.
 pub fn readiness_read_only(entry: &OldCopy, home: &Path, config_dir: &Path) -> Readiness {
-    let view = steam_view(entry, home, config_dir);
-    let mut e = entry.clone();
-    if !view.waiting && e.steam_at.is_none() && e.repoint_queued != Some(false) {
-        e.steam_at = newest_backup_time(home);
-    }
-    readiness(&e, &view)
+    readiness(entry, &steam_view(entry, home, config_dir))
 }
 
-/// The newest modification time (seconds since 1970) among the `shortcuts.vdf.bak-*` backups of every Steam account.
-fn newest_backup_time(home: &Path) -> Option<i64> {
-    super::steam::device_accounts(home)
-        .iter()
-        .filter_map(|a| crate::fork::backups::list_backups(&a.shortcuts).ok())
-        .flatten()
-        .filter_map(|b| b.modified.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .max()
-}
 
 fn mark_steam_seen(config_dir: &Path, old_path: &Path, at: i64) -> io::Result<usize> {
     update(config_dir, |e| e.old_path == old_path, |e| e.steam_at.is_none() && { e.steam_at = Some(at); true })

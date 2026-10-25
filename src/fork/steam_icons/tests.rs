@@ -563,6 +563,25 @@ fn a_shortcut_that_still_starts_an_old_copy_is_found_and_its_icon_is_repaired_li
 }
 
 #[test]
+fn a_switch_cut_short_does_not_make_its_old_folder_a_place_the_shortcut_should_have_left() {
+    let w = World::new("old_copy_cut_short");
+    let old = w.root.join("home/Applications/dpm/Library/Zelda");
+    put(&old.join("run"), b"#!/bin/sh\n");
+    for (switched, expect) in [(false, 0usize), (true, 1)] {
+        fs::write(
+            w.config.join("port-moves.json"),
+            json!({"version": 1, "old_copies": [{"port_key": "Zelda", "name": "Zelda", "old_path": old.to_string_lossy(), "new_path": w.dir("Zelda").to_string_lossy(), "switched": switched}]}).to_string(),
+        )
+        .unwrap();
+        let exe = format!("\"{}\"", old.join("run").display());
+        w.write_vdf(&[steam_entry_with(0, 5, "Zelda shortcut", &exe, &format!("\"{}\"", old.display()), "", "")]);
+        let found = diagnose(&w.home, &w.library, &w.config, &[port("Zelda", false)]).unwrap();
+        assert_eq!(found.len(), expect, "switched = {switched}");
+        assert!(found.iter().all(|f| f.at_old_copy));
+    }
+}
+
+#[test]
 fn a_cached_catalog_icon_that_is_not_a_picture_is_said_plainly() {
     let w = World::new("bad_cache");
     w.write_vdf(&[w.entry(0, 5, "Zelda", "", "")]);

@@ -87,3 +87,37 @@ fn write_repoint_changes_the_file_and_only_the_named_fields() {
     assert_eq!(list[1].icon, "/usr/share/c.png");
     let _ = fs::remove_dir_all(&home);
 }
+
+#[test]
+fn the_checkups_repoint_changes_the_old_copy_shortcuts_of_every_account_whatever_they_are_called_and_adds_nothing() {
+    // Two accounts: one shortcut still has the port's catalog name, the other was renamed by the user. Both start the old copy.
+    let same_name = steam_entry_with(0, 0xAAAA_0001, "Ship of Harkinian", "\"/old/SoH/soh\"", "\"/old/SoH\"", "\"/old/SoH/art/i.png\"", "--fullscreen");
+    let renamed = steam_entry_with(0, 0xBBBB_0002, "Zelda (my copy)", "\"/old/SoH/soh\"", "\"/old/SoH\"", "/old/SoH/art/i.png", "-x");
+    let unrelated = steam_entry_with(1, 0xBBBB_0003, "Chiaki", "\"/usr/bin/chiaki\"", "\"/usr/bin/\"", "/usr/share/c.png", "");
+    let home = home_with(&[same_name], "repoint_all");
+    let second = home.join(".local/share/Steam/userdata/5678/config");
+    fs::create_dir_all(&second).unwrap();
+    fs::write(second.join("shortcuts.vdf"), file_of(&[renamed, unrelated])).unwrap();
+    let config = home.join("app");
+    fs::create_dir_all(&config).unwrap();
+    let settings = ForkSettings::load(&home.join("fork-settings.json"));
+    let ctx = SteamCtx { home: &home, config_dir: &config, settings: &settings, steam: &no_steam, game_mode: false, now: SystemTime::now() };
+    let report = repoint_everywhere("a/soh", "Ship of Harkinian", Path::new("/old/SoH"), Path::new("/new/SoH"), &ctx);
+    assert_eq!((report.changed_count(), report.queued.len(), report.failed.len()), (2, 0, 0), "{report:?}");
+    let list = |account: u32| shortcuts::list(&ShortcutsFile::load(&home.join(format!(".local/share/Steam/userdata/{account}/config/shortcuts.vdf"))).unwrap().doc);
+    let (one, two) = (list(1234), list(5678));
+    assert_eq!((one.len(), two.len()), (1, 2), "no shortcut was added");
+    assert_eq!((one[0].app_name.as_str(), one[0].app_id, one[0].launch_options.as_str()), ("Ship of Harkinian", Some(0xAAAA_0001), "--fullscreen"));
+    assert_eq!((one[0].exe.as_str(), one[0].start_dir.as_str(), one[0].icon.as_str()), ("\"/new/SoH/soh\"", "\"/new/SoH\"", "/new/SoH/art/i.png"));
+    assert_eq!((two[0].app_name.as_str(), two[0].app_id, two[0].launch_options.as_str()), ("Zelda (my copy)", Some(0xBBBB_0002), "-x"), "a renamed shortcut keeps its name, id and launch options");
+    assert_eq!((two[0].exe.as_str(), two[0].icon.as_str()), ("\"/new/SoH/soh\"", "/new/SoH/art/i.png"));
+    assert_eq!(two[1].exe, "\"/usr/bin/chiaki\"", "another program is untouched");
+    // With Steam running nothing is written: one Repoint is queued for each account that has something to change.
+    let steam_up = || -> io::Result<Vec<String>> { Ok(vec!["77 steam".into()]) };
+    let again = home_with(&[steam_entry_with(0, 7, "Zelda", "\"/old/SoH/soh\"", "\"/old/SoH\"", "", "")], "repoint_queue");
+    let ctx = SteamCtx { home: &again, config_dir: &config, settings: &settings, steam: &steam_up, game_mode: false, now: SystemTime::now() };
+    let queued = repoint_everywhere("a/soh", "Ship of Harkinian", Path::new("/old/SoH"), Path::new("/new/SoH"), &ctx);
+    assert_eq!((queued.changed_count(), queued.queued.len()), (0, 1), "{queued:?}");
+    let _ = fs::remove_dir_all(&home);
+    let _ = fs::remove_dir_all(&again);
+}

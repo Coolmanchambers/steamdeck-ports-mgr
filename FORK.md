@@ -447,7 +447,7 @@ these in the future." Spec: `docs/design/checkup-wizard.md` in the project folde
   list, the update badges, the cloud status) is read on the UI thread, when the worker's answer arrives. No look runs, and a
   result that arrives is dropped, while a move, install, restore or import runs. Old copies use
   `old_copies::readiness_read_only` (never `readiness_now`, which writes a note into the record): a Steam start counts when it
-  is later than the recorded switch, else later than the newest `shortcuts.vdf.bak-*` backup.
+  is later than the recorded switch time; with none recorded the copy is "start it once" (removal never looks closer than it is).
 - **The pages** (one question each): "Looking over your setup" (Cancel), "Checkup" (a line for each check that needs a look and
   one for all the fine ones, "Fix them one by one" recommended, "Check again" and "Not now" in the footer; with everything fine all ten lines
   and "Done"), one page per problem (its line, the real values behind it in the small text, the fix card, "Skip this one"; B goes
@@ -469,7 +469,10 @@ these in the future." Spec: `docs/design/checkup-wizard.md` in the project folde
   badge on Home does not open the checkup (the tile does).
 - **Steam icons, shared engine.** `steam_icons::diagnose` also matches a shortcut through the old folders recorded in
   `port-moves.json` (`IconFinding.at_old_copy`), so the Fix Steam icons page lists such a shortcut ("the shortcut still starts the
-  old copy") and its icon is repaired like any other.
+  old copy; Fix problems can point it at the new one") and its icon is repaired like any other. A record whose switch was cut short
+  (`switched` false) does not count. **Point Steam at the new copy** (`Fix::Repoint`) asks first ("Its name, art, play time and launch
+  options stay"), then calls `port_mover::steam::repoint_everywhere` for each such port: every account, the app ID kept, written when
+  Steam is closed, else queued as a Repoint and handed to the Close Steam flow. Add to Steam stays for "Not in Steam" only.
 - Upstream edits: `src/app/mod.rs` (one module line) and `tools/smoke-test.sh`.
 
 

@@ -97,6 +97,9 @@ pub enum Fix {
     CloseSteam,
     SteamIcons,
     AddToSteam,
+    /// Asks first on a page of its own, then points the shortcuts that still start an old copy at the new one (the port's
+    /// ports are the problem's `ports`): written when Steam is closed, else queued and the Close Steam flow follows.
+    Repoint,
     PickProgram(String),
     GameFiles,
     FindSaves(String),
@@ -451,7 +454,25 @@ impl Results {
         self.items.iter().filter(|(_, o)| matches!(o, Outcome::Unknown(_))).count()
     }
 
-    /// The line Settings shows on its card: "6 things to fix", "Everything looks fine".
+    /// How many problems have a fix that works now (or are red): what the Home tile counts. The rest are reminders.
+    pub fn to_do_now(&self) -> usize {
+        self.home_problems().len()
+    }
+
+    /// How the problems split, for a line: "3 things to fix", or "2 to do now, 1 reminder" when some are only reminders.
+    pub fn split_words(&self) -> String {
+        let (n, now) = (self.problem_count(), self.to_do_now());
+        let reminders = n - now;
+        let r = if reminders == 1 { "1 reminder".to_string() } else { format!("{reminders} reminders") };
+        match (n, now) {
+            (1, 1) => "1 thing to fix".to_string(),
+            (n, m) if n == m => format!("{n} things to fix"),
+            (_, 0) => r,
+            (_, m) => format!("{m} to do now, {r}"),
+        }
+    }
+
+    /// The line Settings shows on its card: "6 things to fix", "5 to do now, 2 reminders", "Everything looks fine".
     pub fn summary(&self) -> String {
         let skipped = match self.skipped_count() {
             0 => String::new(),
@@ -460,8 +481,7 @@ impl Results {
         match self.problem_count() {
             0 if self.unknown_count() > 0 => format!("Looks fine ({} could not be checked){skipped}", self.unknown_count()),
             0 => format!("Everything looks fine{skipped}"),
-            1 => format!("1 thing to fix{skipped}"),
-            n => format!("{n} things to fix{skipped}"),
+            _ => format!("{}{skipped}", self.split_words()),
         }
     }
 
@@ -642,9 +662,12 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
     if !missing.is_empty() {
         parts.push(format!("Not in Steam: {}", named_list(&missing)));
     }
-    let ports: Vec<Named> = at_old.iter().chain(missing.iter()).cloned().collect();
-    let label = if at_old.is_empty() { "Add them to Steam" } else { "Update the Steam shortcuts" };
-    problem(Mark::ToDo, parts.join("; "), keys(&ports), Fix::AddToSteam, label)
+    // A shortcut at an old copy is repointed first (its name, art, play time and launch options stay); a port that is not in
+    // Steam at all is added after, which the next look offers.
+    if !at_old.is_empty() {
+        return problem(Mark::ToDo, parts.join("; "), keys(&at_old), Fix::Repoint, "Point Steam at the new copy");
+    }
+    problem(Mark::ToDo, parts.join("; "), keys(&missing), Fix::AddToSteam, "Add them to Steam")
 }
 
 fn programs(f: &Facts) -> Outcome {

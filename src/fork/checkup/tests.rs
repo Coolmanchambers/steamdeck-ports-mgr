@@ -279,7 +279,7 @@ fn the_summary_and_the_home_tile_count_the_checks_with_something_to_fix() {
     f.saves = vec![named("soh")];
     f.queue = Ok(vec![queued("soh", QueuedKind::Add)]);
     let r = run(&f);
-    assert_eq!(r.summary(), "3 things to fix");
+    assert_eq!(r.summary(), "2 to do now, 1 reminder");
     let tile = r.home_tile().unwrap();
     assert_eq!((tile.title.as_str(), tile.note.as_str()), ("Fix 2 problems", "Steam changes"));
     assert_eq!(r.problem_count(), 3, "saves not found shows in the checkup but is not worth a tile by itself");
@@ -333,7 +333,7 @@ fn the_overview_has_one_line_per_check_and_leads_with_fixing_when_there_is_somet
     f.saves = vec![named("soh")];
     let page = pages::overview_page(&run(&f));
     assert_eq!(page.options[0].title, "Fix them one by one");
-    assert_eq!(page.paragraphs, vec!["I found 2 things to fix."]);
+    assert_eq!(page.paragraphs, vec!["I found 2 things to fix: 1 to do now, 1 reminder."], "saves not found is a reminder");
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn the_last_page_counts_what_is_left_and_the_confirm_page_asks_first() {
 
     let ask = pages::confirm_page(Check::Updates, "Update SOH to the newest version?", vec!["Your saves are kept.".into()], "Update", 1, 1);
     assert_eq!(ask.paragraphs.len(), 2);
-    assert_eq!((ask.options[0].action, ask.options[1].action), (Act::Yes, Act::Skip));
+    assert_eq!((ask.options[0].action, ask.options[1].action), (Act::Yes, Act::Next), "Not now never remembers a skip");
     assert_eq!(ask.back_hint, "Not now", "B never changes anything");
     let wait = pages::looking_page();
     assert!(wait.options.is_empty() && wait.buttons[crate::fork::page::RIGHT].is_some(), "the wait can be cancelled");
@@ -493,11 +493,15 @@ fn nudges_and_things_that_cannot_be_done_now_show_in_the_checkup_but_do_not_rais
     assert_eq!(r.problem_count(), 3, "saves not found, an old backup, an old copy waiting for a first start");
     assert!(r.problems().iter().all(|(_, p)| p.advisory), "all three are nudges or waiting");
     assert!(r.home_tile().is_none(), "none of them raises the tile by itself");
-    assert_eq!(r.summary(), "3 things to fix", "but Settings' line counts them");
+    assert_eq!(r.summary(), "3 reminders", "but Settings' line counts them");
+    assert_eq!(pages::overview_page(&r).paragraphs, vec!["I found 3 things to fix: 3 reminders."]);
     // A real fix next to them: the tile counts only that one.
     f.updates = vec![named("soh")];
     let tile = run(&f).home_tile().unwrap();
     assert_eq!((tile.title.as_str(), tile.note.as_str(), tile.mark), ("Fix 1 problem", "Updates", Mark::ToDo));
+    // The checkup and Settings say how the problems split, so the tile's count is explained.
+    assert_eq!(run(&f).summary(), "1 to do now, 3 reminders");
+    assert_eq!(pages::overview_page(&run(&f)).paragraphs, vec!["I found 4 things to fix: 1 to do now, 3 reminders."]);
     // A red problem always counts, advisory or not.
     f.updates.clear();
     f.files = vec![(named("soh"), FilesState::Missing)];
@@ -624,8 +628,14 @@ fn a_shortcut_that_still_starts_an_old_copy_is_in_steam_but_wrong_and_never_offe
     f.shortcuts = Ok(vec![ok_icon("soh"), old]);
     let p = problem_of(check(Check::SteamShortcuts, &f));
     assert_eq!(p.summary, "Steam still starts the old copy of DUSK");
-    assert_eq!((p.fix.clone(), p.fix_label.as_str()), (Fix::AddToSteam, "Update the Steam shortcuts"));
+    assert_eq!((p.fix.clone(), p.fix_label.as_str()), (Fix::Repoint, "Point Steam at the new copy"), "a repoint, never an Add that would duplicate it");
     assert_eq!(p.ports, vec!["dusk"]);
+    // Another port is not in Steam at all: the line says both, the repoint comes first, and only the old copy's port is its.
+    let mut both = f.clone();
+    both.installed.push(named("abuse"));
+    let p = problem_of(check(Check::SteamShortcuts, &both));
+    assert_eq!(p.summary, "Steam still starts the old copy of DUSK; Not in Steam: ABUSE");
+    assert_eq!((p.fix, p.ports), (Fix::Repoint, vec!["dusk".to_string()]));
     // Its repoint is queued: that is a Steam change, not this line's problem.
     f.queue = Ok(vec![queued("dusk", QueuedKind::Repoint)]);
     assert_eq!(check(Check::SteamShortcuts, &f), Outcome::Ok("Every port is in Steam".into()));
@@ -665,7 +675,7 @@ fn only_the_menus_the_chosen_fix_returns_to_hand_control_back() {
     assert!(Fix::OldCopies.returns_to(Menu::PortsFolder), "the old copies list's Back row opens the ports folder menu: that is leaving");
     assert!(!Fix::GameFiles.returns_to(Menu::PortsFolder), "the Game files flow opening the ports folder menu is part of the flow");
     assert!(!Fix::PortsFolderMenu.returns_to(Menu::PortsFolder), "inside the ports folder menu its own screens open it again: not a way out");
-    for fix in [Fix::CloseSteam, Fix::SteamIcons, Fix::AddToSteam, Fix::BackUpNow, Fix::Update("a".into()), Fix::FindSaves("a".into()), Fix::PickProgram("a".into())] {
+    for fix in [Fix::CloseSteam, Fix::SteamIcons, Fix::AddToSteam, Fix::Repoint, Fix::BackUpNow, Fix::Update("a".into()), Fix::FindSaves("a".into()), Fix::PickProgram("a".into())] {
         assert!(!fix.returns_to(ports) && !fix.returns_to(Menu::PortsFolder) && !fix.returns_to(Menu::SettingsGroup(Group::Steam)), "{fix:?}");
     }
 }
@@ -697,8 +707,10 @@ fn wording_of_the_game_files_and_the_settings_line() {
     f.files.clear();
     f.updates = vec![named("soh")];
     assert_eq!(run(&f).summary(), "1 thing to fix");
+    f.queue = Ok(vec![queued("soh", QueuedKind::Add)]);
+    assert_eq!(run(&f).summary(), "2 things to fix", "two fixes that work now");
     f.saves = vec![named("soh")];
-    assert_eq!(run(&f).summary(), "2 things to fix");
+    assert_eq!(run(&f).summary(), "2 to do now, 1 reminder");
     assert_eq!(Check::ALL.iter().map(|c| c.key()).collect::<HashSet<_>>().len(), 10, "every check has its own key");
 }
 

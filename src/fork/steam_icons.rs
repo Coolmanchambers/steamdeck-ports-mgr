@@ -127,7 +127,7 @@ pub struct IconFinding {
 impl IconFinding {
     /// "Twilight Princess: icon file missing (/run/media/x/tp.png)".
     pub fn describe(&self) -> String {
-        let old = if self.at_old_copy { "; the shortcut still starts the old copy" } else { "" };
+        let old = if self.at_old_copy { "; the shortcut still starts the old copy (Fix problems can point it at the new one)" } else { "" };
         format!("{}: {}{old}", self.port_name, self.state.wording())
     }
 }
@@ -209,7 +209,9 @@ pub fn icon_state(stored: &str, port_dir: &Path, grid_dir: &Path, old_folders: &
 pub fn diagnose(home: &Path, library_dir: &Path, config_dir: &Path, ports: &[Port]) -> Result<Vec<IconFinding>, String> {
     let dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().map(|(i, p)| (i, library_dir.join(&p.folder))).collect();
     let records = old_copies::load(config_dir).unwrap_or_default();
-    let old_dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().flat_map(|(i, p)| records.iter().filter(move |r| r.port_key == p.key()).map(move |r| (i, r.old_path.clone()))).collect();
+    // A switch cut short (`switched` false) has not made its new copy the port: its old folder is not a place a shortcut should
+    // already have left.
+    let old_dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().flat_map(|(i, p)| records.iter().filter(move |r| r.switched && r.port_key == p.key()).map(move |r| (i, r.old_path.clone()))).collect();
     let route_list = routes(&dirs, &old_dirs);
     let mut out = Vec::new();
     for account in device_accounts(home) {

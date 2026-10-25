@@ -172,30 +172,27 @@ fn a_switch_seen_without_a_recorded_time_is_noted_and_only_later_steam_starts_co
 }
 
 #[test]
-fn a_steam_start_after_the_switch_makes_the_copy_ready_without_writing_anything() {
+fn a_steam_start_counts_only_with_a_recorded_switch_time_and_looking_writes_nothing() {
     let h = home();
-    // The queue was applied by hand-off long ago (no switch time in the record, as for a record that never saw the old
-    // copies page), Steam now starts the new copy, and the applying left a backup of the shortcuts.
+    // The queue was applied long ago and no switch time was recorded (a record that never saw the old copies page); Steam now
+    // starts the new copy, and applying left a backup of the shortcuts.
     old_copies::record(&h.app, OldCopy { repoint_queued: Some(true), ..h.entry() }).unwrap();
-    h.shortcut_at(&h.new, 1_000);
+    h.shortcut_at(&h.new, 9_000);
     let backup = h.vdf.with_file_name("shortcuts.vdf.bak-20261024-110000");
     fs::write(&backup, b"x").unwrap();
     let applied = std::time::UNIX_EPOCH + std::time::Duration::from_secs(5_000);
     fs::File::options().write(true).open(&backup).unwrap().set_modified(applied).unwrap();
     let before = fs::read_to_string(old_copies::path(&h.app)).unwrap();
-    // Played before the backup: that may have been the old copy's.
+    // No recorded switch time: a backup's time is no stand-in, so the copy is "Start it once" (never closer than it is).
     assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::StartOnce);
-    // Played from Steam after it: ready, as the page itself would say.
-    h.shortcut_at(&h.new, 9_000);
-    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::Ready(StartedBy::Steam));
     assert_eq!(fs::read_to_string(old_copies::path(&h.app)).unwrap(), before, "looking wrote nothing into the record");
-    // No backup at all and no switch time: nothing says when it was switched, so it stays "start it once".
-    fs::remove_file(&backup).unwrap();
-    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::StartOnce);
-    // A recorded switch time is used as it is.
+    // A recorded switch time is used as it is: a start after it is ready, one before it is not.
     old_copies::record(&h.app, OldCopy { steam_at: Some(2_000), repoint_queued: Some(true), ..h.entry() }).unwrap();
     assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::Ready(StartedBy::Steam));
+    h.shortcut_at(&h.new, 1_000);
+    assert_eq!(old_copies::readiness_read_only(&h.entry(), &h.home, &h.app), Readiness::StartOnce);
 }
+
 
 #[test]
 fn a_queue_file_that_is_not_readable_is_never_moved_aside_by_looking() {

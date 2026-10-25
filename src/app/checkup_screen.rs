@@ -694,6 +694,11 @@ fn open_fix(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
             let page = pages::confirm_page(check, &format!("Update {name} to the newest version?"), vec!["This is the same update you get from the port's own page.".to_string()], "Update", n, total);
             show(app, router, s, Stage::Confirm, page);
         }
+        Fix::Repoint => {
+            let names = checkup::names(&problem.ports.iter().map(|k| port_by_key(app, k).map_or_else(|| k.clone(), |p| p.display_name().to_string())).collect::<Vec<_>>());
+            let page = pages::confirm_page(check, &format!("Point Steam at the new copy of {names}?"), vec!["Its name, art, play time and launch options stay. Only where it starts changes.".to_string()], "Point Steam at it", n, total);
+            show(app, router, s, Stage::Confirm, page);
+        }
         Fix::BackUpNow => {
             let page = pages::confirm_page(check, "Back up every port's saves now?", vec!["The saves are copied into a zip. Nothing is deleted or replaced.".to_string()], "Back up now", n, total);
             show(app, router, s, Stage::Confirm, page);
@@ -706,7 +711,38 @@ fn open_fix(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 fn confirmed(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     let Some(check) = current(s) else { return };
     let Some(problem) = problem_of(s, check) else { return show_after(app, router) };
+    if problem.fix == Fix::Repoint {
+        return repoint(app, router, s, &problem.ports);
+    }
     hand_off(app, router, s, problem.fix);
+}
+
+/// "Point Steam at it" was confirmed: every shortcut of these ports that still starts a recorded old copy is repointed at the new
+/// copy (`port_mover::steam::repoint_everywhere`: every account, the app ID kept, written now when Steam is closed, else queued).
+/// A queued change goes on to the Close Steam flow; either way the checkup looks again.
+fn repoint(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, keys: &[String]) {
+    use crate::fork::port_mover::steam::{repoint_everywhere, SteamCtx};
+    let (Some(home), Ok(records)) = (home_dir(), old_copies::load(&app.paths.config_dir)) else {
+        eprintln!("checkup: could not read where Steam and the old copies are; nothing was changed");
+        return look(app, router, s, Rc::new(show_after));
+    };
+    let settings = ForkSettings::load(&settings_path(app));
+    let steam = crate::fork::store::SystemSteamCheck::new();
+    let ctx = SteamCtx { home: &home, config_dir: &app.paths.config_dir, settings: &settings, steam: &steam, game_mode: steam_queue::game_mode_from_env(), now: std::time::SystemTime::now() };
+    let mut queued = 0;
+    for key in keys {
+        let name = port_by_key(app, key).map_or_else(|| key.clone(), |p| p.display_name().to_string());
+        for r in records.iter().filter(|r| r.switched && r.port_key == *key) {
+            let report = repoint_everywhere(key, &name, &r.old_path, &r.new_path, &ctx);
+            eprintln!("checkup: repoint {name}: wrote {}, queued {}, left alone {}, failed {}", report.changed_count(), report.queued.len(), report.skipped.len(), report.failed.len());
+            queued += report.queued.len();
+        }
+    }
+    if queued > 0 {
+        hand_off(app, router, s, Fix::CloseSteam);
+    } else {
+        look(app, router, s, Rc::new(show_after));
+    }
 }
 
 fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
@@ -725,6 +761,8 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
         }
         Fix::SteamIcons => super::steam_icons_screen::open(app, router, back_here),
         Fix::AddToSteam => super::steam_screens::open_steam_screen(app, router),
+        // Asked and done on the checkup's own pages (`repoint`), never handed off.
+        Fix::Repoint => {}
         Fix::PickProgram(key) => {
             if let Some(port) = port_by_key(app, &key) {
                 super::install_launch::open_favorite_exe_picker(app, router, port);

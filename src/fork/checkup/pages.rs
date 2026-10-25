@@ -89,7 +89,8 @@ pub fn overview_page(results: &Results) -> CheckupPage {
         (0, 0, _) => "Everything I could check looks fine.".to_string(),
         (0, s, _) => format!("Nothing new to fix. {s} skipped earlier."),
         (1, _, _) => "I found 1 thing to fix.".to_string(),
-        (n, _, _) => format!("I found {n} things to fix."),
+        (n, _, _) if results.to_do_now() == n => format!("I found {n} things to fix."),
+        (n, _, _) => format!("I found {n} things to fix: {}.", results.split_words()),
     };
     if n > 0 && skipped > 0 {
         text.push_str(&format!(" {skipped} skipped earlier."));
@@ -151,7 +152,8 @@ pub fn confirm_page(check: Check, question: &str, lines: Vec<String>, yes: &str,
     let mut p = base(check.title());
     counter(&mut p, n, total);
     p.paragraphs = std::iter::once(question.to_string()).chain(lines).collect();
-    p.options = vec![option(yes, "", Act::Yes, true), option("Not now", "Nothing is changed.", Act::Skip, false)];
+    // "Not now" leaves it for now without remembering a skip (only "Skip this one" does).
+    p.options = vec![option(yes, "", Act::Yes, true), option("Not now", "Nothing is changed.", Act::Next, false)];
     p.initial = Focus::Option(0);
     p.b_means("Not now")
 }
