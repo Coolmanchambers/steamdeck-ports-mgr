@@ -22,10 +22,8 @@ fn is_candidate(path: &Path) -> bool {
 
 #[cfg(target_os = "linux")]
 fn is_candidate(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let executable_bit = std::fs::metadata(path).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false);
-    let script_ext = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("sh") || e.eq_ignore_ascii_case("appimage"));
-    executable_bit || script_ext
+    // Fork: the executable bit alone says nothing on exFAT (every file is 0755); see `fork::program_detect`.
+    crate::fork::program_detect::is_linux_program(path)
 }
 
 fn collect_candidates(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -47,9 +45,17 @@ fn collect_candidates(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-pub fn autodetect_executable(game_dir: &Path) -> Result<PathBuf, ExecutableSelectionError> {
+/// Fork: every launch candidate in the folder, shallowest folder first (the Info favorite picker's list).
+pub fn list_candidates(game_dir: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     collect_candidates(game_dir, &mut candidates);
+    crate::fork::program_detect::sort_shallow_first(game_dir, &mut candidates);
+    candidates
+}
+
+pub fn autodetect_executable(game_dir: &Path) -> Result<PathBuf, ExecutableSelectionError> {
+    // Fork: only the candidates at the shallowest depth that has any (a top-level `launch.sh` beats `jdk/bin/java`).
+    let mut candidates = crate::fork::program_detect::shallowest(game_dir, list_candidates(game_dir));
     match candidates.len() {
         0 => Err(ExecutableSelectionError::NotFound),
         1 => Ok(candidates.remove(0)),
@@ -94,7 +100,7 @@ mod tests {
     fn write_candidate(dir: &Path, stem: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join(stem);
-        std::fs::write(&path, b"").unwrap();
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
     }

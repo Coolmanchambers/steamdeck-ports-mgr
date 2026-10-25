@@ -953,7 +953,7 @@ mod tests {
 
     fn put_exe(path: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, b"x").unwrap();
+        fs::write(path, b"#!/bin/sh\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

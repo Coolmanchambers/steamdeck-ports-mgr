@@ -28,8 +28,14 @@ fn put(path: &Path, data: &[u8]) {
     fs::write(path, data).unwrap();
 }
 
+/// A minimal 64-bit little-endian ELF executable header, then the tag (so two releases differ).
 fn elf(tag: &str) -> Vec<u8> {
-    [b"\x7fELF".as_slice(), tag.as_bytes()].concat()
+    let mut head = vec![0u8; 64];
+    head[..4].copy_from_slice(b"\x7fELF");
+    head[4] = 2;
+    head[5] = 1;
+    head[16] = 2;
+    [head.as_slice(), tag.as_bytes()].concat()
 }
 
 fn no_steam() -> io::Result<Vec<String>> {

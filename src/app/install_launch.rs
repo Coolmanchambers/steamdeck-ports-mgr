@@ -126,18 +126,26 @@ fn file_label(path: &Path) -> String {
 
 pub(crate) fn open_favorite_exe_picker(app: &Rc<AppState>, router: &Router, port: Port) {
     let Some(game_dir) = game_dir(app, &port).filter(|dir| dir.is_dir()) else { return };
-    let candidates = match crate::core::executable_detect::autodetect_executable(&game_dir) {
-        Ok(single) => vec![single],
-        Err(ExecutableSelectionError::Ambiguous(candidates)) => candidates,
-        Err(ExecutableSelectionError::NotFound) => return open_info_dialog(app, router, &port),
-    };
+    // Fork: the full list of programs, shallowest folder first (the launch list shows only the shallowest).
+    let candidates = crate::core::executable_detect::list_candidates(&game_dir);
+    if candidates.is_empty() {
+        return open_info_dialog(app, router, &port);
+    }
     let mut labels = vec![tr!(app).invoke_picker_ask_every_time().to_string()];
-    labels.extend(candidates.iter().map(|p| file_label(p)));
+    labels.extend(candidates.iter().map(|p| option_label(&game_dir, p)));
     let key = port.key().to_string();
     open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_favorite_executable(), labels, move |app, _, idx| {
-        let exe = idx.checked_sub(1).and_then(|i| candidates.get(i)).and_then(|p| p.strip_prefix(&game_dir).ok()).map(|p| p.to_string_lossy().to_string());
+        let exe = idx.checked_sub(1).and_then(|i| candidates.get(i)).and_then(|p| crate::fork::program_detect::relative_pick(&game_dir, p));
         app.state.borrow_mut().set_favorite_exe(&key, exe);
     });
+}
+
+// Fork: a program below the top folder is named with its folder, so two `java` files can be told apart.
+fn option_label(game_dir: &Path, path: &Path) -> String {
+    match crate::fork::program_detect::relative_pick(game_dir, path) {
+        Some(rel) if crate::fork::program_detect::depth_in(game_dir, path) > 0 => rel.replace('\\', "/"),
+        _ => file_label(path),
+    }
 }
 
 fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Path) {
@@ -192,8 +200,13 @@ pub(crate) fn launch_flow(app: &Rc<AppState>, router: &Router, port: &Port) {
         Err(ExecutableSelectionError::Ambiguous(candidates)) => {
             let labels = candidates.iter().map(|p| file_label(p)).collect();
             let port = port.clone();
+            let game_dir = game_dir.clone();
             open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_executable(), labels, move |app, router, idx| {
                 if let Some(exe) = candidates.get(idx) {
+                    // Fork: remember the pick, so the next start does not ask again (Info can set it back to "Ask every time").
+                    if let Some(rel) = crate::fork::program_detect::relative_pick(&game_dir, exe) {
+                        app.state.borrow_mut().set_favorite_exe(port.key(), Some(rel));
+                    }
                     launch_executable(app, router, &port, exe);
                 }
             });

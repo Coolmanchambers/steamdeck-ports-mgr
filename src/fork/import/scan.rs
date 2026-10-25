@@ -394,8 +394,18 @@ pub(crate) mod fixtures {
         fs::write(path, bytes).unwrap();
     }
 
+    /// An extensionless program reads as a program only by its content, so such a file starts with `#!` (the
+    /// length stays the same, but one byte long becomes two).
     pub fn put_exe(path: &Path, bytes: &[u8]) {
-        put_file(path, bytes);
+        let mut bytes = bytes.to_vec();
+        if path.extension().is_none() {
+            if bytes.len() < 2 {
+                bytes = b"#!".to_vec();
+            } else {
+                bytes[..2].copy_from_slice(b"#!");
+            }
+        }
+        put_file(path, &bytes);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

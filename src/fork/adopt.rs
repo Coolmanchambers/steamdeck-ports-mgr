@@ -408,7 +408,7 @@ impl Program {
 const DOC_NAMES: [&str; 7] = ["readme", "license", "copying", "changelog", "makefile", "authors", "notice"];
 
 /// Whether a file is a program: a known program extension (`.AppImage`, `.x86_64`, `.sh`, `.exe`...), or
-/// no extension and executable (and not a document such as `README`). Config files, images, saves and ROMs
+/// no extension and executable by bit and content (and not a document such as `README`). Config files, images, saves and ROMs
 /// never are.
 fn is_program(path: &Path, entry: &fs::DirEntry) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
@@ -420,10 +420,11 @@ fn is_program(path: &Path, entry: &fs::DirEntry) -> bool {
     }
 }
 
+/// Executable bit AND program content (ELF program or `#!` script): on exFAT every file has the bit.
 #[cfg(unix)]
 fn is_executable(entry: &fs::DirEntry) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    entry.metadata().is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    let path = entry.path();
+    super::program_detect::has_exec_bit(&path) && super::program_detect::is_program_content(&path)
 }
 
 /// No executable bit elsewhere: a file without an extension counts, as a program may be named so.
@@ -877,7 +878,7 @@ mod tests {
         fs::write(path, b"x").unwrap();
     }
 
-    use super::test_fixtures::{tims_sd_card, touch_exe};
+    use super::test_fixtures::{tims_sd_card, touch_exe, touch_program};
 
     /// Entries shaped like the real catalog's (public catalog data: names, folders, sources).
     fn real_catalog() -> Vec<Port> {
@@ -1090,14 +1091,16 @@ mod tests {
         assert_eq!(stems, ["a", "b", "c", "d", "e", "f", "g", "h"], "no extension and not executable is data (on Linux)");
         #[cfg(unix)]
         {
-            touch_exe(&dir.join("plain"));
+            touch_program(&dir.join("plain"));
             touch_exe(&dir.join("rom.z64"));
+            touch_exe(&dir.join("disc-data"));
             for doc in ["README", "LICENSE", "Makefile", "copying", "CHANGELOG", "AUTHORS", "NOTICE"] {
                 touch_exe(&dir.join(doc));
             }
             touch_exe(&dir.join(".hidden-launcher"));
             let stems: Vec<String> = programs(&dir).into_iter().map(|p| p.stem).collect();
             assert!(stems.contains(&"plain".to_string()) && !stems.contains(&"rom".to_string()), "{stems:?}");
+            assert!(!stems.contains(&"disc-data".to_string()), "an executable-bit file with data inside is not a program (exFAT): {stems:?}");
             let docs = ["readme", "license", "makefile", "copying", "changelog", "authors", "notice", "hiddenlauncher"];
             assert!(!stems.iter().any(|s| docs.contains(&s.as_str())), "documents and hidden files are not programs: {stems:?}");
         }
@@ -1240,7 +1243,7 @@ mod tests {
         let dir = temp_dir("by_exe");
         let games = dir.join("Games");
         touch(&games.join("zelda64").join("dusklight.AppImage"));
-        touch_exe(&games.join("misc").join("bin").join("othergame-launcher"));
+        touch_program(&games.join("misc").join("bin").join("othergame-launcher"));
         touch(&games.join("junk").join("run.sh"));
         let result = scan(&[games], &catalog(), &dir.join("Library"));
         let found: Vec<(&str, &str, MatchKind)> =
@@ -1584,6 +1587,12 @@ pub(crate) mod test_fixtures {
         }
     }
 
+    /// Like `touch_exe`, with a script's first line so the file reads as a program by content too.
+    pub fn touch_program(path: &Path) {
+        touch_exe(path);
+        fs::write(path, b"#!/bin/sh\n").unwrap();
+    }
+
     /// Tim's SD card as reported from his Deck (2026-10-23), the card's id replaced by `sd`: four ports in
     /// folders named after their downloads, the ports folder `Ports`, EmuDeck's `Emulation`, a Steam library
     /// (`steamapps`, `libraryfolder.vdf`), `lost+found` and the trash. The ROMs carry the executable bit, as
@@ -1641,7 +1650,7 @@ pub(crate) mod test_fixtures {
         touch(&dusk.join("config.toml"));
 
         let sev = sd.join("Severed_Chains_Steam_Deck");
-        touch_exe(&sev.join("launch"));
+        touch_program(&sev.join("launch"));
         touch(&sev.join("lod-game.jar"));
         touch(&sev.join("isos").join(".keep"));
         sd

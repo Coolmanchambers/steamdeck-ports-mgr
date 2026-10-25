@@ -493,7 +493,7 @@ mod tests {
     /// Writes a program file; the mode only matters on Unix.
     fn exe(path: &Path, executable: bool) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, b"x").unwrap();
+        fs::write(path, b"#!/bin/sh\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
