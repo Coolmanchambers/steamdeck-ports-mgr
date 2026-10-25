@@ -146,7 +146,7 @@ pub fn build(ports: &[PortFacts], setup_done: bool, checkup: Option<&crate::fork
     Home::Tiles(tiles)
 }
 
-/// The controller hint bar for what is focused (the real bindings: A plays, X opens Info, Y opens Settings, L1/R1 and
+/// The controller hint bar for what is focused (the real bindings: A plays, X opens the Port page (Fork, port page), Y opens Settings, L1/R1 and
 /// Tab switch lists). `None` focus: the empty card.
 pub fn hints(focused: Option<TileKind>) -> String {
     let gap = crate::fork::page::HINT_GAP;
@@ -155,7 +155,7 @@ pub fn hints(focused: Option<TileKind>) -> String {
         Some(TileKind::Setup) => ["A Set up", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(TileKind::Add) => ["A Add", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(TileKind::Checkup) => ["A Fix", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
-        Some(_) => ["A Play", "X Info", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
+        Some(_) => ["A Play", "X Options", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
     }
 }
 
@@ -189,12 +189,22 @@ impl List {
         }
     }
 
-    /// Where B (or Escape) goes from this list: from the Deck-ready list back to Home, in both modes; elsewhere B does
-    /// nothing.
+    /// Where B (or Escape) goes from this list: from Deck-ready and All ports back to Home, in both modes (Fork, port page:
+    /// Tim was stuck on a list with no way back); on Home B does nothing.
     pub fn back(self) -> Option<List> {
         match self {
-            List::DeckReady => Some(List::Home),
-            List::Home | List::AllPorts => None,
+            List::DeckReady | List::AllPorts => Some(List::Home),
+            List::Home => None,
+        }
+    }
+
+    /// The words of the hint for B on this list: "Clear search" while there is search text (the first B clears it), else
+    /// "Home"; empty on Home.
+    pub fn back_hint(self, searching: bool) -> &'static str {
+        match (self, searching) {
+            (List::Home, _) => "",
+            (_, true) => "B / Esc  Clear search",
+            (_, false) => "B / Esc  Home",
         }
     }
 
@@ -331,7 +341,7 @@ mod tests {
         assert_eq!(unplayed.iter().map(|t| t.kind).collect::<Vec<_>>(), [TileKind::Checkup, TileKind::Port, TileKind::Add]);
         assert_eq!(build(&[], true, Some(&tile)), Home::Empty, "nothing installed: nothing to fix");
         assert!(hints(Some(TileKind::Checkup)).starts_with("A Fix"));
-        assert!(!hints(Some(TileKind::Checkup)).contains("X Info"));
+        assert!(!hints(Some(TileKind::Checkup)).contains("X Options"));
     }
 
     #[test]
@@ -366,7 +376,10 @@ mod tests {
         assert_eq!(List::Home.next_in(false), List::AllPorts);
         assert_eq!((List::browse(true), List::browse(false)), (List::DeckReady, List::AllPorts));
         assert_eq!(List::DeckReady.back(), Some(List::Home), "B leaves Deck-ready for Home, also in big mode where next_in goes to All ports");
-        assert_eq!((List::Home.back(), List::AllPorts.back()), (None, None));
+        assert_eq!((List::Home.back(), List::AllPorts.back()), (None, Some(List::Home)), "B goes Home from All ports too");
+        assert_eq!(List::AllPorts.back_hint(true), "B / Esc  Clear search");
+        assert_eq!(List::DeckReady.back_hint(false), "B / Esc  Home");
+        assert_eq!(List::Home.back_hint(true), "");
     }
 
     #[test]
@@ -400,11 +413,11 @@ mod tests {
     #[test]
     fn the_hint_bar_names_the_real_buttons() {
         assert!(hints(Some(TileKind::Port)).starts_with("A Play"));
-        assert!(hints(Some(TileKind::Continue)).contains("X Info"));
+        assert!(hints(Some(TileKind::Continue)).contains("X Options"));
         assert!(hints(Some(TileKind::Setup)).starts_with("A Set up"));
         assert!(hints(Some(TileKind::Add)).starts_with("A Add"));
-        assert!(!hints(Some(TileKind::Add)).contains("X Info"), "nothing to show Info for");
-        assert!(!hints(None).contains("X Info"));
+        assert!(!hints(Some(TileKind::Add)).contains("X Options"), "nothing to show Info for");
+        assert!(!hints(None).contains("X Options"));
         assert!(hints(None).contains("L1/R1 Lists"));
     }
 

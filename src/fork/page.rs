@@ -129,6 +129,18 @@ pub enum Icon {
     Update,
     /// A check in a circle: the Fix problems checkup.
     Fix,
+    /// A play triangle in a circle (the Port page's Play card).
+    Play,
+    /// A program window with a prompt (Program to start).
+    Program,
+    /// A disc (Game files).
+    GameFiles,
+    /// A page of text (a port's settings files).
+    TextFile,
+    /// Three dots (More).
+    More,
+    /// A circle with a minus (Uninstall).
+    Remove,
 }
 
 impl Icon {
@@ -146,6 +158,12 @@ impl Icon {
             Icon::Gear => 8,
             Icon::Update => 9,
             Icon::Fix => 10,
+            Icon::Play => 11,
+            Icon::Program => 12,
+            Icon::GameFiles => 13,
+            Icon::TextFile => 14,
+            Icon::More => 15,
+            Icon::Remove => 16,
         }
     }
 }

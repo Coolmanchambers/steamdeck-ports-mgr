@@ -286,6 +286,10 @@ fn launch_with_update_check(app: &Rc<AppState>, router: &Router, port: &Port) {
 }
 
 pub(crate) fn activate_selection(app: &Rc<AppState>, router: &Router) {
+    // Fork (port page): A on the lists' "< Home" button.
+    if super::home_screen::list_button_activate(app, router) {
+        return;
+    }
     if app.deck_ready.is_active() {
         return super::deck_ready_screen::activate(app, router);
     }
@@ -300,6 +304,10 @@ pub(crate) fn activate_selection(app: &Rc<AppState>, router: &Router) {
 pub(crate) fn show_info_for_current_selection(app: &Rc<AppState>, router: &Router) {
     if app.deck_ready.is_active() {
         return super::deck_ready_screen::show_info(app, router);
+    }
+    // Fork (port page): X on Home opens the focused port's Port page (Info is its "All details" card).
+    if app.home.is_active() {
+        return super::home_screen::open_options(app, router);
     }
     if let Some(port) = app.current_selected_port() {
         open_info_dialog(app, router, &port);

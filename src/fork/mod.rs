@@ -24,6 +24,7 @@ pub mod folder_picker;
 pub mod custom_repo;
 pub mod import;
 pub mod page;
+pub mod port_page;
 pub mod rom_library;
 pub mod rom_screens;
 pub mod port_mover;

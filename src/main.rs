@@ -282,6 +282,7 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
         let query = if app::cheats::search_changed(&app, &query) { Default::default() } else { query };
         *app.windowed_nav.search_query.borrow_mut() = query.to_string();
         app.refresh_current_view();
+        app::home_screen::push_list_hint(&app); // Fork (port page): B's hint says it clears the search first
     }));
     window.on_fullscreen_toggle_requested(with!(app => move || app.toggle_fullscreen()));
     window.on_minimize_requested(with!(app => move || app.window().window().set_minimized(true)));
@@ -295,7 +296,8 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     window.on_escape_pressed(with!(app, router => move || {
         let window = app.window();
         // Leaving the Deck-ready list (back to Home) is undone by nothing: it acts at once, and an echo of a pad B is dropped.
-        if window.get_deck_ready_mode() {
+        // Fork (port page): All ports goes back the same way (the first press clears a search).
+        if !window.get_home_mode() {
             if fork::press_echo::key(fork::press_echo::Press::Back) {
                 app::home_screen::back(&app, &router);
             }
@@ -399,6 +401,19 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
         let port = app.grid_nav.displayed_installed.borrow().get(idx).cloned();
         if let Some(port) = port {
             app::save_finder_screen::open_from_badge(&app, &router, port);
+        }
+    }));
+    // Fork (port page): a right-click on an installed row or card opens its Port page; on a port not installed, its project page.
+    window.on_list_row_options(with!(app, router => move |index| {
+        if !dialog_is_open(&app) {
+            with_indexed_port(&app, index, |port| app::port_page_screen::open_options_for(&app, &router, &port));
+        }
+    }));
+    window.on_card_options(with!(app, router => move |row, col| {
+        let idx = row as usize * app.grid_nav.grid_columns.get().max(1) + col as usize;
+        let port = app.grid_nav.displayed_installed.borrow().get(idx).cloned();
+        if let (Some(port), false) = (port, dialog_is_open(&app)) {
+            app::port_page_screen::open_options_for(&app, &router, &port);
         }
     }));
     window.on_list_row_info_requested(with!(app, router => move |index| {

@@ -15,6 +15,7 @@ pub mod import_cards_screen;
 pub mod import_screen;
 pub mod install_launch;
 pub mod page_dialog;
+pub mod port_page_screen;
 pub mod cheats;
 pub mod playtime;
 pub mod ports_folder_screen;

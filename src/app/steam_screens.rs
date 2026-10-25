@@ -57,6 +57,12 @@ fn no_home(app: &Rc<AppState>, router: &Router, title: &str) {
 // -- Add to Steam ---------------------------------------------------------------------------
 
 pub(crate) fn open_steam_screen(app: &Rc<AppState>, router: &Router) {
+    open_steam_screen_for(app, router, None);
+}
+
+/// Add to Steam with only one port selected (`Some(key)`: the Port page's Steam card, one port's checkup); every other
+/// row stays on the screen, switched off. `None` is the usual screen.
+pub(crate) fn open_steam_screen_for(app: &Rc<AppState>, router: &Router, only: Option<&str>) {
     if dialog_is_open(app) {
         return;
     }
@@ -72,6 +78,12 @@ pub(crate) fn open_steam_screen(app: &Rc<AppState>, router: &Router) {
     screen.queue = loaded.queue;
     screen.queue_note = loaded.problem;
     screen.game_mode = steam_queue::game_mode_from_env();
+    if let Some(key) = only {
+        // The port asked for is on (even a shortcut found by name only: the review shows what it would repoint).
+        for row in &mut screen.rows {
+            row.selected = row.key == key && row.can_change();
+        }
+    }
     prefetch_art(app);
     show_steam_screen(app, router, Rc::new(RefCell::new(screen)));
 }

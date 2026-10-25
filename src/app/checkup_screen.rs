@@ -105,6 +105,9 @@ struct Session {
     looking: Cell<u64>,
     /// What to do when the look in progress ends.
     then: RefCell<Option<Rc<dyn Fn(&Rc<AppState>, &Router)>>>,
+    /// Fork (port page): the checkup for this one port only (`checkup::run_for_port`), and where leaving it goes.
+    scope: Option<String>,
+    done: Option<Rc<dyn Fn(&Rc<AppState>, &Router)>>,
 }
 
 fn session() -> Option<Rc<Session>> {
@@ -183,7 +186,12 @@ fn app_part(app: &AppState) -> AppPart {
 }
 
 fn sys_input(app: &AppState) -> SysInput {
-    let installed = installed_ports(app);
+    sys_input_for(app, None)
+}
+
+/// The facts to read, for every installed port or (`scope`) for one.
+fn sys_input_for(app: &AppState, scope: Option<&str>) -> SysInput {
+    let installed: Vec<Port> = installed_ports(app).into_iter().filter(|p| scope.is_none_or(|k| p.key() == k)).collect();
     let (favorites, played) = {
         let state = app.state.borrow();
         let favorites = installed.iter().filter_map(|p| state.get(p.key()).and_then(|i| i.favorite_exe.clone()).map(|f| (p.key().to_string(), f))).collect();
@@ -343,6 +351,35 @@ fn busy(app: &AppState) -> bool {
     super::ports_folder_screen::job_running() || super::import_screen::import_running() || super::save_restore_screen::restore_running() || !app.install_runtime.installing.borrow().is_empty()
 }
 
+// -- One port's line, for the Port page -----------------------------------------------------------------------
+
+/// Fork (port page): what one port's checkup reads, taken on the UI thread; `gather` it on a worker.
+pub(crate) struct PortLook(SysInput);
+
+/// What the worker read for one port's checkup.
+pub(crate) struct PortSys(SysFacts);
+
+pub(crate) fn port_look(app: &AppState, key: &str) -> PortLook {
+    PortLook(sys_input_for(app, Some(key)))
+}
+
+impl PortLook {
+    /// Reads the disk (a worker thread); writes nothing.
+    pub(crate) fn gather(self) -> PortSys {
+        PortSys(sys_gather(self.0))
+    }
+}
+
+/// The port's Fix problems line ("Everything looks fine", "2 things to fix") and how many problems, joined with what is in
+/// memory now. `None` while a move, install, restore or import runs (what the disk shows is half way).
+pub(crate) fn port_line(app: &AppState, key: &str, sys: PortSys) -> Option<(String, usize)> {
+    if busy(app) {
+        return None;
+    }
+    let results = checkup::run_for_port(&assemble(&app_part(app), sys.0), key);
+    Some((results.summary(), results.problem_count()))
+}
+
 // -- The cached answer (Home's tile, Settings' card) --------------------------------------------------------
 
 /// Called once at start: the first look, after the first screen is up.
@@ -451,7 +488,9 @@ fn skip_current(app: &Rc<AppState>, s: &Rc<Session>) {
     save_skips(app, &skips);
     eprintln!("checkup: skipped {}", check.title());
     let results = s.results.borrow().clone().with_skips(&skips);
-    store(results.clone());
+    if s.scope.is_none() {
+        store(results.clone());
+    }
     *s.results.borrow_mut() = results;
 }
 
@@ -459,6 +498,17 @@ fn skip_current(app: &Rc<AppState>, s: &Rc<Session>) {
 
 /// Settings > Fix problems, and Home's tile. Closes whatever page is open, then looks.
 pub(crate) fn open(app: &Rc<AppState>, router: &Router) {
+    open_scoped(app, router, None, None);
+}
+
+/// Fork (port page): the checkup for one port, from the Port page's Fix problems card. Only the checks that can be about
+/// a port (`checkup::Check::PORT`), its lines and step pages as the full checkup has them; leaving it runs `done` (the
+/// Port page again).
+pub(crate) fn open_for_port(app: &Rc<AppState>, router: &Router, key: &str, done: Rc<dyn Fn(&Rc<AppState>, &Router)>) {
+    open_scoped(app, router, Some(key.to_string()), Some(done));
+}
+
+fn open_scoped(app: &Rc<AppState>, router: &Router, scope: Option<String>, done: Option<Rc<dyn Fn(&Rc<AppState>, &Router)>>) {
     close_current_dialog(app, router);
     let s = Rc::new(Session {
         stage: Cell::new(Stage::Looking),
@@ -474,6 +524,8 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router) {
         job: RefCell::new(None),
         looking: Cell::new(0),
         then: RefCell::new(None),
+        scope,
+        done,
     });
     SESSION.with(|x| *x.borrow_mut() = Some(s.clone()));
     eprintln!("checkup: opened");
@@ -493,8 +545,14 @@ fn handlers(s: &Rc<Session>) -> Handlers<Act> {
     }
 }
 
-fn show(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, stage: Stage, page: CheckupPage) {
+fn show(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, stage: Stage, mut page: CheckupPage) {
     s.stage.set(stage);
+    // Fork (port page): one port's checkup says whose it is.
+    if let Some(key) = &s.scope {
+        let name = port_by_key(app, key).map_or_else(|| key.clone(), |p| p.display_name().to_string());
+        page.window_title = format!("{}: {name}", page.window_title);
+        page.header = name;
+    }
     if !show_page(app, router, page, handlers(s)) {
         eprintln!("checkup: the page window could not be made");
         end(app, router, s);
@@ -516,6 +574,10 @@ fn leave(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
     end(app, router, s);
     // What the checkup found last is what Home and Settings show.
     refresh_in_background(app);
+    // Fork (port page): one port's checkup goes back to its Port page.
+    if let Some(done) = &s.done {
+        done(app, router);
+    }
 }
 
 fn end(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
@@ -543,7 +605,7 @@ fn look(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, then: Rc<dyn Fn(&R
     show(app, router, s, Stage::Looking, wait);
     let id = s.looking.get() + 1;
     s.looking.set(id);
-    let input = sys_input(app);
+    let input = sys_input_for(app, s.scope.as_deref());
     *s.job.borrow_mut() = Some(Rc::new(Background::spawn(move |_| sys_gather(input))));
     *s.then.borrow_mut() = Some(then);
     let (app, router, s) = (app.clone(), router.clone(), s.clone());
@@ -559,9 +621,16 @@ fn look(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, then: Rc<dyn Fn(&R
             let then = s.then.borrow_mut().take();
             match done {
                 Ok(sys) => {
-                    let results = checkup::run(&assemble(&app_part(&app), sys));
-                    eprintln!("checkup: looked ({})", results.summary());
-                    store(results.clone());
+                    let facts = assemble(&app_part(&app), sys);
+                    let results = match s.scope.as_deref() {
+                        Some(key) => checkup::run_for_port(&facts, key),
+                        None => checkup::run(&facts),
+                    };
+                    eprintln!("checkup: looked ({}){}", results.summary(), if s.scope.is_some() { " for one port" } else { "" });
+                    // Home's tile and Settings' card show the whole checkup, never one port's.
+                    if s.scope.is_none() {
+                        store(results.clone());
+                    }
                     *s.results.borrow_mut() = results;
                     if let Some(then) = then {
                         then(&app, &router);
@@ -725,10 +794,25 @@ fn confirmed(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 /// copy (`port_mover::steam::repoint_everywhere`: every account, the app ID kept, written now when Steam is closed, else queued).
 /// A queued change goes on to the Close Steam flow; either way the checkup looks again.
 fn repoint(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, keys: &[String]) {
+    let Some((queued, notes)) = repoint_ports(app, keys) else {
+        return look(app, router, s, Rc::new(show_after));
+    };
+    *s.notes.borrow_mut() = notes;
+    if queued > 0 {
+        hand_off(app, router, s, Fix::CloseSteam);
+    } else {
+        look(app, router, s, Rc::new(show_after));
+    }
+}
+
+/// Fork (port page): points every shortcut of these ports that still starts a recorded old copy at the new copy (the
+/// checkup's `Fix::Repoint`, shared with the Port page's Steam card). How many changes were queued for Steam to close,
+/// and the notes to show; `None` when where Steam and the old copies are could not be read (nothing was changed).
+pub(crate) fn repoint_ports(app: &Rc<AppState>, keys: &[String]) -> Option<(usize, Vec<String>)> {
     use crate::fork::port_mover::steam::{repoint_everywhere, SteamCtx};
     let (Some(home), Ok(records)) = (home_dir(), old_copies::load(&app.paths.config_dir)) else {
         eprintln!("checkup: could not read where Steam and the old copies are; nothing was changed");
-        return look(app, router, s, Rc::new(show_after));
+        return None;
     };
     let settings = ForkSettings::load(&settings_path(app));
     let steam = crate::fork::store::SystemSteamCheck::new();
@@ -756,12 +840,7 @@ fn repoint(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, keys: &[String]
             notes.extend(report.failed.iter().cloned());
         }
     }
-    *s.notes.borrow_mut() = notes;
-    if queued > 0 {
-        hand_off(app, router, s, Fix::CloseSteam);
-    } else {
-        look(app, router, s, Rc::new(show_after));
-    }
+    Some((queued, notes))
 }
 
 fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
@@ -778,8 +857,12 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
             let then: super::steam_close_screen::Then = Rc::new(|app, router, _| resume(app, router));
             super::steam_close_screen::open(app, router, super::steam_close_screen::Opts { ask_first: true, ..Default::default() }, then);
         }
-        Fix::SteamIcons => super::steam_icons_screen::open(app, router, back_here),
-        Fix::AddToSteam => super::steam_screens::open_steam_screen(app, router),
+        // Fork (port page): one port's checkup fixes that port only.
+        Fix::SteamIcons => match &s.scope {
+            Some(key) => super::steam_icons_screen::open_for(app, router, Some(key.clone()), back_here),
+            None => super::steam_icons_screen::open(app, router, back_here),
+        },
+        Fix::AddToSteam => super::steam_screens::open_steam_screen_for(app, router, s.scope.as_deref()),
         // Asked and done on the checkup's own pages (`repoint`), never handed off.
         Fix::Repoint => {}
         Fix::PickProgram(key) => {
@@ -787,7 +870,10 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
                 super::install_launch::open_favorite_exe_picker(app, router, port);
             }
         }
-        Fix::GameFiles => super::rom_screens::open_game_files(app, router),
+        Fix::GameFiles => match &s.scope {
+            Some(key) => super::rom_screens::find_for_port(app, router, key, back_here),
+            None => super::rom_screens::open_game_files(app, router),
+        },
         Fix::FindSaves(key) => {
             if let Some(port) = port_by_key(app, &key) {
                 super::save_finder_screen::open(app, router, port, back_here);

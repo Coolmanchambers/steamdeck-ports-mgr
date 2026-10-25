@@ -127,6 +127,9 @@ enum JobUi {
     Progress { title: &'static str, status: String },
     /// A list showing how far the job got, with a Cancel row. Closing it (B) cancels too.
     Cancellable { title: &'static str },
+    /// Fork (port page): a guided page showing how far the job got, for the one-port game files pages. With `cancellable`
+    /// it has a Cancel card (B cancels too); without, it only waits.
+    Page { title: &'static str, cancellable: bool },
 }
 
 fn cancel_labels(progress: &str, cancelling: bool) -> Vec<String> {
@@ -149,6 +152,22 @@ thread_local! {
 fn scan_progress_page(title: &str, text: &str, cancelling: bool) -> crate::fork::page::Page<ProgressAction> {
     let mut page = progress_page(title, "Only files your ports could need are read; nothing is changed or moved.", 3, &text.lines().take(3).collect::<Vec<_>>().join("\n"), "Skip for now (the folder is kept)", cancelling);
     page.window_title = format!("Setup wizard: {}", title.to_lowercase());
+    page
+}
+
+/// The one-port game files flow's wait page (`JobUi::Page`).
+fn work_page(title: &str, text: &str, cancellable: bool, cancelling: bool) -> crate::fork::page::Page<ProgressAction> {
+    let mut page = if cancellable {
+        progress_page(title, "Your game files are only read; nothing is changed or moved.", 3, &text.lines().take(3).collect::<Vec<_>>().join("
+"), "Cancel (nothing is changed)", cancelling)
+    } else {
+        let mut p = progress_page(title, "This takes a moment.", 3, &text.lines().take(3).collect::<Vec<_>>().join("
+"), "", false);
+        p.options.clear();
+        p.no_back = true;
+        p
+    };
+    page.window_title = format!("Game files: {}", title.to_lowercase());
     page
 }
 
@@ -177,7 +196,29 @@ fn run_job<T: Send + 'static>(
     // In the setup wizard the scan's progress is a page (one line, and Cancel) instead of a list.
     let mut page_handle = None;
     let page_closed = Rc::new(Cell::new(false));
+    let own_page = matches!(ui, JobUi::Page { .. });
     let progress_mode = match &ui {
+        JobUi::Page { title, cancellable } => {
+            let (cancel_job, closed_job) = (job.clone(), job.clone());
+            let (cancelling_now, closed, closed_exit) = (cancelling.clone(), page_closed.clone(), page_closed.clone());
+            let cancellable = *cancellable;
+            let handlers = Handlers {
+                on_action: Rc::new(move |_, _, _: ProgressAction| {
+                    cancel_job.cancel();
+                    cancelling_now.set(true);
+                }),
+                on_back: Rc::new(move |_, _| {
+                    if cancellable {
+                        closed_job.cancel();
+                        closed.set(true);
+                    }
+                }),
+                on_exit: Rc::new(move |_, _| closed_exit.set(true)),
+                on_input: None,
+            };
+            page_handle = show_page_handle(app, router, work_page(title, "", cancellable, false).with_progress(None), handlers);
+            false
+        }
         JobUi::Progress { title, status } => {
             open_progress_dialog(app, router, title, status);
             true
@@ -229,7 +270,7 @@ fn run_job<T: Send + 'static>(
     };
 
     let title_text = match &ui {
-        JobUi::Cancellable { title } | JobUi::Progress { title, .. } => *title,
+        JobUi::Cancellable { title } | JobUi::Progress { title, .. } | JobUi::Page { title, .. } => *title,
     };
     let done: RefCell<Option<Box<dyn FnOnce(&Rc<AppState>, &Router, Result<T, String>)>>> = RefCell::new(Some(Box::new(done)));
     let (app, router) = (app.clone(), router.clone());
@@ -257,11 +298,13 @@ fn run_job<T: Send + 'static>(
                 if abandoned.get() {
                     if let Some(hook) = hook {
                         hook(&app, &router);
-                    } else if page_handle.is_some() && super::setup_wizard_screen::active() {
+                    } else if page_handle.is_some() && super::setup_wizard_screen::active() && !own_page {
                         // B on the wizard's scan page: the page goes, and the wizard's game files page comes back
                         // (opening the Game files menu is what the wizard takes over while it waits).
                         close_current_dialog(&app, &router);
                         open_game_files(&app, &router);
+                    } else if own_page {
+                        close_current_dialog(&app, &router);
                     }
                     return;
                 }
@@ -288,6 +331,8 @@ fn run_job<T: Send + 'static>(
                 if let DialogSlot::Progress(d) = &*app.dialog_nav.dialogs.borrow() {
                     update_progress_dialog(&app, d, &text);
                 }
+            } else if let (Some(handle), JobUi::Page { cancellable, .. }) = (&page_handle, &ui) {
+                handle.update(work_page(title_text, &text, *cancellable, cancelling.get()).with_progress(job.fraction()));
             } else if let Some(handle) = &page_handle {
                 handle.update(scan_progress_page(title_text, &text, cancelling.get()).with_progress(job.fraction()));
             } else if let Some(d) = picker.as_ref().and_then(slint::Weak::upgrade) {
@@ -547,7 +592,7 @@ fn after_scan(app: &Rc<AppState>, router: &Router, out: ScanOutput) {
             TITLE,
             &format!(
                 "No game files were found in {}.\n\n{} other files were ignored. Game files are looked for up to 6 folders deep, with folder names like n64, snes or gc helping to tell the console.",
-                out.report.root.display(),
+                crate::fork::port_page::paths::human_path_here(&out.report.root),
                 out.report.ignored_files
             ),
         );
@@ -584,7 +629,8 @@ fn show_systems(app: &Rc<AppState>, router: &Router, report: Rc<Report>) {
     let mut order: Vec<usize> = (0..report.groups.len()).collect();
     order.sort_by_key(|i| report.groups[*i].ports.is_empty());
     let mut labels = vec![
-        format!("{} game files in {}", report.total_files, ellipsize(&report.root.to_string_lossy(), 40)),
+        // Fork (port page): the folder by place, never by a card's ID.
+        format!("{} game files in {}", report.total_files, ellipsize(&crate::fork::port_page::paths::human_path_here(&report.root), 40)),
         format!("{} not used by any port, {} other files ignored", report.unused_files, report.ignored_files),
     ];
     if report.problems > 0 {

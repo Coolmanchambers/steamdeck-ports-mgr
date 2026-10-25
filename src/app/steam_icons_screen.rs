@@ -50,11 +50,16 @@ fn settings(app: &AppState) -> ForkSettings {
 }
 
 pub(crate) fn open(app: &Rc<AppState>, router: &Router, then: Then) {
+    open_for(app, router, None, then);
+}
+
+/// Fork (port page): the same pages for one port's shortcuts only (`Some(key)`), from its Port page or its checkup.
+pub(crate) fn open_for(app: &Rc<AppState>, router: &Router, only: Option<String>, then: Then) {
     let Some(home) = home_dir() else {
         show(app, router, None, pages::problem_page("Could not find your home folder, so there is nowhere to look."), then);
         return;
     };
-    let ports: Vec<Port> = app.catalog.borrow().iter().filter(|p| !p.is_android_only() && app.is_installed(p)).cloned().collect();
+    let ports: Vec<Port> = app.catalog.borrow().iter().filter(|p| !p.is_android_only() && app.is_installed(p) && only.as_deref().is_none_or(|k| p.key() == k)).cloned().collect();
     let run = Rc::new(Run { ports, home, then, findings: RefCell::new(Vec::new()), plan: RefCell::new(Plan::default()), cancelled: Cell::new(false) });
     scan(app, router, &run);
 }

@@ -76,6 +76,10 @@ pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
         let (app, router) = (app.clone(), router.clone());
         window.on_deck_ready_filters_requested(move || open_filters(&app, &router));
     }
+    {
+        let (app, router) = (app.clone(), router.clone());
+        window.on_deck_ready_row_options(move |i| row_options(&app, &router, i));
+    }
     super::home_screen::wire(window, app, router);
 }
 
@@ -249,6 +253,31 @@ pub(crate) fn move_selection(app: &AppState, dx: i32, dy: i32) {
     }
 }
 
+/// Fork (port page): the cursor is on the first row (or there is none): Up from here reaches the Home button.
+pub(crate) fn at_top(app: &AppState) -> bool {
+    app.deck_ready.selected.get() == 0 || app.deck_ready.rows.borrow().is_empty()
+}
+
+/// Fork (port page): a right-click on a row: the Port page of a port the app has installed, else its project page.
+pub(crate) fn row_options(app: &Rc<AppState>, router: &Router, index: i32) {
+    if dialog_is_open(app) {
+        return;
+    }
+    select(app, index);
+    let Some(row) = selected_row(app) else { return };
+    let installed = match &row.action {
+        Action::Existing { key } => app.find_port(key).filter(|p| app.is_installed(p)),
+        _ => None,
+    };
+    if let Some(port) = installed {
+        return super::port_page_screen::open_from_list(app, router, &port);
+    }
+    let project = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(&row.id).cloned()).and_then(|e| e.website.clone().or_else(|| entry::source_url(&e)).or_else(|| e.repo_url.clone()));
+    if let Some(url) = project.filter(|u| crate::core::launch::is_web_url(u)) {
+        super::port_page_screen::open_link(app, router, &row.name, &url, None);
+    }
+}
+
 fn selected_row(app: &AppState) -> Option<Row> {
     let ui = &app.deck_ready;
     ui.rows.borrow().get(ui.selected.get()).cloned()
@@ -345,6 +374,7 @@ pub(crate) fn show_info(app: &Rc<AppState>, router: &Router) {
     dialog.set_project_enabled(project.is_some());
     dialog.set_releases_enabled(releases.is_some());
     let first = info_buttons(&dialog).iter().position(|&on| on).unwrap_or(3) as i32;
+    let row_name = row.name.clone();
     app.dialog_nav.info_nav_index.set(first);
     dialog.set_selected_index(first);
     {
@@ -354,8 +384,10 @@ pub(crate) fn show_info(app: &Rc<AppState>, router: &Router) {
             run_action(&app, &router, &row);
         });
     }
-    if let Some(url) = project {
-        dialog.on_project_requested(move || open_url(&url));
+    // Fork (port page): the address is shown first (and a QR code to scan in Game Mode, where there is no browser).
+    if let Some(url) = project.filter(|u| crate::core::launch::is_web_url(u)) {
+        let (app, router, name) = (app.clone(), router.clone(), row_name);
+        dialog.on_project_requested(move || super::port_page_screen::open_link(&app, &router, &name, &url, None));
     }
     if let Some(url) = releases {
         dialog.on_releases_requested(move || open_url(&url));

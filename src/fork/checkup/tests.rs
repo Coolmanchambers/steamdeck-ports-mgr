@@ -737,3 +737,65 @@ fn an_unreadable_waiting_list_is_could_not_check() {
     assert_eq!(check(Check::SteamWaiting, &f), Outcome::Unknown("Steam's change list cannot be read".into()));
     assert_eq!(pages::line(Check::SteamWaiting, &check(Check::SteamWaiting, &f)), "Steam changes: could not check (Steam's change list cannot be read)");
 }
+
+// -- One port (the Port page's Fix problems) ------------------------------------------------------------------
+
+/// Two ports with something wrong each, and a stale all-ports backup.
+fn two_with_problems() -> Facts {
+    Facts {
+        installed: vec![named("soh"), named("dusk")],
+        shortcuts: Ok(vec![finding("soh", IconState::Empty), ok_icon("dusk")]),
+        programs: vec![named("dusk")],
+        files: vec![(named("soh"), FilesState::Missing)],
+        saves: vec![named("dusk")],
+        updates: vec![named("soh"), named("dusk")],
+        queue: Ok(vec![queued("dusk", QueuedKind::Add)]),
+        old_copies: Ok(vec![CopyFact { name: "DUSK".into(), state: CopyState::Ready }]),
+        backup_days: Some(90),
+        saves_known: 2,
+        ..Facts::default()
+    }
+}
+
+#[test]
+fn the_port_filter_keeps_only_that_ports_facts() {
+    let f = two_with_problems().only_port("dusk");
+    assert_eq!(f.installed, vec![named("dusk")]);
+    assert_eq!(f.programs, vec![named("dusk")]);
+    assert!(f.files.is_empty(), "soh's missing file is not dusk's");
+    assert_eq!(f.saves, vec![named("dusk")]);
+    assert_eq!(f.updates, vec![named("dusk")]);
+    assert_eq!(f.queue.as_ref().unwrap().len(), 1);
+    assert_eq!(f.shortcuts.as_ref().unwrap().iter().map(|s| s.port_key.as_str()).collect::<Vec<_>>(), ["dusk"]);
+    assert_eq!(f.old_copies.as_ref().unwrap().len(), 1, "old copies match by the port's name");
+    assert_eq!((f.backup_days, f.saves_known), (None, 0), "the all-ports backup is not about one port");
+    let soh = two_with_problems().only_port("soh");
+    assert!(soh.old_copies.as_ref().unwrap().is_empty() && soh.queue.as_ref().unwrap().is_empty());
+}
+
+#[test]
+fn the_checkup_for_one_port_runs_only_the_port_checks_and_names_only_that_port() {
+    let r = run_for_port(&two_with_problems(), "soh");
+    assert_eq!(r.items.iter().map(|(c, _)| *c).collect::<Vec<_>>(), Check::PORT.to_vec());
+    assert!(r.outcome(Check::PortsFolder).is_none() && r.outcome(Check::Backups).is_none());
+    let problems: Vec<Check> = r.problems().iter().map(|(c, _)| *c).collect();
+    assert_eq!(problems, [Check::SteamIcons, Check::GameFiles, Check::Updates]);
+    for (_, p) in r.problems() {
+        assert!(p.ports.iter().all(|k| k == "soh"), "{p:?}");
+        assert!(!p.summary.contains("DUSK"), "{}", p.summary);
+    }
+    assert_eq!(r.summary(), "3 things to fix");
+    let dusk = run_for_port(&two_with_problems(), "dusk");
+    let problems: Vec<Check> = dusk.problems().iter().map(|(c, _)| *c).collect();
+    assert_eq!(problems, [Check::SteamWaiting, Check::Programs, Check::Saves, Check::OldCopies, Check::Updates]);
+    assert!(matches!(dusk.problems()[1].1.fix, Fix::PickProgram(ref k) if k == "dusk"));
+}
+
+#[test]
+fn a_port_with_nothing_wrong_reads_everything_looks_fine() {
+    let r = run_for_port(&fine(), "soh");
+    assert_eq!(r.problem_count(), 0);
+    assert_eq!(r.summary(), "Everything looks fine");
+    let gone = Facts { folder: Folder::Gone, ..fine() };
+    assert!(matches!(run_for_port(&gone, "soh").outcome(Check::GameFiles), Some(Outcome::Unknown(_))), "no ports folder: could not check");
+}

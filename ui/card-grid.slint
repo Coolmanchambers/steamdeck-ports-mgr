@@ -26,6 +26,8 @@ export component CardGrid {
     callback card-saves-requested(int, int);
     callback card-hovered(int, int);
     callback card-unhovered();
+    // Fork (port page): a right-click on a card.
+    callback card-options(int, int);
 
     if root.rows.length == 0: Text {
         text: root.empty-message;
@@ -155,6 +157,12 @@ export component CardGrid {
                 self.pointer-on-card && root.rows[self.hovered-row].cards[self.hovered-column].saves-warning
                 && self.content-mouse-y >= self.card-top + card-height - grid-container.badge-height;
 
+            // Fork (port page): a right-click on a card asks for the port's options.
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right && self.pointer-on-card) {
+                    root.card-options(self.hovered-row, self.hovered-column);
+                }
+            }
             clicked => {
                 if (self.pointer-on-badge) {
                     root.card-saves-requested(self.hovered-row, self.hovered-column);

@@ -183,7 +183,7 @@ impl Drive {
 }
 
 /// A file system ID rather than a name: hex digits and dashes, 8 or more of them (UUIDs, FAT serials like 1A2B-3C4D).
-fn looks_like_an_id(label: &str) -> bool {
+pub(crate) fn looks_like_an_id(label: &str) -> bool {
     label.len() >= 8 && label.contains('-') && label.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 

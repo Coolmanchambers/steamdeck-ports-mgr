@@ -107,10 +107,14 @@ export component DeckReadyList inherits Rectangle {
     in property <string> filter-text: "";
     in property <string> empty-text: "";
     in property <bool> show-hints: true;
+    // Fork (port page): what B does now ("B / Esc  Home", or "B / Esc  Clear search" while there is search text).
+    in property <string> back-hint: "B / Esc  Back";
     in property <bool> scroll-trigger: false;
     callback row-hovered(int);
     callback row-info(int);
     callback row-action(int);
+    // Fork (port page): a right-click on a row.
+    callback row-options(int);
     callback filters-requested();
 
     property <length> small-font: root.item-font-px * 0.85;
@@ -226,6 +230,11 @@ export component DeckReadyList inherits Rectangle {
                                 root.row-hovered(index);
                             }
                         }
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                                root.row-options(index);
+                            }
+                        }
                     }
 
                     build-chip := Chip {
@@ -319,7 +328,7 @@ export component DeckReadyList inherits Rectangle {
         }
 
         if root.show-hints: Text {
-            text: "A  Install / Play     X  Info     Y  Filters     B / Esc  Back     L1 R1 / Tab  Switch list";
+            text: "A  Install / Play     X  Info     Y  Filters     " + root.back-hint + "     L1 R1 / Tab  Switch list";
             color: Theme.list-text;
             font-size: root.small-font;
             vertical-alignment: center;

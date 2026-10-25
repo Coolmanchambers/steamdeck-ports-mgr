@@ -32,10 +32,13 @@ fn show(app: &Rc<AppState>, router: &Router, from_settings: bool) {
             Act::DeckReady => {
                 close_current_dialog(app, router);
                 super::home_screen::show_list(app, router, List::DeckReady);
+                // B on the list comes back to this page (Fork, port page).
+                super::home_screen::opened_from_add_port(app, from_settings);
             }
             Act::Browse => {
                 close_current_dialog(app, router);
                 super::home_screen::show_list(app, router, List::AllPorts);
+                super::home_screen::opened_from_add_port(app, from_settings);
             }
             Act::Import | Act::GithubLink => {
                 close_current_dialog(app, router);

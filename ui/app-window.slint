@@ -132,6 +132,15 @@ export component AppWindow inherits Window {
             search-input.focus();
         }
     }
+    // Fork (port page): a port's options (right-click or long press on a Home tile, right-click on a row or card), and the
+    // Home button at the top left of All ports and Deck-ready (focused from the controller by Up at the top of the list).
+    callback home-tile-options(int);
+    callback list-row-options(int);
+    callback card-options(int, int);
+    callback deck-ready-row-options(int);
+    callback list-home-requested();
+    in property <bool> list-home-focused: false;
+    in property <string> list-back-hint: "";
 
     init => { search-input.focus(); }
 
@@ -245,7 +254,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: root.home-mode ? "Ports Launcher  ›  Home" : root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : (root.big-mode ? "Ports Launcher      L1 / R1  Lists" : "Ports Launcher");
+                        text: root.home-mode ? "Ports Launcher  ›  Home" : root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : (root.big-mode ? "Ports Launcher      L1 / R1  Lists      " + root.list-back-hint : "Ports Launcher      " + root.list-back-hint);
                         color: Theme.list-text;
                         vertical-alignment: center;
                         font-weight: 700;
@@ -305,10 +314,29 @@ export component AppWindow inherits Window {
                         vertical-stretch: 0;
                         height: search-bar-height;
 
-                        search-bar := Rectangle {
-                            width: root.big-mode ? content-width * 0.5 : content-width;
+                        // Fork (port page): "< Home" at the top left of All ports and Deck-ready, for touch and the mouse (B does the same).
+                        property <length> home-w: root.home-mode ? 0px : home-btn.text-preferred-width + button-padding * 3;
+                        home-btn := ActionButton {
+                            visible: !root.home-mode;
+                            x: 0px;
+                            width: parent.home-w;
                             height: 100%;
-                            x: root.big-mode ? (content-width - self.width) / 2 : 0px;
+                            text: "< Home";
+                            font-size: item-font-px * 1.1;
+                            fill-color: root.list-home-focused ? SemanticColors.info.darker(0.3) : SemanticColors.info;
+                            clicked => { root.list-home-requested(); }
+                            Rectangle {
+                                visible: root.list-home-focused;
+                                border-width: max(3px, 4px / Theme.scale-factor);
+                                border-color: SemanticColors.selection-border;
+                                background: transparent;
+                            }
+                        }
+
+                        search-bar := Rectangle {
+                            width: root.big-mode ? content-width * 0.5 : content-width - parent.home-w - (root.home-mode ? 0px : row-spacing);
+                            height: 100%;
+                            x: root.big-mode ? (content-width - self.width) / 2 : parent.home-w + (root.home-mode ? 0px : row-spacing);
                             clip: true;
                             background: Theme.search-background;
                             border-width: 1px / Theme.scale-factor;
@@ -417,6 +445,7 @@ export component AppWindow inherits Window {
                             card-activated(r, c) => { root.card-activated(r, c); }
                             card-saves-requested(r, c) => { root.card-saves-requested(r, c); }
                             card-hovered(r, c) => { root.card-hovered(r, c); }
+                            card-options(r, c) => { root.card-options(r, c); }
                             card-unhovered() => { root.card-unhovered(); }
                         }
 
@@ -489,6 +518,11 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         pointer-event(event) => {
+                                            // Fork (port page): a right-click on a row asks for the port's options.
+                                            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                                                root.list-row-options(index);
+                                                return;
+                                            }
                                             if (event.kind == PointerEventKind.down) {
                                                 self.drag-start-cursor-y = self.absolute-position.y + self.mouse-y;
                                                 self.drag-start-viewport-y = port-list.content-y;
@@ -651,6 +685,7 @@ export component AppWindow inherits Window {
                             scroll-trigger: root.scroll-trigger;
                             tile-activated(i) => { root.home-tile-activated(i); }
                             tile-hovered(i) => { root.home-tile-hovered(i); }
+                            tile-options(i) => { root.home-tile-options(i); }
                             settings-requested => { root.settings-requested(); }
                             setup-requested => { root.home-setup-requested(); }
                             add-requested => { root.home-add-requested(); }
@@ -672,6 +707,8 @@ export component AppWindow inherits Window {
                             row-hovered(i) => { root.deck-ready-row-hovered(i); }
                             row-info(i) => { root.deck-ready-row-info(i); }
                             row-action(i) => { root.deck-ready-row-action(i); }
+                            row-options(i) => { root.deck-ready-row-options(i); }
+                            back-hint: root.list-back-hint;
                             filters-requested => { root.deck-ready-filters-requested(); }
                         }
                     }

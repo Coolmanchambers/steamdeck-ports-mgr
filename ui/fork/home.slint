@@ -23,6 +23,9 @@ component Tile inherits Rectangle {
     callback clicked();
     // The pointer really moved over the tile (its position inside it), for the resting-pointer guard.
     callback moved(length, length);
+    // Fork (port page): a right-click or a long press on the touch screen asks for the port's options.
+    callback options();
+    property <bool> long-fired: false;
     property <length> pad: root.font-px * 0.5;
     // Two lines of title and the badge line.
     property <length> text-h: root.font-px * 4.4;
@@ -31,12 +34,31 @@ component Tile inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border-color;
 
-    TouchArea {
-        clicked => { root.clicked(); }
+    area := TouchArea {
+        clicked => {
+            if (!root.long-fired) {
+                root.clicked();
+            }
+        }
         pointer-event(event) => {
             if (event.kind == PointerEventKind.move) {
                 root.moved(self.mouse-x, self.mouse-y);
             }
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                root.long-fired = false;
+            }
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                root.options();
+            }
+        }
+    }
+    // Held for most of a second without letting go: the options, and the press does not also play.
+    Timer {
+        interval: 650ms;
+        running: area.pressed && !root.long-fired;
+        triggered => {
+            root.long-fired = true;
+            root.options();
         }
     }
 
@@ -216,6 +238,8 @@ export component HomeView inherits Rectangle {
     in property <bool> scroll-trigger: false;
     callback tile-activated(int);
     callback tile-hovered(int);
+    // Fork (port page): right-click or long press on a tile.
+    callback tile-options(int);
     callback settings-requested();
     callback setup-requested();
     callback add-requested();
@@ -343,6 +367,7 @@ export component HomeView inherits Rectangle {
             selected: i == root.selected;
             font-px: root.font-px;
             clicked => { root.tile-activated(i); }
+            options => { root.tile-options(i); }
             moved(x, y) => { root.pointer-moved(i, x, y); }
         }
     }

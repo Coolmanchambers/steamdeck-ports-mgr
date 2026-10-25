@@ -53,6 +53,10 @@ pub(crate) struct HomeUi {
     updates_seen: Cell<usize>,
     steam: RefCell<Option<(Instant, HashMap<String, i64>)>>,
     files: RefCell<HashMap<String, (Instant, Option<FilesState>)>>,
+    /// Fork (port page): the "< Home" button of All ports and Deck-ready has the controller's focus.
+    list_button: Cell<bool>,
+    /// Fork (port page): the list was opened from the Add a port page (`Some(from_settings)`): B goes back to that page.
+    from_add_port: Cell<Option<bool>>,
 }
 
 impl HomeUi {
@@ -93,6 +97,18 @@ pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
         let (app, router) = (app.clone(), router.clone());
         window.on_home_add_requested(move || open_add(&app, &router));
     }
+    // Fork (port page): the Port page from a tile (right-click, long press), and the lists' Home button.
+    {
+        let (app, router) = (app.clone(), router.clone());
+        window.on_home_tile_options(move |i| {
+            select(&app, i.max(0) as usize);
+            open_options(&app, &router);
+        });
+    }
+    {
+        let (app, router) = (app.clone(), router.clone());
+        window.on_list_home_requested(move || list_home(&app, &router));
+    }
     start(app);
 }
 
@@ -132,16 +148,104 @@ pub(crate) fn next_list(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
     }
+    app.home.from_add_port.set(None);
     go_to(app, router, current_list(app).next_in(app.window().get_big_mode()));
 }
 
-/// B (and Escape) in a list: back to where `List::back` says (from the Deck-ready list to Home, in both modes).
+/// B (and Escape) in a list: back to where `List::back` says (from Deck-ready and All ports to Home, in both modes).
+/// Fork (port page): with search text the first B clears it (the hint says so); a list opened from Add a port goes
+/// back to that page (its own B then goes Home).
 pub(crate) fn back(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
     }
-    if let Some(to) = current_list(app).back() {
+    let list = current_list(app);
+    if list != List::Home && !app.windowed_nav.search_query.borrow().trim().is_empty() {
+        app.window().invoke_clear_search();
+        app.windowed_nav.search_query.borrow_mut().clear();
+        app.refresh_current_view();
+        push_list_hint(app);
+        eprintln!("list: search cleared");
+        return;
+    }
+    if let Some(to) = list.back() {
+        let from_add_port = app.home.from_add_port.take();
         go_to(app, router, to);
+        if let Some(from_settings) = from_add_port {
+            super::add_port_screen::open(app, router, from_settings);
+        }
+    }
+}
+
+/// Fork (port page): the "< Home" button (a tap, a click, or A while it has the controller's focus): Home, whatever list
+/// this is and wherever it was opened from.
+pub(crate) fn list_home(app: &Rc<AppState>, router: &Router) {
+    if dialog_is_open(app) {
+        return;
+    }
+    app.home.from_add_port.set(None);
+    go_to(app, router, List::Home);
+}
+
+/// Fork (port page): the list was opened from the Add a port page.
+pub(crate) fn opened_from_add_port(app: &AppState, from_settings: bool) {
+    app.home.from_add_port.set(Some(from_settings));
+}
+
+/// Fork (port page): the hint for B on the lists ("B / Esc  Home", "B / Esc  Clear search"), and the Home button's focus.
+pub(crate) fn push_list_hint(app: &AppState) {
+    let window = app.window();
+    let searching = !app.windowed_nav.search_query.borrow().trim().is_empty();
+    window.set_list_back_hint(current_list(app).back_hint(searching).into());
+    window.set_list_home_focused(app.home.list_button.get() && !app.home.is_active());
+}
+
+/// Fork (port page): the D-pad on All ports and Deck-ready reaches the "< Home" button: Up at the top of the list moves onto
+/// it, Down comes back to the list. True when the press was used here.
+pub(crate) fn list_button_move(app: &AppState, dx: i32, dy: i32) -> bool {
+    if app.home.is_active() {
+        app.home.list_button.set(false);
+        return false;
+    }
+    if app.home.list_button.get() {
+        if dy > 0 {
+            app.home.list_button.set(false);
+            push_list_hint(app);
+        }
+        return true;
+    }
+    let at_top = if app.deck_ready.is_active() {
+        super::deck_ready_screen::at_top(app)
+    } else if app.window().get_big_mode() {
+        app.grid_nav.grid_selected.get().0 == 0
+    } else {
+        app.windowed_nav.windowed_selected.get() == 0
+    };
+    if dy < 0 && dx == 0 && at_top {
+        app.home.list_button.set(true);
+        push_list_hint(app);
+        return true;
+    }
+    false
+}
+
+/// Fork (port page): A while the "< Home" button has the focus. True when it did.
+pub(crate) fn list_button_activate(app: &Rc<AppState>, router: &Router) -> bool {
+    if app.home.is_active() || !app.home.list_button.get() {
+        return false;
+    }
+    app.home.list_button.set(false);
+    list_home(app, router);
+    true
+}
+
+/// Fork (port page): X on Home, and a right-click or long press on a tile: the focused port's Port page.
+pub(crate) fn open_options(app: &Rc<AppState>, router: &Router) {
+    if dialog_is_open(app) {
+        return;
+    }
+    if let Some(port) = selected_port(app) {
+        super::port_page_screen::open_from_list(app, router, &port);
     }
 }
 
@@ -186,6 +290,9 @@ fn go_to(app: &Rc<AppState>, router: &Router, next: List) {
     }
     let window = app.window();
     window.set_next_list_text(current_list(app).next_in(window.get_big_mode()).name().into());
+    // Fork (port page): a new list starts with the cursor in the list, not on its Home button.
+    app.home.list_button.set(false);
+    push_list_hint(app);
     eprintln!("list: {}", current_list(app).name());
 }
 
@@ -372,6 +479,19 @@ pub(crate) fn update_ready(app: &AppState, key: &str) -> bool {
     let installed_at = app.state.borrow().get(key).map_or(0, |i| home::app_played_at(&i.installed_at));
     let seen = app.home.updates.lock().ok().and_then(|u| u.get(key).copied());
     home::update_shown(seen, installed_at)
+}
+
+/// Fork (port page): Home's badge for a port (its words and mark), when it has a tile now.
+pub(crate) fn badge_of(app: &AppState, key: &str) -> Option<(String, crate::fork::page::Mark)> {
+    app.home.tiles.borrow().iter().find(|t| t.key == key && matches!(t.kind, TileKind::Port | TileKind::Continue)).map(|t| (t.badge.label().to_string(), t.badge.mark()))
+}
+
+/// Fork (port page): what "Check for an update now" found, kept with Home's own check results (so the badge agrees).
+pub(crate) fn note_update_check(app: &AppState, key: &str, available: bool) {
+    if let Ok(mut u) = app.home.updates.lock() {
+        u.insert(key.to_string(), home::UpdateSeen { available, at: unix_now() });
+    }
+    save_results(app);
 }
 
 /// The game files state of each port (`None`: needs none), each answer reused for a few seconds (Home redraws often:

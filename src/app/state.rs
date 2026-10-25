@@ -209,6 +209,10 @@ impl AppState {
     }
 
     pub(crate) fn move_selection(&self, dx: i32, dy: i32) {
+        // Fork (port page): Up at the top of All ports or Deck-ready reaches the "< Home" button.
+        if super::home_screen::list_button_move(self, dx, dy) {
+            return;
+        }
         if self.deck_ready.is_active() {
             return super::deck_ready_screen::move_selection(self, dx, dy);
         }

@@ -410,7 +410,7 @@ pub(crate) fn open_uninstall_confirm_dialog(app: &Rc<AppState>, router: &Router,
     );
 }
 
-fn open_extra_install_confirm_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
+pub(crate) fn open_extra_install_confirm_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
     let window = app.window();
     let tr = window.global::<Tr>();
     let name: slint::SharedString = port.name.clone().into();
@@ -424,7 +424,7 @@ fn open_extra_install_confirm_dialog(app: &Rc<AppState>, router: &Router, port: 
     );
 }
 
-fn open_reset_playtime_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
+pub(crate) fn open_reset_playtime_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
     let window = app.window();
     let tr = window.global::<Tr>();
     let name: slint::SharedString = port.name.clone().into();
@@ -534,7 +534,11 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
     dialog.set_selected_index(first_enabled);
     position_dialog!(dialog, app, dw, dh, x, y);
 
-    wire_open(website, |url: &String| open_url(url), |f| dialog.on_website_requested(f));
+    // Fork (port page): Website shows the address first, with a QR code for Game Mode (no browser there).
+    if let Some(url) = website {
+        let (app, router, name) = (app.clone(), router.clone(), port.display_name().to_string());
+        dialog.on_website_requested(move || super::port_page_screen::open_link(&app, &router, &name, &url, None));
+    }
     wire_open(mods, |url: &String| open_url(url), |f| dialog.on_mods_requested(f));
     wire_open(installed_dir, |dir: &PathBuf| open_folder(dir), |f| dialog.on_game_folder_requested(f));
     wire_open(save, |dir: &PathBuf| open_folder(dir), |f| dialog.on_save_folder_requested(f));

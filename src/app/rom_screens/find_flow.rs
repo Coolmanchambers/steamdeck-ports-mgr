@@ -15,10 +15,14 @@
 //! where it looked, with Search again, Connect by hand... and Later. Nothing is copied without the
 //! user's yes (the Connect step asks), and game files are only read.
 
-use super::{
-    choose_folder, load_store, message, open_connect, open_list, run_job, show_connect, store_path, Back, JobUi, Router, Then, JOB_RUNNING, TITLE,
-};
-use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_picker_dialog, DialogSlot};
+use super::{choose_folder, load_store, message, open_list, run_job, store_path, Back, JobUi, Router, Then, JOB_RUNNING, TITLE};
+use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, DialogSlot};
+use crate::app::page_dialog::{show_page, Handlers};
+use crate::fork::page::Page;
+use crate::fork::port_page::paths::{human_path, Places};
+use crate::fork::rom_library::{Approval, SlotStatus};
+use crate::fork::rom_screens::pages::{self, GfAct};
+use crate::fork::rom_screens::util::file_name;
 use crate::app::folder_picker_screen::open_folder_picker;
 use crate::app::state::AppState;
 use crate::core::models::Port;
@@ -28,8 +32,7 @@ use crate::fork::setup_wizard::files_state::FilesState;
 use crate::fork::rom_screens::connect_screen::{ConnectScreen, Pick};
 use crate::fork::rom_screens::file_pick::{FileBrowser, Line as FileLine};
 use crate::fork::rom_screens::find::{
-    find_game_files_for_port, find_game_files_for_ports, match_hand_picked, looks_empty_lines, no_folder_lines, no_match_lines, not_found_lines, unreadable_lines,
-    use_anyway,
+    find_game_files_for_port, find_game_files_for_ports, match_hand_picked, no_match_lines, use_anyway,
     FindOutcome, FindRequest, HandPick, LATER_HINT,
 };
 use crate::fork::rom_screens::offer::{self, AutoSearch};
@@ -146,7 +149,8 @@ pub(crate) fn find_for_port(app: &Rc<AppState>, router: &Router, key: &str, back
     let Some(store) = load_store(app, router) else { return };
     let req = request_for(app, &local_entries(app), &port, store.mappings().to_vec());
     if !req.needs_files() {
-        return message(app, router, &title_for(port.display_name()), &format!("{} does not name any game files it needs, so there is nothing to look for.", port.display_name()));
+        let name = port.display_name().to_string();
+        return gf_result(app, router, &name, "No game files needed", &format!("{name} does not name any game files it needs, so there is nothing to look for."), back);
     }
     search(app, router, req, store, back, None);
 }
@@ -265,7 +269,8 @@ fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibra
     run_job(
         app,
         router,
-        JobUi::Cancellable { title: SEARCH_TITLE },
+        // Fork (port page): one port's search waits on a page (Cancel, or B), not a list.
+        JobUi::Page { title: SEARCH_TITLE, cancellable: true },
         move |ctl| find_game_files_for_port(&store, &worker_req, ctl.flag(), &mut |t| ctl.set_progress(t)),
         move |app, router, result| match result {
             Ok(Some(outcome)) => show_outcome(app, router, req, outcome, back, mark),
@@ -293,81 +298,170 @@ fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: 
     if let Some(key) = mark {
         mark_searched(app, &[key]);
     }
+    // Fork (port page): the result is a card page (`fork::rom_screens::pages`), every place named the human way.
+    let places = Places::system();
+    let place = |p: &Path| human_path(p, &places);
+    let ctx = Rc::new(Ctx { req, back });
     match outcome {
-        FindOutcome::NoFilesNeeded => back(app, router),
-        FindOutcome::Found { row, .. } => open_row(app, router, &row, back),
-        FindOutcome::Ambiguous { row, slots, .. } => pick_then_connect(app, router, row, slots, back),
+        FindOutcome::NoFilesNeeded => (ctx.back)(app, router),
+        FindOutcome::Found { row, .. } if row.connected => {
+            let files = connected_files(&ctx.req, &place);
+            gf_page(app, router, pages::connected_page(&name, &files), ctx, None);
+        }
+        FindOutcome::Found { row, .. } => {
+            let files: Vec<(String, String)> = row
+                .matched
+                .slots
+                .iter()
+                .filter(|s| !s.optional)
+                .filter_map(|s| if let SlotStatus::Found(f) = &s.status { Some((file_name(&f.path), f.path.parent().map(&place).unwrap_or_default())) } else { None })
+                .collect();
+            let page = pages::found_page(&name, &files, row.low_confidence);
+            gf_page(app, router, page, ctx, Some(Rc::new(row)));
+        }
+        FindOutcome::Ambiguous { row, slots, .. } => pick_then_connect(app, router, row, slots, ctx.back.clone()),
         FindOutcome::NotFound { needs, looked_in, notes } => {
-            let lines = not_found_lines(&name, &needs, &looked_in, &notes);
-            prompt(app, router, Rc::new(Prompt { req, lines, acts: vec![Act::SearchAgain, Act::ByHand, Act::Later], back }));
+            let page = pages::not_found_page(&name, &needs, &place(&looked_in.folder), &notes, looked_in.problems);
+            gf_page(app, router, page, ctx, None);
         }
-        FindOutcome::NoRomFolder { needs } => {
-            let lines = no_folder_lines(&name, &needs);
-            prompt(app, router, Rc::new(Prompt { req, lines, acts: vec![Act::ChooseFolder("Choose ROM folder..."), Act::ByHand, Act::Later], back }));
-        }
+        FindOutcome::NoRomFolder { needs } => gf_page(app, router, pages::no_folder_page(&name, &needs), ctx, None),
         FindOutcome::FolderUnreadable { needs, folder, error } => {
-            let lines = unreadable_lines(&name, &needs, &folder, &error);
-            let acts = vec![Act::SearchAgain, Act::ChooseFolder("Choose another folder..."), Act::ByHand, Act::Later];
-            prompt(app, router, Rc::new(Prompt { req, lines, acts, back }));
+            let page = pages::unreadable_page(&name, &needs, &place(&folder), &ellipsize(&error, 80));
+            gf_page(app, router, page, ctx, None);
         }
         FindOutcome::FolderLooksEmpty { needs, folder, saved } => {
-            let lines = looks_empty_lines(&name, &needs, &folder, saved);
-            let acts = vec![Act::SearchAgain, Act::ChooseFolder("Choose another folder..."), Act::ByHand, Act::Later];
-            prompt(app, router, Rc::new(Prompt { req, lines, acts, back }));
+            let why = format!("it held {} last time, but now it has none", crate::fork::rom_screens::find::count_files(saved));
+            gf_page(app, router, pages::unreadable_page(&name, &needs, &place(&folder), &why), ctx, None);
         }
     }
 }
 
-// -- The prompt (not found, no folder, unreadable) -------------------------------------------------
+// -- The result pages -------------------------------------------------------------------------------------
 
-#[derive(Clone, Copy)]
-enum Act {
-    SearchAgain,
-    ChooseFolder(&'static str),
-    ByHand,
-    Later,
-}
-
-impl Act {
-    fn label(self) -> &'static str {
-        match self {
-            Act::SearchAgain => "Search again",
-            Act::ChooseFolder(label) => label,
-            Act::ByHand => "Connect by hand...",
-            Act::Later => "Later",
-        }
-    }
-}
-
-struct Prompt {
+/// The one port the pages are about, and where they lead when the user is done (Later, Done, B).
+struct Ctx {
     req: FindRequest,
-    lines: Vec<String>,
-    acts: Vec<Act>,
     back: Back,
 }
 
-fn prompt(app: &Rc<AppState>, router: &Router, p: Rc<Prompt>) {
-    let mut labels: Vec<String> = p.lines.iter().map(|l| ellipsize(l, ROW_WIDTH)).collect();
-    labels.push(LATER_HINT.to_string());
-    let first = labels.len();
-    labels.extend(p.acts.iter().map(|a| a.label().to_string()));
-    let title = title_for(p.req.port.display_name());
-    open_list_at(app, router, &title, labels, first, move |app, router, index| {
-        let Some(act) = index.checked_sub(first).and_then(|i| p.acts.get(i)).copied() else { return };
-        let key = p.req.port.key().to_string();
-        match act {
-            Act::SearchAgain => search_key(app, router, &key, p.back.clone()),
-            Act::ChooseFolder(_) => choose_folder(app, router, Then::Find { key, back: p.back.clone() }),
-            Act::ByHand => {
-                let again: Back = {
-                    let p = p.clone();
-                    Rc::new(move |app, router| prompt(app, router, p.clone()))
-                };
-                connect_by_hand(app, router, p.req.clone(), p.back.clone(), again);
+/// The connected files of the port: (file name, its place).
+fn connected_files(req: &FindRequest, place: &dyn Fn(&Path) -> String) -> Vec<(String, String)> {
+    req.mappings.iter().filter(|m| m.port_key == req.port.key()).map(|m| (file_name(&m.source), m.source.parent().map(place).unwrap_or_default())).collect()
+}
+
+/// Shows a result page; `row` is what Use it connects (the Found page).
+fn gf_page(app: &Rc<AppState>, router: &Router, page: Page<GfAct>, ctx: Rc<Ctx>, row: Option<Rc<PortRow>>) {
+    let again_page = page.clone();
+    let (c_act, c_back, c_exit) = (ctx.clone(), ctx.clone(), ctx);
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| {
+            let key = c_act.req.port.key().to_string();
+            match act {
+                GfAct::UseIt => match &row {
+                    Some(row) => connect_row(app, router, row, c_act.back.clone()),
+                    None => (c_act.back)(app, router),
+                },
+                GfAct::LookAgain => search_key(app, router, &key, c_act.back.clone()),
+                GfAct::ChooseFolder => choose_folder(app, router, Then::Find { key, back: c_act.back.clone() }),
+                GfAct::ChooseFile => {
+                    let again: Back = {
+                        let (page, ctx, row) = (again_page.clone(), c_act.clone(), row.clone());
+                        Rc::new(move |app, router| gf_page(app, router, page.clone(), ctx.clone(), row.clone()))
+                    };
+                    connect_by_hand(app, router, c_act.req.clone(), c_act.back.clone(), again);
+                }
+                GfAct::Later | GfAct::Done | GfAct::Copy | GfAct::Pick(_) => (c_act.back)(app, router),
             }
-            Act::Later => (p.back)(app, router),
-        }
-    });
+        }),
+        on_back: Rc::new(move |app, router| (c_back.back)(app, router)),
+        on_exit: Rc::new(move |app, router| (c_exit.back)(app, router)),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
+}
+
+/// A page with only Done (a result), leading to `back`.
+fn gf_result(app: &Rc<AppState>, router: &Router, name: &str, title: &str, text: &str, back: Back) {
+    let (b1, b2, b3) = (back.clone(), back.clone(), back);
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, _: GfAct| b1(app, router)),
+        on_back: Rc::new(move |app, router| b2(app, router)),
+        on_exit: Rc::new(move |app, router| b3(app, router)),
+        on_input: None,
+    };
+    show_page(app, router, pages::result_page(name, title, text), handlers);
+}
+
+/// "Use it": connect what was found, the way Settings > Game files does (its own rules: use in place, link, or a copy
+/// only after a yes with its size shown), on pages.
+fn connect_row(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back) {
+    if !row.installed {
+        let name = row.port.display_name().to_string();
+        return gf_result(app, router, &name, "Install it first", &format!("Install {name} first, then connect its game files."), back);
+    }
+    let Some(store) = load_store(app, router) else { return };
+    let Ok(port_dir) = safe_join(&app.paths.library_dir(), &row.port.folder) else { return };
+    connect_screen_now(app, router, ConnectScreen::new(row, port_dir, store.mappings()), back);
+}
+
+fn connect_screen_now(app: &Rc<AppState>, router: &Router, screen: ConnectScreen, back: Back) {
+    let name = screen.port_name.clone();
+    let requests = match screen.requests() {
+        Ok(r) => r,
+        Err(text) => return gf_result(app, router, &name, "Nothing was connected", &text, back),
+    };
+    let unchecked = Rc::new(screen.unchecked_files());
+    run_job(
+        app,
+        router,
+        JobUi::Page { title: "Checking the files", cancellable: false },
+        move |_| crate::fork::rom_screens::connect_screen::make_plan(requests),
+        move |app, router, result| {
+            let plan = match result.and_then(|r| r) {
+                Ok(plan) => Rc::new(plan),
+                Err(e) => return gf_result(app, router, &name, "Nothing was connected", &e, back.clone()),
+            };
+            if !plan.needs_copy_approval() {
+                return apply_pages(app, router, &name, plan, Approval::None, unchecked.clone(), back.clone());
+            }
+            let (name2, plan2, unchecked2, back2, back3, back4) = (name.clone(), plan.clone(), unchecked.clone(), back.clone(), back.clone(), back.clone());
+            let handlers = Handlers {
+                on_action: Rc::new(move |app, router, act| match act {
+                    GfAct::Copy => apply_pages(app, router, &name2, plan2.clone(), Approval::CopyAllowed, unchecked2.clone(), back2.clone()),
+                    _ => back2(app, router),
+                }),
+                on_back: Rc::new(move |app, router| back3(app, router)),
+                on_exit: Rc::new(move |app, router| back4(app, router)),
+                on_input: None,
+            };
+            show_page(app, router, pages::copy_page(&name, &plan.confirm_text(&name)), handlers);
+        },
+    );
+}
+
+fn apply_pages(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<crate::fork::rom_screens::connect_screen::PlanOutput>, approval: Approval, unchecked: Rc<Vec<String>>, back: Back) {
+    let title = if approval == Approval::CopyAllowed { "Copying game files" } else { "Connecting game files" };
+    let (path, plans) = (store_path(app), plan.plans.clone());
+    let name = name.to_string();
+    run_job(
+        app,
+        router,
+        JobUi::Page { title, cancellable: false },
+        move |_| crate::fork::rom_screens::connect_screen::apply_plans(&path, &plans, approval),
+        move |app, router, result| match result.and_then(|r| r) {
+            Ok(mappings) => {
+                let mut text = crate::fork::rom_screens::connect_screen::done_text(&name, &plan.plans, &mappings);
+                for w in plan.warnings() {
+                    text.push_str(&format!("\n\nNote: {w}"));
+                }
+                for file in unchecked.iter() {
+                    text.push_str(&format!("\n\n{file} was matched by its name only. If the game does not start, choose the file yourself."));
+                }
+                gf_result(app, router, &name, "Game files connected", &text, back.clone());
+            }
+            Err(e) => gf_result(app, router, &name, "Nothing was connected", &format!("{e}\n\nNothing was changed."), back.clone()),
+        },
+    );
 }
 
 // -- Several ports at once --------------------------------------------------------------------------
@@ -452,11 +546,8 @@ fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items
 // -- Connect ----------------------------------------------------------------------------------------
 
 fn open_row(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back) {
-    if !row.installed {
-        let name = row.port.display_name();
-        return message(app, router, &title_for(name), &format!("Install {name} first, then connect its game files."));
-    }
-    open_connect(app, router, row, back);
+    // Fork (port page): a file the user picked or said to use goes straight to connecting it, on pages.
+    connect_row(app, router, row, back);
 }
 
 fn pick_then_connect(app: &Rc<AppState>, router: &Router, row: PortRow, slots: Vec<usize>, back: Back) {
@@ -470,24 +561,37 @@ fn pick_then_connect(app: &Rc<AppState>, router: &Router, row: PortRow, slots: V
     pick_next(app, router, screen, slots, 0, back);
 }
 
-/// One pick list per slot with several matching files, then the Connect step with the choices made.
+/// One page per thing with several matching files ("Which one is your copy?"), then connecting with the choices made.
 fn pick_next(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectScreen>>, slots: Rc<Vec<(usize, String)>>, n: usize, back: Back) {
-    let Some((slot, label)) = slots.get(n).cloned() else { return show_connect(app, router, screen, back) };
+    let Some((slot, label)) = slots.get(n).cloned() else {
+        let screen = screen.borrow().clone();
+        return connect_screen_now(app, router, screen, back);
+    };
     if !screen.borrow().is_editable(slot) {
         return pick_next(app, router, screen, slots, n + 1, back);
     }
     let (picks, pick_labels) = (screen.borrow().picks(slot), screen.borrow().pick_labels(slot));
     let files: Vec<(Pick, String)> =
         picks.into_iter().zip(pick_labels).filter(|(p, _)| matches!(p, Pick::File(_))).map(|(p, l)| (p, l.trim_start_matches("File: ").to_string())).collect();
-    let mut labels: Vec<String> = files.iter().map(|f| f.1.clone()).collect();
-    labels.push("Decide in the Connect step".into());
-    let title = format!("Pick one: {}", ellipsize(&label, 30));
-    open_picker_dialog(app, router, &title, labels, move |app, router, choice| {
-        if let Some((pick, _)) = files.get(choice) {
-            screen.borrow_mut().choose(slot, *pick);
-        }
-        pick_next(app, router, screen.clone(), slots.clone(), n + 1, back.clone());
-    });
+    let name = screen.borrow().port_name.clone();
+    let shown: Vec<(String, String)> = files.iter().map(|(_, l)| (l.clone(), String::new())).collect();
+    let page = pages::pick_page(&name, &ellipsize(&label, 50), &shown);
+    let (b1, b2) = (back.clone(), back.clone());
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            GfAct::Pick(i) => {
+                if let Some((pick, _)) = files.get(i) {
+                    screen.borrow_mut().choose(slot, *pick);
+                }
+                pick_next(app, router, screen.clone(), slots.clone(), n + 1, back.clone());
+            }
+            _ => back(app, router),
+        }),
+        on_back: Rc::new(move |app, router| b1(app, router)),
+        on_exit: Rc::new(move |app, router| b2(app, router)),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }
 
 // -- Connect by hand --------------------------------------------------------------------------------
@@ -534,7 +638,7 @@ fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrow
     run_job(
         app,
         router,
-        JobUi::Cancellable { title: "Checking the file" },
+        JobUi::Page { title: "Checking the file", cancellable: true },
         move |ctl| match_hand_picked(&worker_req, &path, ctl.flag(), &mut |t| ctl.set_progress(t)),
         move |app, router, result| match result.and_then(|r| r) {
             Err(e) => message(app, router, TITLE, &e),

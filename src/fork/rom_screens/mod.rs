@@ -19,6 +19,7 @@ pub mod file_pick;
 pub mod find;
 pub mod job;
 pub mod offer;
+pub mod pages;
 pub mod report;
 pub mod scan_work;
 pub mod util;

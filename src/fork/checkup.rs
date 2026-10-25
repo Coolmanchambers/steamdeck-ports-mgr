@@ -409,6 +409,48 @@ pub fn run(f: &Facts) -> Results {
     Results { items: Check::ALL.into_iter().map(|c| (c, check(c, f))).collect() }.with_skips(&f.skips)
 }
 
+impl Check {
+    /// The checks that can be about one port (the Port page's Fix problems): not the ports folder itself and not the
+    /// all-ports save backup.
+    pub const PORT: [Check; 8] = [Check::SteamWaiting, Check::SteamIcons, Check::SteamShortcuts, Check::Programs, Check::GameFiles, Check::Saves, Check::OldCopies, Check::Updates];
+}
+
+impl Facts {
+    /// The same facts with everything that is about another port left out: the one port's Steam changes, shortcuts,
+    /// program question, game files, saves, old copies (by its name: their records carry no key) and update. The ports
+    /// folder and the skips stay as they are; the all-ports backup facts are emptied (they are not about one port).
+    pub fn only_port(&self, key: &str) -> Facts {
+        let name = self.installed.iter().find(|n| n.key == key).map(|n| n.name.clone());
+        let mine = |n: &Named| n.key == key;
+        Facts {
+            game_mode: self.game_mode,
+            installed: self.installed.iter().filter(|n| mine(n)).cloned().collect(),
+            folder: self.folder,
+            unfinished_moves: Vec::new(),
+            steam_found: self.steam_found,
+            queue: self.queue.as_ref().map(|q| q.iter().filter(|e| e.port_key == key).cloned().collect()).map_err(Clone::clone),
+            shortcuts: self.shortcuts.as_ref().map(|s| s.iter().filter(|f| f.port_key == key).cloned().collect()).map_err(Clone::clone),
+            programs: self.programs.iter().filter(|n| mine(n)).cloned().collect(),
+            files: self.files.iter().filter(|(n, _)| mine(n)).cloned().collect(),
+            saves: self.saves.iter().filter(|n| mine(n)).cloned().collect(),
+            old_copies: self.old_copies.as_ref().map(|c| c.iter().filter(|c| name.as_deref() == Some(c.name.as_str())).cloned().collect()).map_err(Clone::clone),
+            updates: self.updates.iter().filter(|n| mine(n)).cloned().collect(),
+            backup_days: None,
+            cloud_problem: false,
+            cloud_ok: false,
+            saves_known: 0,
+            skips: self.skips.clone(),
+        }
+    }
+}
+
+/// The checkup for one port: [`Check::PORT`] over [`Facts::only_port`]. The same checks, words and fixes as the full
+/// checkup, so nothing about a port is decided twice.
+pub fn run_for_port(f: &Facts, key: &str) -> Results {
+    let mine = f.only_port(key);
+    Results { items: Check::PORT.into_iter().map(|c| (c, check(c, &mine))).collect() }.with_skips(&mine.skips)
+}
+
 impl Results {
     pub fn outcome(&self, check: Check) -> Option<&Outcome> {
         self.items.iter().find(|(c, _)| *c == check).map(|(_, o)| o)
