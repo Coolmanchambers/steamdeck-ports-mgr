@@ -473,9 +473,11 @@ fn a_second_queued_repair_for_the_same_shortcut_replaces_the_first() {
 
 #[test]
 fn the_ports_own_ownership_rule_ignores_a_shortcut_outside_every_port() {
-    let dirs = [(0usize, PathBuf::from("/lib/A")), (1, PathBuf::from("/lib/A/inner"))];
-    assert_eq!(owner_of(Path::new("/lib/A/inner/run"), &dirs), Some(1));
-    assert_eq!(owner_of(Path::new("/lib/A/run"), &dirs), Some(0));
+    let route = |port: usize, dir: &str, old: bool| Route { port, dir: PathBuf::from(dir), old };
+    let dirs = [route(0, "/lib/A", false), route(1, "/lib/A/inner", false), route(0, "/home/old/A", true)];
+    assert_eq!(owner_of(Path::new("/lib/A/inner/run"), &dirs), Some((1, false)));
+    assert_eq!(owner_of(Path::new("/lib/A/run"), &dirs), Some((0, false)));
+    assert_eq!(owner_of(Path::new("/home/old/A/run"), &dirs), Some((0, true)), "a recorded old copy belongs to its port, and says so");
     assert_eq!(owner_of(Path::new("/lib/AB/run"), &dirs), None, "whole path components only");
 }
 
@@ -524,6 +526,40 @@ fn an_icon_inside_an_old_copy_needs_fixing_and_comes_from_the_same_file_in_the_n
     // Nothing recorded: the same icon is just "outside the port folder", left alone.
     fs::remove_file(w.config.join("port-moves.json")).unwrap();
     assert!(matches!(diagnose(&w.home, &w.library, &w.config, &ports).unwrap()[0].state, IconState::Outside(_)));
+}
+
+#[test]
+fn a_shortcut_that_still_starts_an_old_copy_is_found_and_its_icon_is_repaired_like_any_other() {
+    let w = World::new("old_copy_shortcut");
+    let old = w.root.join("home/Applications/dpm/Library/Zelda");
+    put(&old.join("run"), b"#!/bin/sh\n");
+    put(&old.join("art/i.png"), PNG);
+    let new_icon = w.dir("Zelda/art/i.png");
+    put(&new_icon, PNG);
+    fs::write(
+        w.config.join("port-moves.json"),
+        json!({"version": 1, "old_copies": [{"port_key": "Zelda", "name": "Zelda", "old_path": old.to_string_lossy(), "new_path": w.dir("Zelda").to_string_lossy()}]}).to_string(),
+    )
+    .unwrap();
+    // The shortcut's program and start folder are still in the old copy (never repointed), and so is its icon.
+    let exe = format!("\"{}\"", old.join("run").display());
+    let start = format!("\"{}\"", old.display());
+    let icon = old.join("art/i.png").to_string_lossy().into_owned();
+    w.write_vdf(&[steam_entry_with(0, 5, "Zelda shortcut", &exe, &start, &icon, "")]);
+    let ports = [port("Zelda", false)];
+    let findings = diagnose(&w.home, &w.library, &w.config, &ports).unwrap();
+    assert_eq!(findings.len(), 1, "a shortcut into a recorded old copy belongs to the port");
+    assert!(findings[0].at_old_copy);
+    assert!(matches!(&findings[0].state, IconState::InOldCopy(_)), "{:?}", findings[0].state);
+    assert!(findings[0].describe().contains("still starts the old copy"));
+    let p = plan(&w.inputs(), &findings, &ports);
+    assert_eq!(p.items[0].replacement, Replacement::Use { path: new_icon, source: Source::MovedFromOldCopy }, "the icon repair still works on it");
+    // A shortcut in the current folder is not at an old copy; and with no record the old folder belongs to nobody.
+    w.write_vdf(&[w.entry(0, 5, "Zelda", "", "")]);
+    assert!(!diagnose(&w.home, &w.library, &w.config, &ports).unwrap()[0].at_old_copy);
+    w.write_vdf(&[steam_entry_with(0, 5, "Zelda shortcut", &exe, &start, &icon, "")]);
+    fs::remove_file(w.config.join("port-moves.json")).unwrap();
+    assert!(diagnose(&w.home, &w.library, &w.config, &ports).unwrap().is_empty());
 }
 
 #[test]

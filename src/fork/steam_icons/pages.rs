@@ -149,6 +149,7 @@ mod tests {
             app_id: Some(7),
             stored: String::new(),
             state,
+            at_old_copy: false,
         }
     }
 

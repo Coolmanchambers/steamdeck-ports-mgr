@@ -119,32 +119,55 @@ pub struct IconFinding {
     /// The `icon` field as stored (quote marks and all).
     pub stored: String,
     pub state: IconState,
+    /// The shortcut's program is inside an old copy of the port (`port-moves.json`), not its current folder: a repoint
+    /// is queued or was never applied. Its icon is still repaired like any other.
+    pub at_old_copy: bool,
 }
 
 impl IconFinding {
     /// "Twilight Princess: icon file missing (/run/media/x/tp.png)".
     pub fn describe(&self) -> String {
-        format!("{}: {}", self.port_name, self.state.wording())
+        let old = if self.at_old_copy { "; the shortcut still starts the old copy" } else { "" };
+        format!("{}: {}{old}", self.port_name, self.state.wording())
     }
 }
 
-/// The port whose folder holds `exe` (as written, or as the file system names it); the longest folder wins.
-fn owner_of(exe: &Path, dirs: &[(usize, PathBuf)]) -> Option<usize> {
-    let canonical = fs::canonicalize(exe).ok();
-    dirs.iter()
-        .filter(|(_, d)| exe.starts_with(d) || canonical.as_ref().is_some_and(|c| c.starts_with(d)))
-        .max_by_key(|(_, d)| d.components().count())
-        .map(|(i, _)| *i)
+/// A folder a shortcut's program can be in and the port it belongs to; `old` for a recorded old copy.
+#[derive(Debug, Clone)]
+struct Route {
+    port: usize,
+    dir: PathBuf,
+    old: bool,
 }
 
-/// Each port's folder as written and, when it differs, as the file system names it: an SD card is reachable as
-/// `/run/media/deck/<label>` and as `/run/media/mmcblk0p1`, and a shortcut may use either.
-fn routes(dirs: &[(usize, PathBuf)]) -> Vec<(usize, PathBuf)> {
-    let mut out = dirs.to_vec();
+/// The port whose folder holds `exe` (as written, or as the file system names it); the longest folder wins. With
+/// whether that folder is an old copy.
+fn owner_of(exe: &Path, routes: &[Route]) -> Option<(usize, bool)> {
+    let canonical = fs::canonicalize(exe).ok();
+    routes
+        .iter()
+        .filter(|r| exe.starts_with(&r.dir) || canonical.as_ref().is_some_and(|c| c.starts_with(&r.dir)))
+        .max_by_key(|r| r.dir.components().count())
+        .map(|r| (r.port, r.old))
+}
+
+/// Each port's folder as written and, when it differs, as the file system names it (an SD card is reachable as
+/// `/run/media/deck/<label>` and as `/run/media/mmcblk0p1`, and a shortcut may use either), then the old copies recorded
+/// for each port: a shortcut that was never repointed still starts one.
+fn routes(dirs: &[(usize, PathBuf)], old: &[(usize, PathBuf)]) -> Vec<Route> {
+    let mut out: Vec<Route> = dirs.iter().map(|(i, d)| Route { port: *i, dir: d.clone(), old: false }).collect();
     for (i, d) in dirs {
         if let Ok(real) = fs::canonicalize(d) {
             if &real != d {
-                out.push((*i, real));
+                out.push(Route { port: *i, dir: real, old: false });
+            }
+        }
+    }
+    for (i, d) in old {
+        out.push(Route { port: *i, dir: d.clone(), old: true });
+        if let Ok(real) = fs::canonicalize(d) {
+            if &real != d {
+                out.push(Route { port: *i, dir: real, old: true });
             }
         }
     }
@@ -185,8 +208,9 @@ pub fn icon_state(stored: &str, port_dir: &Path, grid_dir: &Path, old_folders: &
 /// ones. An unreadable shortcuts file is an error, so a caller never takes "could not tell" for "nothing wrong".
 pub fn diagnose(home: &Path, library_dir: &Path, config_dir: &Path, ports: &[Port]) -> Result<Vec<IconFinding>, String> {
     let dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().map(|(i, p)| (i, library_dir.join(&p.folder))).collect();
-    let route_list = routes(&dirs);
     let records = old_copies::load(config_dir).unwrap_or_default();
+    let old_dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().flat_map(|(i, p)| records.iter().filter(move |r| r.port_key == p.key()).map(move |r| (i, r.old_path.clone()))).collect();
+    let route_list = routes(&dirs, &old_dirs);
     let mut out = Vec::new();
     for account in device_accounts(home) {
         if !account.shortcuts.exists() {
@@ -195,7 +219,7 @@ pub fn diagnose(home: &Path, library_dir: &Path, config_dir: &Path, ports: &[Por
         let file = ShortcutsFile::load(&account.shortcuts).map_err(|e| format!("Could not read the Steam shortcuts of {}: {e}", account.label))?;
         let grid = account.shortcuts.parent().map(|c| c.join("grid")).unwrap_or_default();
         for s in shortcuts::list(&file.doc) {
-            let Some(i) = owner_of(Path::new(s.exe_path()), &route_list) else { continue };
+            let Some((i, at_old_copy)) = owner_of(Path::new(s.exe_path()), &route_list) else { continue };
             let old: Vec<PathBuf> = records.iter().filter(|r| r.port_key == ports[i].key()).map(|r| r.old_path.clone()).collect();
             let state = icon_state(&s.icon, &dirs[i].1, &grid, &old);
             let finding = IconFinding {
@@ -209,6 +233,7 @@ pub fn diagnose(home: &Path, library_dir: &Path, config_dir: &Path, ports: &[Por
                 app_id: s.app_id,
                 stored: s.icon.clone(),
                 state,
+                at_old_copy,
             };
             eprintln!(
                 "steam icons: {} / shortcut \"{}\" (app id {}, account {}): {}; stored {:?}",
