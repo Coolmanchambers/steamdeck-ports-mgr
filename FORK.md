@@ -250,6 +250,10 @@ Files added by this fork:
 | 2026-10-25 | `src/core/jobs.rs` | Home review: `run_update_check_result` tells a failed check (rate limit, no network) from "no update"; `run_update_check` and the private `update_available` now go through it (same behaviour for Play); 1 test |
 | 2026-10-25 | `src/app/install_launch.rs` | Home review: Play's "is the update check due" test is `fork::home::update_check_due`, the one the home screen uses too (same rule) |
 | 2026-10-25 | `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh` | Home screen: the new Slint file is linted; the smoke test checks the app opens on Home, All ports is one Tab away, Deck-ready the next, and Home after that |
+| 2026-10-25 | `src/app/dialogs.rs` | Add a port and Settings pages (branch `home-settings`): the 17-row Settings list (`SettingsEntry`, `SETTINGS_ENTRIES`, `settings_labels`, the picker) is gone; `open_settings_dialog` keeps its two guards (a dialog is open; the setup wizard is waiting) and then calls `settings_menu_screen::open`; `run_settings_entry` is what each entry of the old list did (same calls, same order of closing the dialog first), taking the fork's `settings_menu::Entry` |
+| 2026-10-25 | `ui/app-window.slint` | Add a port: `home-browse-requested` is now `home-add-requested` (two lines; the empty Home card's second button is Add a port) |
+| 2026-10-25 | `src/app/mod.rs` | Add a port and Settings pages: two module lines (`add_port_screen`, `settings_menu_screen`) |
+| 2026-10-25 | `tools/smoke-test.sh`, `tools/test-app-update.sh` | Add a port and Settings pages: Settings is a page of groups, so both tests open it by the title bar button and pick a group and a card by keyboard (the Down counts are read from `src/fork/settings_menu.rs`); the smoke test also checks the plus tile opens the Add a port page and B returns, and that B goes up one level (group page, Settings) |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -358,18 +362,47 @@ The first thing the app shows (Tim, 2026-10-25: "want a better first impression 
 - **Continue**: the port played last (the later of the app's play record and Steam's `LastPlayTime` for a shortcut
   whose program is inside the port's folder) is the first tile, tagged Continue, and not repeated below; the rest are
   by name. While setup was never finished, a "Finish setting up" tile comes first.
-- **Nothing installed**: one card, "Set up Deck Ports Manager" (the setup wizard) and "Browse ports" (All ports).
+- **Add a port**: the last tile is a big plus, "Add a port" (also the empty card's second button). A opens the Add a port
+  page (below); B on it returns to Home with the cursor still on the tile.
+- **Nothing installed**: one card, "Set up Deck Ports Manager" (the setup wizard) and "Add a port".
 - **Top line**: "Your ports", a small cloud backup status (cloud outline, a status mark and "Backed up", "Backing up",
   "Backup problem" or "Not backed up yet"; nothing when not signed in) and the Settings gear.
 - **Lists**: L1/R1, Tab and the footer button go Home, All ports, Deck-ready, then Home. In big mode, where All ports
   is upstream's card grid of installed ports only, the order is Home, Deck-ready, All ports, so the next list after Home
-  is one to install from; "Browse ports" goes to All ports windowed and to the Deck-ready list in big mode. All ports
+  is one to install from. All ports
   itself is unchanged; B (and Escape) in the Deck-ready list goes back to Home in both modes (`List::back`). The search bar stays on Home: typing
   searches All ports (the app switches to it with what was typed).
 - **Buttons on Home**: A plays (or sets up on the Setup tile and the empty card), X opens Info, Y opens Settings, B does
   nothing; the hint bar says so ("A Play · X Info · D-pad Move · Y Settings · L1/R1 Lists").
 - **Sizes**: about 210 px a tile in big mode (6 on a Deck), 160 px windowed, never taller than the room left; redrawn
   when the mode changes.
+
+## Add a port and Settings as pages (`src/fork/add_port.rs`, `src/fork/settings_menu.rs`, `src/app/add_port_screen.rs`, `src/app/settings_menu_screen.rs`)
+
+Tim, 2026-10-25, after his Deck test of Home: "we need an add new port button, better design for the setting menus".
+
+- **Add a port** (Home's plus tile, the empty card, and Settings > Ports > Add a port): one question, "How do you want to
+  add a port?", with cards that each have a picture and one plain line: Deck-ready ports (recommended), Browse all
+  ports, Ports you already have (Import ports), From a GitHub link. Big mode has no list of the whole catalog (All ports
+  there shows only the ports you have), so Browse all ports is left out and Deck-ready ports is the one to browse.
+  "From a GitHub link" is Import ports' own link route (`import_screen::open_link`): no folder scan first (only the port
+  lists are read), then the link page, "Is this the project?", the folder the port is in, and the move. B on the page goes
+  to where it was opened from (Home, or Settings' Ports page).
+- **Settings** (Y on Home, the gear, the title bar button, the tray): a page with a card for each group, each with a
+  one-line summary that is cheap to read (Ports: place and count; Steam: changes waiting; Saves: age of the newest
+  "Back up saves now" zip and the cloud state; Updates: version and whether update checks are on). A group's page has its
+  actions as cards; the two switches (Check for updates, Discord) show On or Off and flip in place. B goes up one level
+  (group page, Settings, Home). Groups: Ports (Add a port, Bring in ports you already have, Ports folder, Game files, Open the
+  ports folder [upstream's Library]), Steam (Steam shortcuts [Add to Steam], Artwork sources), Saves (Back up saves now,
+  Restore saves, Cloud backup), App (Setup wizard, Themes, Language, Files, Discord), Updates (Check for updates, Update the
+  app now [Force update], Version). All 17 entries of the old list are there, each in exactly one group (a unit test), with
+  the old guards: Back up saves, Restore saves and Update the app now refuse while a restore runs, and
+  `setup_wizard_screen::resume_instead_of_menu` still sends a Back out of a screen the wizard opened back to the wizard.
+  Screens that led back to the Settings list (Cloud backup, Artwork sources, Restore saves, Ports folder) lead back to
+  their group's page.
+- **Cards with pictures** (`fork::page::Icon`, `Page.icons`, `Page.toggles`; drawn as paths by `OptionRow` in
+  `ui/fork/setup-wizard.slint`, so no font is needed): a group or choice card can have a picture before its title and an
+  On/Off switch at its right.
 
 ## Add to Steam (Settings menu)
 

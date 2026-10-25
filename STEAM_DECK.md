@@ -98,9 +98,25 @@ The app opens on **Home**: "Your ports" as cover tiles, each with one status (Re
 Steam waiting, Find saves). The port you played last is first, tagged Continue. A plays, X opens Info,
 Y opens Settings. L1/R1 (or Tab) go to All ports (every port you can install, with search), then the Deck-ready list,
 then back to Home (in big mode and Game Mode the Deck-ready list comes right after Home, since All ports there shows
-only installed ports). With nothing installed yet, Home shows one card: Set up, or Browse ports. Home checks your
+only installed ports). The last tile is a big plus, **Add a port**. With nothing installed yet, Home shows one card: Set up, or Add a port. Home checks your
 installed ports for updates at most every 12 hours, only when "check for updates" is on. Typing on Home searches
 All ports. The top line shows the cloud backup status (when you are signed in) and the Settings gear.
+
+### Add a port, and Settings
+
+**Add a port** (the plus tile) asks one question, "How do you want to add a port?": Deck-ready ports, Browse all ports
+(windowed only), Ports you already have (Import ports), or From a GitHub link. B goes back to Home.
+
+**Settings** is a page of five groups, each with a line saying where it stands. Wherever this guide says
+"Settings > X", X is a card inside one of these groups. B goes up one level.
+
+| Group | Cards |
+|---|---|
+| Ports | Add a port, Bring in ports you already have (Import ports), Ports folder, Game files, Open the ports folder |
+| Steam | Steam shortcuts (Add to Steam), Artwork sources |
+| Saves | Back up saves now (Backup Saves), Restore saves, Cloud backup |
+| App | Setup wizard, Themes, Language, Files, Discord Rich Presence (On or Off) |
+| Updates | Check for Updates (On or Off), Update the app now (Force update), Version |
 
 ## First launch: the setup wizard
 

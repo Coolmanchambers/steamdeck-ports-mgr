@@ -38,7 +38,7 @@
 set -u
 BIN_DIR="$(readlink -f "${1:?folder with the packaged build}")"
 OUT="$(readlink -f "${2:-app-update-out}")"
-SRC_DIALOGS="$(dirname "$(readlink -f "$0")")/../src/app/dialogs.rs"
+SRC_MENU="$(dirname "$(readlink -f "$0")")/../src/fork/settings_menu.rs"
 PKG=steamdeck-ports-mgr
 ASSET="$PKG-linux-x86_64.tar.gz"
 
@@ -52,16 +52,18 @@ done
 mkdir -p "$OUT" || setup_fail "can't create $OUT"
 W="$(mktemp -d)" && W="$(readlink -f "$W")" || setup_fail "mktemp"
 
-# How many Down presses reach "Force update" in the Settings list: its position in SETTINGS_ENTRIES.
-# Read from the source when it is next to this script. If the source is there but the list can't be
-# read (the code was restructured), that is a setup failure, not a reason to guess.
-if [ -f "$SRC_DIALOGS" ]; then
-    DOWNS=$(awk '/const SETTINGS_ENTRIES/ {on=1; next} on && /^\];/ {exit} on && /SettingsEntry::ForceUpdate/ {print n+0; exit} on && /SettingsEntry::/ {n++}' "$SRC_DIALOGS")
-    { [ -n "$DOWNS" ] && [ "$DOWNS" -ge 0 ] 2>/dev/null; } || setup_fail "could not find ForceUpdate in SETTINGS_ENTRIES in $SRC_DIALOGS (got '${DOWNS:-}'); update the awk in this script"
+# Settings is a page of groups; "Update the app now" (Force update) is a card of the Updates group. How many Down presses
+# reach the Updates group on the first page, and then the card on the group's page: their positions in `Group::ALL` and in
+# the Updates entries of src/fork/settings_menu.rs. Read from the source when it is next to this script. If the source is
+# there but the lists can't be read (the code was restructured), that is a setup failure, not a reason to guess.
+if [ -f "$SRC_MENU" ]; then
+    GROUP_DOWNS=$(grep -m1 'pub const ALL: \[Group' "$SRC_MENU" | sed 's/.*= \[//; s/\].*//' | tr ',' '\n' | awk '$1=="Group::Updates" {print NR - 1; exit}')
+    ENTRY_DOWNS=$(grep -m1 'Group::Updates => &\[' "$SRC_MENU" | sed 's/.*&\[//; s/\].*//' | tr ',' '\n' | awk '$1=="Entry::ForceUpdate" {print NR - 1; exit}')
+    { [ -n "$GROUP_DOWNS" ] && [ -n "$ENTRY_DOWNS" ]; } || setup_fail "could not find Group::Updates and Entry::ForceUpdate in $SRC_MENU (got '${GROUP_DOWNS:-}' and '${ENTRY_DOWNS:-}'); update the lookup in this script"
 else
-    DOWNS=9; echo "note: $SRC_DIALOGS is not here (package tested without the source), assuming $DOWNS"
+    GROUP_DOWNS=4; ENTRY_DOWNS=1; echo "note: $SRC_MENU is not here (package tested without the source), assuming $GROUP_DOWNS and $ENTRY_DOWNS"
 fi
-echo "Force update is $DOWNS Down presses into the Settings list"
+echo "Update the app now is $GROUP_DOWNS Down presses to the Updates group, then $ENTRY_DOWNS into its page"
 
 APP=""; XVFB=""
 cleanup() {
@@ -170,6 +172,7 @@ count_pids() {
 }
 main_win() { xdotool search --name '^Ports Launcher$' 2>/dev/null | head -1; }
 settings_win() { xdotool search --onlyvisible --name '^Settings$' 2>/dev/null | tail -1; }
+updates_win() { xdotool search --onlyvisible --name '^Settings: Updates$' 2>/dev/null | tail -1; }
 last_line() { tail -n 1 "$APP/updater.log" 2>/dev/null; }
 
 launch() {  # $1 = DPM_RELEASE_BASE; a bare session like Game Mode: no D-Bus, so no tray host
@@ -199,7 +202,15 @@ open_settings_and_force_update() {
     [ -n "$dlg" ] && [ "$(xdotool getwindowname "$dlg" 2>/dev/null)" = "Settings" ] || return 1
     xdotool windowfocus "$dlg"; sleep 0.4
     local keys="" i
-    for i in $(seq 1 "$DOWNS"); do keys="$keys Down"; done
+    for i in $(seq 1 "$GROUP_DOWNS"); do keys="$keys Down"; done
+    [ -n "$keys" ] && xdotool key --delay 120 $keys
+    sleep 0.5; shot updates-selected
+    xdotool key Return
+    # The Updates page is another page in the same window; its cards are the Settings "Update the app now".
+    wait_for 5 'upd=$(updates_win); [ -n "$upd" ]' || return 1
+    xdotool windowfocus "$upd"; sleep 0.4
+    keys=""
+    for i in $(seq 1 "$ENTRY_DOWNS"); do keys="$keys Down"; done
     [ -n "$keys" ] && xdotool key --delay 120 $keys
     sleep 0.5; shot force-selected
     xdotool key Return

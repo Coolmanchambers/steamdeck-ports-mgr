@@ -6,11 +6,11 @@
 #   - its window is mapped and the screenshot is not blank;
 #   - it opens on Home; Tab goes to All ports, then the Deck-ready list without a crash (whether it downloads is only
 #     reported), then Home again;
-#   - Settings > Artwork sources... opens and its Back row returns to Settings;
-#   - Settings > Cloud backup... opens its first page and B returns to Settings;
-#   - Settings > Import ports... opens and closes without a crash;
-#   - Settings > Game files... opens without a crash;
-#   - Settings > Ports folder... opens, its "Choose another folder..." opens the folder picker, and
+#   - Settings is a page of groups (Settings, Settings: Ports ...): Steam > Artwork sources opens and its Back row returns to
+#     the Steam page, B goes up to Settings, Saves > Cloud backup opens its first page and B returns to the Saves page;
+#   - Ports > Import ports opens and closes without a crash;
+#   - Ports > Game files opens without a crash;
+#   - Ports > Ports folder opens, its "Choose another folder..." opens the folder picker, and
 #     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
 #     ports into ~/Games/Ports (New folder here, Use this folder, Move, Keep for now twice) and checks the
 #     setting, the copy (program bits), the kept old copies and their records, and a relaunch;
@@ -242,13 +242,61 @@ if [ "$alive" = yes ]; then
         if [ -f "$APP_DIR/cache/deck-ready.json" ]; then echo "info: Deck-ready list downloaded and saved"; else echo "info: Deck-ready list not saved (no network here?)"; fi
         xdotool key Tab; sleep 1
         check "the lists go round back to Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ]'
-        # Settings (gear in the title bar) > Game files... opens without a crash. Dialogs get no keyboard
-        # focus without a window manager, so this clicks, relative to the main window.
+        # The plus tile ("Add a port") is the last tile on Home: A opens the Add a port page, B returns to Home.
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key --delay 250 Right Right Right Right Return; sleep 1.5
+        ap=$(xdotool search --name "^Add a port$" 2>/dev/null | head -1)
+        import -window root "$OUT/add-a-port.png" 2>/dev/null
+        check "A on the Add a port tile opens the Add a port page" '[ -n "$ap" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+        if [ -n "$ap" ]; then
+            press_keys "$ap" Escape; sleep 1.5
+            check "B returns from Add a port to Home" '[ -z "$(xdotool search --name "^Add a port$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
+        fi
+        # Settings is a page of groups: the title bar's Settings button opens it, then the keyboard picks a group and a card
+        # (Down presses; Up first, since a page remembers where the cursor was). The pages are one window each, found by
+        # name ("Settings", "Settings: Ports"...). Without a window manager keys reach a window only after an explicit
+        # focus (press_keys). The Down counts come from src/fork/settings_menu.rs when it is next to this script.
+        MENU_SRC="$(dirname "$(readlink -f "$0")")/../src/fork/settings_menu.rs"
+        downs() { local out="" i; for i in $(seq 1 "$1"); do out="$out Down"; done; echo "$out"; }
+        group_downs() {
+            local n=""
+            [ -f "$MENU_SRC" ] && n=$(grep -m1 'pub const ALL: \[Group' "$MENU_SRC" | sed 's/.*= \[//; s/\].*//' | tr ',' '\n' | awk -v g="Group::$1" '$1==g {print NR - 1; exit}')
+            [ -z "$n" ] && case "$1" in Ports) n=0 ;; Steam) n=1 ;; Saves) n=2 ;; App) n=3 ;; Updates) n=4 ;; esac
+            echo "$n"
+        }
+        entry_downs() {  # $1 = group, $2 = entry
+            local n=""
+            [ -f "$MENU_SRC" ] && n=$(grep -m1 "Group::$1 => &\[" "$MENU_SRC" | sed 's/.*&\[//; s/\].*//' | tr ',' '\n' | awk -v e="Entry::$2" '$1==e {print NR - 1; exit}')
+            [ -z "$n" ] && case "$1:$2" in Ports:ImportPorts) n=1 ;; Ports:PortsFolder) n=2 ;; Ports:GameFiles) n=3 ;; Steam:ArtSources) n=1 ;; Saves:CloudBackup) n=2 ;; esac
+            echo "$n"
+        }
+        open_settings_page() {
+            eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
+            xdotool windowfocus "$win" 2>/dev/null; sleep 0.4
+            # The button only reacts to a click once the pointer has been seen over it (no window manager here).
+            xdotool mousemove $((X + 250)) $((Y + 150)); sleep 0.3; xdotool mousemove $((X + 312)) $((Y + 16)); sleep 0.5; xdotool click 1
+            find_window '^Settings$' >/dev/null
+        }
+        settings_group() {  # $1 = group: from the first page into that group's page
+            local s; s=$(find_window '^Settings$') || return 1
+            press_keys "$s" Up Up Up Up Up $(downs "$(group_downs "$1")") Return
+            find_window "^Settings: $1\$" >/dev/null
+        }
+        settings_entry() {  # $1 = group, $2 = entry: from the first page into the card
+            settings_group "$1" || return 1
+            local g; g=$(find_window "^Settings: $1\$") || return 1
+            press_keys "$g" Up Up Up Up Up $(downs "$(entry_downs "$1" "$2")") Return
+        }
+        close_settings() {  # B on a group page, B on the first page
+            local w
+            for _ in 1 2; do
+                w=$(xdotool search --onlyvisible --name '^Settings' 2>/dev/null | tail -1); [ -n "$w" ] || break
+                press_keys "$w" Escape; sleep 1.2
+            done
+        }
         eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
         if [ -n "${X:-}" ] && [ -n "${Y:-}" ]; then
-            # Settings > Import ports... opens (its scan runs on a worker thread), shows the screen and closes again.
-            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 353)) click 1; sleep 4
+            # Settings > Ports > Import ports opens (its scan runs on a worker thread), shows the screen and closes again.
+            open_settings_page && settings_entry Ports ImportPorts; sleep 4
             import -window root "$OUT/import-ports.png" 2>/dev/null
             imp=$(xdotool search --name "^Import ports: " 2>/dev/null | head -1)
             imp_alive=no; kill -0 "$APP" 2>/dev/null && imp_alive=yes
@@ -257,13 +305,9 @@ if [ "$alive" = yes ]; then
                 xdotool windowfocus "$imp" 2>/dev/null; sleep 0.3; xdotool key Escape
                 for _wait in $(seq 1 15); do [ -z "$(xdotool search --name "^Import ports: " 2>/dev/null)" ] && break; sleep 0.2; done
                 xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
-                eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
-                # The gear only reacts to a click once the pointer has been seen over it (no window manager here).
-                xdotool mousemove $((X + 250)) $((Y + 150)); sleep 0.3; xdotool mousemove $((X + 312)) $((Y + 16)); sleep 0.5
             fi
-            # Settings > Artwork sources... opens and shows its rows, and its Back row returns to Settings.
-            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 437)) click 1; sleep 2
+            # Settings > Steam > Artwork sources opens and shows its rows, and its Back row returns to the Steam page.
+            open_settings_page && settings_entry Steam ArtSources; sleep 2
             import -window root "$OUT/art-sources.png" 2>/dev/null
             art=$(xdotool search --name "^Artwork sources$" 2>/dev/null | head -1)
             art_alive=no; kill -0 "$APP" 2>/dev/null && art_alive=yes
@@ -271,28 +315,32 @@ if [ "$alive" = yes ]; then
             if [ -n "$art" ]; then
                 eval "$(xdotool getwindowgeometry --shell "$art")"; AX=$X; AY=$Y
                 xdotool mousemove $((AX + 100)) $((AY + 63 + 42 * 9)) click 1; sleep 1.5
-                check "Back leaves Artwork sources for Settings" '[ -z "$(xdotool search --name "^Artwork sources$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings$" 2>/dev/null)" ]'
-                # Settings > Cloud backup... (the 13th row, by keyboard) opens a page titled "Cloud backup" (the intro, or
-                # "isn't set up in this build" when the build has no Google client), and B returns to Settings.
-                cs=$(xdotool search --name "^Settings$" 2>/dev/null | head -1)
-                if [ -n "$cs" ]; then
-                    press_keys "$cs" Down Down Down Down Down Down Down Down Down Down Down Down Return; sleep 2
+                check "Back leaves Artwork sources for the Steam settings page" '[ -z "$(xdotool search --name "^Artwork sources$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings: Steam$" 2>/dev/null)" ]'
+                # B on the Steam page goes up to Settings (one level). Then Settings > Saves > Cloud backup opens a page titled
+                # "Cloud backup" (the intro, or "isn't set up in this build" when the build has no Google client), and B
+                # returns to the Saves page.
+                sg=$(xdotool search --name "^Settings: Steam$" 2>/dev/null | head -1)
+                if [ -n "$sg" ]; then
+                    press_keys "$sg" Escape; sleep 1.5
+                    check "B goes up from the Steam page to Settings" '[ -z "$(xdotool search --name "^Settings: Steam$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings$" 2>/dev/null)" ]'
+                    settings_entry Saves CloudBackup; sleep 2
                     import -window root "$OUT/cloud-backup.png" 2>/dev/null
                     cb=$(xdotool search --name "^Cloud backup$" 2>/dev/null | head -1)
                     check "Cloud backup screen opens and the app keeps running" '[ -n "$cb" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
                     if [ -n "$cb" ]; then
                         press_keys "$cb" Escape; sleep 1.5
-                        check "B leaves Cloud backup for Settings" '[ -z "$(xdotool search --name "^Cloud backup$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings$" 2>/dev/null)" ]'
+                        check "B leaves Cloud backup for the Saves settings page" '[ -z "$(xdotool search --name "^Cloud backup$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings: Saves$" 2>/dev/null)" ]'
                     fi
                 fi
+                close_settings
                 eval "$(xdotool getwindowgeometry --shell "$win")"
             fi
-            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 395)) click 1; sleep 2
+            # Settings > Ports > Game files opens without a crash.
+            open_settings_page && settings_entry Ports GameFiles; sleep 2
             import -window root "$OUT/game-files.png" 2>/dev/null
             gf_alive=no; kill -0 "$APP" 2>/dev/null && gf_alive=yes
             check "Game files screen opens and the app keeps running" '[ "$gf_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$(xdotool search --name "^Game files$" 2>/dev/null)" ]'
-            # Settings > Ports folder... (row 6; the Setup wizard row is first), then its "Choose another folder..." row (third) opens the picker;
+            # Settings > Ports > Ports folder, then its "Choose another folder..." row (third) opens the picker;
             # the picker's close button cancels back to the Ports folder list.
             # A dialog's own close button (top right), since keys need focus and there is no window manager.
             close_named() {
@@ -301,8 +349,7 @@ if [ "$alive" = yes ]; then
             }
             close_named "^Game files$"
             eval "$(xdotool getwindowgeometry --shell "$win")"
-            xdotool mousemove $((X + 312)) $((Y + 16)) click 1; sleep 1
-            xdotool mousemove $((X + 71)) $((Y + 269)) click 1; sleep 2
+            open_settings_page && settings_entry Ports PortsFolder; sleep 2
             pf=$(xdotool search --name "^Ports folder$" 2>/dev/null | head -1)
             check "Ports folder screen opens and the app keeps running" 'kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log" && [ -n "$pf" ]'
             if [ -n "$pf" ]; then
