@@ -6,6 +6,8 @@ import { MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, 
 import { DeckReadyList, DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog } from "fork/deck-ready.slint";
 // Fork: the setup wizard page.
 import { SetupWizardDialog, WizardCard, WizardFact, WizardOption, WizardTile } from "fork/setup-wizard.slint";
+// Fork: the home screen.
+import { HomeView, HomeTile } from "fork/home.slint";
 export { AppTray } from "tray.slint";
 
 export struct PortItem {
@@ -22,6 +24,7 @@ export { DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog }
 // Fork: the in-app folder picker (src/app/folder_picker_screen.rs).
 export { FolderPickerDialog, FolderRow } from "fork/folder-picker.slint";
 export { SetupWizardDialog, WizardCard, WizardFact, WizardOption, WizardTile }
+export { HomeTile }
 
 component ActionButton inherits Rectangle {
     in property <string> text: "";
@@ -98,6 +101,22 @@ export component AppWindow inherits Window {
     callback deck-ready-row-info(int);
     callback deck-ready-row-action(int);
     callback deck-ready-filters-requested();
+    // Fork: the home screen (src/app/home_screen.rs) replaces the port list or card grid while home-mode is on.
+    in property <bool> home-mode: false;
+    in property <[HomeTile]> home-tiles: [];
+    in property <int> home-selected: 0;
+    in property <bool> home-empty: false;
+    in property <int> home-columns: 4;
+    in property <int> home-cloud: 0;
+    in property <string> home-cloud-text: "";
+    in property <string> home-hint: "";
+    // The footer button's list (the one L1/R1 goes to next).
+    in property <string> next-list-text: "Deck-ready";
+    callback home-tile-activated(int);
+    callback home-tile-hovered(int);
+    callback home-setup-requested();
+    callback home-browse-requested();
+    callback home-empty-hovered(int);
 
     init => { search-input.focus(); }
 
@@ -211,7 +230,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : (root.big-mode ? "Ports Launcher      L1 / R1  Deck-ready list" : "Ports Launcher");
+                        text: root.home-mode ? "Ports Launcher  ›  Home" : root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : (root.big-mode ? "Ports Launcher      L1 / R1  Lists" : "Ports Launcher");
                         color: Theme.list-text;
                         vertical-alignment: center;
                         font-weight: 700;
@@ -368,7 +387,7 @@ export component AppWindow inherits Window {
                         transform-scale-y: root.head-scale * 100%;
                         animate transform-rotation { duration: 1s; easing: ease-in-out; }
 
-                        if root.big-mode && !root.deck-ready-mode: CardGrid {
+                        if root.big-mode && !root.deck-ready-mode && !root.home-mode: CardGrid {
                             x: root.shake-x;
                             y: root.shake-y;
                             width: 100%;
@@ -386,7 +405,7 @@ export component AppWindow inherits Window {
                             card-unhovered() => { root.card-unhovered(); }
                         }
 
-                        if !root.big-mode && !root.deck-ready-mode: list-container := Rectangle {
+                        if !root.big-mode && !root.deck-ready-mode && !root.home-mode: list-container := Rectangle {
                             x: root.shake-x;
                             y: root.shake-y;
                             width: 100%;
@@ -603,6 +622,26 @@ export component AppWindow inherits Window {
                             }
                         }
 
+                        if root.home-mode: HomeView {
+                            width: 100%;
+                            height: 100%;
+                            tiles: root.home-tiles;
+                            selected: root.home-selected;
+                            empty: root.home-empty;
+                            columns: root.home-columns;
+                            font-px: item-font-px * (root.big-mode ? 1.15 : 1.0);
+                            cloud: root.home-cloud;
+                            cloud-text: root.home-cloud-text;
+                            hint-text: root.home-hint;
+                            scroll-trigger: root.scroll-trigger;
+                            tile-activated(i) => { root.home-tile-activated(i); }
+                            tile-hovered(i) => { root.home-tile-hovered(i); }
+                            settings-requested => { root.settings-requested(); }
+                            setup-requested => { root.home-setup-requested(); }
+                            browse-requested => { root.home-browse-requested(); }
+                            empty-hovered(i) => { root.home-empty-hovered(i); }
+                        }
+
                         if root.deck-ready-mode: DeckReadyList {
                             width: 100%;
                             height: 100%;
@@ -633,7 +672,7 @@ export component AppWindow inherits Window {
                             alignment: end;
 
                             ActionButton {
-                                text: root.deck-ready-mode ? @tr("All ports") : @tr("Deck-ready");
+                                text: root.next-list-text;
                                 fill-color: SemanticColors.info;
                                 fill-hover-color: SemanticColors.info-hover;
                                 font-size: item-font-px;

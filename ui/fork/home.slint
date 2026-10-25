@@ -1,0 +1,366 @@
+// Fork: the home screen, the first thing the app shows (src/app/home_screen.rs fills it; src/fork/home.rs decides what
+// it says). "Your ports" as cover tiles for the installed ports, each with one status badge, a Continue tile first for
+// the port played last, and with nothing installed one card: set the app up, or browse ports. The top line has the
+// cloud backup status and the Settings gear; the bottom line says what the controller's buttons do here.
+
+import { SemanticColors, Theme, TitleBarIconButton } from "../shared.slint";
+import { FocusLook, FocusRing, StatusIcon } from "setup-wizard.slint";
+
+// kind: 0 a port, 1 Continue (the port played last), 2 Finish setting up. `mark` is fork::page::Mark::code.
+export struct HomeTile {
+    title: string,
+    image: image,
+    badge: string,
+    mark: int,
+    kind: int,
+}
+
+component Tile inherits Rectangle {
+    in property <HomeTile> tile;
+    in property <bool> selected: false;
+    in property <length> font-px: 14px;
+    callback clicked();
+    callback hovered();
+    property <length> pad: root.font-px * 0.5;
+    property <length> text-h: root.font-px * 3.4;
+
+    background: root.selected ? FocusLook.fill : Theme.search-background;
+    border-width: 1px;
+    border-color: Theme.border-color;
+
+    TouchArea {
+        clicked => { root.clicked(); }
+        changed has-hover => {
+            if (self.has-hover) {
+                root.hovered();
+            }
+        }
+    }
+
+    // The cover (or the port's name on a plain tile while there is none; a plus sign for Finish setting up).
+    cover := Rectangle {
+        x: root.pad;
+        y: root.pad;
+        width: root.width - root.pad * 2;
+        height: root.height - root.pad * 2 - root.text-h;
+        background: Theme.list-background;
+        clip: true;
+        if root.tile.image.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            source: root.tile.image;
+            image-fit: contain;
+        }
+        if root.tile.image.width == 0 && root.tile.kind != 2: Text {
+            x: root.font-px * 0.4;
+            width: parent.width - root.font-px * 0.8;
+            height: 100%;
+            text: root.tile.title;
+            color: Theme.list-text;
+            font-size: root.font-px * 1.1;
+            font-weight: 700;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        if root.tile.kind == 2: Path {
+            width: 50%;
+            height: 50%;
+            x: parent.width * 0.25;
+            y: parent.height * 0.25;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 50 15 L 50 85 M 15 50 L 85 50";
+            stroke: SemanticColors.info;
+            stroke-width: root.font-px * 0.5;
+        }
+        // Continue: a tag over the top of the cover.
+        if root.tile.kind == 1: Rectangle {
+            x: root.font-px * 0.3;
+            y: root.font-px * 0.3;
+            width: continue-label.preferred-width + root.font-px * 1.2;
+            height: root.font-px * 1.6;
+            border-radius: self.height / 2;
+            background: FocusLook.accent;
+            continue-label := Text {
+                text: "Continue";
+                color: SemanticColors.text-on-accent;
+                font-size: root.font-px * 0.8;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+        }
+    }
+    Text {
+        x: root.pad;
+        y: cover.y + cover.height + root.font-px * 0.25;
+        width: root.width - root.pad * 2;
+        height: root.font-px * 1.4;
+        text: root.tile.title;
+        color: Theme.list-text;
+        font-size: root.font-px;
+        font-weight: 700;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    // The badge: one mark and its words.
+    if root.tile.badge != "": HorizontalLayout {
+        x: root.pad;
+        y: cover.y + cover.height + root.font-px * 1.75;
+        width: root.width - root.pad * 2;
+        height: root.font-px * 1.3;
+        spacing: root.font-px * 0.35;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            StatusIcon {
+                mark: root.tile.mark;
+                width: root.font-px * 1.0;
+                height: root.font-px * 1.0;
+            }
+        }
+        Text {
+            text: root.tile.badge;
+            color: Theme.search-text;
+            font-size: root.font-px * 0.85;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+    if root.selected: FocusRing {
+        width: 100%;
+        height: 100%;
+        ring-px: max(3px, 4px / Theme.scale-factor);
+    }
+}
+
+component CardButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> selected: false;
+    in property <length> font-px: 14px;
+    out property <length> text-w: label.preferred-width;
+    callback clicked();
+    callback hovered();
+    background: root.primary ? FocusLook.accent : (root.selected ? FocusLook.fill : Theme.list-background);
+    border-width: 1px;
+    border-color: root.primary ? FocusLook.accent : Theme.border-color;
+    TouchArea {
+        clicked => { root.clicked(); }
+        changed has-hover => {
+            if (self.has-hover) {
+                root.hovered();
+            }
+        }
+    }
+    label := Text {
+        text: root.text;
+        color: root.primary ? SemanticColors.text-on-accent : Theme.list-text;
+        font-size: root.font-px * 1.1;
+        font-weight: root.primary ? 700 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+    if root.selected: FocusRing {
+        width: 100%;
+        height: 100%;
+        ring-px: max(3px, 4px / Theme.scale-factor);
+    }
+}
+
+export component HomeView inherits Rectangle {
+    in property <[HomeTile]> tiles: [];
+    // The focused tile; with nothing installed, 0 is "Set up" and 1 is "Browse ports".
+    in property <int> selected: 0;
+    in property <bool> empty: false;
+    in property <int> columns: 4;
+    in property <length> font-px: 14px;
+    // The cloud backup status: 0 not signed in (nothing shown), 1 backed up, 3 waiting or copying, 5 a problem.
+    in property <int> cloud: 0;
+    in property <string> cloud-text: "";
+    in property <string> hint-text: "";
+    in property <bool> scroll-trigger: false;
+    callback tile-activated(int);
+    callback tile-hovered(int);
+    callback settings-requested();
+    callback setup-requested();
+    callback browse-requested();
+    callback empty-hovered(int);
+
+    property <length> gap: root.font-px * 0.9;
+    property <length> top-h: root.font-px * 2.4;
+    property <length> hint-h: root.hint-text == "" ? 0px : root.font-px * 2.0;
+    property <length> tile-w: (root.width - root.gap * (root.columns - 1)) / max(1, root.columns);
+    // A portrait cover and two lines, but never taller than the room below the top line (a small desktop window).
+    property <length> tile-h: min(root.tile-w * 1.25 + root.font-px * 3.4, max(root.font-px * 9, (root.height - root.top-h - root.hint-h - root.gap) * 0.96));
+    property <int> rows: Math.ceil(root.tiles.length / max(1, root.columns));
+
+    // The top line: "Your ports", the cloud backup status and the Settings gear.
+    Text {
+        x: 0px;
+        y: 0px;
+        width: root.width * 0.5;
+        height: root.top-h;
+        text: "Your ports";
+        color: Theme.list-text;
+        font-size: root.font-px * 1.4;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+    gear := TitleBarIconButton {
+        x: root.width - self.width;
+        y: (root.top-h - self.height) / 2;
+        size: root.top-h * 0.8;
+        hover-color: #AA8ED6;
+        hover-stroke-color: SemanticColors.text-on-accent;
+        icon-commands: "M 22 50 A 28 28 0 1 1 78 50 A 28 28 0 1 1 22 50 Z";
+        clicked => { root.settings-requested(); }
+    }
+    if root.cloud > 0: HorizontalLayout {
+        x: root.width * 0.5;
+        y: 0px;
+        width: gear.x - root.width * 0.5 - root.gap;
+        height: root.top-h;
+        alignment: end;
+        spacing: root.font-px * 0.4;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: root.font-px * 1.6;
+                height: root.font-px * 1.1;
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-width: 100;
+                    viewbox-height: 70;
+                    commands: "M 22 62 L 78 62 A 16 16 0 0 0 76 30 A 24 24 0 0 0 30 26 A 18 18 0 0 0 22 62 Z";
+                    stroke: Theme.list-text;
+                    stroke-width: 2px;
+                    fill: transparent;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            StatusIcon {
+                mark: root.cloud;
+                width: root.font-px * 0.9;
+                height: root.font-px * 0.9;
+            }
+        }
+        Text {
+            text: root.cloud-text;
+            color: Theme.search-text;
+            font-size: root.font-px * 0.85;
+            vertical-alignment: center;
+        }
+    }
+
+    // The tiles.
+    if !root.empty: body := Flickable {
+        x: 0px;
+        y: root.top-h + root.gap * 0.5;
+        width: root.width;
+        height: root.height - self.y - root.hint-h - root.gap * 0.5;
+        content-height: max(self.height, root.rows * (root.tile-h + root.gap));
+        property <bool> trigger: root.scroll-trigger;
+        property <length> sel-top: Math.floor(root.selected / max(1, root.columns)) * (root.tile-h + root.gap);
+        changed trigger => {
+            if (self.sel-top + self.content-y < 0px) {
+                self.content-y = -self.sel-top;
+            } else if (self.sel-top + root.tile-h + self.content-y > self.height) {
+                self.content-y = self.height - self.sel-top - root.tile-h;
+            }
+        }
+        for t[i] in root.tiles: Tile {
+            x: Math.mod(i, max(1, root.columns)) * (root.tile-w + root.gap);
+            y: Math.floor(i / max(1, root.columns)) * (root.tile-h + root.gap);
+            width: root.tile-w;
+            height: root.tile-h;
+            tile: t;
+            selected: i == root.selected;
+            font-px: root.font-px;
+            clicked => { root.tile-activated(i); }
+            hovered => { root.tile-hovered(i); }
+        }
+    }
+
+    // Nothing installed: one card.
+    if root.empty: Rectangle {
+        property <length> card-w: min(root.width, root.font-px * 36);
+        property <length> card-h: root.font-px * 13;
+        x: (root.width - self.card-w) / 2;
+        y: root.top-h + max(root.gap, (root.height - root.top-h - root.hint-h - self.card-h) / 2);
+        width: self.card-w;
+        height: self.card-h;
+        background: Theme.search-background;
+        border-width: 1px;
+        border-color: Theme.border-color;
+        Text {
+            x: root.gap * 1.5;
+            y: root.gap * 1.2;
+            width: parent.width - root.gap * 3;
+            text: "Set up Deck Ports Manager";
+            color: Theme.list-text;
+            font-size: root.font-px * 1.5;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Text {
+            x: root.gap * 1.5;
+            y: root.gap * 1.2 + root.font-px * 2.6;
+            width: parent.width - root.gap * 3;
+            text: "Choose where ports go, bring in the ones already on this Deck, and add them to Steam. Or browse the ports you can install.";
+            color: Theme.list-text;
+            font-size: root.font-px;
+            wrap: word-wrap;
+        }
+        setup-btn := CardButton {
+            x: root.gap * 1.5;
+            y: parent.height - self.height - root.gap * 1.2;
+            width: self.text-w + root.font-px * 2.4;
+            height: root.font-px * 2.8;
+            text: "Set up";
+            primary: true;
+            selected: root.selected == 0;
+            font-px: root.font-px;
+            clicked => { root.setup-requested(); }
+            hovered => { root.empty-hovered(0); }
+        }
+        CardButton {
+            x: setup-btn.x + setup-btn.width + root.gap;
+            y: setup-btn.y;
+            width: self.text-w + root.font-px * 2.4;
+            height: setup-btn.height;
+            text: "Browse ports";
+            selected: root.selected == 1;
+            font-px: root.font-px;
+            clicked => { root.browse-requested(); }
+            hovered => { root.empty-hovered(1); }
+        }
+    }
+
+    // What the controller's buttons do here.
+    if root.hint-text != "": Rectangle {
+        x: 0px;
+        y: root.height - root.hint-h;
+        width: root.width;
+        height: root.hint-h;
+        background: Theme.search-background;
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.hint-text;
+            color: Theme.list-text;
+            font-size: root.font-px * 0.95;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

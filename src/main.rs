@@ -208,6 +208,7 @@ fn main() {
         },
         cheats: Default::default(),
         deck_ready: Default::default(),
+        home: Default::default(),
         events,
     });
     let router = Rc::new(RefCell::new(GamepadRouter::new()));

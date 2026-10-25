@@ -6,6 +6,7 @@ pub mod deck_ready_screen;
 pub mod dialogs;
 pub mod events;
 pub mod folder_picker_screen;
+pub mod home_screen;
 pub mod gamepad_target;
 pub mod import_cards_screen;
 pub mod import_screen;

@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 
-fn load_cached_card_image(image_cache: &RefCell<HashMap<String, slint::Image>>, cache_dir: &Path, folder: &str) -> slint::Image {
+pub(crate) fn load_cached_card_image(image_cache: &RefCell<HashMap<String, slint::Image>>, cache_dir: &Path, folder: &str) -> slint::Image {
     if let Some(img) = image_cache.borrow().get(folder) {
         return img.clone();
     }

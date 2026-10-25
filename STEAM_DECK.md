@@ -92,6 +92,14 @@ start prints "this app is already running from this folder" and quits (bringing 
 the front is best effort, especially on Wayland). A copy of this app from before 2026-10-21 that is
 still open from the same folder is recognized too; quit old copies from the tray before updating.
 
+## Home
+
+The app opens on **Home**: "Your ports" as cover tiles, each with one status (Ready, Update available, Game files
+missing, Steam waiting, Saves not found). The port you played last is first, tagged Continue. A plays, X opens Info,
+Y opens Settings. L1/R1 (or Tab) go to All ports (every port you can install, with search), then the Deck-ready list,
+then back to Home. With nothing installed yet, Home shows one card: Set up, or Browse ports. Typing on Home searches
+All ports. The top line shows the cloud backup status (when you are signed in) and the Settings gear.
+
 ## First launch: the setup wizard
 
 The first time the app starts (and on an install from before the wizard existed) it opens **Setup wizard**

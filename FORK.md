@@ -243,6 +243,11 @@ Files added by this fork:
 | 2026-10-25 | `src/app/gamepad_target.rs` | Polish review: `dialog_activate` runs inside `press_echo::not_a_key` (the close callback it invokes for A on a message is not a second key) |
 | 2026-10-25 | `src/app/dialogs.rs`, `src/app/events.rs` | Polish review: the theme picker's and the after-Play version picker's own close callbacks ask `press_echo::key` first |
 | 2026-10-25 | `ui/app-window.slint`, `src/main.rs` | Polish review: Escape in the Deck-ready list also goes through `escape-pressed` (filtered, acts at once); big mode Escape waits 300 ms like Close; the held Escape does nothing when a dialog opened meanwhile |
+| 2026-10-25 | `ui/app-window.slint` | Home screen: imports `ui/fork/home.slint`; `home-*` properties and callbacks; `HomeView` shown instead of the port list or card grid while `home-mode` is on (both of those now also check `!home-mode`); the title says "› Home" and the big-mode hint "L1 / R1  Lists"; the footer list button's text comes from `next-list-text`; `HomeTile` exported |
+| 2026-10-25 | `src/app/state.rs` | Home screen: `home` field; `current_selected_port`, `move_selection` and `refresh_current_view` hand over to Home while it is shown (3 guards); `apply_live_mode` redraws Home for the new size; `ensure_card_images_cached` made `pub(crate)` |
+| 2026-10-25 | `src/app/cards.rs`, `src/app/install_launch.rs`, `src/main.rs`, `src/app/mod.rs` | Home screen: `load_cached_card_image` made `pub(crate)`; `activate_selection` hands over to Home; `home` field initialised; one module line |
+| 2026-10-25 | `src/app/gamepad_target.rs` | Home screen: L1/R1 go round the lists (Home, All ports, Deck-ready); B in the Deck-ready list goes on to Home |
+| 2026-10-25 | `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh` | Home screen: the new Slint file is linted; the smoke test checks the app opens on Home, All ports is one Tab away, Deck-ready the next, and Home after that |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -331,6 +336,29 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
   runs; it ends full when the pass finishes). Sliding: looking for ports, checking and removing old copies. The sliding
   block is redrawn every frame while shown (`animation-tick`); on the Deck that is a small, constant cost only while a
   long scan walks folders.
+
+## Home screen (`src/fork/home.rs`, `src/app/home_screen.rs`, `ui/fork/home.slint`)
+
+The first thing the app shows (Tim, 2026-10-25: "want a better first impression screen").
+
+- **Your ports**: a grid of cover tiles for the installed ports (covers from the card image cache, the port's name on a
+  plain tile while there is none), each with one status badge drawn with the guided pages' status marks: Game files
+  missing (from the game files records), Update available (the same check Play runs, made once per start in the
+  background for ports that follow a GitHub or GitLab release, only when "check for updates" is on), Steam waiting (a
+  change for the port in the Steam queue), Saves not found (the save finder), else Ready, in that order of priority.
+- **Continue**: the port played last (the later of the app's play record and Steam's `LastPlayTime` for a shortcut
+  whose program is inside the port's folder) is the first tile, tagged Continue, and not repeated below; the rest are
+  by name. While setup was never finished, a "Finish setting up" tile comes first.
+- **Nothing installed**: one card, "Set up Deck Ports Manager" (the setup wizard) and "Browse ports" (All ports).
+- **Top line**: "Your ports", a small cloud backup status (cloud outline, a status mark and "Backed up", "Backing up",
+  "Backup problem" or "Not backed up yet"; nothing when not signed in) and the Settings gear.
+- **Lists**: L1/R1, Tab and the footer button go Home, All ports, Deck-ready, then Home. All ports is upstream's list
+  (or card grid in big mode), unchanged; B in the Deck-ready list goes on to Home. The search bar stays on Home: typing
+  searches All ports (the app switches to it with what was typed).
+- **Buttons on Home**: A plays (or sets up on the Setup tile and the empty card), X opens Info, Y opens Settings, B does
+  nothing; the hint bar says so ("A Play · X Info · D-pad Move · Y Settings · L1/R1 Lists").
+- **Sizes**: about 210 px a tile in big mode (6 on a Deck), 160 px windowed, never taller than the room left; redrawn
+  when the mode changes.
 
 ## Add to Steam (Settings menu)
 

@@ -51,7 +51,8 @@ impl DeckReadyUi {
 pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
     {
         let (app, router) = (app.clone(), router.clone());
-        window.on_deck_ready_toggle_requested(move || toggle(&app, &router));
+        // The lists go round: Home, All ports, Deck-ready (src/app/home_screen.rs).
+        window.on_deck_ready_toggle_requested(move || super::home_screen::next_list(&app, &router));
     }
     {
         let app = app.clone();
@@ -75,6 +76,7 @@ pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
         let (app, router) = (app.clone(), router.clone());
         window.on_deck_ready_filters_requested(move || open_filters(&app, &router));
     }
+    super::home_screen::wire(window, app, router);
 }
 
 /// Switches between All ports and the Deck-ready list. The search text is cleared either way.

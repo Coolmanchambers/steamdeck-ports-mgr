@@ -209,6 +209,26 @@ fn pass_job(config_dir: &Path, saves: &Path, why: Why, ctl: &Ctl) -> PassOutcome
     }
 }
 
+/// The home screen's small cloud backup status: the mark code (`fork::page::Mark::code`: 1 done, 3 waiting, 5 a
+/// problem) and a few words; `(0, "")` when not signed in (nothing is shown).
+pub(crate) fn home_status(app: &AppState) -> (i32, String) {
+    let tokens_file = tokens_path(&app.paths.config_dir);
+    if !store::tokens_of(&tokens_file, SERVICE).is_some_and(|t| t.signed_in()) {
+        return (0, String::new());
+    }
+    if running_text().is_some() {
+        return (3, "Backing up".to_string());
+    }
+    let record = store::record_of(&record_path(&app.paths.config_dir), SERVICE);
+    if record.last_error.is_some() {
+        (5, "Backup problem".to_string())
+    } else if record.last_ok.is_some() {
+        (1, "Backed up".to_string())
+    } else {
+        (3, "Not backed up yet".to_string())
+    }
+}
+
 /// How far a running pass's copying is, when it has started copying.
 fn running_fraction() -> Option<f32> {
     RUNTIME.with(|r| r.borrow().running.as_ref().and_then(|r| r.job.fraction()))

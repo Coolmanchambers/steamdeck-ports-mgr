@@ -203,15 +203,16 @@ impl GamepadTarget for AppGamepadTarget {
         activate_selection(&self.app, &self.router);
     }
 
-    // Fork: B leaves the Deck-ready list (it does nothing in All ports); L1/R1 switch lists.
+    // Fork: B leaves the Deck-ready list for Home (it does nothing on Home and in All ports); L1/R1 go round the
+    // lists: Home, All ports, Deck-ready.
     fn reject(&self) {
         if self.app.deck_ready.is_active() {
-            super::deck_ready_screen::toggle(&self.app, &self.router);
+            super::home_screen::next_list(&self.app, &self.router);
         }
     }
 
     fn switch_list(&self) {
-        super::deck_ready_screen::toggle(&self.app, &self.router);
+        super::home_screen::next_list(&self.app, &self.router);
     }
 
     fn show_info_for_selection(&self) {

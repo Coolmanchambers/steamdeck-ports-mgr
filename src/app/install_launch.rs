@@ -261,6 +261,9 @@ pub(crate) fn activate_selection(app: &Rc<AppState>, router: &Router) {
     if app.deck_ready.is_active() {
         return super::deck_ready_screen::activate(app, router);
     }
+    if app.home.is_active() {
+        return super::home_screen::activate(app, router);
+    }
     if let Some(port) = app.current_selected_port() {
         activate_port(app, router, &port);
     }

@@ -95,6 +95,8 @@ pub(crate) struct AppState {
     pub(crate) cheats: super::cheats::Cheats,
     // Fork: the Deck-ready list (src/app/deck_ready_screen.rs).
     pub(crate) deck_ready: super::deck_ready_screen::DeckReadyUi,
+    // Fork: the home screen (src/app/home_screen.rs).
+    pub(crate) home: super::home_screen::HomeUi,
     pub(crate) events: Arc<Mutex<Vec<AppEvent>>>,
 }
 
@@ -141,6 +143,9 @@ impl AppState {
     pub(crate) fn current_selected_port(&self) -> Option<Port> {
         if self.deck_ready.is_active() {
             return None;
+        }
+        if self.home.is_active() {
+            return super::home_screen::selected_port(self);
         }
         if self.window().get_big_mode() {
             let (row, col) = self.grid_nav.grid_selected.get();
@@ -207,6 +212,9 @@ impl AppState {
         if self.deck_ready.is_active() {
             return super::deck_ready_screen::move_selection(self, dx, dy);
         }
+        if self.home.is_active() {
+            return super::home_screen::move_selection(self, dx, dy);
+        }
         if self.window().get_big_mode() {
             self.move_grid_selection(dx, dy);
         } else {
@@ -272,7 +280,7 @@ impl AppState {
         self.grid_nav.displayed_installed.borrow().get(row * columns + col).map(|p| p.key().to_string())
     }
 
-    fn ensure_card_images_cached(&self, installed: &[Port]) {
+    pub(crate) fn ensure_card_images_cached(&self, installed: &[Port]) {
         let missing: Vec<(String, String)> = installed
             .iter()
             .filter_map(|p| {
@@ -350,6 +358,10 @@ impl AppState {
         if self.deck_ready.is_active() {
             return super::deck_ready_screen::rebuild(self);
         }
+        // Fork: Home, unless something was typed (then All ports draws below).
+        if self.home.is_active() && super::home_screen::rebuild(self) {
+            return;
+        }
         if self.window().get_big_mode() {
             self.rebuild_grid(true);
         } else {
@@ -385,6 +397,10 @@ impl AppState {
         }
         let slot = if big_mode { &self.window_geometry.fullscreen_mode } else { &self.window_geometry.normal_mode };
         *slot.borrow_mut() = mode;
+        // Fork: Home lays its tiles out for the new size.
+        if self.home.is_active() {
+            super::home_screen::rebuild(self);
+        }
     }
 
     pub(crate) fn toggle_fullscreen(&self) {

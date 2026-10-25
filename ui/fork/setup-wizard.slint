@@ -14,7 +14,7 @@ import { DialogChrome } from "../dialogs/chrome.slint";
 // One focus look on every guided page: the focused item gets a thick ring and a slightly lighter fill; nothing else
 // changes size or colour when focus moves. Colour is kept for meaning: the accent marks the primary button and the
 // "Recommended" tag, never focus. On a light theme the ring and fill go dark instead of light.
-global FocusLook {
+export global FocusLook {
     out property <bool> light: (Theme.list-background.red + Theme.list-background.green + Theme.list-background.blue) > 3 * 150;
     out property <color> ring: FocusLook.light ? Theme.list-text : SemanticColors.selection-border;
     out property <color> fill: FocusLook.light ? Theme.list-background.darker(0.15) : Theme.list-background.brighter(0.5);
@@ -23,7 +23,7 @@ global FocusLook {
 }
 
 // The ring itself, laid over the item it marks.
-component FocusRing inherits Rectangle {
+export component FocusRing inherits Rectangle {
     in property <length> ring-px: 4px;
     background: transparent;
     border-width: root.ring-px;
@@ -62,7 +62,7 @@ export struct WizardFact {
 
 // The mark itself: a small drawn picture in a coloured disc, so it can never fall back to an empty box the way a
 // text character (a check mark, an arrow) can in a font that lacks it.
-component StatusIcon inherits Rectangle {
+export component StatusIcon inherits Rectangle {
     in property <int> mark: 0;
     property <color> ink: SemanticColors.text-on-accent;
     width: 20px;

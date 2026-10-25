@@ -4,7 +4,8 @@
 #   - it is still running after STARTUP_SECONDS, with no panic;
 #   - it skipped the tray (no tray host here) instead of letting Slint try and fail;
 #   - its window is mapped and the screenshot is not blank;
-#   - Tab opens the Deck-ready list without a crash (whether it downloads is only reported), Tab returns;
+#   - it opens on Home; Tab goes to All ports, then the Deck-ready list without a crash (whether it downloads is only
+#     reported), then Home again;
 #   - Settings > Artwork sources... opens and its Back row returns to Settings;
 #   - Settings > Cloud backup... opens its first page and B returns to Settings;
 #   - Settings > Import ports... opens and closes without a crash;
@@ -227,13 +228,20 @@ if [ "$alive" = yes ]; then
     win=$(xdotool search --name "^Ports Launcher$" 2>/dev/null | head -1)
     if [ -n "$win" ]; then
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
-        # Tab opens the Deck-ready list (it loads in the background), Tab again goes back.
+        # The app opens on Home; Tab goes to All ports (the catalog, one switch away), then the Deck-ready list (it loads
+        # in the background), then Home again.
+        import -window root "$OUT/home.png" 2>/dev/null
+        check "the app opens on Home" 'grep -q "^list: Home$" "$OUT/app.log"'
+        xdotool key Tab; sleep 1
+        import -window root "$OUT/all-ports.png" 2>/dev/null
+        check "the catalog (All ports) is one switch away" '[ "$(grep "^list: " "$OUT/app.log" | sed -n 2p)" = "list: All ports" ]'
         xdotool key Tab; sleep "${DECK_READY_SECONDS:-8}"
         import -window root "$OUT/deck-ready.png" 2>/dev/null
         dr_alive=no; kill -0 "$APP" 2>/dev/null && dr_alive=yes
-        check "Deck-ready list opens and the app keeps running" '[ "$dr_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log"'
+        check "Deck-ready list opens and the app keeps running" '[ "$dr_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && grep -q "^list: Deck-ready$" "$OUT/app.log"'
         if [ -f "$APP_DIR/cache/deck-ready.json" ]; then echo "info: Deck-ready list downloaded and saved"; else echo "info: Deck-ready list not saved (no network here?)"; fi
         xdotool key Tab; sleep 1
+        check "the lists go round back to Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ]'
         # Settings (gear in the title bar) > Game files... opens without a crash. Dialogs get no keyboard
         # focus without a window manager, so this clicks, relative to the main window.
         eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
