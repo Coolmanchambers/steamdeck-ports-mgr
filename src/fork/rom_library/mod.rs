@@ -23,6 +23,7 @@ pub mod requirements;
 pub mod scan;
 pub mod store;
 pub mod system;
+pub mod title;
 
 #[cfg(test)]
 pub(crate) mod testutil;

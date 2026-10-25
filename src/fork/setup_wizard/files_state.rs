@@ -11,9 +11,9 @@
 //! `must_hash`) is not changed by this: it still ignores title-only slots.
 
 use crate::core::models::Port;
-use crate::fork::port_mover::game_files::{files_by_name, required_not_found, GameFiles};
+use crate::fork::port_mover::game_files::{files_by_name, missing_in, GameFiles, SEARCH_DEPTH};
 use crate::fork::rom_library::requirements::generated_archives;
-use crate::fork::rom_library::system::is_rom_extension;
+use crate::fork::rom_library::title::{is_disc_image_extension, is_game_image_extension, needs_cue, significant_words, stem_has_words};
 use crate::fork::rom_library::{load_local_entries, RomSpec, Slot};
 use std::path::{Path, PathBuf};
 
@@ -36,47 +36,25 @@ impl FilesState {
     }
 }
 
-/// Words in a title that say nothing about the game: regions, formats, filler.
-const TITLE_FILLER: [&str; 24] = [
-    "pal", "ntsc", "ntscu", "ntscj", "usa", "us", "europe", "eur", "japan", "jpn", "world", "australia", "korea", "or", "and", "the", "of", "iso", "disc",
-    "dump", "image", "version", "region", "an",
-];
-
-/// The words of a game title worth looking for in a file name: lowercase, no parenthesised tags, no region or filler
-/// words, no one-letter words ("Majora's" is `majoras`).
-pub fn significant_words(title: &str) -> Vec<String> {
-    let mut plain = String::new();
-    let mut depth = 0usize;
-    for c in title.chars() {
-        match c {
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth = depth.saturating_sub(1),
-            '\'' | '\u{2019}' => {}
-            c if depth == 0 => plain.push(c),
-            _ => {}
-        }
-    }
-    plain
-        .split(|c: char| !c.is_alphanumeric())
-        .map(str::to_lowercase)
-        .filter(|w| w.chars().count() >= 2 && !TITLE_FILLER.contains(&w.as_str()))
-        .collect()
-}
-
-fn squash(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
-}
-
-/// A game or disc file (by extension) within a few levels of the port's folder whose name has every significant word
-/// of one of the slot's titles.
+/// A disc or ROM image within a few levels of the port's folder (never an archive or a data file; an `.img` only with
+/// its cue sheet) whose name has every significant word of one of the slot's titles. A title written as a described
+/// disc (`The Legend of Dragoon .iso`) wants a disc image: an `.iso`, a `.bin`/`.cue` set, a `.chd`, an `.rvz`...
 fn title_in_folder(slot: &Slot, present: &[(String, PathBuf)]) -> bool {
     slot.alternatives.iter().filter(|a| a.title_only).any(|alt| {
         let words = significant_words(&alt.display);
         !words.is_empty()
             && present.iter().any(|(name, path)| {
                 let Some((stem, ext)) = name.rsplit_once('.') else { return false };
-                let key = squash(stem);
-                is_rom_extension(ext) && words.iter().all(|w| key.contains(&squash(w))) && std::fs::metadata(path).is_ok()
+                if !is_game_image_extension(ext) || (!alt.ext_hint.is_empty() && !is_disc_image_extension(ext)) {
+                    return false;
+                }
+                if needs_cue(ext) {
+                    let cue = format!("{stem}.cue");
+                    if !present.iter().any(|(n, p)| *n == cue && p.parent() == path.parent()) {
+                        return false;
+                    }
+                }
+                stem_has_words(stem, &words) && std::fs::metadata(path).is_ok()
             })
     })
 }
@@ -90,11 +68,12 @@ fn state_for(spec: &RomSpec, files: &GameFiles, dir: &Path) -> FilesState {
         let unnamed: Vec<&Slot> = needed.iter().copied().filter(|s| !s.is_vague()).collect();
         return if !unnamed.is_empty() && unnamed.iter().all(|s| connected(s)) { FilesState::Have } else { FilesState::Missing };
     }
-    if !required_not_found(dir, files).is_empty() {
+    // The folder is walked once for both questions.
+    let mut present = Vec::new();
+    files_by_name(dir, SEARCH_DEPTH, &mut present);
+    if !missing_in(&present, files).is_empty() {
         return FilesState::Missing;
     }
-    let mut present = Vec::new();
-    files_by_name(dir, 3, &mut present);
     if vague.iter().all(|s| connected(s) || title_in_folder(s, &present)) {
         FilesState::Have
     } else {

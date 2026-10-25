@@ -170,8 +170,28 @@ fn regions(s: &str) -> Vec<&'static str> {
     out
 }
 
+/// A title-only alternative against a file: the file is a game image (a disc image when the entry described one) and
+/// its name has every significant word of the title. The same rule Home uses (`rom_library::title`).
+fn title_words_basis(alt: &Alt, file: &RomFile, name: &str) -> Option<Basis> {
+    use super::title::{is_disc_image_extension, is_game_image_extension, needs_cue, significant_words, stem_has_words};
+    if !alt.title_only || !is_game_image_extension(&file.ext) {
+        return None;
+    }
+    if !alt.ext_hint.is_empty() && !is_disc_image_extension(&file.ext) {
+        return None;
+    }
+    if needs_cue(&file.ext) {
+        return None;
+    }
+    stem_has_words(file_stem(name), &significant_words(&alt.display)).then_some(Basis::NameTitle)
+}
+
 fn name_basis(alt: &Alt, file: &RomFile) -> Option<Basis> {
     if !extension_fits(alt, file) && alt.tokens.is_empty() {
+        return None;
+    }
+    // A described disc ("The Legend of Dragoon .iso") is satisfied by a disc image of any kind, never by a cartridge.
+    if !alt.ext_hint.is_empty() && !super::title::is_disc_image_extension(&file.ext) {
         return None;
     }
     let file_name = file.file_name();
@@ -203,7 +223,7 @@ fn name_basis(alt: &Alt, file: &RomFile) -> Option<Basis> {
         }
         return Some(Basis::NameTitle);
     }
-    None
+    title_words_basis(alt, file, &file_name)
 }
 
 fn file_name_without_ext(name: &str) -> String {
@@ -791,5 +811,37 @@ mod tests {
         let m = match_port("k", "G", &spec(&text), &scan_dir(dir.path()));
         assert!(matches!(m.slots[0].status, SlotStatus::Found(_)));
         assert!(matches!(m.slots[1].status, SlotStatus::Missing), "{:#?}", m.slots[1]);
+    }
+
+    /// Settings > Game files uses the same title rule as Home: the Dusklight entry names only a title.
+    #[test]
+    fn a_title_only_entry_finds_the_disc_whose_name_has_the_title_words() {
+        let text = "Required files: Legend of Zelda, The - Twilight Princess PAL or NTSC";
+        let dir = temp_dir();
+        write(&dir.path().join("Legend of Zelda, The - Twilight Princess (USA).rvz"), &random_bytes(30, 2000));
+        write(&dir.path().join("Legend of Zelda, The - Wind Waker (USA).rvz"), &random_bytes(31, 2000));
+        let m = match_port("k", "TP", &spec(text), &scan_dir(dir.path()));
+        let SlotStatus::Found(f) = &m.slots[0].status else { panic!("{:?}", m.slots) };
+        assert!(f.path.to_string_lossy().contains("Twilight Princess") && f.is_low_confidence());
+        assert_eq!(m.status, PortStatus::Found);
+        // An archive with the same words is not a game image.
+        let dir = temp_dir();
+        write(&dir.path().join("Twilight Princess Legend of Zelda.zip"), &random_bytes(32, 2000));
+        write(&dir.path().join("Twilight Princess Legend of Zelda.dat"), &random_bytes(33, 2000));
+        assert_eq!(match_port("k", "TP", &spec(text), &scan_dir(dir.path())).status, PortStatus::Unverifiable);
+    }
+
+    /// "The Legend of Dragoon .iso" describes a disc image: any disc set with the title words satisfies it.
+    #[test]
+    fn a_described_disc_is_satisfied_by_a_bin_cue_set_but_not_by_a_cartridge() {
+        let text = "Required files: The Legend of Dragoon .iso\n\nLanguages: English.";
+        let dir = temp_dir();
+        write(&dir.path().join("isos/Legend of Dragoon (USA) (Disc 1).bin"), &random_bytes(40, 4000));
+        write(&dir.path().join("isos/Legend of Dragoon (USA) (Disc 1).cue"), b"FILE \"Legend of Dragoon (USA) (Disc 1).bin\" BINARY\n");
+        let m = match_port("k", "SC", &spec(text), &scan_dir(dir.path()));
+        assert!(matches!(m.slots[0].status, SlotStatus::Found(_)), "{:#?}", m.slots);
+        let dir = temp_dir();
+        write(&dir.path().join("The Legend of Dragoon.z64"), &random_bytes(41, 4000));
+        assert_eq!(match_port("k", "SC", &spec(text), &scan_dir(dir.path())).status, PortStatus::Unverifiable, "a disc was described, a cartridge is not one");
     }
 }

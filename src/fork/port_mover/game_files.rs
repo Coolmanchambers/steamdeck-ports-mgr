@@ -166,7 +166,15 @@ pub fn check_before(port_dir: &Path, files: &GameFiles) -> Vec<Issue> {
 /// archive, a ROM the port turned into its own data file). The move summary lists them.
 pub fn required_not_found(port_dir: &Path, files: &GameFiles) -> Vec<String> {
     let mut present = Vec::new();
-    files_by_name(port_dir, 3, &mut present);
+    files_by_name(port_dir, SEARCH_DEPTH, &mut present);
+    missing_in(&present, files)
+}
+
+/// How many levels below the port's folder a game file is looked for (by name here, by title in `files_state`).
+pub const SEARCH_DEPTH: usize = 3;
+
+/// [`required_not_found`] over files already listed by [`files_by_name`].
+pub fn missing_in(present: &[(String, PathBuf)], files: &GameFiles) -> Vec<String> {
     files
         .required
         .iter()

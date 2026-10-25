@@ -62,6 +62,9 @@ pub struct Alt {
     pub tokens: Vec<String>,
     /// The text named no file, checksum or serial: a game title and nothing more to check against.
     pub title_only: bool,
+    /// For a title-only alternative written as `Game Title .iso` (a space before the extension, no checksum): the
+    /// extension is a description of the kind of file ("a disc image"), not a file name. Lowercase, no dot.
+    pub ext_hint: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,11 +374,23 @@ fn kind_of(display: &str) -> SlotKind {
     }
 }
 
+/// "The Legend of Dragoon .iso": a space right before the extension. Written that way the catalog describes the kind
+/// of file it wants; it does not name one (nobody's disc is called exactly `The Legend of Dragoon.iso`).
+fn spaced_extension(name: &str) -> bool {
+    name.rfind('.').is_some_and(|dot| name[..dot].ends_with(char::is_whitespace))
+}
+
 /// Parse one alternative. The bool says whether it carried a checksum clause of its own.
 fn parse_alt(piece: &str) -> (Alt, bool) {
     let (name_part, clauses) = split_clauses(piece);
     let had_clause = clauses.any();
     let name_part = name_part.trim().trim_end_matches('.').trim();
+    if !had_clause && spaced_extension(name_part) {
+        if let Some((base, exts)) = extract_exts(name_part) {
+            let hint = exts.iter().map(|e| e.to_ascii_lowercase()).collect();
+            return (Alt { display: base.to_string(), title_only: true, ext_hint: hint, ..Alt::default() }, false);
+        }
+    }
     let (names, exts) = match extract_exts(name_part) {
         Some((base, exts)) => (exts.iter().map(|e| format!("{base}.{e}")).collect(), exts.iter().map(|e| e.to_ascii_lowercase()).collect()),
         None => (Vec::new(), Vec::new()),
@@ -596,6 +611,17 @@ pub fn parse_instructions(instructions: &str) -> Requirement {
     if has_clause || PLACEHOLDERS.iter().any(|p| lower.contains(p)) || letters < 3 || body.chars().count() > 80 {
         return Requirement::default();
     }
+    // Titles written with a described extension ("The Legend of Dragoon .iso") keep the title and the kind of file.
+    if !pieces.is_empty() && pieces.iter().flatten().all(|(a, _)| a.title_only) {
+        let slots = pieces
+            .into_iter()
+            .map(|alts| {
+                let alts: Vec<Alt> = alts.into_iter().map(|(a, _)| a).collect();
+                Slot { label: alts[0].display.clone(), kind: kind_of(&alts[0].display), optional: false, alternatives: alts }
+            })
+            .collect();
+        return Requirement { slots, explicit: false };
+    }
     Requirement {
         slots: vec![Slot {
             label: body.to_string(),
@@ -650,7 +676,7 @@ pub fn explicit_requirement(entry: &Value) -> Option<Requirement> {
                 label: label.clone(),
                 kind,
                 optional: obj.get("optional").and_then(Value::as_bool).unwrap_or(false),
-                alternatives: vec![Alt { display: label, names, exts, crc32, sha1, tokens, title_only: false }],
+                alternatives: vec![Alt { display: label, names, exts, crc32, sha1, tokens, title_only: false, ext_hint: Vec::new() }],
             })
         })
         .collect();
@@ -894,6 +920,34 @@ mod tests {
         assert!(with_crc >= 100, "CRC in {with_crc} ports");
         assert!(multi_slot >= 5, "multi-slot in {multi_slot} ports");
         assert!(alternatives >= 1, "alternatives in {alternatives} ports");
+    }
+
+    /// "The Legend of Dragoon .iso": a space before the extension and no checksum describes a kind of file, it does not
+    /// name one. In the shipped catalog this changes exactly two entries (Severed Chains and Sega Superstars Tennis).
+    #[test]
+    fn a_described_extension_is_a_title_with_a_hint_not_a_file_name() {
+        let r = parse_instructions(&catalog_instructions("Severed-Chains"));
+        assert_eq!(r.slots.len(), 1);
+        let alt = &r.slots[0].alternatives[0];
+        assert!(alt.title_only && alt.names.is_empty() && alt.exts.is_empty(), "{alt:?}");
+        assert_eq!((alt.display.as_str(), alt.ext_hint.as_slice()), ("The Legend of Dragoon", ["iso".to_string()].as_slice()));
+        assert!(r.slots[0].is_vague());
+        // Written without the space it is a file name, and a checksum makes it one either way.
+        let named = parse_instructions("Required files: The Legend of Dragoon.iso");
+        assert_eq!(named.slots[0].alternatives[0].names, ["The Legend of Dragoon.iso"]);
+        let checked = parse_instructions("Required files: Some Game (USA) .iso (CRC32: 12345678)");
+        assert!(!checked.slots[0].alternatives[0].title_only, "a checksum entry is left as it was");
+        // Across the whole catalog only those two entries have such a slot.
+        let data: Value = serde_json::from_str(include_str!("../../../ports.json")).unwrap();
+        let mut described: Vec<String> = Vec::new();
+        for p in data["ports"].as_array().unwrap() {
+            let name = p.get("name").or_else(|| p.get("-name")).and_then(Value::as_str).unwrap_or("?");
+            let r = parse_instructions(p.get("instructions").and_then(Value::as_str).unwrap_or(""));
+            if r.slots.iter().flat_map(|s| &s.alternatives).any(|a| !a.ext_hint.is_empty()) {
+                described.push(name.to_string());
+            }
+        }
+        assert!(described.len() <= 4 && described.iter().any(|n| n.contains("Severed-Chains")), "{described:?}");
     }
 
     #[test]
