@@ -7,7 +7,6 @@ use super::save_finder_screen::open_from_info as open_find_saves;
 use super::save_restore_screen::open_from_info as open_restore_saves;
 use super::rom_screens::open_from_info as open_game_files_for_port;
 use super::state::AppState;
-use super::sync::launch_self_update;
 use crate::core::launch::{is_web_url, open_file, open_folder, open_url};
 use crate::core::models::{Port, SourceType};
 use crate::ui::chrome;
@@ -669,8 +668,8 @@ pub(crate) fn open_picker_dialog(
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
-// Fork: Settings is a page of groups (src/app/settings_menu_screen.rs, what they say is src/fork/settings_menu.rs), not
-// the old 17-row list. This opens it; `run_settings_entry` below is what each entry of the old list did, unchanged.
+// Fork: Settings is a page of groups (src/app/settings_menu_screen.rs), not the old 17-row list; what each entry does is
+// `settings_menu_screen::run_entry`.
 pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
@@ -680,32 +679,6 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
         return;
     }
     super::settings_menu_screen::open(app, router);
-}
-
-/// Fork: what a Settings entry does when it is chosen (the entries of the old list, each as it was; the two switches are
-/// flipped by the Settings screen itself, and the save-restore refusal guard is asked there first).
-pub(crate) fn run_settings_entry(app: &Rc<AppState>, router: &Router, entry: crate::fork::settings_menu::Entry) {
-    use crate::fork::settings_menu::Entry;
-    close_current_dialog(app, router);
-    match entry {
-        Entry::SetupWizard => super::setup_wizard_screen::open_from_settings(app, router),
-        Entry::Themes => open_theme_picker(app, router),
-        Entry::Language => open_language_picker(app, router),
-        Entry::Files => open_files_picker(app, router),
-        Entry::OpenPortsFolder => open_folder(&app.paths.library_dir()),
-        Entry::PortsFolder => super::ports_folder_screen::open_menu(app, router),
-        Entry::AddToSteam => super::steam_screens::open_steam_screen(app, router),
-        Entry::ImportPorts => super::import_screen::open(app, router, false),
-        Entry::GameFiles => super::rom_screens::open_game_files(app, router),
-        Entry::ArtSources => super::art_screens::open_art_sources(app, router),
-        Entry::BackupSaves => start_save_backup(app, router),
-        Entry::RestoreSaves => super::save_restore_screen::open_from_settings(app, router),
-        Entry::CloudBackup => super::cloud_screen::open_from_settings(app, router),
-        Entry::Version => open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
-        Entry::ForceUpdate => launch_self_update(app, router),
-        Entry::AddPort => super::add_port_screen::open(app, router, true),
-        Entry::CheckUpdates | Entry::DiscordRpc => {}
-    }
 }
 
 /// Fork: the search dialog used as a one-line text entry (the Artwork sources screen asks for keys with
@@ -840,7 +813,7 @@ fn open_search_list_dialog(
     finish_dialog_open(app, router, DialogSlot::SearchList(dialog));
 }
 
-fn open_theme_picker(app: &Rc<AppState>, router: &Router) {
+pub(crate) fn open_theme_picker(app: &Rc<AppState>, router: &Router) {
     let names = crate::ui::theme::list_theme_names(&app.theme.theme_config.borrow());
     if names.is_empty() {
         return;
@@ -860,7 +833,7 @@ fn open_theme_picker(app: &Rc<AppState>, router: &Router) {
     });
 }
 
-fn open_files_picker(app: &Rc<AppState>, router: &Router) {
+pub(crate) fn open_files_picker(app: &Rc<AppState>, router: &Router) {
     const FILES: [&str; 4] = ["ports.json", "ports.local.json", "state.json", "themes.json"];
     let labels = FILES.iter().map(|name| name.to_string()).collect();
     open_picker_dialog(app, router, &tr!(app).invoke_label_files(), labels, |app, _, idx| {
@@ -893,7 +866,7 @@ const LANGUAGES: &[(&str, &str)] = &[
     ("ro", "Română"),
 ];
 
-fn open_language_picker(app: &Rc<AppState>, router: &Router) {
+pub(crate) fn open_language_picker(app: &Rc<AppState>, router: &Router) {
     let items = std::iter::once((String::new(), tr!(app).invoke_language_default_system().to_string()))
         .chain(LANGUAGES.iter().map(|(code, name)| (code.to_string(), name.to_string())))
         .collect();
@@ -904,7 +877,7 @@ fn open_language_picker(app: &Rc<AppState>, router: &Router) {
     });
 }
 
-fn start_save_backup(app: &Rc<AppState>, router: &Router) {
+pub(crate) fn start_save_backup(app: &Rc<AppState>, router: &Router) {
     let window = app.window();
     let tr = window.global::<Tr>();
     open_progress_dialog(app, router, &tr.invoke_dialog_title_saves_backup(), &tr.invoke_progress_backing_up_saves());

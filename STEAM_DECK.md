@@ -105,16 +105,16 @@ All ports. The top line shows the cloud backup status (when you are signed in) a
 ### Add a port, and Settings
 
 **Add a port** (the plus tile) asks one question, "How do you want to add a port?": Deck-ready ports, Browse all ports
-(windowed only), Ports you already have (Import ports), or From a GitHub link. B goes back to Home.
+(windowed only), Ports you already have (Import ports), or A port on this Deck that is not on the lists (finds its project from a GitHub link, then asks which folder it is in). B goes back to Home.
 
 **Settings** is a page of five groups, each with a line saying where it stands. Wherever this guide says
 "Settings > X", X is a card inside one of these groups. B goes up one level.
 
 | Group | Cards |
 |---|---|
-| Ports | Add a port, Bring in ports you already have (Import ports), Ports folder, Game files, Open the ports folder |
-| Steam | Steam shortcuts (Add to Steam), Artwork sources |
-| Saves | Back up saves now (Backup Saves), Restore saves, Cloud backup |
+| Ports | Add a port, Ports you already have (Import ports), Ports folder, Game files, Library (opens the ports folder) |
+| Steam | Add to Steam, Artwork sources |
+| Saves | Save Backup (Backup Saves), Restore saves, Cloud backup |
 | App | Setup wizard, Themes, Language, Files, Discord Rich Presence (On or Off) |
 | Updates | Check for Updates (On or Off), Update the app now (Force update), Version |
 

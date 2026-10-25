@@ -76,13 +76,15 @@ pub(super) struct Ctx {
     /// Projects added from a GitHub link (the port and what importing writes first), kept while the screen is open.
     pub(super) extra: Rc<RefCell<Vec<(crate::core::models::Port, crate::fork::import::targets::NewEntry)>>>,
     /// Opened by "From a GitHub link" on the Add a port page: no folders are scanned and the first page is the link page.
-    /// The step is where B (and Cancel) go back to.
-    pub(super) link_first: Option<Step>,
+    pub(super) link_first: bool,
+    /// Opened from the Add a port page: where leaving Import ports goes, whichever way (B, the X, the end of an import, a
+    /// notice). It runs with `finish`, once.
+    pub(super) return_to: Option<Step>,
 }
 
 impl Ctx {
     pub(super) fn new(from_wizard: bool, finish: Option<Finish>) -> Ctx {
-        Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default(), extra: Rc::default(), link_first: None }
+        Ctx { from_wizard, finish, finished: Once::default(), choices: Rc::default(), extra: Rc::default(), link_first: false, return_to: None }
     }
 
     /// Whether the wizard is waiting for this screen.
@@ -95,6 +97,9 @@ impl Ctx {
         self.finished.run(|| {
             if let Some(finish) = &self.finish {
                 finish(app, router);
+            }
+            if let Some(back) = &self.return_to {
+                back(app, router);
             }
         });
     }
@@ -177,11 +182,13 @@ pub(super) fn notice_back(app: &Rc<AppState>, router: &Router, text: &str, then:
 
 /// A notice that ends the flow: a message, or for the wizard a Continue dialog (B too) that finishes it.
 pub(super) fn end_notice(app: &Rc<AppState>, router: &Router, ctx: &Ctx, title: &str, text: &str) {
-    if !ctx.waited_on() {
+    if !ctx.waited_on() && ctx.return_to.is_none() {
         return message(app, router, title, text);
     }
+    // From the setup wizard the way on is "Continue setup"; from the Add a port page it is plain OK (back to that page).
+    let label = if ctx.waited_on() { "Continue setup" } else { "OK" };
     let ctx2 = ctx.clone();
-    confirm_back(app, router, title, text, "Continue setup", false, move |app, router| ctx2.finish_quiet(app, router), ctx.finisher());
+    confirm_back(app, router, title, text, label, false, move |app, router| ctx2.finish_quiet(app, router), ctx.finisher());
 }
 
 pub(super) fn home_dir() -> Option<PathBuf> {
@@ -209,6 +216,18 @@ pub(crate) fn open_with(app: &Rc<AppState>, router: &Router, from_wizard: bool, 
     start_scan(app, router, &Ctx::new(from_wizard, finish), folders);
 }
 
+/// "Ports you already have" on the Add a port page: Import ports, and leaving it (B, the end of an import, a notice) goes back
+/// to that page (`back`).
+pub(crate) fn open_back_to(app: &Rc<AppState>, router: &Router, back: Step) {
+    if dialog_is_open(app) {
+        return;
+    }
+    let mut ctx = Ctx::new(false, None);
+    ctx.return_to = Some(back);
+    let folders = ScanFolders::on_this_device(&ForkSettings::load(&settings_path(app)));
+    start_scan(app, router, &ctx, folders);
+}
+
 /// "From a GitHub link" on the Add a port page: straight to the page for the link, with no folder scan first (the port
 /// matching only needs the lists the app already has). `back` runs when the user leaves the link page or the short
 /// preparation with B or Cancel. What follows the link is Import ports' own flow: confirm the project, pick the folder it
@@ -218,9 +237,10 @@ pub(crate) fn open_link(app: &Rc<AppState>, router: &Router, back: Step) {
         return;
     }
     let mut ctx = Ctx::new(false, None);
-    ctx.link_first = Some(back.clone());
+    ctx.link_first = true;
+    ctx.return_to = Some(back);
     let folders = ScanFolders::on_this_device(&ForkSettings::load(&settings_path(app)));
-    scan(app, router, &ctx, folders, Some(back));
+    scan(app, router, &ctx, folders, Some(ctx.finisher()));
 }
 
 // -- Background jobs ---------------------------------------------------------------------------------
@@ -668,7 +688,7 @@ pub(super) fn run_job<T: Send + 'static>(app: &Rc<AppState>, router: &Router, sp
 pub(super) fn start_scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: ScanFolders) {
     // B or Cancel on the first scan leaves the step. In the setup wizard that is "back" to the question before,
     // not a quiet skip.
-    let leave: Option<Step> = ctx.waited_on().then(|| {
+    let leave: Option<Step> = (ctx.waited_on() || ctx.return_to.is_some()).then(|| {
         let ctx = ctx.clone();
         let step: Step = Rc::new(move |app, router| {
             if ctx.from_wizard {
@@ -690,7 +710,7 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
     let settings = ForkSettings::load(&settings_path(app));
     let ports = ports_folder(&app.paths.library_dir());
     // The link page needs the port lists, not the folders: nothing is looked through (and no list is fetched) for it.
-    let link_first = ctx.link_first.is_some();
+    let link_first = ctx.link_first;
     let roots = if link_first { Vec::new() } else { folders.roots(&home, &ports) };
     let catalog = app.catalog.borrow().clone();
     let saved_index = super::deck_ready_screen::index_for_import(app);
@@ -748,9 +768,10 @@ pub(super) fn scan(app: &Rc<AppState>, router: &Router, ctx: &Ctx, folders: Scan
                 let ignored = crate::fork::import::cards::ignored_paths(&ForkSettings::load(&settings_path(app)));
                 let cards = Cards::from_scan(&scan, &ignored, &ports);
                 let screen = Rc::new(RefCell::new(ImportScreen::new(&home, &ports, folders, scan, cards, ctx2.from_wizard)));
-                match ctx2.link_first.clone() {
-                    Some(back) => super::import_cards_screen::show_link_first(app, router, &ctx2, screen, back),
-                    None => super::import_cards_screen::show_found(app, router, &ctx2, screen),
+                if ctx2.link_first {
+                    super::import_cards_screen::show_link_first(app, router, &ctx2, screen);
+                } else {
+                    super::import_cards_screen::show_found(app, router, &ctx2, screen);
                 }
             }
             Err(e) => end_notice(app, router, &ctx2, TITLE, &e),

@@ -9,6 +9,8 @@
 #   - Settings is a page of groups (Settings, Settings: Ports ...): Steam > Artwork sources opens and its Back row returns to
 #     the Steam page, B goes up to Settings, Saves > Cloud backup opens its first page and B returns to the Saves page;
 #   - Ports > Import ports opens and closes without a crash;
+#   - Ports > Add a port opens the page and B returns to the Ports page; Updates > Check for Updates flips in place and keeps
+#     the cursor on it;
 #   - Ports > Game files opens without a crash;
 #   - Ports > Ports folder opens, its "Choose another folder..." opens the folder picker, and
 #     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
@@ -266,7 +268,7 @@ if [ "$alive" = yes ]; then
         entry_downs() {  # $1 = group, $2 = entry
             local n=""
             [ -f "$MENU_SRC" ] && n=$(grep -m1 "Group::$1 => &\[" "$MENU_SRC" | sed 's/.*&\[//; s/\].*//' | tr ',' '\n' | awk -v e="Entry::$2" '$1==e {print NR - 1; exit}')
-            [ -z "$n" ] && case "$1:$2" in Ports:ImportPorts) n=1 ;; Ports:PortsFolder) n=2 ;; Ports:GameFiles) n=3 ;; Steam:ArtSources) n=1 ;; Saves:CloudBackup) n=2 ;; esac
+            [ -z "$n" ] && case "$1:$2" in Ports:AddPort|Updates:CheckUpdates) n=0 ;; Ports:ImportPorts) n=1 ;; Ports:PortsFolder) n=2 ;; Ports:GameFiles) n=3 ;; Steam:ArtSources) n=1 ;; Saves:CloudBackup) n=2 ;; esac
             echo "$n"
         }
         open_settings_page() {
@@ -335,6 +337,31 @@ if [ "$alive" = yes ]; then
                 close_settings
                 eval "$(xdotool getwindowgeometry --shell "$win")"
             fi
+            # Settings > Ports > Add a port opens the Add a port page, and B returns to the Ports page (one level up).
+            open_settings_page && settings_entry Ports AddPort; sleep 1.5
+            ap2=$(xdotool search --name "^Add a port$" 2>/dev/null | head -1)
+            check "Settings > Ports > Add a port opens the Add a port page" '[ -n "$ap2" ] && kill -0 "$APP" 2>/dev/null'
+            if [ -n "$ap2" ]; then
+                press_keys "$ap2" Escape; sleep 1.5
+                check "B on Add a port returns to the Ports page of Settings" '[ -z "$(xdotool search --name "^Add a port$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Settings: Ports$" 2>/dev/null)" ]'
+            fi
+            close_settings
+            # A switch flips in place and keeps the cursor: Settings > Updates > Check for Updates. Two presses of A flip it twice,
+            # which they only do if the cursor is still on it after the first (state.json holds the value).
+            release_sync() { grep -o '"release_sync": *[a-z]*' "$APP_DIR/state.json" 2>/dev/null | grep -o '[a-z]*$' | tail -1; }
+            open_settings_page && settings_entry Updates CheckUpdates; sleep 1
+            rs1=$(release_sync)
+            ug=$(xdotool search --name "^Settings: Updates$" 2>/dev/null | head -1)
+            if [ -n "$ug" ]; then
+                press_keys "$ug" Return; sleep 1; rs2=$(release_sync)
+                press_keys "$ug" Return; sleep 1; rs3=$(release_sync)
+                echo "release_sync: ${rs1:-none} -> ${rs2:-none} -> ${rs3:-none}" >>"$OUT/focus.log"
+                import -window root "$OUT/switch-flipped.png" 2>/dev/null
+                check "a switch flips in place and the cursor stays on it (release_sync ${rs1:-none} -> ${rs2:-none} -> ${rs3:-none})" '[ -n "$rs2" ] && [ -n "$rs3" ] && [ "$rs2" != "$rs3" ] && [ -n "$(xdotool search --name "^Settings: Updates$" 2>/dev/null)" ]'
+            else
+                check "the Updates page opens" 'false'
+            fi
+            close_settings
             # Settings > Ports > Game files opens without a crash.
             open_settings_page && settings_entry Ports GameFiles; sleep 2
             import -window root "$OUT/game-files.png" 2>/dev/null

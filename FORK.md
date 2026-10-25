@@ -250,7 +250,7 @@ Files added by this fork:
 | 2026-10-25 | `src/core/jobs.rs` | Home review: `run_update_check_result` tells a failed check (rate limit, no network) from "no update"; `run_update_check` and the private `update_available` now go through it (same behaviour for Play); 1 test |
 | 2026-10-25 | `src/app/install_launch.rs` | Home review: Play's "is the update check due" test is `fork::home::update_check_due`, the one the home screen uses too (same rule) |
 | 2026-10-25 | `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh` | Home screen: the new Slint file is linted; the smoke test checks the app opens on Home, All ports is one Tab away, Deck-ready the next, and Home after that |
-| 2026-10-25 | `src/app/dialogs.rs` | Add a port and Settings pages (branch `home-settings`): the 17-row Settings list (`SettingsEntry`, `SETTINGS_ENTRIES`, `settings_labels`, the picker) is gone; `open_settings_dialog` keeps its two guards (a dialog is open; the setup wizard is waiting) and then calls `settings_menu_screen::open`; `run_settings_entry` is what each entry of the old list did (same calls, same order of closing the dialog first), taking the fork's `settings_menu::Entry` |
+| 2026-10-25 | `src/app/dialogs.rs` | Add a port and Settings pages (branch `home-settings`): the 17-row Settings list (`SettingsEntry`, `SETTINGS_ENTRIES`, `settings_labels`, the picker) is gone; `open_settings_dialog` keeps its two guards (a dialog is open; the setup wizard is waiting) and then makes one call, `settings_menu_screen::open`; four helpers the entries need (`open_theme_picker`, `open_language_picker`, `open_files_picker`, `start_save_backup`) became `pub(crate)`, and the now unused `launch_self_update` import is gone. What each entry of the old list does (same calls, same order of closing the dialog first) is `settings_menu_screen::run_entry`, in the fork's own file |
 | 2026-10-25 | `ui/app-window.slint` | Add a port: `home-browse-requested` is now `home-add-requested` (two lines; the empty Home card's second button is Add a port) |
 | 2026-10-25 | `src/app/mod.rs` | Add a port and Settings pages: two module lines (`add_port_screen`, `settings_menu_screen`) |
 | 2026-10-25 | `tools/smoke-test.sh`, `tools/test-app-update.sh` | Add a port and Settings pages: Settings is a page of groups, so both tests open it by the title bar button and pick a group and a card by keyboard (the Down counts are read from `src/fork/settings_menu.rs`); the smoke test also checks the plus tile opens the Add a port page and B returns, and that B goes up one level (group page, Settings) |
@@ -383,17 +383,20 @@ Tim, 2026-10-25, after his Deck test of Home: "we need an add new port button, b
 
 - **Add a port** (Home's plus tile, the empty card, and Settings > Ports > Add a port): one question, "How do you want to
   add a port?", with cards that each have a picture and one plain line: Deck-ready ports (recommended), Browse all
-  ports, Ports you already have (Import ports), From a GitHub link. Big mode has no list of the whole catalog (All ports
+  ports, Ports you already have (Import ports), A port on this Deck that is not on the lists (a GitHub link). Big mode has no list of the whole catalog (All ports
   there shows only the ports you have), so Browse all ports is left out and Deck-ready ports is the one to browse.
-  "From a GitHub link" is Import ports' own link route (`import_screen::open_link`): no folder scan first (only the port
-  lists are read), then the link page, "Is this the project?", the folder the port is in, and the move. B on the page goes
-  to where it was opened from (Home, or Settings' Ports page).
+  The GitHub link card is Import ports' own link route (`import_screen::open_link`), so it is for a port that is already on
+  the Deck and not on the lists: no folder scan first (only the port lists are read), then the link page, "Is this the
+  project?", "Pick the folder this port is in", and the move. B in that folder picker comes back to the link page with the
+  link kept. A real install-from-link flow does not exist yet (follow-up). "Ports you already have" is Import ports
+  (`import_screen::open_back_to`). Leaving either (B, the end of an import, a notice: OK) goes back to the Add a port page
+  (`Ctx::return_to`), which B takes to where it was opened from (Home, or Settings' Ports page).
 - **Settings** (Y on Home, the gear, the title bar button, the tray): a page with a card for each group, each with a
   one-line summary that is cheap to read (Ports: place and count; Steam: changes waiting; Saves: age of the newest
   "Back up saves now" zip and the cloud state; Updates: version and whether update checks are on). A group's page has its
   actions as cards; the two switches (Check for updates, Discord) show On or Off and flip in place. B goes up one level
-  (group page, Settings, Home). Groups: Ports (Add a port, Bring in ports you already have, Ports folder, Game files, Open the
-  ports folder [upstream's Library]), Steam (Steam shortcuts [Add to Steam], Artwork sources), Saves (Back up saves now,
+  (group page, Settings, Home). Groups: Ports (Add a port, Ports you already have [Import ports], Ports folder, Game files, Library
+  [upstream's word, opens the ports folder]), Steam (Add to Steam, Artwork sources), Saves (Save Backup [upstream's word],
   Restore saves, Cloud backup), App (Setup wizard, Themes, Language, Files, Discord), Updates (Check for updates, Update the
   app now [Force update], Version). All 17 entries of the old list are there, each in exactly one group (a unit test), with
   the old guards: Back up saves, Restore saves and Update the app now refuse while a restore runs, and

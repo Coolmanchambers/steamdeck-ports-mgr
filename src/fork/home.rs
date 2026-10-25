@@ -136,7 +136,7 @@ pub fn hints(focused: Option<TileKind>) -> String {
     match focused {
         None => ["A Choose", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(TileKind::Setup) => ["A Set up", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
-        Some(TileKind::Add) => ["A Add a port", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
+        Some(TileKind::Add) => ["A Add", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(_) => ["A Play", "X Info", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
     }
 }
@@ -356,7 +356,7 @@ mod tests {
         assert!(hints(Some(TileKind::Port)).starts_with("A Play"));
         assert!(hints(Some(TileKind::Continue)).contains("X Info"));
         assert!(hints(Some(TileKind::Setup)).starts_with("A Set up"));
-        assert!(hints(Some(TileKind::Add)).starts_with("A Add a port"));
+        assert!(hints(Some(TileKind::Add)).starts_with("A Add"));
         assert!(!hints(Some(TileKind::Add)).contains("X Info"), "nothing to show Info for");
         assert!(!hints(None).contains("X Info"));
         assert!(hints(None).contains("L1/R1 Lists"));

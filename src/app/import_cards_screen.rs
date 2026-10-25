@@ -135,15 +135,12 @@ pub(super) fn show_found(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
     show_or_end(app, router, ctx, page, handlers(ctx, act, back));
 }
 
-/// The first page of "From a GitHub link" on the Add a port page: the link page itself. B and Cancel leave Import ports and
-/// run `back` (the Add a port page again).
-pub(super) fn show_link_first(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, back: super::import_screen::Step) {
+/// The first page of "From a GitHub link" on the Add a port page: the link page itself. B and Cancel leave Import ports, which
+/// goes back to the Add a port page (`Ctx::return_to`).
+pub(super) fn show_link_first(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen) {
     let leave_to: Again = {
         let ctx = ctx.clone();
-        Rc::new(move |app, router| {
-            leave(app, router, &ctx);
-            back(app, router);
-        })
+        Rc::new(move |app, router| leave(app, router, &ctx))
     };
     show_github(app, router, ctx, screen, Target::NewFolder, leave_to, String::new());
 }
@@ -692,12 +689,13 @@ fn show_github_card(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Scre
 /// The project (`key`, now among the scan's ports) is the port: for a folder of the walk it is measured like
 /// any pick; with no folder yet the user picks the folder first.
 #[allow(clippy::too_many_arguments)]
-fn use_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, key: String, back: Again, again: Again) {
+fn use_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, target: Target, key: String, _back: Again, again: Again) {
     match target {
         Target::Folder { index } => choose_port(app, router, ctx, screen, Folder::Index(index), key, again),
         Target::NewFolder => {
             let start = home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
-            let (ctx2, screen2, back2, again2) = (ctx.clone(), screen.clone(), back.clone(), again.clone());
+            let (ctx2, screen2, again2) = (ctx.clone(), screen.clone(), again.clone());
+            let cancel = again.clone();
             open_folder_picker(
                 app,
                 router,
@@ -708,7 +706,8 @@ fn use_port(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen, targ
                     }
                     choose_port(app, router, &ctx2, screen2.clone(), Folder::New(path), key.clone(), again2.clone());
                 },
-                move |app, router| back2(app, router),
+                // B in the picker comes back to the link page, the typed link still in its box (not to where the user was before it).
+                move |app, router| cancel(app, router),
             );
         }
     }

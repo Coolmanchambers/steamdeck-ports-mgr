@@ -37,15 +37,15 @@ fn show(app: &Rc<AppState>, router: &Router, from_settings: bool) {
                 close_current_dialog(app, router);
                 super::home_screen::show_list(app, router, List::AllPorts);
             }
-            Act::Import => {
+            Act::Import | Act::GithubLink => {
                 close_current_dialog(app, router);
-                super::import_screen::open(app, router, false);
-            }
-            Act::GithubLink => {
-                close_current_dialog(app, router);
-                // B on the link page (and a failed or cancelled start) comes back to this page.
+                // Leaving Import ports (B, the end of an import, a notice) comes back to this page.
                 let again: super::import_screen::Step = Rc::new(move |app, router| show(app, router, from_settings));
-                super::import_screen::open_link(app, router, again);
+                if act == Act::Import {
+                    super::import_screen::open_back_to(app, router, again);
+                } else {
+                    super::import_screen::open_link(app, router, again);
+                }
             }
         }),
         on_back: Rc::new(move |app, router| back(app, router, from_settings)),

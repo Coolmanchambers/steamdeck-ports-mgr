@@ -1,7 +1,7 @@
 //! Settings as pages instead of one long list. The first page has a card for each group (Ports, Steam, Saves, App,
 //! Updates), each with a one-line summary of where that stands; a group's page has its actions as cards, and a card
 //! that is a switch shows On or Off and flips in place. Pure data for `fork::page`: the groups, what each entry
-//! says, the summaries. What an entry does is `src/app/dialogs.rs::run_settings_entry`; the screens are
+//! says, the summaries. What an entry does is `src/app/settings_menu_screen.rs::run_entry`; the screens are
 //! `src/app/settings_menu_screen.rs`.
 //!
 //! Every entry of the old list is still here, in exactly one group, with the same behaviour.
@@ -146,7 +146,7 @@ impl Cloud {
         match self {
             Cloud::Off => "cloud off",
             Cloud::On => "cloud on",
-            Cloud::Waiting => "cloud waiting",
+            Cloud::Waiting => "cloud backing up",
             Cloud::Problem => "cloud has a problem",
         }
     }
@@ -172,9 +172,14 @@ pub struct Facts {
 /// title is its label without the state (the card shows On or Off itself): see [`without_state`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Labels {
+    /// The title of the first page (upstream's "Settings"), also the header of a group's page.
+    pub settings: String,
     pub themes: String,
     pub language: String,
     pub files: String,
+    /// Upstream's "Library": the card that opens the ports folder.
+    pub library: String,
+    pub backup_saves: String,
     pub check_updates: String,
     pub discord: String,
     pub version: String,
@@ -183,9 +188,12 @@ pub struct Labels {
 impl Labels {
     pub fn english(version: &str) -> Labels {
         Labels {
+            settings: "Settings".into(),
             themes: "Themes".into(),
             language: "Language".into(),
             files: "Files".into(),
+            library: "Library".into(),
+            backup_saves: "Save Backup".into(),
             check_updates: "Check for Updates".into(),
             discord: "Discord Rich Presence".into(),
             version: format!("Version: {version}"),
@@ -203,6 +211,18 @@ pub fn without_state(label: &str) -> String {
             if !after.is_empty() && after.chars().count() <= 12 { label[..i].trim_end().to_string() } else { label.to_string() }
         }
         _ => label.to_string(),
+    }
+}
+
+/// What a ports folder's place is called on the Ports card; `None` for a folder that is neither on a drive nor the
+/// internal default (the line then leaves the place out rather than guess).
+pub fn place_name(kind: Option<crate::fork::setup_wizard::places::Kind>) -> Option<String> {
+    use crate::fork::setup_wizard::places::Kind;
+    match kind? {
+        Kind::SdCard => Some("SD card".to_string()),
+        Kind::OtherDrive => Some("Another drive".to_string()),
+        Kind::Internal => Some("Internal storage".to_string()),
+        Kind::Current | Kind::Earlier => None,
     }
 }
 
@@ -278,21 +298,21 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
     let plain = |title: &str, detail: &str| Card { title: title.to_string(), detail: detail.to_string(), switch: None };
     match entry {
         Entry::AddPort => plain("Add a port", "Browse, bring in, or use a GitHub link"),
-        Entry::ImportPorts => plain("Bring in ports you already have", "Find ports on this Deck and move them in"),
+        Entry::ImportPorts => plain("Ports you already have", "Import ports: find them on this Deck and move them in"),
         Entry::PortsFolder => Card { title: "Ports folder".into(), detail: f.ports_place.clone().unwrap_or_else(|| "Where your ports are kept".to_string()), switch: None },
         Entry::GameFiles => plain("Game files", "Connect your game files to the ports that need them"),
-        Entry::OpenPortsFolder => plain("Open the ports folder", "Show it in the file manager"),
-        Entry::AddToSteam if f.steam_waiting > 0 => Card { title: "Steam shortcuts".into(), detail: format!("{} waiting for Steam to close", count(f.steam_waiting, "change", "changes")), switch: None },
-        Entry::AddToSteam => plain("Steam shortcuts", "Add your ports to Steam"),
+        Entry::OpenPortsFolder => plain(&l.library, "Show the ports folder in the file manager"),
+        Entry::AddToSteam if f.steam_waiting > 0 => Card { title: "Add to Steam".into(), detail: format!("{} waiting for Steam to close", count(f.steam_waiting, "change", "changes")), switch: None },
+        Entry::AddToSteam => plain("Add to Steam", "Shortcuts and art for your ports"),
         Entry::ArtSources => plain("Artwork sources", "Where covers and pictures come from"),
-        Entry::BackupSaves => plain("Back up saves now", "Copy every port's saves into the backup folder"),
+        Entry::BackupSaves => plain(&l.backup_saves, "Back up every port's saves now"),
         Entry::RestoreSaves => plain("Restore saves", "Put an earlier backup back"),
         Entry::CloudBackup => plain(
             "Cloud backup",
             match f.cloud {
                 Cloud::Off => "Keep a copy of your saves online",
                 Cloud::On => "On: your saves are copied online",
-                Cloud::Waiting => "On: waiting to copy your saves",
+                Cloud::Waiting => "On: backing up your saves",
                 Cloud::Problem => "Needs a look",
             },
         ),
@@ -301,7 +321,7 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::Language => plain(&l.language, "Choose the app's language"),
         Entry::Files => plain(&l.files, "Open the app's own data files"),
         Entry::DiscordRpc => Card { title: l.discord.clone(), detail: "Show what you are playing on Discord".into(), switch: Some(f.discord) },
-        Entry::CheckUpdates => Card { title: l.check_updates.clone(), detail: "Look for new versions of your ports".into(), switch: Some(f.check_updates) },
+        Entry::CheckUpdates => Card { title: l.check_updates.clone(), detail: "Look for new versions of your ports and this app".into(), switch: Some(f.check_updates) },
         Entry::ForceUpdate => plain("Update the app now", "Install the newest version of this app"),
         Entry::Version => plain(&l.version, "See what is new on GitHub"),
     }
@@ -322,8 +342,9 @@ fn back_button() -> [Option<PageButton<Act>>; 4] {
 }
 
 /// The first page: a card for each group, with where it stands.
-pub fn top_page(f: &Facts) -> Page<Act> {
-    let mut p = Page::<Act> { window_title: TITLE.to_string(), large: true, header: TITLE.to_string(), title: TITLE.to_string(), initial: Focus::Option(0), buttons: back_button(), ..Page::default() };
+pub fn top_page(l: &Labels, f: &Facts) -> Page<Act> {
+    // No header line on the first page: the window already says "Settings" and so does the title under it.
+    let mut p = Page::<Act> { window_title: TITLE.to_string(), large: true, header: String::new(), title: l.settings.clone(), initial: Focus::Option(0), buttons: back_button(), ..Page::default() };
     for (i, g) in Group::ALL.into_iter().enumerate() {
         p.options.push(PageOption { title: g.title().to_string(), detail: summary(g, f), choice: None, enabled: true, recommended: false, action: Act::Open(g) });
         p = p.icon(i, g.icon());
@@ -333,7 +354,7 @@ pub fn top_page(f: &Facts) -> Page<Act> {
 
 /// A group's page: its actions as cards; switches show On or Off.
 pub fn group_page(group: Group, l: &Labels, f: &Facts) -> Page<Act> {
-    let mut p = Page::<Act> { window_title: group.window_title(), large: true, header: TITLE.to_string(), title: group.title().to_string(), initial: Focus::Option(0), buttons: back_button(), ..Page::default() };
+    let mut p = Page::<Act> { window_title: group.window_title(), large: true, header: l.settings.clone(), title: group.title().to_string(), initial: Focus::Option(0), buttons: back_button(), ..Page::default() };
     for (i, entry) in group.entries().iter().enumerate() {
         let c = entry_card(*entry, l, f);
         p.options.push(PageOption { title: c.title, detail: c.detail, choice: None, enabled: true, recommended: false, action: Act::Do(*entry) });
@@ -386,7 +407,7 @@ mod tests {
 
     #[test]
     fn the_first_page_has_a_card_for_each_group_with_a_picture_and_a_summary() {
-        let p = top_page(&facts());
+        let p = top_page(&Labels::english("1.2.3"), &facts());
         assert_eq!(p.options.len(), 5);
         assert_eq!(p.title, "Settings");
         for (i, g) in Group::ALL.into_iter().enumerate() {
@@ -458,7 +479,7 @@ mod tests {
 
     #[test]
     fn b_goes_up_one_level_and_the_pages_hint_at_it() {
-        for p in [top_page(&facts()), group_page(Group::Saves, &Labels::english("1"), &facts())] {
+        for p in [top_page(&Labels::english("1"), &facts()), group_page(Group::Saves, &Labels::english("1"), &facts())] {
             assert_eq!(p.buttons[LEFT].as_ref().map(|b| b.action), Some(Act::Back));
             assert_eq!(hints(&p), ["A Choose", "B Back", "D-pad Move"].join(HINT_GAP));
         }
@@ -492,6 +513,75 @@ mod tests {
         assert!(newest > old, "the newer zip wins, whatever its case");
         std::fs::create_dir(dir.path().join("folder.zip")).unwrap();
         assert_eq!(newest_zip(dir.path()), Some(newest), "a folder named like a zip is not a backup");
+    }
+
+    #[test]
+    fn cards_say_what_is_waiting_and_what_the_cloud_is_doing() {
+        let l = Labels::english("1");
+        let mut f = facts();
+        let card = |e: Entry, l: &Labels, f: &Facts| entry_card(e, l, f);
+        assert_eq!((card(Entry::AddToSteam, &l, &f).title, card(Entry::AddToSteam, &l, &f).detail), ("Add to Steam".to_string(), "Shortcuts and art for your ports".to_string()), "the card has the screen's own name");
+        f.steam_waiting = 2;
+        let waiting = card(Entry::AddToSteam, &l, &f);
+        assert_eq!((waiting.title.as_str(), waiting.detail.as_str()), ("Add to Steam", "2 changes waiting for Steam to close"));
+        f.steam_waiting = 1;
+        assert_eq!(card(Entry::AddToSteam, &l, &f).detail, "1 change waiting for Steam to close");
+        for (cloud, detail, phrase) in [
+            (Cloud::Off, "Keep a copy of your saves online", "cloud off"),
+            (Cloud::On, "On: your saves are copied online", "cloud on"),
+            (Cloud::Waiting, "On: backing up your saves", "cloud backing up"),
+            (Cloud::Problem, "Needs a look", "cloud has a problem"),
+        ] {
+            f.cloud = cloud;
+            assert_eq!(card(Entry::CloudBackup, &l, &f).detail, detail, "{cloud:?}");
+            assert_eq!(cloud.phrase(), phrase);
+        }
+        assert_eq!(card(Entry::CheckUpdates, &l, &f).detail, "Look for new versions of your ports and this app", "the switch gates both checks");
+    }
+
+    #[test]
+    fn one_name_for_import_and_the_translated_labels_where_upstream_has_them() {
+        let mut l = Labels::english("1");
+        l.settings = "Reglages".into();
+        l.library = "Bibliotheque".into();
+        l.backup_saves = "Sauvegarde".into();
+        let f = facts();
+        let top = top_page(&l, &f);
+        assert_eq!((top.title.as_str(), top.header.as_str(), top.window_title.as_str()), ("Reglages", "", "Settings"), "translated title, no repeated header, the window name the tests look for");
+        let ports = group_page(Group::Ports, &l, &f);
+        assert_eq!(ports.header, "Reglages");
+        assert_eq!(ports.options[1].title, "Ports you already have", "the Add a port card says the same");
+        assert!(ports.options[1].detail.contains("Import ports"));
+        assert_eq!(ports.options[4].title, "Bibliotheque");
+        assert_eq!(group_page(Group::Saves, &l, &f).options[0].title, "Sauvegarde");
+    }
+
+    #[test]
+    fn the_ports_card_names_the_place_or_says_what_the_folder_is_for() {
+        use crate::fork::setup_wizard::places::Kind;
+        assert_eq!(place_name(Some(Kind::SdCard)).as_deref(), Some("SD card"));
+        assert_eq!(place_name(Some(Kind::OtherDrive)).as_deref(), Some("Another drive"));
+        assert_eq!(place_name(Some(Kind::Internal)).as_deref(), Some("Internal storage"));
+        assert_eq!(place_name(None), None, "a folder chosen elsewhere: no guess");
+        let mut f = facts();
+        f.ports_place = None;
+        assert_eq!(entry_card(Entry::PortsFolder, &Labels::english("1"), &f).detail, "Where your ports are kept");
+        assert_eq!(summary(Group::Ports, &f), "5 ports");
+        f.ports_place = Some("SD card".into());
+        assert_eq!(entry_card(Entry::PortsFolder, &Labels::english("1"), &f).detail, "SD card");
+    }
+
+    #[test]
+    fn each_entry_knows_its_group() {
+        assert_eq!(Group::of(Entry::AddPort), Group::Ports);
+        assert_eq!(Group::of(Entry::OpenPortsFolder), Group::Ports);
+        assert_eq!(Group::of(Entry::ArtSources), Group::Steam);
+        assert_eq!(Group::of(Entry::CloudBackup), Group::Saves);
+        assert_eq!(Group::of(Entry::DiscordRpc), Group::App);
+        assert_eq!(Group::of(Entry::ForceUpdate), Group::Updates);
+        for g in Group::ALL {
+            assert!(g.entries().iter().all(|e| Group::of(*e) == g));
+        }
     }
 
     #[test]

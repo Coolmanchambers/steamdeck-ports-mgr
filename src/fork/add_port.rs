@@ -35,8 +35,8 @@ fn card(act: Act) -> (&'static str, &'static str, Icon) {
     match act {
         Act::DeckReady => ("Deck-ready ports", "Ports checked to run well on the Deck", Icon::DeckReady),
         Act::Browse => ("Browse all ports", "Every port this app knows about", Icon::Browse),
-        Act::Import => ("Ports you already have", "Find ports on this Deck and bring them in", Icon::Import),
-        Act::GithubLink => ("From a GitHub link", "For a port that is not on the lists", Icon::Link),
+        Act::Import => ("Ports you already have", "Import ports: find them on this Deck", Icon::Import),
+        Act::GithubLink => ("A port on this Deck that is not on the lists", "Find its project from a GitHub link", Icon::Link),
         Act::Back => ("Back", "", Icon::None),
     }
 }
