@@ -258,7 +258,7 @@ pub fn confirm_page(c: &Checked, index: usize, count: usize, origin: Origin) -> 
         PageOption { title: "Not yet".to_string(), detail: "Its old copy stays".to_string(), choice: None, enabled: true, recommended: false, action: ConfirmAction::NotYet },
     ];
     p.initial = Focus::Option(0);
-    p
+    p.b_does(&ConfirmAction::NotYet)
 }
 
 fn copies(n: usize) -> &'static str {

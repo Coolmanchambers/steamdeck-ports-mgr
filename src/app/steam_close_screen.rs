@@ -117,6 +117,7 @@ fn finish(app: &Rc<AppState>, router: &Router, run: &Rc<Run>) {
 }
 
 fn decorate(run: &Run, page: ClosePage) -> ClosePage {
+    let page = { let back = back_action(&page); page.b_does(&back) };
     if run.opts.wizard { page.in_wizard(crate::fork::setup_wizard::flow::Step::Steam.number(), crate::fork::setup_wizard::flow::Step::COUNTED) } else { page }
 }
 

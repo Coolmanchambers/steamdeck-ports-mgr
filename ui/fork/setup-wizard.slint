@@ -11,6 +11,25 @@
 import { SemanticColors, Theme, ThemedScrollbar } from "../shared.slint";
 import { DialogChrome } from "../dialogs/chrome.slint";
 
+// One focus look on every guided page: the focused item gets a thick ring and a slightly lighter fill; nothing else
+// changes size or colour when focus moves. Colour is kept for meaning: the accent marks the primary button and the
+// "Recommended" tag, never focus. On a light theme the ring and fill go dark instead of light.
+global FocusLook {
+    out property <bool> light: (Theme.list-background.red + Theme.list-background.green + Theme.list-background.blue) > 3 * 150;
+    out property <color> ring: FocusLook.light ? Theme.list-text : SemanticColors.selection-border;
+    out property <color> fill: FocusLook.light ? Theme.list-background.darker(0.15) : Theme.list-background.brighter(0.5);
+    // The accent, dark enough for white text to read at 7 inches (about 5:1 on the default theme).
+    out property <color> accent: SemanticColors.info.darker(0.6);
+}
+
+// The ring itself, laid over the item it marks.
+component FocusRing inherits Rectangle {
+    in property <length> ring-px: 4px;
+    background: transparent;
+    border-width: root.ring-px;
+    border-color: FocusLook.ring;
+}
+
 // kind: 0 an action (opens something), 1 a choice (a radio mark, `chosen` says which one is in use)
 export struct WizardOption {
     title: string,
@@ -47,6 +66,7 @@ component WizardButton inherits Rectangle {
     in property <bool> primary: false;
     in property <bool> selected: false;
     in property <length> border-px: 1px;
+    in property <length> ring-px: 4px;
     in property <length> font-size: 14px;
     out property <length> text-preferred-width: label.preferred-width;
     callback clicked();
@@ -54,11 +74,9 @@ component WizardButton inherits Rectangle {
     // where a page opened sends none, so it cannot take the highlight from the controller.
     callback moved(length, length);
 
-    background: root.primary
-        ? (root.selected ? SemanticColors.info-hover : SemanticColors.info)
-        : (root.selected ? Theme.selected-background : Theme.list-background);
-    border-width: root.selected ? root.border-px * 2 : root.border-px;
-    border-color: root.selected ? SemanticColors.selection-border : (root.primary ? SemanticColors.info : Theme.border-color);
+    background: root.primary ? FocusLook.accent : (root.selected ? FocusLook.fill : Theme.list-background);
+    border-width: root.border-px;
+    border-color: root.primary ? FocusLook.accent : Theme.border-color;
 
     TouchArea {
         clicked => { root.clicked(); }
@@ -70,13 +88,18 @@ component WizardButton inherits Rectangle {
     }
     label := Text {
         text: root.text;
-        color: root.primary ? SemanticColors.text-on-accent : (root.selected ? Theme.selected-text : Theme.list-text);
+        color: root.primary ? SemanticColors.text-on-accent : Theme.list-text;
         font-size: root.font-size;
         font-weight: root.primary ? 700 : 400;
         horizontal-alignment: center;
         vertical-alignment: center;
         width: 100%;
         height: 100%;
+    }
+    if root.selected: FocusRing {
+        width: 100%;
+        height: 100%;
+        ring-px: root.ring-px;
     }
 }
 
@@ -89,16 +112,15 @@ component OptionRow inherits Rectangle {
     in property <bool> recommended: false;
     in property <bool> selected: false;
     in property <length> border-px: 1px;
+    in property <length> ring-px: 4px;
     in property <length> font-size: 14px;
     callback clicked();
     callback moved(length, length);
 
     opacity: root.enabled ? 1.0 : 0.5;
-    background: root.recommended
-        ? (root.selected ? SemanticColors.info-hover : SemanticColors.info)
-        : Theme.list-background;
-    border-width: root.selected ? root.border-px * 2 : root.border-px;
-    border-color: root.selected ? SemanticColors.selection-border : (root.recommended ? SemanticColors.info : Theme.border-color);
+    background: root.selected ? FocusLook.fill : Theme.list-background;
+    border-width: root.border-px;
+    border-color: Theme.border-color;
 
     TouchArea {
         enabled: root.enabled;
@@ -112,7 +134,44 @@ component OptionRow inherits Rectangle {
 
     property <length> mark-size: root.font-size * 1.1;
     property <length> text-x: root.kind == 1 ? root.font-size * 0.9 + root.mark-size + root.font-size * 0.7 : root.font-size * 0.9;
-    property <color> text-color: root.recommended ? SemanticColors.text-on-accent : Theme.list-text;
+    property <color> text-color: Theme.list-text;
+    // "Recommended": a small tag at the right of the title and an accent edge on the left. Never a fill: a fill
+    // looked like focus.
+    property <length> tag-font: root.font-size * 0.72;
+    property <length> tag-w: root.recommended ? tag-m.preferred-width + root.tag-font * 1.4 : 0px;
+    property <length> title-y: root.detail == "" ? 0px : root.height * 0.08;
+    property <length> title-h: root.detail == "" ? root.height : root.height * 0.46;
+    tag-m := Text {
+        visible: false;
+        text: "Recommended";
+        font-size: root.tag-font;
+        font-weight: 700;
+    }
+    if root.recommended: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: max(3px, root.font-size * 0.28);
+        height: root.height;
+        background: SemanticColors.info;
+    }
+    if root.recommended: Rectangle {
+        x: root.width - root.tag-w - root.font-size * 0.9;
+        y: root.title-y + (root.title-h - self.height) / 2;
+        width: root.tag-w;
+        height: root.tag-font * 1.75;
+        border-radius: self.height / 2;
+        background: FocusLook.accent;
+        Text {
+            text: "Recommended";
+            color: SemanticColors.text-on-accent;
+            font-size: root.tag-font;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+    }
 
     if root.kind == 1: Rectangle {
         x: root.font-size * 0.9;
@@ -133,13 +192,13 @@ component OptionRow inherits Rectangle {
     }
     Text {
         x: root.text-x;
-        y: root.detail == "" ? 0px : root.height * 0.08;
-        width: root.width - root.text-x - root.font-size * 0.9;
-        height: root.detail == "" ? root.height : root.height * 0.46;
+        y: root.title-y;
+        width: root.width - root.text-x - root.font-size * 0.9 - (root.recommended ? root.tag-w + root.font-size * 0.6 : 0px);
+        height: root.title-h;
         text: root.title;
         color: root.text-color;
         font-size: root.font-size;
-        font-weight: (root.kind == 1 && root.chosen) || root.recommended ? 700 : 400;
+        font-weight: root.kind == 1 && root.chosen ? 700 : 400;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -155,6 +214,11 @@ component OptionRow inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
+    if root.selected: FocusRing {
+        width: 100%;
+        height: 100%;
+        ring-px: root.ring-px;
+    }
 }
 
 // A cover, or the port's name on a plain tile when there is no picture (yet).
@@ -163,11 +227,12 @@ component Cover inherits Rectangle {
     in property <string> label: "";
     in property <length> font-size: 14px;
     in property <length> border-px: 1px;
+    in property <length> ring-px: 4px;
     in property <bool> selected: false;
 
     background: Theme.search-background;
-    border-width: root.selected ? root.border-px * 3 : root.border-px;
-    border-color: root.selected ? SemanticColors.selection-border : Theme.border-color;
+    border-width: root.border-px;
+    border-color: Theme.border-color;
     clip: true;
 
     if root.source.width > 0: Image {
@@ -188,6 +253,11 @@ component Cover inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
         overflow: elide;
+    }
+    if root.selected: FocusRing {
+        width: 100%;
+        height: 100%;
+        ring-px: root.ring-px;
     }
 }
 
@@ -241,6 +311,7 @@ component TileBox inherits Rectangle {
     in property <bool> selected: false;
     in property <length> font-size: 14px;
     in property <length> border-px: 1px;
+    in property <length> ring-px: 4px;
     callback clicked();
     callback moved(length, length);
     property <length> label-h: root.font-size * 3.4;
@@ -253,6 +324,7 @@ component TileBox inherits Rectangle {
             label: "";
             font-size: root.font-size * 0.85;
             border-px: root.border-px;
+            ring-px: root.ring-px;
             selected: root.selected;
         }
         Text {
@@ -320,6 +392,8 @@ export component SetupWizardDialog inherits Window {
     in property <int> input-focus: -1;
     in property <[WizardOption]> options: [];
     in property <string> footnote: "";
+    // The controller hint bar along the bottom ("A Choose · B Back · D-pad Move"), from fork::page::hints.
+    in property <string> hint-text: "";
     // The footer, left to right: left (Back), middle (Skip), extra (Close the wizard in a rerun), right
     // (the primary Next or Finish). An empty text hides the button.
     in property <string> left-text: "";
@@ -365,6 +439,9 @@ export component SetupWizardDialog inherits Window {
     property <length> body-font: root.item-font-px * (root.large ? 1.25 : 1.0);
     property <length> option-height: root.large ? max(root.row-height * 1.6, root.height * 0.088) : root.row-height * 1.3;
     property <length> bar-thickness: root.item-font-px * 0.4;
+    // The focus ring: thick enough to find at a glance on a 7 inch screen.
+    property <length> ring: max(3px, 4px / Theme.scale-factor);
+    property <length> hint-h: root.hint-text == "" ? 0px : root.item-font-px * 2.0;
 
     // A pointer that merely rests where a page opened must not take the highlight from the controller
     // or the keyboard. The first pointer event after the page opens only records where the pointer is;
@@ -468,7 +545,7 @@ export component SetupWizardDialog inherits Window {
             property <length> inner-w: chrome.content-width - root.gutter * 2;
             property <length> header-h: root.item-font-px * 1.7;
             property <length> title-h: root.item-font-px * 2.2;
-            property <length> footer-y: chrome.content-height - root.gutter - root.row-height;
+            property <length> footer-y: chrome.content-height - root.hint-h - root.gutter - root.row-height;
             property <length> body-y: root.gutter + self.header-h + root.bar-thickness + root.spacing * 2 + self.title-h;
             // Button widths (the text's own width plus padding), for placing the buttons that follow.
             property <length> left-w: root.left-text == "" ? 0px : left-m.preferred-width + root.button-padding * 2;
@@ -569,8 +646,8 @@ export component SetupWizardDialog inherits Window {
                         height: root.has-input ? root.option-height : 0px;
                         visible: root.has-input;
                         background: Theme.search-background;
-                        border-width: root.selected-index == root.input-focus ? root.border-px * 2 : root.border-px;
-                        border-color: root.selected-index == root.input-focus ? SemanticColors.selection-border : Theme.border-color;
+                        border-width: root.border-px;
+                        border-color: Theme.border-color;
                         text-in := TextInput {
                             x: root.body-font * 0.8;
                             width: parent.width - root.body-font * 1.6;
@@ -600,6 +677,11 @@ export component SetupWizardDialog inherits Window {
                                     reject
                                 }
                             }
+                        }
+                        if root.has-input && root.selected-index == root.input-focus: FocusRing {
+                            width: 100%;
+                            height: 100%;
+                            ring-px: root.ring;
                         }
                         if root.has-input && root.input-text == "": Text {
                             x: root.body-font * 0.8;
@@ -635,6 +717,7 @@ export component SetupWizardDialog inherits Window {
                             selected: t.focus >= 0 && root.selected-index == t.focus;
                             font-size: root.body-font;
                             border-px: root.border-px;
+                            ring-px: root.ring;
                             clicked => { root.tile-requested(i); }
                             moved(x, y) => { root.pointer-moved(t.focus, x, y); }
                         }
@@ -651,6 +734,7 @@ export component SetupWizardDialog inherits Window {
                             recommended: o.recommended;
                             selected: o.enabled && root.selected-index == o.focus;
                             border-px: root.border-px;
+                            ring-px: root.ring;
                             font-size: root.body-font;
                             clicked => { root.option-requested(i); }
                             moved(x, y) => { root.pointer-moved(o.focus, x, y); }
@@ -683,6 +767,7 @@ export component SetupWizardDialog inherits Window {
                 primary: root.primary-slot == 0;
                 selected: root.selected-index == root.focus-left;
                 border-px: root.border-px;
+                ring-px: root.ring;
                 font-size: root.item-font-px;
                 clicked => { root.button-requested(0); }
                 moved(x, y) => { root.pointer-moved(root.focus-left, x, y); }
@@ -696,6 +781,7 @@ export component SetupWizardDialog inherits Window {
                 primary: root.primary-slot == 1;
                 selected: root.selected-index == root.focus-middle;
                 border-px: root.border-px;
+                ring-px: root.ring;
                 font-size: root.item-font-px;
                 clicked => { root.button-requested(1); }
                 moved(x, y) => { root.pointer-moved(root.focus-middle, x, y); }
@@ -709,6 +795,7 @@ export component SetupWizardDialog inherits Window {
                 primary: root.primary-slot == 2;
                 selected: root.selected-index == root.focus-extra;
                 border-px: root.border-px;
+                ring-px: root.ring;
                 font-size: root.item-font-px;
                 clicked => { root.button-requested(2); }
                 moved(x, y) => { root.pointer-moved(root.focus-extra, x, y); }
@@ -722,9 +809,34 @@ export component SetupWizardDialog inherits Window {
                 primary: root.primary-slot == 3;
                 selected: root.selected-index == root.focus-right;
                 border-px: root.border-px;
+                ring-px: root.ring;
                 font-size: root.item-font-px;
                 clicked => { root.button-requested(3); }
                 moved(x, y) => { root.pointer-moved(root.focus-right, x, y); }
+            }
+            // The controller hint bar: what A, B and the D-pad do on this page.
+            if root.hint-text != "": Rectangle {
+                x: 0px;
+                y: chrome.content-height - root.hint-h;
+                width: chrome.content-width;
+                height: root.hint-h;
+                background: Theme.search-background;
+                Rectangle {
+                    y: 0px;
+                    height: root.border-px;
+                    background: Theme.border-color;
+                }
+                Text {
+                    x: root.gutter;
+                    width: parent.width - root.gutter * 2;
+                    height: parent.height;
+                    text: root.hint-text;
+                    color: Theme.list-text;
+                    font-size: root.item-font-px * 0.95;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
             }
             // Measure the texts that position the buttons after them.
             left-m := Text {

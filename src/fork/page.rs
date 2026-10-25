@@ -24,7 +24,7 @@ pub struct PageOption<A> {
     pub choice: Option<bool>,
     /// False: shown dimmed, cannot be chosen or focused (the folder in use, a drive that cannot hold ports).
     pub enabled: bool,
-    /// Drawn as the recommended choice (filled with the accent colour).
+    /// Drawn as the recommended choice (a small "Recommended" tag and an accent edge; focus is the ring alone).
     pub recommended: bool,
     pub action: A,
 }
@@ -107,6 +107,8 @@ pub struct Page<A> {
     pub primary: Option<usize>,
     /// Where the cursor starts.
     pub initial: Focus,
+    /// What B does, in a word or two, for the controller hint bar ("Back" when empty). See [`Page::b_does`].
+    pub back_hint: String,
 }
 
 impl<A> Default for Page<A> {
@@ -129,6 +131,7 @@ impl<A> Default for Page<A> {
             buttons: [None, None, None, None],
             primary: None,
             initial: Focus::Button(RIGHT),
+            back_hint: String::new(),
         }
     }
 }
@@ -156,6 +159,48 @@ impl<A> Page<A> {
         self
     }
 }
+
+impl<A> Page<A> {
+    /// Says what B does on this page, for the hint bar ("Cancel", "Keep them").
+    pub fn b_means(mut self, words: impl Into<String>) -> Page<A> {
+        self.back_hint = words.into();
+        self
+    }
+}
+
+impl<A: PartialEq> Page<A> {
+    /// Says what B does by the label of the button or option that does the same thing (B on a question whose
+    /// safe answer is "Keep them" reads "B Keep them"). Left as it was when nothing on the page does that.
+    pub fn b_does(mut self, action: &A) -> Page<A> {
+        let label = self.buttons.iter().flatten().find(|b| b.action == *action).map(|b| b.label.clone()).or_else(|| self.options.iter().find(|o| o.action == *action).map(|o| o.title.clone()));
+        if let Some(label) = label {
+            self.back_hint = label.trim_end_matches("...").trim_end_matches('\u{2026}').trim().to_string();
+        }
+        self
+    }
+}
+
+/// The controller hint bar along the bottom of the page: what A, B and the D-pad do here, and on a page with a text
+/// box how to bring up Steam's keyboard. Only the D-pad, A and B reach the window, so these are all the buttons.
+pub fn hints<A>(page: &Page<A>) -> String {
+    let can_focus = focusables(page).len();
+    let back = if page.back_hint.is_empty() { "Back" } else { page.back_hint.as_str() };
+    let mut parts: Vec<String> = Vec::new();
+    if can_focus > 0 {
+        parts.push("A Choose".into());
+    }
+    parts.push(format!("B {back}"));
+    if can_focus > 1 {
+        parts.push("D-pad Move".into());
+    }
+    if page.input.is_some() {
+        parts.push("Steam + X Keyboard".into());
+    }
+    parts.join(HINT_GAP)
+}
+
+/// Between two hints in the bar.
+pub const HINT_GAP: &str = "   \u{b7}   ";
 
 impl<A: Clone> Page<A> {
     /// Every cover the page shows, once each (the card first), for the image loader.
@@ -433,6 +478,30 @@ mod tests {
         assert_eq!(focus_at(&bare, down), Some(Focus::Button(LEFT)));
         assert_eq!(move_focus(&bare, down, 0, -1), 0, "up from the footer reaches the box when there is nothing between");
     }
+    #[test]
+    fn the_hint_bar_names_a_b_and_the_d_pad_and_what_b_does_here() {
+        let bar = |parts: &[&str]| parts.join(HINT_GAP);
+        assert_eq!(hints(&card_page()), bar(&["A Choose", "B Back", "D-pad Move"]));
+        let skip = card_page().b_does(&Act::Skip);
+        assert_eq!(hints(&skip), bar(&["A Choose", "B Skip", "D-pad Move"]), "B takes the label of what it does");
+        assert_eq!(card_page().b_means("Cancel").back_hint, "Cancel");
+        let mut dots = card_page();
+        dots.buttons[LEFT] = Some(PageButton { label: "Skip setup...".into(), action: Act::Details });
+        assert_eq!(dots.b_does(&Act::Details).back_hint, "Skip setup", "no trailing dots in the bar");
+        let mut none = card_page();
+        none.buttons[LEFT] = None;
+        assert_eq!(none.b_does(&Act::Details).back_hint, "", "nothing on the page does it: the bar says Back");
+    }
+
+    #[test]
+    fn the_hint_bar_leaves_out_what_does_nothing_and_names_the_keyboard_on_a_text_page() {
+        assert_eq!(hints(&Page::<Act>::default()), "B Back", "nothing to choose: only B");
+        let mut one = Page::<Act>::default();
+        one.buttons[RIGHT] = Some(PageButton { label: "Cancel".into(), action: Act::Skip });
+        assert_eq!(hints(&one.b_means("Cancel")), ["A Choose", "B Cancel"].join(HINT_GAP), "one thing to choose: no D-pad");
+        assert!(hints(&input_page()).ends_with("Steam + X Keyboard"));
+    }
+
     #[test]
     fn a_page_in_the_wizard_says_which_step_it_is_and_keeps_its_own_counter() {
         let p = Page::<u8> { header: "Import ports".into(), step_text: "Port 2 of 5".into(), ..Page::default() }.in_wizard(2, 5);

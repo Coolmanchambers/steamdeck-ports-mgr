@@ -110,6 +110,8 @@ export component AppWindow inherits Window {
     callback window-drag-moved();
     callback move-requested(int, int);
     callback activate-requested();
+    // Fork: Escape on the main list (src/fork/press_echo.rs).
+    callback escape-pressed();
     callback reveal-folder-requested();
     callback window-size-requested(int);
     callback border-adjust-requested(int);
@@ -296,11 +298,9 @@ export component AppWindow inherits Window {
                                             root.deck-ready-toggle-requested();
                                             accept
                                         } else if (event.text == Key.Escape) {
-                                            if (root.big-mode) {
-                                                root.fullscreen-toggle-requested();
-                                            } else {
-                                                root.close-requested();
-                                            }
+                                            // Fork: the app decides (leave big mode, or Close after a short hold a controller B
+                                            // can cancel): src/fork/press_echo.rs.
+                                            root.escape-pressed();
                                             accept
                                         } else if (event.modifiers.alt && event.text == Key.Return) {
                                             root.fullscreen-toggle-requested();

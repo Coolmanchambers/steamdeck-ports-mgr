@@ -466,7 +466,7 @@ fn show_prompt_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, por
     let first = &issues[0];
     let file = std::path::Path::new(&first.file).file_name().map_or(first.file.clone(), |n| n.to_string_lossy().into_owned());
     let problem = format!("{file}: {}.", first.problem.trim_end_matches('.'));
-    let page = ports_pages::game_file_page(&port, &problem, 0).in_wizard(2, crate::fork::setup_wizard::flow::Step::COUNTED);
+    let page = ports_pages::game_file_page(&port, &problem, 0).b_means("Stop the import").in_wizard(2, crate::fork::setup_wizard::flow::Step::COUNTED);
     let (on_action, on_back, on_exit) = (answer.clone(), answer.clone(), answer);
     let handlers = Handlers {
         on_action: Rc::new(move |_, _, action: FolderAction| match action {

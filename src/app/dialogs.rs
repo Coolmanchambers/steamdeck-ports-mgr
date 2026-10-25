@@ -104,7 +104,8 @@ pub(crate) use tr;
 macro_rules! wire_dialog_close {
     ($dialog:expr, $app:expr, $router:expr) => {{
         let (app, router) = ($app.clone(), $router.clone());
-        $dialog.on_close_requested(move || close_current_dialog(&app, &router));
+        // Fork: an Escape that echoes a controller B just acted on is dropped (crate::fork::press_echo).
+        $dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) { close_current_dialog(&app, &router) });
     }};
 }
 
@@ -116,7 +117,8 @@ macro_rules! wire_keyboard_nav {
             dialog_move_selection(&app, dx, dy);
         });
         let app = $app.clone();
-        $dialog.on_activate_selection_requested(move || dialog_activate(&app));
+        // Fork: a Return that echoes a controller A just acted on is dropped (crate::fork::press_echo).
+        $dialog.on_activate_selection_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Choose) { dialog_activate(&app) });
     }};
 }
 

@@ -24,6 +24,7 @@ use super::dialogs::{build_setup_wizard_dialog, close_current_dialog, dialog_is_
 use super::state::AppState;
 use crate::fork::art::thumbs::{ArtRef, ThumbLoader};
 use crate::fork::page::{self, Focus, Page};
+use crate::fork::press_echo::{self, Press};
 use crate::ui::chrome;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::{SetupWizardDialog, WizardCard, WizardOption, WizardTile};
@@ -193,6 +194,7 @@ fn fill<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_step_index(page.step_number as i32 - 1);
     d.set_page_title(page.title.clone().into());
     d.set_has_input(page.input.is_some());
+    d.set_hint_text(page::hints(page).into());
     fill_body(d, page);
 }
 
@@ -418,8 +420,9 @@ fn wire(dialog: &SetupWizardDialog, serial: u64) {
             b.move_by(dx, dy);
         }
     });
+    // A and Return, B and Escape: one physical press acts once (`press_echo`; the pad's own press passes).
     dialog.on_activate_requested(move || {
-        if let Some(b) = bound(serial) {
+        if let Some(b) = bound(serial).filter(|_| press_echo::key(Press::Choose)) {
             b.activate();
         }
     });
@@ -429,7 +432,7 @@ fn wire(dialog: &SetupWizardDialog, serial: u64) {
         }
     });
     dialog.on_close_requested(move || {
-        if let Some(b) = bound(serial) {
+        if let Some(b) = bound(serial).filter(|_| press_echo::key(Press::Back)) {
             GOING_BACK.with(|g| g.set(true));
             b.back();
             GOING_BACK.with(|g| g.set(false));

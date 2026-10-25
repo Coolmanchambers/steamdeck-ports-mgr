@@ -202,7 +202,7 @@ pub fn moving_page(names: &[String], text: &str, cancelling: bool, replaces: boo
         option("Cancel", if replaces { "The copy in progress is removed" } else { "Nothing is changed" }, FolderAction::CancelMove, false)
     }];
     p.initial = Focus::Option(0);
-    p
+    p.b_means("Cancel")
 }
 
 /// Some ports did not move. `failed` is name and a short reason; `moved` is how many did.

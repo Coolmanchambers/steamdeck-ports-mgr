@@ -50,6 +50,8 @@ pub fn progress_page(title: &str, sentence: &str, step: usize, text: &str, cance
         PageOption { title: cancel, detail, choice: None, enabled: true, recommended: false, action: ProgressAction::Cancel }
     }];
     p.initial = Focus::Option(0);
+    // B stops the work like the Cancel choice does; the hint bar says so.
+    let p = if cancelling { p.b_means("Cancel") } else { p.b_does(&ProgressAction::Cancel) };
     p.in_wizard(step, super::flow::Step::COUNTED)
 }
 

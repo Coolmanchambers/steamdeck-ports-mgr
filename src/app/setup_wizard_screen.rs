@@ -246,7 +246,8 @@ fn context(app: &AppState, step: crate::fork::setup_wizard::flow::Step) -> Conte
 
 fn draw(app: &Rc<AppState>, router: &Router, w: &Wizard) {
     let ctx = context_for(app, w);
-    let page = text::page_for(w, &ctx);
+    // The hint bar names what B does here (Back, Skip setup, Keep going with setup, OK).
+    let page = text::page_for(w, &ctx).b_does(&flow::back_action(w));
     let handlers = Handlers {
         on_action: Rc::new(|app, router, action| with_wizard(app, router, |w, ui| flow::press(w, action, ui))),
         // B and Escape: back one step (a question or a notice: its own way out).

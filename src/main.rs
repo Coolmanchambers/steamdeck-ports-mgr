@@ -286,7 +286,19 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     window.on_window_size_requested(with!(app => move |percent| app.set_window_size_percent(percent)));
     window.on_border_adjust_requested(with!(app => move |delta| app.adjust_border(delta)));
     window.on_move_requested(with!(app => move |dx, dy| app.move_selection(dx, dy)));
-    window.on_activate_requested(with!(app, router => move || activate_selection(&app, &router)));
+    // Fork: a Return or Escape that echoes a controller A or B just acted on is dropped; Escape's Close waits a
+    // moment for a B (crate::fork::press_echo).
+    window.on_activate_requested(with!(app, router => move || if fork::press_echo::key(fork::press_echo::Press::Choose) { activate_selection(&app, &router) }));
+    window.on_escape_pressed(with!(app => move || {
+        if app.window().get_big_mode() {
+            if fork::press_echo::key(fork::press_echo::Press::Back) {
+                app.toggle_fullscreen();
+            }
+        } else {
+            let weak = app.window().as_weak();
+            fork::press_echo::hold_main_escape(move || if let Some(w) = weak.upgrade() { w.invoke_close_requested() });
+        }
+    }));
     window.on_reveal_folder_requested(with!(app => move || reveal_selected_folder(&app)));
     window.on_discord_requested(|| core::launch::open_url(DISCORD_URL));
     // Fork: the Deck-ready list.

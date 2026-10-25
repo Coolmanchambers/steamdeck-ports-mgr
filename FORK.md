@@ -234,6 +234,9 @@ Files added by this fork:
 | 2026-10-24 | `src/app/cloud_screen.rs` | Settings > Cloud backup: the pages, the sign-in, the status card, the restore list and the passes the hooks start |
 | 2026-10-25 | `src/app/dialogs.rs` | Polish (branch `polish`): `close_current_dialog` hands the guided page window to `page_dialog::park` (4 lines) instead of hiding it at once, so the next page can be drawn in the same window; anything else closes as before |
 | 2026-10-25 | `tools/smoke-test.sh` | Polish: two checks that the first Import ports page and the page B returns to are the wizard's own window (same X window id) |
+| 2026-10-25 | `src/ui/gamepad_router.rs` | Polish: `dispatch` asks `fork::press_echo::pad` before acting on A or B (an echo of a key Steam typed for the same press is dropped) and runs the target inside `press_echo::while_pad`, so a dialog callback the pad reaches is not taken for a key |
+| 2026-10-25 | `src/app/dialogs.rs` | Polish: `wire_keyboard_nav` (Return) and `wire_dialog_close` (Escape) ask `press_echo::key` first (2 lines) |
+| 2026-10-25 | `ui/app-window.slint`, `src/main.rs` | Polish: Escape on the main list calls a new `escape-pressed` callback; in big mode it leaves big mode (unless it echoes a pad B), in the windowed view Close waits 300 ms and a pad B in that time drops it (`press_echo::hold_main_escape`); Return on the main list asks `press_echo::key` |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -259,6 +262,28 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
   if that place still exists. Pages reached forwards start where the page says.
 - **A new page** scrolls the body to the top, re-arms the "resting pointer" guard and gives the keyboard to the page
   (or to its text box when the cursor starts there) (`page-shown()` in `ui/fork/setup-wizard.slint`).
+
+## Guided pages: focus look, hint bar, one press acts once
+
+- **Focus look** (`ui/fork/setup-wizard.slint`, `FocusLook` / `FocusRing`): the focused option, tile, button or text
+  box gets a 4 px ring (`selection-border`, white on the default theme; dark on light themes) and a slightly lighter
+  fill; borders never change width, so nothing moves when focus moves. "Recommended" is a small tag at the right of
+  the option's title plus an accent edge on its left, never a fill. The primary button and the tag use the accent
+  darkened (`info.darker(0.6)`) so white text reads at about 5:1.
+- **Hint bar**: a strip along the bottom of every page, from `fork::page::hints`: "A Choose · B Back · D-pad Move".
+  "D-pad Move" only when more than one thing can take focus, "A Choose" only when something can; pages with a text
+  box add "Steam + X Keyboard". What B does comes from `Page.back_hint`: `Page::b_does(&action)` takes the label of
+  the button or option that does what B does (the wizard: its `back_action`; Close Steam: its `back_action`; the old
+  copies page: Keep them; notices: their safe answer), `Page::b_means("Cancel")` sets it by hand (progress and moving
+  pages, the import's game-file question: "Stop the import").
+- **One press acts once** (`src/fork/press_echo.rs`): Steam Input can type Return or Escape on top of the A or B our
+  gamepad reader (gilrs, reading the pad whatever window has focus) sees, and both reach the same action. A press
+  from the other source (pad or keyboard) of the same kind within 300 ms of one acted on is dropped, once per press;
+  presses from one source always count. Asked by the pad dispatch, the page window's Return/Escape, the upstream
+  dialogs' keyboard wiring and the main list. Escape on the main list in the windowed view (Close) waits 300 ms; a
+  pad B in that time drops it and counts as the one B (coordinator ruling 2026-10-25), so B on the main list never
+  closes the app even when Steam's Escape arrives first. Not covered: D-pad arrows (Steam may also type arrow keys;
+  watch for double moves on the Deck), and dialogs that wire their own close callbacks.
 
 ## Add to Steam (Settings menu)
 

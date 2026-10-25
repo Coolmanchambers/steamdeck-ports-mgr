@@ -99,7 +99,10 @@ on top of the list instead of leaving you in it. It takes a few minutes. Every p
 few big choices: A chooses (and moves on), the D-pad moves, B goes back one page. On the first page B asks
 "Skip setup?" and the cursor starts on "Keep going with setup". The header shows "Step N of 5". You can skip
 anything and run setup again later. All the pages, Import ports and the old copies page included, stay in one
-window that changes its content; B usually lands on the choice you were on. Other screens it hands over to (the
+window that changes its content; B usually lands on the choice you were on. The bar along the bottom of each page says
+what the buttons do there ("A Choose · B Back · D-pad Move", or what B does instead, such as "B Cancel"). The
+choice the cursor is on has a thick white ring; "Recommended" is a small tag on the suggested choice. One press of A
+or B acts once even when Steam also types Enter or Escape for it. Other screens it hands over to (the
 folder picker, Settings > Game files) open on their own and the wizard window comes back after them.
 
 1. **Where should ports go?** With an SD card in, it is offered first ("Recommended", a `Ports` folder on it),

@@ -164,17 +164,26 @@ pub fn dispatch(result: PollResult) {
         }
     }
     for (action, input) in result.actions {
+        // Fork: one physical press acts once (Steam can type Return / Escape on top of A / B): crate::fork::press_echo.
+        let echoable = match (action, input) {
+            (GamepadAction::ActivateSelection, CheatInput::A) => Some(crate::fork::press_echo::Press::Choose),
+            (GamepadAction::Reject, _) => Some(crate::fork::press_echo::Press::Back),
+            _ => None,
+        };
+        if echoable.is_some_and(|press| !crate::fork::press_echo::pad(press)) {
+            continue;
+        }
         if result.target.intercept(Some(input)) {
             continue;
         }
-        match action {
+        crate::fork::press_echo::while_pad(|| match action {
             GamepadAction::ActivateSelection => result.target.activate_selection(),
             GamepadAction::Reject => result.target.reject(),
             GamepadAction::ShowInfoForSelection => result.target.show_info_for_selection(),
             GamepadAction::ToggleFullscreen => result.target.toggle_fullscreen(),
             GamepadAction::OpenSettings => result.target.open_settings(),
             GamepadAction::SwitchList => result.target.switch_list(),
-        }
+        });
     }
 }
 

@@ -120,6 +120,7 @@ pub(crate) fn result_page(app: &Rc<AppState>, router: &Router, text: &str, origi
     page.paragraphs = text.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect();
     page.options = vec![crate::fork::page::PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: BatchAction::Ok }];
     page.initial = crate::fork::page::Focus::Option(0);
+    let page = page.b_does(&BatchAction::Ok);
     let go = {
         let then = then.clone();
         Rc::new(move |app: &Rc<AppState>, router: &Router| {
@@ -202,7 +203,9 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
         on_input: None,
     };
     // In the setup wizard this is its old copy question, between Steam and the last page.
-    let page = if crate::app::setup_wizard_screen::active() { batch.page().in_wizard(4, crate::fork::setup_wizard::flow::Step::COUNTED) } else { batch.page() };
+    // B keeps the old copies (OK on the page that only says they stay).
+    let page = batch.page().b_does(&BatchAction::Ok).b_does(&BatchAction::Keep);
+    let page = if crate::app::setup_wizard_screen::active() { page.in_wizard(4, crate::fork::setup_wizard::flow::Step::COUNTED) } else { page };
     if !show_page(app, router, page, handlers) {
         // The page could not be built: nothing is removed, and the flow goes on.
         then(app, router, Some(with_summary(&summary, &batch.kept_text())));

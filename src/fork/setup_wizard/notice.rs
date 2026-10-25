@@ -57,6 +57,8 @@ pub fn notice_page(title: &str, text: &str, label: &str, preselect_cancel: bool,
         p.options = vec![option(label, NoticeAction::Confirm, !preselect_cancel), option(cancel_label(label), NoticeAction::Cancel, preselect_cancel)];
         p.initial = Focus::Option(usize::from(preselect_cancel));
     }
+    // B is the safe answer (Cancel), or on a one-answer notice the same as that answer.
+    let p = p.b_does(&NoticeAction::Confirm).b_does(&NoticeAction::Cancel);
     p.in_wizard(step, super::flow::Step::COUNTED)
 }
 
