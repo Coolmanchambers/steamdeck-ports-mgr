@@ -44,6 +44,17 @@ pub enum QueuedKind {
     /// A port moved to another folder: its shortcuts' paths follow (see `port_mover::steam`). Carries
     /// `QueuedChange::repoint`.
     Repoint,
+    /// A shortcut's icon to repair (`fork::steam_icons`). Carries `QueuedChange::icon`.
+    Icon,
+}
+
+/// For `QueuedKind::Icon`: the shortcut's app ID, the `icon` text it had when the problem was found, and the plain
+/// path to store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IconChange {
+    pub app_id: u32,
+    pub from: String,
+    pub to: String,
 }
 
 impl QueuedKind {
@@ -52,6 +63,7 @@ impl QueuedKind {
             QueuedKind::Add => "add",
             QueuedKind::Update => "update",
             QueuedKind::Repoint => "repoint",
+            QueuedKind::Icon => "icon",
         }
     }
 
@@ -59,6 +71,7 @@ impl QueuedKind {
     fn label(self) -> &'static str {
         match self {
             QueuedKind::Repoint => "moved to a new folder or version",
+            QueuedKind::Icon => "icon repair",
             other => other.as_str(),
         }
     }
@@ -101,6 +114,8 @@ pub struct QueuedChange {
     pub queued_at: String,
     /// For `QueuedKind::Repoint`: (old folder, new folder) of the port.
     pub repoint: Option<(String, String)>,
+    /// For `QueuedKind::Icon`.
+    pub icon: Option<IconChange>,
 }
 
 impl QueuedChange {
@@ -109,6 +124,11 @@ impl QueuedChange {
         if let (Some((from, to)), Some(obj)) = (&self.repoint, value.as_object_mut()) {
             obj.insert("repoint_from".into(), json!(from));
             obj.insert("repoint_to".into(), json!(to));
+        }
+        if let (Some(icon), Some(obj)) = (&self.icon, value.as_object_mut()) {
+            obj.insert("icon_app_id".into(), json!(icon.app_id));
+            obj.insert("icon_from".into(), json!(icon.from));
+            obj.insert("icon_to".into(), json!(icon.to));
         }
         value
     }
@@ -139,7 +159,13 @@ impl QueuedChange {
             Some("add") => QueuedKind::Add,
             Some("update") => QueuedKind::Update,
             Some("repoint") => QueuedKind::Repoint,
+            Some("icon") => QueuedKind::Icon,
             _ => return Err("an entry has no usable kind".into()),
+        };
+        let icon = match (obj.get("icon_app_id").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()), obj.get("icon_to").and_then(Value::as_str).filter(|s| !s.is_empty())) {
+            (Some(app_id), Some(to)) => Some(IconChange { app_id, from: obj.get("icon_from").and_then(Value::as_str).unwrap_or_default().to_string(), to: to.to_string() }),
+            _ if kind == QueuedKind::Icon => return Err("an icon entry has no app ID or icon".into()),
+            _ => None,
         };
         let path_text = |key: &str| obj.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string);
         let repoint = match (path_text("repoint_from"), path_text("repoint_to")) {
@@ -165,6 +191,7 @@ impl QueuedChange {
             from_game_mode: flag("from_game_mode"),
             queued_at: text("queued_at").unwrap_or_default(),
             repoint,
+            icon,
         })
     }
 
@@ -198,13 +225,22 @@ impl SteamQueue {
 
     /// An add or update is queued for this port and account (repoints are separate).
     pub fn contains(&self, account_id: u32, port_key: &str) -> bool {
-        self.entries.iter().any(|e| e.account_id == account_id && e.port_key == port_key && e.kind != QueuedKind::Repoint)
+        self.entries.iter().any(|e| e.account_id == account_id && e.port_key == port_key && !matches!(e.kind, QueuedKind::Repoint | QueuedKind::Icon))
     }
 
     /// Adds a change, replacing one already queued for the same port and account (it keeps its place).
     /// Repoints are kept apart from adds and updates; a second move of the same port chains onto the
     /// first (A to B, then B to C, becomes A to C), and a move back cancels out.
     pub fn upsert(&mut self, change: QueuedChange) {
+        if change.kind == QueuedKind::Icon {
+            // One icon repair per shortcut: a newer one for the same app ID replaces the older.
+            let id = change.icon.as_ref().map(|i| i.app_id);
+            match self.entries.iter_mut().find(|e| e.kind == QueuedKind::Icon && e.account_id == change.account_id && e.icon.as_ref().map(|i| i.app_id) == id) {
+                Some(existing) => *existing = change,
+                None => self.entries.push(change),
+            }
+            return;
+        }
         if change.kind == QueuedKind::Repoint {
             let Some((from, to)) = change.repoint.clone() else { return };
             let chained = self.entries.iter().position(|e| {
@@ -224,7 +260,7 @@ impl SteamQueue {
             }
             return;
         }
-        match self.entries.iter_mut().find(|e| e.account_id == change.account_id && e.port_key == change.port_key && e.kind != QueuedKind::Repoint) {
+        match self.entries.iter_mut().find(|e| e.account_id == change.account_id && e.port_key == change.port_key && !matches!(e.kind, QueuedKind::Repoint | QueuedKind::Icon)) {
             Some(existing) => *existing = change,
             None => self.entries.push(change),
         }
@@ -504,6 +540,7 @@ pub fn changes_from_screen(screen: &SteamScreen, queued_at: &str) -> Vec<QueuedC
             from_game_mode: screen.game_mode,
             queued_at: queued_at.to_string(),
             repoint: None,
+            icon: None,
         })
         .collect()
 }
@@ -660,7 +697,8 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
     let mut already_count = 0usize;
 
     // Moves first, in the order they were queued, so a later add or update plans from the new paths.
-    let (repoints, rest): (Vec<&QueuedChange>, Vec<&QueuedChange>) = queue.entries.iter().partition(|e| e.kind == QueuedKind::Repoint);
+    let (icon_entries, not_icons): (Vec<&QueuedChange>, Vec<&QueuedChange>) = queue.entries.iter().partition(|e| e.kind == QueuedKind::Icon);
+    let (repoints, rest): (Vec<&QueuedChange>, Vec<&QueuedChange>) = not_icons.into_iter().partition(|e| e.kind == QueuedKind::Repoint);
     if !repoints.is_empty() {
         let accounts = super::port_mover::steam::device_accounts(inputs.home);
         for entry in repoints {
@@ -713,6 +751,11 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
                 }
             }
         }
+    }
+    // Icon repairs (fork::steam_icons): only the `icon` field of the named shortcuts, one write per account.
+    if !icon_entries.is_empty() {
+        let mut state = ApplyIconState { remaining: &mut remaining, sections: &mut sections, skipped: &mut skipped, wrote: &mut wrote, refused: &mut refused, done: &mut done, already_count: &mut already_count };
+        apply_icon_entries(&icon_entries, inputs, steam, now, &mut state);
     }
     let queue = &SteamQueue { entries: rest.into_iter().cloned().collect() };
 
@@ -816,6 +859,81 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
     }
     already_count += already.len();
     QueueApplyOutcome { text, remaining, wrote, refused, done, already: already_count, dropped: skipped.len() }
+}
+
+/// What [`apply_icon_entries`] adds to.
+struct ApplyIconState<'a> {
+    remaining: &'a mut SteamQueue,
+    sections: &'a mut Vec<String>,
+    skipped: &'a mut Vec<String>,
+    wrote: &'a mut bool,
+    refused: &'a mut bool,
+    done: &'a mut usize,
+    already_count: &'a mut usize,
+}
+
+fn apply_icon_entries(entries: &[&QueuedChange], inputs: &ApplyInputs, steam: &dyn SteamProcessCheck, now: SystemTime, st: &mut ApplyIconState) {
+    use super::port_mover::steam::WriteError;
+    use super::steam_icons::{write_fixes, IconFix};
+    let accounts = super::port_mover::steam::device_accounts(inputs.home);
+    let mut ids: Vec<u32> = Vec::new();
+    for e in entries {
+        if !ids.contains(&e.account_id) {
+            ids.push(e.account_id);
+        }
+    }
+    for account_id in ids {
+        let mine: Vec<&QueuedChange> = entries.iter().copied().filter(|e| e.account_id == account_id).collect();
+        if *st.refused {
+            st.remaining.entries.extend(mine.into_iter().cloned());
+            continue;
+        }
+        let Some(account) = accounts.iter().find(|a| a.account_id == account_id) else {
+            if accounts.is_empty() {
+                st.sections.push("No Steam account folder was found.".into());
+                st.remaining.entries.extend(mine.into_iter().cloned());
+                *st.refused = true;
+            } else {
+                st.skipped.extend(mine.iter().map(|e| format!("  {}: Steam {} is not on this device any more", e.name, e.account_text())));
+            }
+            continue;
+        };
+        let fixes: Vec<IconFix> = mine
+            .iter()
+            .filter_map(|e| e.icon.as_ref().map(|i| IconFix { account_id, account_label: e.account_label.clone(), port_key: e.port_key.clone(), name: e.name.clone(), app_id: i.app_id, from: i.from.clone(), to: i.to.clone() }))
+            .collect();
+        let refs: Vec<&IconFix> = fixes.iter().collect();
+        match write_fixes(&account.shortcuts, &refs, steam, inputs.settings, now) {
+            Ok((result, backup)) => {
+                *st.wrote |= !result.changed.is_empty();
+                *st.done += result.changed.len();
+                *st.already_count += mine.len().saturating_sub(result.changed.len() + result.skipped.len());
+                let mut lines: Vec<String> = Vec::new();
+                for (name, _, _, to) in &result.changed {
+                    lines.push(format!("{name}: icon is now {to}"));
+                }
+                for (name, why) in &result.skipped {
+                    lines.push(format!("{name}: icon left alone: {why}"));
+                }
+                if let Some(name) = backup.as_ref().and_then(|b| b.file_name()) {
+                    lines.push(format!("Backup of the old list: {}", name.to_string_lossy()));
+                }
+                if !lines.is_empty() {
+                    st.sections.push(lines.join("\n"));
+                }
+            }
+            Err(WriteError::SteamUp(why)) => {
+                st.sections.push(format!("Nothing was written: {why}"));
+                st.remaining.entries.extend(mine.into_iter().cloned());
+                *st.refused = true;
+            }
+            Err(WriteError::Failed(why)) => {
+                st.sections.push(format!("Could not update the icons of {}: {why}", account.label));
+                st.remaining.entries.extend(mine.into_iter().cloned());
+                *st.refused = true;
+            }
+        }
+    }
 }
 
 fn push_block(text: &mut String, block: &str) {
@@ -1021,6 +1139,7 @@ mod tests {
             from_game_mode: true,
             queued_at: "20261021-120000".into(),
             repoint: None,
+            icon: None,
         }
     }
 

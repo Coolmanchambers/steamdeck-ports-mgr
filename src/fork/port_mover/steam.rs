@@ -271,6 +271,7 @@ pub fn repoint_everywhere(port_key: &str, port_name: &str, from: &Path, to: &Pat
                     from_game_mode: ctx.game_mode,
                     queued_at: backup_stamp(),
                     repoint: Some((from.to_string_lossy().into_owned(), to.to_string_lossy().into_owned())),
+                    icon: None,
                 };
                 match steam_queue::queue_changes(&steam_queue::queue_path(ctx.config_dir), vec![change], ctx.game_mode) {
                     Ok(_) => report.queued.push(account.label.clone()),

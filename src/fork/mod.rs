@@ -42,6 +42,7 @@ pub mod settings_menu;
 pub mod setup_wizard;
 pub mod shortcuts;
 pub mod steam_close;
+pub mod steam_icons;
 pub mod steam_queue;
 pub mod steam_sync;
 pub mod steam_user;

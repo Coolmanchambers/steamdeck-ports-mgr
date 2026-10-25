@@ -142,6 +142,11 @@ fn show_steam_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<Ste
                         return;
                     }
                 }
+                Some(SteamLine::FixIcons) => {
+                    // Fork: the Steam icons page; leaving it brings this screen back.
+                    super::steam_icons_screen::open(&app, &router, Rc::new(|app, router| open_steam_screen(app, router)));
+                    return;
+                }
                 Some(SteamLine::Review) => {
                     review_steam_changes(&app, &router, screen.clone());
                     return;

@@ -362,6 +362,7 @@ fn a_second_move_chains_onto_a_queued_one_and_a_move_back_cancels_it() {
         from_game_mode: true,
         queued_at: String::new(),
         repoint: Some((from.into(), to.into())),
+        icon: None,
     };
     queue.upsert(change("/a", "/b"));
     queue.upsert(change("/b", "/c"));

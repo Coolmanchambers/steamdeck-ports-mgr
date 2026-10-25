@@ -851,6 +851,7 @@ fn queued_repoints_are_matched_by_path_whichever_port_queued_them() {
         from_game_mode: false,
         queued_at: "2026-10-24_12-00-00".into(),
         repoint: Some((from.into(), to.into())),
+        icon: None,
     };
     let a = w.game.join("Game-v1.0").to_string_lossy().into_owned();
     let b = w.game.join("Game-v1.1");

@@ -121,6 +121,7 @@ impl Home {
             from_game_mode: false,
             queued_at: String::new(),
             repoint: Some((self.old.to_string_lossy().into_owned(), self.new.to_string_lossy().into_owned())),
+            icon: None,
         });
         steam_queue::save(&steam_queue::queue_path(&self.app), &q).unwrap();
     }

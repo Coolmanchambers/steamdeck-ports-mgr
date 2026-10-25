@@ -58,6 +58,8 @@ pub enum SteamLine {
     Account,
     Status,
     Port(usize),
+    /// "Fix Steam icons...": opens the Steam icons page (`steam_icons`).
+    FixIcons,
     Review,
 }
 
@@ -193,6 +195,7 @@ impl SteamScreen {
         }
         lines.extend([SteamLine::Account, SteamLine::Status]);
         lines.extend((0..self.rows.len()).map(SteamLine::Port));
+        lines.push(SteamLine::FixIcons);
         lines.push(SteamLine::Review);
         lines
     }
@@ -252,6 +255,7 @@ impl SteamScreen {
                 };
                 format!("{mark}{}: {what}{queued}", row.name)
             }
+            SteamLine::FixIcons => "Fix Steam icons...".to_string(),
             SteamLine::Review => match (&self.load_error, self.selected_count()) {
                 (Some(_), _) => "Could not read shortcuts.vdf: see the message".to_string(),
                 (None, _) if self.account.is_none() => "Choose a Steam account first".to_string(),
@@ -585,7 +589,8 @@ mod tests {
         assert_eq!(labels[3], "[ ] Ship of Harkinian: same name as a shortcut for soh.appimage, will repoint it");
         assert!(labels[4].starts_with("Two Programs: skipped, several programs found"));
         assert_eq!(labels.last().unwrap(), "Review 1 change...");
-        assert_eq!(labels.len(), 6, "the port that is not installed is not listed");
+        assert_eq!(labels[labels.len() - 2], "Fix Steam icons...");
+        assert_eq!(labels.len(), 7, "the port that is not installed is not listed (account, status, 4 ports, fix icons, review)");
         let _ = fs::remove_dir_all(home);
     }
 
@@ -1052,6 +1057,7 @@ mod tests {
             from_game_mode: false,
             queued_at: String::new(),
             repoint: None,
+            icon: None,
         });
         assert_eq!(screen.lines()[..3], [SteamLine::ApplyQueue, SteamLine::ManageQueue, SteamLine::Account]);
         assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued while Steam was running: apply now...");

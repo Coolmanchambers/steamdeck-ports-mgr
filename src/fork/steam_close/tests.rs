@@ -250,6 +250,7 @@ fn fixture() -> Fixture {
         from_game_mode: false,
         queued_at: "20261024-100000".into(),
         repoint: Some(("/old/SoH".into(), library.join("SoH").to_string_lossy().into_owned())),
+        icon: None,
     });
     steam_queue::save(&queue, &q).unwrap();
     let settings = dir.path().join("app/fork-settings.json");
@@ -327,6 +328,7 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
             from_game_mode: false,
             queued_at: String::new(),
             repoint: Some(("/old/SoH".into(), f.library.join("SoH").to_string_lossy().into_owned())),
+            icon: None,
         });
         q
     })

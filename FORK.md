@@ -257,6 +257,7 @@ Files added by this fork:
 | 2026-10-25 | `src/core/executable_detect.rs` | Branch `deck-fixes-3` (O9, disc images offered as programs): Linux `is_candidate` asks `fork::program_detect::is_linux_program` (`.sh`/`.AppImage` by name, otherwise executable bit AND program content: `#!` or an ELF executable, not a library); new `list_candidates` (all, shallowest folder first); `autodetect_executable` keeps only the shallowest depth that has any candidate; test helper writes a script line; tests in `fork/program_detect/tests.rs` |
 | 2026-10-25 | `src/app/install_launch.rs` | O9: "Choose an executable" saves the pick as the port's favorite executable before starting it; Info's favorite picker lists `list_candidates` (every program, shallowest first, deeper ones shown with their folder) |
 | 2026-10-25 | `src/main.rs`, `src/app/sync.rs` | Branch `deck-fixes-3`: one line each, `fork::catalog_extras::apply`, after the catalog and `ports.local.json` are merged (start-up, and a catalog update): a port added from the Deck-ready list that upstream turned off (`-name`) takes its cover, icon, notes, tags and save paths from the catalog's raw entry, in memory only |
+| 2026-10-25 | `src/app/mod.rs` | Branch `deck-fixes-3`: one module line, `steam_icons_screen` (the Steam icons page) |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -625,6 +626,16 @@ The library underneath the Add to Steam screen. Rules it enforces so a later fea
   used for new entries. Newer Steam builds may assign other IDs to shortcuts added in the Steam UI.
 - Code in `src/fork/` uses English names and module docs; upstream's own tests are in French.
 - Backups (`shortcuts.vdf.bak-<local time>`) are pruned only by `backups::prune_backups`, which Add to Steam calls after a write (newest 10, never anything under an hour old).
+- **Steam icons** (`src/fork/steam_icons.rs`, page in `src/app/steam_icons_screen.rs`, opened from the "Fix Steam icons..."
+  row of Settings > Add to Steam). `diagnose` lists each Steam shortcut (all accounts) whose program is inside an installed
+  port's folder (longest folder wins) with the state of its `icon` field; `plan` picks, for each one that shows nothing, the
+  first of: the icon the same app ID had in a `shortcuts.vdf.bak-*` backup (mapped into the port's current folder through
+  `port-moves.json` when it lived in an old folder; never a file that exists only inside an old copy), an `<id>_icon.*`
+  already in `config/grid/`, the cached catalog icon (written to the grid folder through `art::grid::write_art`, which never
+  overwrites art the user chose); else it says why nothing was found. `apply` changes only the `icon` field, only while it
+  still holds the text it had when found, through `ShortcutsFile::save` (refused while Steam runs, backup first); with
+  Steam running or in Game Mode the repairs are queued (`QueuedKind::Icon`) and applied by the usual "Close Steam and update
+  shortcuts" flow. Every finding, plan line and write is logged (`steam icons: ...`).
 - An icon is read through `Shortcut::icon_path` (quote marks removed, like the program) wherever it is compared: a move
   repoints a quoted icon inside the old folder and writes it plain (the way Steam stores it), and "still points into
   the old copy" sees it. An Update of an existing shortcut never clears or replaces launch options it already has, and
