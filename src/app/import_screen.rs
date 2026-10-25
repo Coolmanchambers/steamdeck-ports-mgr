@@ -10,8 +10,8 @@
 //! port mover (`crate::fork::port_mover`) through `crate::fork::import::real_engine`. The text is English
 //! only; it is not part of upstream's translation tables.
 //!
-//! Entry point for the setup wizard: `open(app, router, from_wizard)`, or `open_with(app, router, true,
-//! Some(finish))`. `finish` runs exactly once, whichever way the user leaves: "Continue setup", the end
+//! Entry point for the setup wizard: `open_with(app, router, true,
+//! Some(finish))` (Settings and the Add a port page use `open_back_to`). `finish` runs exactly once, whichever way the user leaves: "Continue setup", the end
 //! of an import (after the old-copy page and the game file search), B on the found page, B on the
 //! scan's progress list, or a notice. Quitting the app is the one exit that does not call it.
 //! Back inside the flow (B on a card, on the move page, on the scan folders or plan list) returns to the
@@ -200,11 +200,6 @@ pub(super) fn settings_path(app: &AppState) -> PathBuf {
 }
 
 // -- Entry points ----------------------------------------------------------------------------------
-
-/// Settings > Import ports... (`from_wizard` false), or the wizard's import step (true).
-pub(crate) fn open(app: &Rc<AppState>, router: &Router, from_wizard: bool) {
-    open_with(app, router, from_wizard, None);
-}
 
 /// Like `open`; `finish` runs once when the user leaves the screen, whichever way (see the module docs).
 pub(crate) fn open_with(app: &Rc<AppState>, router: &Router, from_wizard: bool, finish: Option<Finish>) {
