@@ -68,8 +68,8 @@ pub fn is_showable_image(path: &Path) -> bool {
 /// What a shortcut's `icon` field holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IconState {
-    /// A picture Steam can show, inside the port's folder or Steam's grid folder.
-    Ok,
+    /// A picture Steam can show, inside the port's folder or Steam's grid folder (the path, so a report shows it).
+    Ok(String),
     /// Nothing is set.
     Empty,
     /// A path, but no file there.
@@ -80,24 +80,27 @@ pub enum IconState {
     Quoted { path: String, exists: bool },
     /// A picture outside the port's folder and outside Steam's grid folder. Informational: left as it is.
     Outside(String),
+    /// A picture inside an old copy of the port (`port-moves.json`): that copy is to be removed one day.
+    InOldCopy(String),
 }
 
 impl IconState {
     /// The icon needs replacing.
     pub fn needs_fix(&self) -> bool {
-        matches!(self, IconState::Empty | IconState::Missing(_) | IconState::NotAnImage(_) | IconState::Quoted { .. })
+        matches!(self, IconState::Empty | IconState::Missing(_) | IconState::NotAnImage(_) | IconState::Quoted { .. } | IconState::InOldCopy(_))
     }
 
     /// One short sentence about the icon, for lists and the log.
     pub fn wording(&self) -> String {
         match self {
-            IconState::Ok => "icon is fine".to_string(),
+            IconState::Ok(p) => format!("icon is fine ({p})"),
             IconState::Empty => "no icon is set".to_string(),
             IconState::Missing(p) => format!("icon file missing ({p})"),
             IconState::NotAnImage(p) => format!("icon file is not a picture Steam can show ({p})"),
             IconState::Quoted { path, exists: true } => format!("icon path is stored in quote marks ({path}); the file is there"),
             IconState::Quoted { path, exists: false } => format!("icon path is stored in quote marks and the file is missing ({path})"),
             IconState::Outside(p) => format!("icon is outside the port folder ({p}); left as it is"),
+            IconState::InOldCopy(p) => format!("icon is stored inside an old copy of the port ({p})"),
         }
     }
 }
@@ -126,12 +129,26 @@ impl IconFinding {
 }
 
 /// The port whose folder holds `exe` (as written, or as the file system names it); the longest folder wins.
-fn owner_of<'a>(exe: &Path, dirs: &'a [(usize, PathBuf)]) -> Option<usize> {
+fn owner_of(exe: &Path, dirs: &[(usize, PathBuf)]) -> Option<usize> {
     let canonical = fs::canonicalize(exe).ok();
     dirs.iter()
         .filter(|(_, d)| exe.starts_with(d) || canonical.as_ref().is_some_and(|c| c.starts_with(d)))
-        .max_by_key(|(_, d)| d.as_os_str().len())
+        .max_by_key(|(_, d)| d.components().count())
         .map(|(i, _)| *i)
+}
+
+/// Each port's folder as written and, when it differs, as the file system names it: an SD card is reachable as
+/// `/run/media/deck/<label>` and as `/run/media/mmcblk0p1`, and a shortcut may use either.
+fn routes(dirs: &[(usize, PathBuf)]) -> Vec<(usize, PathBuf)> {
+    let mut out = dirs.to_vec();
+    for (i, d) in dirs {
+        if let Ok(real) = fs::canonicalize(d) {
+            if &real != d {
+                out.push((*i, real));
+            }
+        }
+    }
+    out
 }
 
 fn inside(path: &Path, dir: &Path) -> bool {
@@ -140,7 +157,7 @@ fn inside(path: &Path, dir: &Path) -> bool {
 
 /// The state of one stored icon value, for a shortcut of the port whose folder is `port_dir`, in an account whose grid
 /// folder is `grid_dir`.
-pub fn icon_state(stored: &str, port_dir: &Path, grid_dir: &Path) -> IconState {
+pub fn icon_state(stored: &str, port_dir: &Path, grid_dir: &Path, old_folders: &[PathBuf]) -> IconState {
     let plain = shortcuts::unquote(stored);
     if plain.is_empty() {
         return IconState::Empty;
@@ -156,7 +173,9 @@ pub fn icon_state(stored: &str, port_dir: &Path, grid_dir: &Path) -> IconState {
         return IconState::NotAnImage(plain.to_string());
     }
     if inside(path, port_dir) || inside(path, grid_dir) {
-        IconState::Ok
+        IconState::Ok(plain.to_string())
+    } else if old_folders.iter().any(|old| inside(path, old)) {
+        IconState::InOldCopy(plain.to_string())
     } else {
         IconState::Outside(plain.to_string())
     }
@@ -164,8 +183,10 @@ pub fn icon_state(stored: &str, port_dir: &Path, grid_dir: &Path) -> IconState {
 
 /// Every Steam shortcut (all accounts) that belongs to one of `ports`, with its icon state. `ports` are the installed
 /// ones. An unreadable shortcuts file is an error, so a caller never takes "could not tell" for "nothing wrong".
-pub fn diagnose(home: &Path, library_dir: &Path, ports: &[Port]) -> Result<Vec<IconFinding>, String> {
+pub fn diagnose(home: &Path, library_dir: &Path, config_dir: &Path, ports: &[Port]) -> Result<Vec<IconFinding>, String> {
     let dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().map(|(i, p)| (i, library_dir.join(&p.folder))).collect();
+    let route_list = routes(&dirs);
+    let records = old_copies::load(config_dir).unwrap_or_default();
     let mut out = Vec::new();
     for account in device_accounts(home) {
         if !account.shortcuts.exists() {
@@ -174,8 +195,9 @@ pub fn diagnose(home: &Path, library_dir: &Path, ports: &[Port]) -> Result<Vec<I
         let file = ShortcutsFile::load(&account.shortcuts).map_err(|e| format!("Could not read the Steam shortcuts of {}: {e}", account.label))?;
         let grid = account.shortcuts.parent().map(|c| c.join("grid")).unwrap_or_default();
         for s in shortcuts::list(&file.doc) {
-            let Some(i) = owner_of(Path::new(s.exe_path()), &dirs) else { continue };
-            let state = icon_state(&s.icon, &dirs[i].1, &grid);
+            let Some(i) = owner_of(Path::new(s.exe_path()), &route_list) else { continue };
+            let old: Vec<PathBuf> = records.iter().filter(|r| r.port_key == ports[i].key()).map(|r| r.old_path.clone()).collect();
+            let state = icon_state(&s.icon, &dirs[i].1, &grid, &old);
             let finding = IconFinding {
                 port_key: ports[i].key().to_string(),
                 port_name: ports[i].display_name().to_string(),
@@ -208,6 +230,8 @@ pub fn diagnose(home: &Path, library_dir: &Path, ports: &[Port]) -> Result<Vec<I
 pub enum Source {
     /// The stored path without its quote marks (the file is there).
     Unquoted,
+    /// The same file in the port's current folder (the stored path pointed into an old copy).
+    MovedFromOldCopy,
     /// The icon this app ID had in the backup of that name.
     Backup(String),
     /// The icon the backup of that name had, moved from an old folder of the port into its current one.
@@ -222,6 +246,7 @@ impl Source {
     fn wording(&self) -> String {
         match self {
             Source::Unquoted => "use the same file without the quote marks".to_string(),
+            Source::MovedFromOldCopy => "use the same icon file in the port's new folder".to_string(),
             Source::Backup(_) => "use the icon from before the problem (from a Steam shortcuts backup)".to_string(),
             Source::BackupMoved(_) => "use the icon from before the move (found in the port's new folder)".to_string(),
             Source::Grid => "use the icon already in Steam's grid folder".to_string(),
@@ -318,6 +343,14 @@ fn replacement_for(f: &IconFinding, inputs: &PlanInputs, port: Option<&Port>, ol
     }
     let port_dir = inputs.library_dir.join(&f.port_folder);
     let current = shortcuts::unquote(&f.stored).to_string();
+    // The icon the shortcut has now, moved from an old copy of the port into its folder: the same picture, a better home.
+    if !current.is_empty() {
+        for old in old_folders {
+            if let Some(moved) = moved_path(&current, old, &port_dir).map(PathBuf::from).filter(|m| is_showable_image(m) && m.to_string_lossy() != current) {
+                return Replacement::Use { path: moved, source: Source::MovedFromOldCopy };
+            }
+        }
+    }
     if let Some(found) = from_backups(f, &current, old_folders, &port_dir) {
         return found;
     }
@@ -329,9 +362,11 @@ fn replacement_for(f: &IconFinding, inputs: &PlanInputs, port: Option<&Port>, ol
     if !in_grid.is_empty() {
         return Replacement::Nothing("a file you put in Steam's grid folder for this shortcut cannot be shown as an icon; it was left alone".into());
     }
-    let cached = crate::core::image_cache::cached_image_path(inputs.cache_dir, &format!("{}_icon", f.port_folder)).ok().filter(|p| is_showable_image(p));
+    // The cache keeps the bytes as downloaded under a `.png` name whatever they are, so "usable" means "decodes".
+    let cached = crate::core::image_cache::cached_image_path(inputs.cache_dir, &format!("{}_icon", f.port_folder)).ok().filter(|p| p.is_file());
     match (cached, port.and_then(|p| p.icon.as_ref())) {
-        (Some(cached), _) => Replacement::WriteCatalog { cached },
+        (Some(cached), _) if catalog_art_from_files(None, Some(&cached)).set.icon.is_some() => Replacement::WriteCatalog { cached },
+        (Some(cached), _) => Replacement::Nothing(format!("the catalog icon saved in the app's cache ({}) cannot be read as a picture; deleting it lets the app download it again", cached.display())),
         (None, Some(_)) => Replacement::Nothing("the catalog icon has not been downloaded yet".into()),
         (None, None) => Replacement::Nothing("no earlier icon was found and the catalog has none for this port".into()),
     }
@@ -492,6 +527,26 @@ pub fn by_account<'a>(fixes: &'a [IconFix], accounts: &[AccountFile]) -> Vec<(Ac
         }
     }
     out
+}
+
+/// After the queue was applied: which fixes are in the shortcuts file now (their icon is the one planned) and which are
+/// not (dropped as stale, the shortcut gone, or the file unreadable). Reads the files; writes nothing.
+pub fn verify_applied(fixes: &[IconFix], home: &Path) -> (Vec<IconFix>, Vec<(IconFix, String)>) {
+    let accounts = device_accounts(home);
+    let (mut done, mut not) = (Vec::new(), Vec::new());
+    for fix in fixes {
+        let now = accounts
+            .iter()
+            .find(|a| a.account_id == fix.account_id)
+            .and_then(|a| ShortcutsFile::load(&a.shortcuts).ok())
+            .and_then(|file| shortcuts::list(&file.doc).into_iter().find(|s| s.app_id == Some(fix.app_id)));
+        match now {
+            Some(s) if s.icon == fix.to => done.push(fix.clone()),
+            Some(_) => not.push((fix.clone(), "its icon was not changed (it changed since the problem was found)".to_string())),
+            None => not.push((fix.clone(), "the shortcut is no longer in Steam".to_string())),
+        }
+    }
+    (done, not)
 }
 
 /// The fixes as Steam queue entries (applied later by "Close Steam and update shortcuts").

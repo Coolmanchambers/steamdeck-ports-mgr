@@ -62,7 +62,7 @@ pub(crate) fn open(app: &Rc<AppState>, router: &Router, then: Then) {
 /// Looks at the shortcuts; fetches catalog icons first when a shortcut would need one that is not downloaded yet.
 fn scan(app: &Rc<AppState>, router: &Router, run: &Rc<Run>) {
     let library = app.paths.library_dir();
-    let findings = match steam_icons::diagnose(&run.home, &library, &run.ports) {
+    let findings = match steam_icons::diagnose(&run.home, &library, &app.paths.config_dir, &run.ports) {
         Ok(f) => f,
         Err(e) => {
             show(app, router, Some(run), pages::problem_page(&e), run.then.clone());
@@ -195,9 +195,11 @@ fn fix(app: &Rc<AppState>, router: &Router, run: &Rc<Run>) {
     let then: steam_close_screen::Then = Rc::new(move |app, router, finished| {
         let mut report = report.clone();
         if finished.waiting == 0 {
-            // Applied: they are written now.
-            let done: Vec<_> = report.queued.drain(..).map(|f| (f.name, f.app_id, f.from, f.to)).collect();
-            report.written.extend(done);
+            // The queue is empty, but an entry can be dropped as stale: read the file to see what was really written.
+            let queued: Vec<_> = report.queued.drain(..).collect();
+            let (done, not) = steam_icons::verify_applied(&queued, &run2.home);
+            report.written.extend(done.into_iter().map(|f| (f.name, f.app_id, f.from, f.to)));
+            report.skipped.extend(not.into_iter().map(|(f, why)| (f.name, why)));
         }
         show_result(app, router, &run2, report, resolved.clone());
     });

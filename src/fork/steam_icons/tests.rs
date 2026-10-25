@@ -1,3 +1,5 @@
+//! Fixtures use `/`-joined paths, symlinks and a Steam folder under the home folder: Linux (the Deck) only.
+#![cfg(unix)]
 use super::*;
 use crate::core::models::port_from_value;
 use crate::fork::steam_queue::{self, ApplyInputs};
@@ -97,7 +99,7 @@ impl World {
     }
 
     fn plan_for(&self, ports: &[Port]) -> Plan {
-        let findings = diagnose(&self.home, &self.library, ports).unwrap();
+        let findings = diagnose(&self.home, &self.library, &self.config, ports).unwrap();
         plan(&self.inputs(), &findings, ports)
     }
 }
@@ -140,11 +142,13 @@ fn every_icon_state() {
     put(&grid.join("77_icon.png"), PNG);
     put(&w.root.join("elsewhere/icon.png"), PNG);
     put(&port_dir.join("art/bad.png"), b"nope");
-    let state = |stored: &str| icon_state(stored, &port_dir, grid);
+    let state = |stored: &str| icon_state(stored, &port_dir, grid, &[]);
     assert_eq!(state(""), IconState::Empty);
     assert_eq!(state("\"\""), IconState::Empty, "only quote marks is nothing");
-    assert_eq!(state(&port_dir.join("art/icon.png").to_string_lossy()), IconState::Ok);
-    assert_eq!(state(&grid.join("77_icon.png").to_string_lossy()), IconState::Ok, "Steam's own grid folder is fine");
+    let inside = port_dir.join("art/icon.png").to_string_lossy().into_owned();
+    assert_eq!(state(&inside), IconState::Ok(inside.clone()));
+    let in_grid = grid.join("77_icon.png").to_string_lossy().into_owned();
+    assert_eq!(state(&in_grid), IconState::Ok(in_grid.clone()), "Steam's own grid folder is fine");
     let outside = w.root.join("elsewhere/icon.png").to_string_lossy().into_owned();
     assert_eq!(state(&outside), IconState::Outside(outside.clone()));
     let missing = port_dir.join("art/gone.png").to_string_lossy().into_owned();
@@ -157,7 +161,8 @@ fn every_icon_state() {
     for fixable in [IconState::Empty, IconState::Missing(String::new()), IconState::NotAnImage(String::new()), IconState::Quoted { path: String::new(), exists: true }] {
         assert!(fixable.needs_fix());
     }
-    assert!(!IconState::Ok.needs_fix() && !IconState::Outside(String::new()).needs_fix());
+    assert!(!IconState::Ok(String::new()).needs_fix() && !IconState::Outside(String::new()).needs_fix());
+    assert!(IconState::InOldCopy(String::new()).needs_fix());
 }
 
 #[test]
@@ -181,10 +186,10 @@ fn diagnose_lists_each_shortcut_of_a_port_and_the_longest_folder_wins() {
         foreign,
         w.entry(3, 3, "Other", "\"/nowhere/x.png\"", ""),
     ]);
-    let findings = diagnose(&w.home, &w.library, &ports).unwrap();
+    let findings = diagnose(&w.home, &w.library, &w.config, &ports).unwrap();
     let summary: Vec<(&str, u32, bool)> = findings.iter().map(|f| (f.port_key.as_str(), f.app_id.unwrap(), f.state.needs_fix())).collect();
     assert_eq!(summary, [("Zelda", 1, false), ("Zelda/mods", 2, true), ("Other", 3, true)], "Chiaki belongs to no port; the nested folder's shortcut is the nested port's");
-    assert_eq!(findings[0].state, IconState::Ok);
+    assert!(matches!(findings[0].state, IconState::Ok(_)));
     assert_eq!(findings[1].state, IconState::Empty);
     assert!(matches!(findings[2].state, IconState::Quoted { exists: false, .. }));
     assert_eq!((findings[0].account_id, findings[0].shortcut_name.as_str()), (1234, "Zelda shortcut"));
@@ -195,7 +200,7 @@ fn diagnose_lists_each_shortcut_of_a_port_and_the_longest_folder_wins() {
 fn an_unreadable_shortcuts_file_is_an_error_not_no_findings() {
     let w = World::new("unreadable");
     put(&w.vdf, b"not a vdf at all");
-    assert!(diagnose(&w.home, &w.library, &[port("Zelda", false)]).is_err());
+    assert!(diagnose(&w.home, &w.library, &w.config, &[port("Zelda", false)]).is_err());
 }
 
 #[test]
@@ -472,4 +477,100 @@ fn the_ports_own_ownership_rule_ignores_a_shortcut_outside_every_port() {
     assert_eq!(owner_of(Path::new("/lib/A/inner/run"), &dirs), Some(1));
     assert_eq!(owner_of(Path::new("/lib/A/run"), &dirs), Some(0));
     assert_eq!(owner_of(Path::new("/lib/AB/run"), &dirs), None, "whole path components only");
+}
+
+#[test]
+fn a_shortcut_stored_through_the_other_route_to_the_sd_card_is_still_the_ports() {
+    let w = World::new("route");
+    // The card is reachable as `Ports` (the alias the app was given) and through its real folder.
+    let alias = w.root.join("alias");
+    std::os::unix::fs::symlink(&w.library, &alias).unwrap();
+    let real_exe = w.dir("Zelda").join("run");
+    put(&real_exe, b"#!/bin/sh\n");
+    put(&w.dir("Zelda/art/i.png"), PNG);
+    let entry = steam_entry_with(0, 5, "Zelda shortcut", &format!("\"{}\"", real_exe.display()), &format!("\"{}\"", w.dir("Zelda").display()), "", "");
+    w.write_vdf(&[entry]);
+    let ports = [port("Zelda", false)];
+    // The app knows the library as the alias; the shortcut says the real path.
+    let findings = diagnose(&w.home, &alias, &w.config, &ports).unwrap();
+    assert_eq!(findings.len(), 1, "the real path is the same folder as the alias");
+    assert_eq!(findings[0].state, IconState::Empty);
+    // And the other way round: the library is the real folder, the shortcut goes through the alias.
+    let via_alias = alias.join("Zelda").join("run");
+    let entry = steam_entry_with(0, 5, "Zelda shortcut", &format!("\"{}\"", via_alias.display()), "\"/x\"", "", "");
+    w.write_vdf(&[entry]);
+    assert_eq!(diagnose(&w.home, &w.library, &w.config, &ports).unwrap().len(), 1);
+}
+
+#[test]
+fn an_icon_inside_an_old_copy_needs_fixing_and_comes_from_the_same_file_in_the_new_folder() {
+    let w = World::new("old_copy_icon");
+    let old = w.root.join("home/Applications/dpm/Library/Zelda");
+    put(&old.join("art/i.png"), PNG);
+    let new_icon = w.dir("Zelda/art/i.png");
+    put(&new_icon, PNG);
+    fs::write(
+        w.config.join("port-moves.json"),
+        json!({"version": 1, "old_copies": [{"port_key": "Zelda", "name": "Zelda", "old_path": old.to_string_lossy(), "new_path": w.dir("Zelda").to_string_lossy()}]}).to_string(),
+    )
+    .unwrap();
+    w.write_vdf(&[w.entry(0, 5, "Zelda", &old.join("art/i.png").to_string_lossy(), "")]);
+    let ports = [port("Zelda", false)];
+    let findings = diagnose(&w.home, &w.library, &w.config, &ports).unwrap();
+    assert!(matches!(&findings[0].state, IconState::InOldCopy(p) if p.ends_with("art/i.png")), "{:?}", findings[0].state);
+    assert!(findings[0].state.wording().contains("old copy of the port"));
+    let p = plan(&w.inputs(), &findings, &ports);
+    assert_eq!(p.items[0].replacement, Replacement::Use { path: new_icon, source: Source::MovedFromOldCopy });
+    // Nothing recorded: the same icon is just "outside the port folder", left alone.
+    fs::remove_file(w.config.join("port-moves.json")).unwrap();
+    assert!(matches!(diagnose(&w.home, &w.library, &w.config, &ports).unwrap()[0].state, IconState::Outside(_)));
+}
+
+#[test]
+fn a_cached_catalog_icon_that_is_not_a_picture_is_said_plainly() {
+    let w = World::new("bad_cache");
+    w.write_vdf(&[w.entry(0, 5, "Zelda", "", "")]);
+    put(&w.cache.join("Zelda_icon.png"), b"<html>404</html>");
+    let p = w.plan_for(&[port("Zelda", true)]);
+    match &p.items[0].replacement {
+        Replacement::Nothing(why) => assert!(why.contains("cannot be read as a picture") && !why.contains("not been downloaded"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    // A JPEG saved under the cache's .png name is a picture (the cache keeps the bytes as downloaded).
+    let jpeg = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(64, 64, image::Rgb([9, 9, 9])));
+    let mut out = std::io::Cursor::new(Vec::new());
+    jpeg.write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+    put(&w.cache.join("Zelda_icon.png"), &out.into_inner());
+    assert!(matches!(w.plan_for(&[port("Zelda", true)]).items[0].replacement, Replacement::WriteCatalog { .. }));
+}
+
+#[test]
+fn verify_applied_tells_written_from_dropped() {
+    let w = World::new("verify");
+    w.write_vdf(&[w.entry(0, 5, "Zelda", "/new/i.png", ""), w.entry(1, 6, "Zelda", "/user/changed.png", "")]);
+    let done = fix_for(5, "", "/new/i.png");
+    let stale = fix_for(6, "", "/new/j.png");
+    let gone = fix_for(7, "", "/new/k.png");
+    let (ok, not) = verify_applied(&[done.clone(), stale.clone(), gone.clone()], &w.home);
+    assert_eq!(ok, [done]);
+    assert_eq!(not.iter().map(|(f, _)| f.app_id).collect::<Vec<_>>(), [6, 7]);
+    assert!(not[0].1.contains("not changed") && not[1].1.contains("no longer in Steam"));
+}
+
+#[test]
+fn a_stale_queued_repair_is_dropped_not_counted_as_done() {
+    let w = World::new("stale_queue");
+    w.write_vdf(&[w.entry(0, 5, "Zelda", "/user/changed.png", "")]);
+    let settings = ForkSettings::load(&w.config.join("fork-settings.json"));
+    let stale = fix_for(5, "", "/new/i.png");
+    let queue_file = steam_queue::queue_path(&w.config);
+    steam_queue::queue_changes(&queue_file, queue_entries(&[stale.clone()], false), false).unwrap();
+    let loaded = steam_queue::load(&queue_file);
+    let inputs = ApplyInputs { home: &w.home, library_dir: &w.library, catalog: &[], favorite_exe: &|_| None, cache_dir: None, settings: &settings, game_mode: false };
+    let out = steam_queue::apply_queue(&loaded.queue, &inputs, &no_steam, SystemTime::now());
+    assert_eq!((out.done, out.wrote), (0, false), "{}", out.text);
+    assert!(out.text.contains("left alone"), "{}", out.text);
+    assert_eq!(w.list()[0].icon, "/user/changed.png");
+    let (done, not) = verify_applied(&[stale], &w.home);
+    assert!(done.is_empty() && not.len() == 1);
 }

@@ -51,12 +51,12 @@ pub fn problem_page(text: &str) -> IconPage {
 pub fn overview_page(findings: &[IconFinding], plan: &Plan, steam_running: bool, game_mode: bool) -> IconPage {
     let mut p = base("Steam icons");
     if findings.is_empty() {
-        p.paragraphs = vec!["None of your ports has a Steam shortcut yet, so there is no icon to fix. Add them from Add to Steam first.".to_string()];
+        p.paragraphs = vec!["No Steam shortcut points into your ports folder, so there is no icon to fix. Add your ports from Add to Steam first.".to_string()];
         p.options = vec![option("OK", "", IconAction::Done, true)];
         p.initial = Focus::Option(0);
         return p;
     }
-    let fine = findings.iter().filter(|f| f.state == IconState::Ok).count();
+    let fine: Vec<&IconFinding> = findings.iter().filter(|f| matches!(f.state, IconState::Ok(_))).collect();
     let outside: Vec<&IconFinding> = findings.iter().filter(|f| matches!(f.state, IconState::Outside(_))).collect();
     let broken = plan.items.len();
     p.paragraphs = vec![format!(
@@ -70,8 +70,9 @@ pub fn overview_page(findings: &[IconFinding], plan: &Plan, steam_running: bool,
     for f in outside {
         p.fact(Mark::Skipped, f.describe());
     }
-    if fine > 0 {
-        p.fact(Mark::Done, format!("{} show their icon.", count(fine, "shortcut", "shortcuts")));
+    // One line per shortcut that looks fine, with the path, so a cause this check does not catch is still visible.
+    for f in fine {
+        p.fact(Mark::Done, f.describe());
     }
     let fixable = plan.fixable();
     if fixable == 0 {
@@ -159,7 +160,7 @@ mod tests {
     fn the_overview_names_each_icon_what_is_wrong_and_what_will_be_done() {
         let missing = item("Twilight Princess", IconState::Missing("/run/media/x/tp.png".into()), Replacement::Use { path: "/lib/tp.png".into(), source: Source::BackupMoved("b".into()) });
         let stuck = item("Zelda", IconState::Empty, Replacement::Nothing("the catalog has none for this port".into()));
-        let ok = finding("Doom", IconState::Ok);
+        let ok = finding("Doom", IconState::Ok("/lib/Doom/i.png".into()));
         let outside = finding("Quake", IconState::Outside("/home/deck/q.png".into()));
         let findings = vec![missing.finding.clone(), stuck.finding.clone(), ok, outside];
         let plan = Plan { items: vec![missing, stuck] };
@@ -167,6 +168,7 @@ mod tests {
         assert_eq!(page.facts[0], "Twilight Princess: icon file missing (/run/media/x/tp.png); will use the icon from before the move (found in the port's new folder)");
         assert!(page.facts[1].starts_with("Zelda: no icon is set; cannot be fixed: "));
         assert_eq!((page.mark_of(0), page.mark_of(1), page.mark_of(2), page.mark_of(3)), (Mark::ToDo, Mark::Problem, Mark::Skipped, Mark::Done));
+        assert_eq!(page.facts[3], "Doom: icon is fine (/lib/Doom/i.png)", "a fine icon shows its path too");
         assert!(page.paragraphs[0].contains("4 Steam shortcuts") && page.paragraphs[0].contains("2 icons will not show"));
         assert_eq!(page.options[0].title, "Fix 1 icon");
         assert!(page.options[0].recommended);
@@ -186,8 +188,8 @@ mod tests {
     fn nothing_to_fix_and_nothing_found_have_only_ok() {
         let page = overview_page(&[], &Plan::default(), false, false);
         assert_eq!(page.options.len(), 1);
-        assert!(page.paragraphs[0].contains("Steam shortcut yet"));
-        let findings = vec![finding("A", IconState::Ok)];
+        assert!(page.paragraphs[0].contains("points into your ports folder"));
+        let findings = vec![finding("A", IconState::Ok("/lib/A/i.png".into()))];
         let page = overview_page(&findings, &Plan::default(), false, false);
         assert!(page.paragraphs[0].contains("Every icon shows"));
         assert_eq!(page.options.len(), 1);

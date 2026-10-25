@@ -1,3 +1,6 @@
+//! The paths are `/`-joined fixtures, and `moved_path` joins with the platform's separator: Linux (the Deck) only,
+//! like the existing repoint tests.
+#![cfg(unix)]
 use super::*;
 use crate::fork::vdf::fixtures::*;
 use std::fs;

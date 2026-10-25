@@ -295,6 +295,18 @@ place), it is left alone and nothing can be queued or applied until you fix or r
 The app's log has a line `game mode: yes` or `game mode: no` at startup with the two values it went by,
 and `steam queue: offering N` whenever it asks.
 
+### Fix Steam icons
+
+Settings > Add to Steam > **Fix Steam icons...** looks at every Steam shortcut that points into one of your ports and
+lists, one line each, what its icon is: fine (with the file's path), not set, missing, not a picture Steam can show,
+stored inside quote marks, inside an old copy of the port, or somewhere outside the port folder. For each one that shows
+nothing it says where a replacement would come from, first that works: the icon the same shortcut had in an earlier
+`shortcuts.vdf.bak-...` backup (found in the port's new folder when it lived in an old one), an icon already in Steam's
+grid folder, or the port's catalog icon (copied into the grid folder; art you chose there is never replaced). **Fix N
+icons** changes only the icon of those shortcuts, with a backup of the shortcut list first. With Steam running the
+repairs are queued and the "Close Steam and update shortcuts" question follows (in Game Mode: finish in Desktop Mode).
+Every finding and write is in `ports_launcher.log` as a `steam icons:` line; attach those lines if an icon is still blank.
+
 ### Close Steam and update shortcuts (Desktop Mode)
 
 In Desktop Mode Steam normally keeps running in the tray, so waiting for it to be closed by hand could

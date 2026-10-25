@@ -258,6 +258,7 @@ Files added by this fork:
 | 2026-10-25 | `src/app/install_launch.rs` | O9: "Choose an executable" saves the pick as the port's favorite executable before starting it; Info's favorite picker lists `list_candidates` (every program, shallowest first, deeper ones shown with their folder) |
 | 2026-10-25 | `src/main.rs`, `src/app/sync.rs` | Branch `deck-fixes-3`: one line each, `fork::catalog_extras::apply`, after the catalog and `ports.local.json` are merged (start-up, and a catalog update): a port added from the Deck-ready list that upstream turned off (`-name`) takes its cover, icon, notes, tags and save paths from the catalog's raw entry, in memory only |
 | 2026-10-25 | `src/app/mod.rs` | Branch `deck-fixes-3`: one module line, `steam_icons_screen` (the Steam icons page) |
+| 2026-10-25 | `src/core/launch.rs` | Branch `deck-fixes-3` (O9): a launcher script without its `#!` line (spawn error ENOEXEC) is run through `sh` |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -626,6 +627,13 @@ The library underneath the Add to Steam screen. Rules it enforces so a later fea
   used for new entries. Newer Steam builds may assign other IDs to shortcuts added in the Steam UI.
 - Code in `src/fork/` uses English names and module docs; upstream's own tests are in French.
 - Backups (`shortcuts.vdf.bak-<local time>`) are pruned only by `backups::prune_backups`, which Add to Steam calls after a write (newest 10, never anything under an hour old).
+- **Described discs, not file names** (`rom_library/requirements.rs`, `title.rs`). A name written with a space before the
+  extension and no checksum (`The Legend of Dragoon .iso`) describes a kind of file; it is a title-only alternative with the
+  extension as a hint (`Alt::ext_hint`), satisfied by any disc image (iso, bin/cue, chd, rvz...) whose name has the title's
+  significant words, never by an archive, a data file or a cartridge. In the shipped catalog it changes two entries
+  (Severed Chains, Sega Superstars Tennis); entries with checksums are untouched. Home, the wizard and Settings > Game
+  files use the one rule in `rom_library::title`. A program that is an extensionless text file named `launch`, `start`,
+  `run*` or `play*` (small, with the executable bit) counts even without `#!`, and is run through `sh`.
 - **Steam icons** (`src/fork/steam_icons.rs`, page in `src/app/steam_icons_screen.rs`, opened from the "Fix Steam icons..."
   row of Settings > Add to Steam). `diagnose` lists each Steam shortcut (all accounts) whose program is inside an installed
   port's folder (longest folder wins) with the state of its `icon` field; `plan` picks, for each one that shows nothing, the
