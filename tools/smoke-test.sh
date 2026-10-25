@@ -258,7 +258,7 @@ if [ "$alive" = yes ]; then
         # Home's "Fix N problems" tile: the seeded setup has problems (no Steam here, a game file missing), so the background
         # look put the tile on Home. With nothing played it is the first tile; A opens the checkup, B leaves it.
         for _ in $(seq 1 20); do grep -q '^checkup: background look' "$OUT/app.log" && break; sleep 0.5; done
-        check "the background checkup found something to fix" 'grep -q "^checkup: background look: [0-9]* problem" "$OUT/app.log"'
+        check "the background checkup found something to fix" 'grep -q "^checkup: background look: [0-9]* thing" "$OUT/app.log"'
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key --delay 250 Left Left Left Left Left; sleep 0.8
         import -window root "$OUT/home-fix-tile.png" 2>/dev/null
         xdotool key --delay 250 Return

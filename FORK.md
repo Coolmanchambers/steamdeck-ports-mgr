@@ -423,40 +423,55 @@ Tim, 2026-10-25, after four Steam icons went blank: "we have a repair wizard to 
 these in the future." Spec: `docs/design/checkup-wizard.md` in the project folder.
 
 - **Looking changes nothing.** The facts are read once into a plain `Facts`; each of ten checks is then a pure function over
-  them returning fine, a problem (a status mark, one line, which ports, which fix) or "could not check" with the reason.
-  The order: Ports folder, Steam changes (the queue), Steam icons (`steam_icons::diagnose`), Steam shortcuts (an installed
-  port with no shortcut, only once another port is in Steam, a queued Add does not count), Program to start (more than
-  one program at the shallowest depth and none remembered; a bounded walk, 4000 entries, 5 folders deep), Game files (the
-  same `files_state` Home uses: red only for a named file that is missing, a title-only slot is a thing to do), Saves
-  (the save finder's warning), Old copies (what each needs: ready to remove, start it once, waiting for Steam, already
-  gone), Updates (the update badge's rule), Save backups (none, or older than 14 days; cloud backup reporting a problem).
-  With the ports folder missing the checks that live in it say "could not check" instead of guessing. Red (`Mark::Problem`)
-  only when a game will not start (the folder missing, a game file missing); everything else is a thing to do or wait for.
-- **Where the facts come from.** The disk part (Steam's files, the queue, old copies, the program walk, the backup folder) is
-  read on a worker thread (`Background`); the part that needs the app's state is read on the UI thread from the answers Home
-  already keeps (`home_screen::file_states`, `update_ready`, the save finder's cache). Old copies use `readiness` with
-  `steam_view`, not `readiness_now`, which writes a note into the record: the checkup only reads.
-- **The pages** (one question each): "Looking over your setup" (Cancel), "Checkup" (one line per check with its mark, then
-  "Fix them one by one" recommended, or "Done" when all is fine), one page per problem (its line, the real values behind it
-  in the small text, the fix card, "Skip this one"; B goes back to the checkup), the page after a fix (the line looked at
-  again: "That is fixed" with Next problem, or "Not fixed yet" with Try again / Check again / Next problem), and "All done" /
-  "Done for now". An update and a backup ask first on a page of the checkup's own ("Update X to the newest version?",
-  "Back up every port's saves now?"); every other fix is an existing screen that asks on its own page.
-- **Hand-off and return** (`checkup_screen`): the fix closes the checkup page and opens the existing screen: the ports folder
-  message or menu, "Close Steam and update shortcuts", the Steam icons page, Add to Steam, the program picker, Game files, the save
-  finder, Old copies, an update, "Back up saves now", Cloud backup. Those screens do not know about the checkup, so (like the
-  setup wizard) it waits: the three that take a "when you leave" callback (Steam icons, the save finder, Close Steam) call
-  back at once; for every other screen a half-second watcher comes back when no dialog has been open for two ticks, and the
-  screens that lead back to a menu (`settings_menu_screen::open_group`, `ports_folder_screen::open_menu`,
-  `rom_screens::open_game_files`) ask `checkup_screen::resume_instead_of_menu` first. Coming back looks again and shows that
-  line.
-- **Entry points.** Settings: a last card on the first page, "Fix problems", with the checkup's last answer as its line ("2
-  problems", "Everything looks fine"; before the first look finished, what it does). Home: a "Fix N problems" tile right after
-  Continue (so the cursor still starts on the game to play), only while the last look found something, its mark red only
-  when a game will not start. Both read a cached answer: a background look runs 4 s after start, then at most every 3
-  minutes, and after each checkup; Home and Settings never wait for it. A port's red badge on Home does not open the
-  checkup (the tile does): a badge is not a separate target on a tile that A plays.
+  them returning fine, a problem (a status mark, one line, which ports, which fix), a repair that is queued, a problem the
+  user skipped, or "could not check" with the reason. The order: Ports folder, Steam changes (the waiting list, read with
+  `steam_queue::peek`, which never moves a bad file aside; an unreadable list is "could not check", never "nothing waiting"),
+  Steam icons (`steam_icons::diagnose`), Steam shortcuts (an installed port with no shortcut, only once another port is in
+  Steam; a shortcut that still starts a recorded old copy; any change waiting for a port counts as handled), Program to start
+  (more than one program at the shallowest depth and none remembered; a bounded walk, 4000 entries, 5 folders deep), Game
+  files (the same `files_state` Home uses: red only for a named file that is missing, a title-only slot is "not connected
+  yet"), Saves (`SaveState::warns`), Old copies (what each needs: ready to remove, start it once from here or from Steam,
+  waiting for Steam, already gone), Updates (the update badge's rule), Save backups (none or older than 14 days, only once a
+  port has a known save folder, and not when cloud backup is signed in with a copy in the last 3 days; a cloud that reports a
+  problem is flagged). With the ports folder missing the checks that live in it say "could not check" instead of guessing.
+- **Marks and the Home tile.** Red (`Mark::Problem`) only when a game will not start (the folder missing, a game file missing);
+  waiting is the clock, everything else the blue arrow. The Home tile counts only red problems and ones with a fix that works
+  now; nudges and things nothing can be done about now (`Problem.advisory`: saves not found, no backup, old copies still waiting,
+  Steam changes in Game Mode) show in the checkup and on Settings' card but do not raise the tile on their own.
+- **A repair that is only queued** (an icon fix with Steam running) reads "Queued: finishes when Steam closes", never "fixed";
+  its card is the Close Steam flow (in Game Mode: "See how to finish this", and Next problem leads).
+- **Skip this one** is remembered in `fork-settings.json` (`checkup_skips`: the check and the problem's line and ports) until the
+  problem reads differently; it shows as "skipped", is not counted, and "Include the skipped ones" brings them back.
+- **Where the facts come from.** Every read of the disk (Steam's files, the waiting list, old copies, each port's game files
+  and saves, the program walk, the backup folder) runs on a worker thread (`Background`); only what is in memory (the installed
+  list, the update badges, the cloud status) is read on the UI thread, when the worker's answer arrives. No look runs, and a
+  result that arrives is dropped, while a move, install, restore or import runs. Old copies use
+  `old_copies::readiness_read_only` (never `readiness_now`, which writes a note into the record): a Steam start counts when it
+  is later than the recorded switch, else later than the newest `shortcuts.vdf.bak-*` backup.
+- **The pages** (one question each): "Looking over your setup" (Cancel), "Checkup" (a line for each check that needs a look and
+  one for all the fine ones, "Fix them one by one" recommended, "Check again" in the footer; with everything fine all ten lines
+  and "Done"), one page per problem (its line, the real values behind it in the small text, the fix card, "Skip this one"; B goes
+  back to the checkup), the page after a fix (the line looked at again: "That is fixed", "Queued, not finished", "One done, more
+  to go" with "Fix the next one", or "Not fixed yet" with Try again / Check again / Next problem), and "All done" / "Done for now"
+  (counts what is to fix, queued, could not be checked and skipped, including a problem that appeared meanwhile). An update and a
+  backup ask first on a page of the checkup's own; every other fix is an existing screen that asks on its own page. Choosing "Fix
+  them one by one" again with nothing changed picks up where it left off.
+- **Hand-off and return** (`checkup_screen`): the fix closes the checkup page and opens the existing screen. The three that take a
+  "when you leave" callback (Steam icons, the save finder, Close Steam) call back at once; for every other screen a half-second
+  watcher comes back when no dialog has been open for two ticks. A menu the screen leads back to hands control back only when the
+  chosen fix returns to it (`Fix::returns_to`, like the wizard's `menu_returns_to_wizard`): a group page of Settings for the
+  ports folder, Game files and Old copies fixes (Saves for Cloud), the Ports folder menu for Old copies; the ports folder flow's
+  own hand-over to Game files is left alone. Coming back looks again and shows that line.
+- **Entry points.** Settings: a last card on the first page, "Fix problems", with the checkup's last answer as its line ("6 things
+  to fix", "Everything looks fine"). Home: a "Fix N problems" tile right after Continue (so the cursor still starts on the game to
+  play), its badge the first problem's title, red only when a game will not start. Both read a cached answer: a background look
+  runs 4 s after start, then at most every 3 minutes, and after each checkup; Home and Settings never wait for it. A port's red
+  badge on Home does not open the checkup (the tile does).
+- **Steam icons, shared engine.** `steam_icons::diagnose` also matches a shortcut through the old folders recorded in
+  `port-moves.json` (`IconFinding.at_old_copy`), so the Fix Steam icons page lists such a shortcut ("the shortcut still starts the
+  old copy") and its icon is repaired like any other.
 - Upstream edits: `src/app/mod.rs` (one module line) and `tools/smoke-test.sh`.
+
 
 ## Add to Steam (Settings menu)
 

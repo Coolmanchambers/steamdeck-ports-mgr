@@ -126,29 +126,34 @@ After the five groups comes one more card, **Fix problems**, whose line says wha
 ### Fix problems
 
 A guided checkup for when something looks wrong (a blank Steam icon, a port that will not start, a Steam change that
-never applied). It opens from the Home tile or Settings > Fix problems. **Looking changes nothing.** The first page is
-one line per check with a mark (green check fine, orange clock waiting, blue arrow something to do, red exclamation a
-game will not start, a dash could not check, with the reason):
+never applied). It opens from the Home tile or Settings > Fix problems. **Looking changes nothing.** The first page has a
+line for each check that needs a look, with a mark (green check fine, orange clock waiting, blue arrow something to do, red
+exclamation a game will not start, a dash skipped or could not check, with the reason), and one line for the fine ones:
 
 | Check | It finds |
 |---|---|
 | Ports folder | The folder or its drive (SD card) is not there, or a move did not finish |
-| Steam changes | Changes waiting for Steam to close |
+| Steam changes | Changes waiting for Steam to close (a list the app cannot read is "could not check") |
 | Steam icons | A shortcut's icon is empty, missing, not a picture, stored the wrong way or in an old copy |
-| Steam shortcuts | An installed port that is not in Steam (once other ports are) |
+| Steam shortcuts | An installed port that is not in Steam (once other ports are), or a shortcut that still starts an old copy |
 | Program to start | More than one program in a port and none chosen |
-| Game files | A named file missing (red), or a title only the app cannot check |
+| Game files | A named file missing (red), or files not connected yet |
 | Saves | Saves the app could not find |
-| Old copies | Copies kept after a move, and what each needs before it can be removed |
+| Old copies | Copies kept after a move, and what each needs before it can be removed (start it once, from here or from Steam) |
 | Updates | An update is ready |
-| Save backups | No backup, or none for 14 days; cloud backup has a problem |
+| Save backups | No backup, or none for 14 days (only once a port has a known save folder, and not when cloud backup copied in the last 3 days); cloud backup has a problem |
+
+The Home tile counts only what is red or has a fix that works right now; reminders (saves not found, no backup, an old copy
+still waiting, Steam changes in Game Mode) show in the checkup and on Settings' card but do not raise the tile.
 
 **Fix them one by one** goes through only the lines with something to fix, one page each: what is wrong (the real value,
 such as the icon file, in small text) and a card that opens the fix: the same screens as in Settings (Close Steam and
-update shortcuts, Fix Steam icons, Add to Steam, the program picker, Game files, Find saves, Old copies, Cloud backup, the
-ports folder), each asking before it changes anything. An update and a backup ask on a page of the checkup's own.
-When you leave a fix, the checkup looks again and shows that line: green ("That is fixed", then Next problem) or "Not
-fixed yet" (Try again, Check again, Next problem). B goes back one page; "Not now" changes nothing.
+update shortcuts, Fix Steam icons, Add to Steam, the program picker, Game files, Find saves for that port, Old copies, Cloud
+backup, the ports folder), each asking before it changes anything. An update and a backup ask on a page of the checkup's own.
+When you leave a fix, the checkup looks again and shows that line: green ("That is fixed", then Next problem), "Queued, not
+finished" (an icon repair made while Steam runs is finished when Steam closes: Close Steam and update shortcuts), "One done,
+more to go" (fix the next port), or "Not fixed yet" (Try again, Check again, Next problem). **Skip this one** keeps a problem
+out of the way until it changes ("Include the skipped ones" brings them back). B goes back one page; "Not now" changes nothing.
 
 ## First launch: the setup wizard
 
