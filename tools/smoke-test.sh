@@ -13,6 +13,8 @@
 #   - while Settings is open the main window shows its dim layer; Return, a click and Escape on it ask for the Settings window
 #     by its id; closing Settings clears it (page and dialog windows are titled "Deck Ports Manager: <page>");
 #   - Ports > Import ports opens and closes without a crash;
+#   - the Port page: a right-click on a Home tile opens it, a card page opens and B returns, B goes Home; the lists' Home
+#     button goes Home from Deck-ready opened via Add a port; B twice from a search in All ports clears it, then goes Home;
 #   - Ports > Add a port opens the page and B returns to the Ports page; Updates > Check for Updates flips in place and keeps
 #     the cursor on it;
 #   - Ports > Game files opens without a crash;
@@ -273,6 +275,43 @@ if [ "$alive" = yes ]; then
             press_keys "$fp" Escape; sleep 1.5
             check "B leaves the checkup for Home" '[ -z "$(xdotool search --name "^Deck Ports Manager: Fix problems$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
         fi
+        # The Port page: a right-click on a port's tile (the second tile is a port, with or without the Fix tile first) opens
+        # it; a card's page opens and B comes back; B on the Port page returns to Home.
+        eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
+        cols=$(( WIDTH / 160 )); [ "$cols" -lt 2 ] && cols=2; [ "$cols" -gt 8 ] && cols=8
+        tx=$(( X + 12 + (WIDTH - 24) * 3 / (2 * cols) )); ty=$(( Y + 200 ))
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.3
+        xdotool mousemove $((X + 40)) $((Y + 600)); sleep 0.3; xdotool mousemove "$tx" "$ty"; sleep 0.3; xdotool mousemove $((tx + 5)) $((ty + 5)); sleep 0.3; xdotool click 3
+        pp=$(find_window '^Port: ') || pp=""
+        sleep 2
+        import -window root "$OUT/port-page.png" 2>/dev/null
+        check "a right-click on a Home tile opens its Port page" '[ -n "$pp" ] && kill -0 "$APP" 2>/dev/null && grep -q "^port page: opened for" "$OUT/app.log"'
+        if [ -n "$pp" ]; then
+            press_keys "$pp" Down Down Return; sleep 1.5
+            pc=$(find_window ': Program to start$') || pc=""
+            check "a card of the Port page opens its own page (Program to start)" '[ -n "$pc" ]'
+            press_keys "$(find_window '^Port: ')" Escape; sleep 1.2
+            check "B on a card page returns to the Port page" '[ -z "$(xdotool search --onlyvisible --name ": Program to start$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Port: " 2>/dev/null)" ]'
+            press_keys "$(find_window '^Port: ')" Escape; sleep 1.5
+            check "B on the Port page returns to Home" '[ -z "$(xdotool search --onlyvisible --name "^Port: " 2>/dev/null)" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
+        fi
+        # The lists' Home button: Add a port > Deck-ready ports, type a search, click "< Home" (top left) -> Home.
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key --delay 250 Right Right Right Right Right Right Right Return; sleep 1.5
+        ap3=$(find_window '^Add a port$') || ap3=""
+        if [ -n "$ap3" ]; then
+            press_keys "$ap3" Return; sleep 2
+            xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool type --delay 120 "zel"; sleep 1
+            eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
+            xdotool mousemove $((X + 40)) $((Y + 300)); sleep 0.3; xdotool mousemove $((X + 45)) $((Y + 72)); sleep 0.3; xdotool mousemove $((X + 47)) $((Y + 74)); sleep 0.3; xdotool click 1; sleep 1.5
+            import -window root "$OUT/home-button.png" 2>/dev/null
+            check "Deck-ready from Add a port, a search, then the Home button goes Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -2 | head -1)" = "list: Deck-ready" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -z "$(xdotool search --name "^Add a port$" 2>/dev/null)" ]'
+        else
+            check "the Add a port tile opens its page again" false
+        fi
+        # B twice from a search with text in All ports: the first clears the search, the second goes Home.
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key Tab; sleep 1; xdotool type --delay 120 "pin"; sleep 0.8
+        xdotool key Escape; sleep 1; xdotool key Escape; sleep 1.2
+        check "B twice from a search in All ports: cleared, then Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -2 | head -1)" = "list: search cleared" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && kill -0 "$APP" 2>/dev/null'
         # Settings is a page of groups: the title bar's Settings button opens it, then the keyboard picks a group and a card
         # (Down presses; Up first, since a page remembers where the cursor was). The pages are one window each, found by
         # name ("Settings", "Settings: Ports"...). Without a window manager keys reach a window only after an explicit

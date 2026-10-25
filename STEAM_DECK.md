@@ -722,7 +722,7 @@ can keep a file private (the internal drive, not an exFAT SD card), or sign-in i
 | Setup wizard again | Settings > Setup wizard... opens it at the first page; A chooses and B goes back with the controller; quitting half-way brings it back at the next start |
 | Install a port | Progress, then installed, with a Linux build under `Library/` |
 | Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |
-| Controller | D-pad moves, A activates, B closes, X opens Info, Y opens Settings |
+| Controller | D-pad moves, A activates, B closes, X opens Info (on Home: the Port page), Y opens Settings |
 | Deck-ready list | L1/R1 switch lists; the list loads, Y filters it, A on a "Catalog" port installs it like All ports |
 | Deck-ready add | A on a row with Install and no Catalog or Yours tag (Info says "In the catalog: Not yet") asks first, then installs; it appears in All ports with Open folder |
 | Deck-ready offline | With Wi-Fi off, the list still opens from the saved copy and says GitHub could not be reached |
@@ -743,6 +743,9 @@ can keep a file private (the internal drive, not an exFAT SD card), or sign-in i
 | Side by side | The original Ports Launcher and this fork, open at the same time, both stay open |
 | Fix problems | Home's "Fix N problems" tile (only when something is wrong) and Settings > Fix problems open the checkup: one line per check, a fix per page, and each line is looked at again when you come back; nothing changes until a fix page asks |
 | Restore saves | Info > Restore saves... lists the backups; Restore makes a "Before restore" zip first and the saves match the backup; refused while the game runs |
+| Port page | X on a Home tile (or a long press, or a right-click) opens "Port options": a card per area with a live line; each card's page reuses the existing screen; B returns to Home on the same tile |
+| Game files result | After installing a port that needs game files (or its Game files card): a card page that names the folder as "SD card > Emulation > roms" and says plainly what is missing, with Choose the file myself / Look again / Add it later |
+| Lists' Home button | "< Home" at the top left of All ports and Deck-ready (touch, mouse, or Up then A); B clears a search first, then goes Home |
 
 ## Known issues being tested
 

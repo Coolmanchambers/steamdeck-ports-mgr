@@ -508,7 +508,8 @@ fn desktop_only(o: PageOption<Act>, game_mode: bool) -> PageOption<Act> {
 
 /// The first page: the cover, the name and its badge, then one card per area with its live line.
 pub fn first_page(p: &PortFacts, disk: Option<&DiskFacts>, places: &Places) -> Page<Act> {
-    let mut page = Page::<Act> { window_title: window_title(&p.name, None), large: true, header: String::new(), title: p.name.clone(), buttons: back_buttons(), initial: Focus::Option(0), ..Page::default() };
+    // The name is on the card under the title; the title says what the page is.
+    let mut page = Page::<Act> { window_title: window_title(&p.name, None), large: true, header: String::new(), title: "Port options".to_string(), buttons: back_buttons(), initial: Focus::Option(0), ..Page::default() };
     let mut lines = vec![p.badge.clone()];
     if let Some(t) = &p.playtime {
         lines.push(format!("Played {t}"));

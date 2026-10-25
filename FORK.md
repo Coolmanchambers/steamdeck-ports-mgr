@@ -1275,6 +1275,39 @@ closed. Privacy: [PRIVACY.md](PRIVACY.md).
 - **New crates.** `sha2` (MIT or Apache-2.0) for the checksum and `qrcode` with default features off (MIT or
   Apache-2.0) for the sign-in QR code, plus the RustCrypto pieces `sha2` needs (all MIT or Apache-2.0).
 
+## Port page (`src/fork/port_page/`, `src/app/port_page_screen.rs`)
+
+One installed port's options as cards, from a right-click (or long press) on its Home tile, X on Home, and a right-click
+on an installed row in All ports or Deck-ready (or a card in big mode). Cards: Play, Fix problems (the checkup for this
+port only: `checkup::run_for_port` over `Facts::only_port`, the same checks), Program to start (favorite program, "Ask every
+time", every program found with its place), Saves (folders with their source, file count, last backup; Back up this port
+now = the save finder's `backup_before_update`; Restore; Find saves; open the folder), Port settings (read-only discovery:
+settings extensions, under 1 MB, two levels of the port and save folders, minus logs, catalog game files and the app's own
+files; a local entry's optional `settings` field, same shape as `save`, names them exactly; a read-only View page with the
+place on top, 48 KB / 400 lines), Game files (the search for this port, its result as card pages), Steam (this port only:
+Add to Steam pre-selected, the checkup's repoint, icon repair for one port, Close Steam), Updates (check now, Update now,
+the update switch, Select version, Install extras), Files (place, size on a worker, version, `.previous` versions),
+Uninstall (a plain confirm page over the guarded `delete_port`), More (project page, All details = upstream Info, Reset game
+time). Everything that reads the disk runs on a worker; looking writes nothing.
+
+Every place is shown the human way by one formatter (`port_page::paths::human_path`): "SD card > Emulation > roms",
+"Internal storage > ...", never a card's UUID (also when the card is not mounted). The game files search for one port
+(after an install, Info, Settings, the Port page) now answers on card pages (`fork::rom_screens::pages`): found / not found
+/ no folder / unreadable / which one / copy / result, instead of the picker list whose sentences read like rows.
+
+The project page (`port_page_screen::open_link`): the address as text and a QR code; "Open in the browser" only in Desktop
+Mode; only http(s). Info's Website and Deck-ready Info's project button go through it.
+
+All ports and Deck-ready have a "< Home" button at the top left (Up at the top of the list focuses it). B / Escape on those
+lists goes Home (All ports too, in both modes); with search text the first B clears it; a list opened from Add a port goes
+back to that page. Home's hint is "X Options".
+
+Upstream files touched (minimal, `// Fork:` comments): `src/app/mod.rs` (module line), `src/main.rs` (options callbacks,
+Escape on the lists, hint after a search edit), `src/app/state.rs` (Home button move hook), `src/app/install_launch.rs` (A on
+the Home button, X on Home), `src/app/dialogs.rs` (two helpers `pub(crate)`, Website through the project page),
+`ui/app-window.slint` (callbacks, the Home button, row right-click, B hint in the title), `ui/card-grid.slint` (right-click),
+`tools/smoke-test.sh` (Port page and Home button checks).
+
 ## Fixes to upstream behavior
 
 Changes that fix upstream defects. The first ones fixed gaps found while validating Tim's catalog
