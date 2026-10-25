@@ -258,6 +258,7 @@ Files added by this fork:
 | 2026-10-25 | `src/app/install_launch.rs` | O9: "Choose an executable" saves the pick as the port's favorite executable before starting it; Info's favorite picker lists `list_candidates` (every program, shallowest first, deeper ones shown with their folder) |
 | 2026-10-25 | `src/main.rs`, `src/app/sync.rs` | Branch `deck-fixes-3`: one line each, `fork::catalog_extras::apply`, after the catalog and `ports.local.json` are merged (start-up, and a catalog update): a port added from the Deck-ready list that upstream turned off (`-name`) takes its cover, icon, notes, tags and save paths from the catalog's raw entry, in memory only |
 | 2026-10-25 | `src/app/mod.rs` | Branch `deck-fixes-3`: one module line, `steam_icons_screen` (the Steam icons page) |
+| 2026-10-25 | `src/app/mod.rs`, `tools/smoke-test.sh` | Branch `checkup`: one module line, `checkup_screen`; the smoke test checks the background checkup, Home's Fix problems tile and Settings > Fix problems (the other files the branch edits are fork-owned: `home_screen`, `settings_menu_screen`, `ports_folder_screen`, `rom_screens`) |
 | 2026-10-25 | `src/core/launch.rs` | Branch `deck-fixes-3` (O9): a launcher script without its `#!` line (spawn error ENOEXEC) is run through `sh` |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
@@ -415,6 +416,47 @@ Tim, 2026-10-25, after his Deck test of Home: "we need an add new port button, b
 - **Cards with pictures** (`fork::page::Icon`, `Page.icons`, `Page.toggles`; drawn as paths by `OptionRow` in
   `ui/fork/setup-wizard.slint`, so no font is needed): a group or choice card can have a picture before its title and an
   On/Off switch at its right.
+
+## Fix problems: the checkup (`src/fork/checkup.rs`, `src/fork/checkup/pages.rs`, `src/app/checkup_screen.rs`)
+
+Tim, 2026-10-25, after four Steam icons went blank: "we have a repair wizard to help guide the users through issues like
+these in the future." Spec: `docs/design/checkup-wizard.md` in the project folder.
+
+- **Looking changes nothing.** The facts are read once into a plain `Facts`; each of ten checks is then a pure function over
+  them returning fine, a problem (a status mark, one line, which ports, which fix) or "could not check" with the reason.
+  The order: Ports folder, Steam changes (the queue), Steam icons (`steam_icons::diagnose`), Steam shortcuts (an installed
+  port with no shortcut, only once another port is in Steam, a queued Add does not count), Program to start (more than
+  one program at the shallowest depth and none remembered; a bounded walk, 4000 entries, 5 folders deep), Game files (the
+  same `files_state` Home uses: red only for a named file that is missing, a title-only slot is a thing to do), Saves
+  (the save finder's warning), Old copies (what each needs: ready to remove, start it once, waiting for Steam, already
+  gone), Updates (the update badge's rule), Save backups (none, or older than 14 days; cloud backup reporting a problem).
+  With the ports folder missing the checks that live in it say "could not check" instead of guessing. Red (`Mark::Problem`)
+  only when a game will not start (the folder missing, a game file missing); everything else is a thing to do or wait for.
+- **Where the facts come from.** The disk part (Steam's files, the queue, old copies, the program walk, the backup folder) is
+  read on a worker thread (`Background`); the part that needs the app's state is read on the UI thread from the answers Home
+  already keeps (`home_screen::file_states`, `update_ready`, the save finder's cache). Old copies use `readiness` with
+  `steam_view`, not `readiness_now`, which writes a note into the record: the checkup only reads.
+- **The pages** (one question each): "Looking over your setup" (Cancel), "Checkup" (one line per check with its mark, then
+  "Fix them one by one" recommended, or "Done" when all is fine), one page per problem (its line, the real values behind it
+  in the small text, the fix card, "Skip this one"; B goes back to the checkup), the page after a fix (the line looked at
+  again: "That is fixed" with Next problem, or "Not fixed yet" with Try again / Check again / Next problem), and "All done" /
+  "Done for now". An update and a backup ask first on a page of the checkup's own ("Update X to the newest version?",
+  "Back up every port's saves now?"); every other fix is an existing screen that asks on its own page.
+- **Hand-off and return** (`checkup_screen`): the fix closes the checkup page and opens the existing screen: the ports folder
+  message or menu, "Close Steam and update shortcuts", the Steam icons page, Add to Steam, the program picker, Game files, the save
+  finder, Old copies, an update, "Back up saves now", Cloud backup. Those screens do not know about the checkup, so (like the
+  setup wizard) it waits: the three that take a "when you leave" callback (Steam icons, the save finder, Close Steam) call
+  back at once; for every other screen a half-second watcher comes back when no dialog has been open for two ticks, and the
+  screens that lead back to a menu (`settings_menu_screen::open_group`, `ports_folder_screen::open_menu`,
+  `rom_screens::open_game_files`) ask `checkup_screen::resume_instead_of_menu` first. Coming back looks again and shows that
+  line.
+- **Entry points.** Settings: a last card on the first page, "Fix problems", with the checkup's last answer as its line ("2
+  problems", "Everything looks fine"; before the first look finished, what it does). Home: a "Fix N problems" tile right after
+  Continue (so the cursor still starts on the game to play), only while the last look found something, its mark red only
+  when a game will not start. Both read a cached answer: a background look runs 4 s after start, then at most every 3
+  minutes, and after each checkup; Home and Settings never wait for it. A port's red badge on Home does not open the
+  checkup (the tile does): a badge is not a separate target on a tile that A plays.
+- Upstream edits: `src/app/mod.rs` (one module line) and `tools/smoke-test.sh`.
 
 ## Add to Steam (Settings menu)
 

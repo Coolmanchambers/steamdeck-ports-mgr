@@ -203,12 +203,13 @@ impl CopyState {
         }
     }
 
-    fn line(self) -> &'static str {
+    /// One sentence about the old copy of `name` (the name comes first or last so a colon inside it reads fine).
+    fn sentence(self, name: &str) -> String {
         match self {
-            CopyState::Ready => "Ready to remove",
-            CopyState::StartOnce => "Start it once from its new place",
-            CopyState::WaitingForSteam => "Waiting for Steam to update",
-            CopyState::Gone => "Already gone, forget the record",
+            CopyState::Ready => format!("The old copy of {name} can be removed"),
+            CopyState::StartOnce => format!("Start {name} once from its new place"),
+            CopyState::WaitingForSteam => format!("Steam still has to update {name}"),
+            CopyState::Gone => format!("The old copy of {name} is already gone"),
         }
     }
 }
@@ -417,15 +418,15 @@ fn steam_waiting(f: &Facts) -> Outcome {
     problem(Mark::Waiting, summary, keys, Fix::CloseSteam, label)
 }
 
-/// A few words for what is wrong with an icon (no path: the step page has it).
+/// A few words for what is wrong with an icon (no path: the step page has it); the port's name follows them.
 pub fn icon_words(state: &IconState) -> &'static str {
     match state {
-        IconState::Ok(_) | IconState::Outside(_) => "icon is fine",
-        IconState::Empty => "has no icon",
-        IconState::Missing(_) => "icon file is missing",
-        IconState::NotAnImage(_) => "icon file is not a picture",
-        IconState::Quoted { .. } => "icon is stored the wrong way",
-        IconState::InOldCopy(_) => "icon is stored in an old copy",
+        IconState::Ok(_) | IconState::Outside(_) => "Icon is fine",
+        IconState::Empty => "No icon is set",
+        IconState::Missing(_) => "Icon file is missing",
+        IconState::NotAnImage(_) => "Icon file is not a picture",
+        IconState::Quoted { .. } => "Icon is stored the wrong way",
+        IconState::InOldCopy(_) => "Icon is stored in an old copy",
     }
 }
 
@@ -455,8 +456,8 @@ fn steam_icons(f: &Facts) -> Outcome {
         }
     }
     let summary = match bad.as_slice() {
-        [one] => format!("{}: {}", one.port_name, icon_words(&one.state)),
-        many => format!("{} show nothing: {}", count(many.len(), "icon", "icons"), names(&ports)),
+        [one] => format!("{} for {}", icon_words(&one.state), one.port_name),
+        many => format!("{} show nothing for {}", count(many.len(), "icon", "icons"), names(&ports)),
     };
     let detail = bad.iter().take(4).map(|b| b.describe()).collect();
     Outcome::Problem(Problem { mark: Mark::ToDo, summary, detail, ports: port_keys, fix: Fix::SteamIcons, fix_label: "Fix the icons".to_string() })
@@ -492,7 +493,7 @@ fn programs(f: &Facts) -> Outcome {
         return Outcome::Ok("Nothing to choose".to_string());
     }
     let first = f.programs[0].clone();
-    problem(Mark::ToDo, format!("More than one program to start: {}", named_list(&f.programs)), keys(&f.programs), Fix::PickProgram(first.key), "Choose the program")
+    problem(Mark::ToDo, format!("Not chosen for {}", named_list(&f.programs)), keys(&f.programs), Fix::PickProgram(first.key), "Choose the program")
 }
 
 fn game_files(f: &Facts) -> Outcome {
@@ -527,7 +528,7 @@ fn old_copies(f: &Facts) -> Outcome {
     }
     let n = |s: CopyState| copies.iter().filter(|c| c.state == s).count();
     let summary = match copies.as_slice() {
-        [one] => format!("{}: {}", one.name, one.state.line()),
+        [one] => one.state.sentence(&one.name),
         many => {
             let mut parts: Vec<String> = Vec::new();
             for (s, words) in [(CopyState::Ready, "ready to remove"), (CopyState::StartOnce, "to start once"), (CopyState::WaitingForSteam, "waiting for Steam"), (CopyState::Gone, "already gone")] {
@@ -539,7 +540,7 @@ fn old_copies(f: &Facts) -> Outcome {
         }
     };
     let can_act = n(CopyState::Ready) + n(CopyState::Gone) > 0;
-    let detail = copies.iter().take(4).map(|c| format!("{}: {}", c.name, c.state.line())).collect();
+    let detail = copies.iter().take(4).map(|c| c.state.sentence(&c.name)).collect();
     Outcome::Problem(Problem { mark: if can_act { Mark::ToDo } else { Mark::Waiting }, summary, detail, ports: Vec::new(), fix: Fix::OldCopies, fix_label: "Look at the old copies".to_string() })
 }
 

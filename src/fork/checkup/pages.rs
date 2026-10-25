@@ -42,9 +42,14 @@ fn option(title: &str, detail: &str, action: Act, recommended: bool) -> PageOpti
     PageOption { title: title.to_string(), detail: detail.to_string(), choice: None, enabled: true, recommended, action }
 }
 
-/// "Steam icons: Dusklight: icon file is missing" would read badly; the line is `Title: words`.
+/// The overview's line: `Title: words`, the words starting in lower case after the colon when that reads on ("Steam
+/// icons: icon file is missing for ..."), never for a name or a number ("3D", "SoH", "2 old copies").
 pub fn line(check: Check, outcome: &Outcome) -> String {
-    format!("{}: {}", check.title(), outcome.words())
+    let words = outcome.words();
+    let first: String = words.chars().take_while(|c| c.is_alphabetic()).collect();
+    let plain_word = first.chars().next().is_some_and(char::is_uppercase) && first.chars().skip(1).all(char::is_lowercase) && first.chars().count() > 1;
+    let words = if plain_word && !words.starts_with("Update ready") { words.chars().flat_map(|c| c.to_lowercase()).take(1).chain(words.chars().skip(1)).collect() } else { words };
+    format!("{}: {}", check.title(), words)
 }
 
 /// While the checkup looks (a moment; nothing is changed).
@@ -106,7 +111,8 @@ pub fn step_page(check: Check, problem: &Problem, n: usize, total: usize) -> Che
     let mut p = base(check.title());
     counter(&mut p, n, total);
     p.fact(problem.mark, problem.summary.clone());
-    p.paragraphs = problem.detail.clone();
+    p.footnote = problem.detail.join("
+");
     p.options = vec![option(&problem.fix_label, "", Act::Fix, true), option("Skip this one", "Leave it as it is for now.", Act::Skip, false)];
     p.initial = Focus::Option(0);
     p.b_means("Checkup")
@@ -137,7 +143,8 @@ pub fn after_page(check: Check, outcome: &Outcome, n: usize, total: usize, last:
     p.options = match outcome {
         Outcome::Ok(_) => vec![option(next, "", Act::Next, true)],
         Outcome::Problem(pr) => {
-            p.paragraphs = pr.detail.clone();
+            p.footnote = pr.detail.join("
+");
             vec![
                 option("Try again", &pr.fix_label, Act::TryAgain, true),
                 option("Check again", "Look at it once more.", Act::CheckAgain, false),

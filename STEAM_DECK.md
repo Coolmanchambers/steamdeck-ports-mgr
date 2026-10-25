@@ -100,7 +100,9 @@ Y opens Settings. L1/R1 (or Tab) go to All ports (every port you can install, wi
 then back to Home (in big mode and Game Mode the Deck-ready list comes right after Home, since All ports there shows
 only installed ports). The last tile is a big plus, **Add a port**. With nothing installed yet, Home shows one card: Set up, or Add a port. Home checks your
 installed ports for updates at most every 12 hours, only when "check for updates" is on. Typing on Home searches
-All ports. The top line shows the cloud backup status (when you are signed in) and the Settings gear.
+All ports. The top line shows the cloud backup status (when you are signed in) and the Settings gear. When the app
+finds something wrong with your setup, a **Fix N problems** tile appears right after the port you played last (red only
+when a game will not start); A opens the checkup (below). With nothing wrong there is no tile.
 
 ### Add a port, and Settings
 
@@ -117,6 +119,36 @@ All ports. The top line shows the cloud backup status (when you are signed in) a
 | Saves | Back up saves now (Backup Saves), Restore saves, Cloud backup |
 | App | Setup wizard, Themes, Language, Files, Discord Rich Presence (On or Off) |
 | Updates | Check for Updates (On or Off), Update the app now (Force update), Version |
+
+After the five groups comes one more card, **Fix problems**, whose line says what the last look found ("2 problems",
+"Everything looks fine").
+
+### Fix problems
+
+A guided checkup for when something looks wrong (a blank Steam icon, a port that will not start, a Steam change that
+never applied). It opens from the Home tile or Settings > Fix problems. **Looking changes nothing.** The first page is
+one line per check with a mark (green check fine, orange clock waiting, blue arrow something to do, red exclamation a
+game will not start, a dash could not check, with the reason):
+
+| Check | It finds |
+|---|---|
+| Ports folder | The folder or its drive (SD card) is not there, or a move did not finish |
+| Steam changes | Changes waiting for Steam to close |
+| Steam icons | A shortcut's icon is empty, missing, not a picture, stored the wrong way or in an old copy |
+| Steam shortcuts | An installed port that is not in Steam (once other ports are) |
+| Program to start | More than one program in a port and none chosen |
+| Game files | A named file missing (red), or a title only the app cannot check |
+| Saves | Saves the app could not find |
+| Old copies | Copies kept after a move, and what each needs before it can be removed |
+| Updates | An update is ready |
+| Save backups | No backup, or none for 14 days; cloud backup has a problem |
+
+**Fix them one by one** goes through only the lines with something to fix, one page each: what is wrong (the real value,
+such as the icon file, in small text) and a card that opens the fix: the same screens as in Settings (Close Steam and
+update shortcuts, Fix Steam icons, Add to Steam, the program picker, Game files, Find saves, Old copies, Cloud backup, the
+ports folder), each asking before it changes anything. An update and a backup ask on a page of the checkup's own.
+When you leave a fix, the checkup looks again and shows that line: green ("That is fixed", then Next problem) or "Not
+fixed yet" (Try again, Check again, Next problem). B goes back one page; "Not now" changes nothing.
 
 ## First launch: the setup wizard
 
@@ -704,6 +736,7 @@ can keep a file private (the internal drive, not an exFAT SD card), or sign-in i
 | Update offered | After a newer build is published and 12 h past the last check (relaunch, or leave it open), the footer says Update |
 | Save folder unknown | Info of an installed port whose catalog entry has only a Windows save folder says "Save folder: unknown on Linux, no backup"; Save Backup names it |
 | Side by side | The original Ports Launcher and this fork, open at the same time, both stay open |
+| Fix problems | Home's "Fix N problems" tile (only when something is wrong) and Settings > Fix problems open the checkup: one line per check, a fix per page, and each line is looked at again when you come back; nothing changes until a fix page asks |
 | Restore saves | Info > Restore saves... lists the backups; Restore makes a "Before restore" zip first and the saves match the backup; refused while the game runs |
 
 ## Known issues being tested

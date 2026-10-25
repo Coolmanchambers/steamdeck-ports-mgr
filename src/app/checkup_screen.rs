@@ -352,8 +352,11 @@ fn refresh_in_background(app: &Rc<AppState>) {
             });
             match (done, part) {
                 (Ok(sys), Some(part)) => {
-                    let changed = store(checkup::run(&assemble(&part, sys)));
-                    if changed && app.home.is_active() && !dialog_is_open(&app) {
+                    let results = checkup::run(&assemble(&part, sys));
+                    eprintln!("checkup: background look: {}", results.summary());
+                    let changed = store(results);
+                    // Redrawn even under a dialog: Home is only drawn behind it, and the tile must be there when it closes.
+                    if changed && app.home.is_active() {
                         app.refresh_current_view();
                     }
                 }
@@ -677,4 +680,98 @@ pub(crate) fn resume_instead_of_menu(app: &Rc<AppState>, router: &Router) -> boo
     }
     resume(app, router);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn port(folder: &str) -> Port {
+        crate::core::models::port_from_value(&serde_json::json!({"name": folder, "folder": folder, "source": "https://example.com/x.zip"})).unwrap()
+    }
+
+    fn input(root: &std::path::Path, installed: Vec<Port>) -> SysInput {
+        SysInput {
+            installed,
+            favorites: HashMap::new(),
+            home: Some(root.join("home")),
+            library: root.join("Library"),
+            config_dir: root.join("config"),
+            saves_backup_dir: root.join("Saves Backup"),
+            default_library: root.join("elsewhere"),
+        }
+    }
+
+    #[test]
+    fn looking_reads_the_disk_and_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("home")).unwrap();
+        std::fs::create_dir_all(root.path().join("config")).unwrap();
+        let before = std::fs::read_dir(root.path()).unwrap().count();
+        let facts = sys_gather(input(root.path(), vec![port("a")]));
+        assert_eq!(facts.folder, Folder::Gone, "a chosen ports folder that is not there");
+        assert!(!facts.steam_found, "an empty home has no Steam folder");
+        assert!(matches!(&facts.queue, Ok(q) if q.is_empty()));
+        assert!(matches!(&facts.shortcuts, Ok(s) if s.is_empty()));
+        assert!(facts.programs.is_empty(), "the folder is not there: no walk");
+        assert_eq!(facts.backup_days, None);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), before, "nothing was created next to the app's folders");
+        assert_eq!(std::fs::read_dir(root.path().join("config")).unwrap().count(), 0, "and nothing in the config folder");
+    }
+
+    #[test]
+    fn a_waiting_list_that_cannot_be_opened_is_could_not_check_not_empty() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("Library")).unwrap();
+        std::fs::create_dir_all(root.path().join("config").join(steam_queue::FILE_NAME)).unwrap();
+        let facts = sys_gather(input(root.path(), Vec::new()));
+        assert_eq!(facts.folder, Folder::Here);
+        assert!(facts.queue.is_err(), "a directory where the list should be: say so, do not call it empty");
+        assert!(matches!(checkup::check(Check::SteamWaiting, &assemble_for_test(facts)), Outcome::Unknown(_)));
+    }
+
+    fn assemble_for_test(sys: SysFacts) -> Facts {
+        let part = AppPart { installed: Vec::new(), files: Vec::new(), saves: Vec::new(), updates: Vec::new(), cloud_problem: false, unfinished_moves: Vec::new(), game_mode: false };
+        assemble(&part, sys)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_port_with_two_programs_and_no_remembered_choice_is_asked_about_once() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("Library").join("two");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.sh"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(dir.join("b.sh"), b"#!/bin/sh\n").unwrap();
+        let one = root.path().join("Library").join("one");
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::write(one.join("a.sh"), b"#!/bin/sh\n").unwrap();
+        let mut i = input(root.path(), vec![port("two"), port("one")]);
+        assert_eq!(programs_to_choose(&i), vec![Named::new("two", "two")], "a single program needs no choice");
+        i.favorites.insert("two".to_string(), "b.sh".to_string());
+        assert!(programs_to_choose(&i).is_empty(), "a remembered choice that still exists settles it");
+        i.favorites.insert("two".to_string(), "gone.sh".to_string());
+        assert_eq!(programs_to_choose(&i).len(), 1, "a remembered program that is gone asks again");
+    }
+
+    #[test]
+    fn an_old_copy_is_gone_or_waits_for_its_first_start() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(root.path().join("home")).unwrap();
+        let kept = root.path().join("old").join("kept");
+        std::fs::create_dir_all(&kept).unwrap();
+        let record = |name: &str, old: &std::path::Path| {
+            serde_json::json!({"port_key": name, "name": name, "old_path": old, "new_path": root.path().join("Library").join(name), "bytes": 1,
+                "moved_at": "20261024-120000", "link_only": false, "switched": true, "repoint_queued": false})
+        };
+        let file = serde_json::json!({"version": 1, "old_copies": [record("kept", &kept), record("vanished", &root.path().join("old").join("vanished"))]});
+        std::fs::write(config.join(old_copies::FILE_NAME), file.to_string()).unwrap();
+        let i = input(root.path(), Vec::new());
+        let copies = old_copy_facts(&i).unwrap();
+        assert_eq!(copies.iter().map(|c| (c.name.as_str(), c.state)).collect::<Vec<_>>(), [("kept", CopyState::StartOnce), ("vanished", CopyState::Gone)]);
+        let record_after = std::fs::read_to_string(config.join(old_copies::FILE_NAME)).unwrap();
+        assert_eq!(record_after, file.to_string(), "looking did not note anything in the record (readiness_now would have)");
+    }
 }

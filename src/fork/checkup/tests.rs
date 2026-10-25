@@ -131,7 +131,7 @@ fn a_blank_icon_names_the_port_and_the_reason_and_keeps_the_path_for_the_step_pa
     let mut f = fine();
     f.shortcuts = Ok(vec![finding("soh", IconState::Missing("/run/media/x/tp.png".into())), ok_icon("dusk")]);
     let p = problem_of(check(Check::SteamIcons, &f));
-    assert_eq!(p.summary, "SOH: icon file is missing");
+    assert_eq!(p.summary, "Icon file is missing for SOH");
     assert!(!p.summary.contains('/'), "the line has no path");
     assert!(p.detail[0].contains("/run/media/x/tp.png"), "the real value is on the step page: {:?}", p.detail);
     assert_eq!((p.mark, p.fix.clone()), (Mark::ToDo, Fix::SteamIcons), "a blank icon does not stop a game");
@@ -142,7 +142,7 @@ fn a_blank_icon_names_the_port_and_the_reason_and_keeps_the_path_for_the_step_pa
         finding("quake", IconState::Outside("/home/q.png".into())),
     ]);
     let p = problem_of(check(Check::SteamIcons, &f));
-    assert_eq!(p.summary, "3 icons show nothing: SOH, DUSK and ABUSE", "an icon outside the folder is left alone");
+    assert_eq!(p.summary, "3 icons show nothing for SOH, DUSK and ABUSE", "an icon outside the folder is left alone");
     assert_eq!(p.ports, vec!["soh", "dusk", "abuse"]);
 }
 
@@ -195,7 +195,7 @@ fn programs_missing_files_and_saves_name_their_ports_and_fixes() {
     f.programs = vec![named("severed"), named("soh")];
     let p = problem_of(check(Check::Programs, &f));
     assert_eq!(p.fix, Fix::PickProgram("severed".into()));
-    assert_eq!(p.summary, "More than one program to start: SEVERED and SOH");
+    assert_eq!(p.summary, "Not chosen for SEVERED and SOH");
 
     f.files = vec![(named("dusk"), FilesState::Unverifiable)];
     let p = problem_of(check(Check::GameFiles, &f));
@@ -219,7 +219,7 @@ fn old_copies_say_what_each_needs_and_wait_unless_one_can_be_acted_on() {
     let mut f = fine();
     f.old_copies = Ok(vec![CopyFact { name: "Dusklight".into(), state: CopyState::StartOnce }]);
     let p = problem_of(check(Check::OldCopies, &f));
-    assert_eq!(p.summary, "Dusklight: Start it once from its new place");
+    assert_eq!(p.summary, "Start Dusklight once from its new place");
     assert_eq!(p.mark, Mark::Waiting, "nothing to do yet");
     f.old_copies = Ok(vec![
         CopyFact { name: "A".into(), state: CopyState::Ready },
@@ -231,7 +231,7 @@ fn old_copies_say_what_each_needs_and_wait_unless_one_can_be_acted_on() {
     assert_eq!(p.summary, "4 old copies kept: 1 ready to remove, 1 to start once, 1 waiting for Steam, 1 already gone");
     assert_eq!((p.mark, p.fix.clone()), (Mark::ToDo, Fix::OldCopies));
     assert_eq!(p.detail.len(), 4);
-    assert_eq!(p.detail[0], "A: Ready to remove");
+    assert_eq!(p.detail[0], "The old copy of A can be removed");
     f.old_copies = Err("The list of old copies could not be read.".into());
     assert!(matches!(check(Check::OldCopies, &f), Outcome::Unknown(_)));
     assert_eq!(CopyState::of(Readiness::Ready(StartedBy::User)), CopyState::Ready);
@@ -284,6 +284,17 @@ fn the_summary_and_the_home_tile_count_the_checks_with_something_to_fix() {
 }
 
 #[test]
+fn the_overview_line_reads_on_after_the_colon_without_breaking_names_and_numbers() {
+    let words = |w: &str| pages::line(Check::SteamIcons, &Outcome::Ok(w.into()));
+    assert_eq!(words("Icon file is missing for SOH"), "Steam icons: icon file is missing for SOH");
+    assert_eq!(words("3 icons show nothing for A"), "Steam icons: 3 icons show nothing for A");
+    assert_eq!(words("SoH is fine"), "Steam icons: SoH is fine", "not a word of ours: left alone");
+    assert_eq!(words("All fine"), "Steam icons: all fine");
+    assert_eq!(words("A"), "Steam icons: A");
+    assert_eq!(pages::line(Check::Updates, &Outcome::Unknown("x".into())), "Updates: could not check (x)");
+}
+
+#[test]
 fn names_read_like_a_sentence() {
     let v = |l: &[&str]| names(&l.iter().map(|s| s.to_string()).collect::<Vec<_>>());
     assert_eq!(v(&[]), "");
@@ -303,7 +314,7 @@ fn the_overview_has_one_line_per_check_and_leads_with_fixing_when_there_is_somet
     assert_eq!(page.facts.len(), 10, "one line per check");
     assert_eq!(page.title, "Checkup");
     let updates = Check::ALL.iter().position(|c| *c == Check::Updates).unwrap();
-    assert_eq!(page.facts[updates], "Updates: Update ready: SOH");
+    assert_eq!(page.facts[updates], "Updates: Update ready: SOH", "kept as it is: it reads as a title");
     assert_eq!(page.mark_of(updates), Mark::ToDo);
     let icons = Check::ALL.iter().position(|c| *c == Check::SteamIcons).unwrap();
     assert_eq!(page.facts[icons], "Steam icons: could not check (Could not read Steam)", "a check that cannot run says why on its own line");
@@ -339,8 +350,9 @@ fn a_step_page_shows_the_problem_the_fix_card_and_a_way_to_skip() {
     assert_eq!(page.title, "Steam icons");
     assert_eq!(page.step_text, "Problem 2 of 3");
     assert_eq!((page.step_number, page.step_count), (2, 3));
-    assert_eq!(page.facts, vec!["SOH: icon file is missing"]);
-    assert!(page.paragraphs[0].contains("/run/media/x/tp.png"));
+    assert_eq!(page.facts, vec!["Icon file is missing for SOH"]);
+    assert!(page.footnote.contains("/run/media/x/tp.png"), "the real value sits in the small text: {:?}", page.footnote);
+    assert!(page.paragraphs.is_empty());
     assert_eq!((page.options[0].title.as_str(), page.options[0].action, page.options[0].recommended), ("Fix the icons", Act::Fix, true));
     assert_eq!(page.options[1].action, Act::Skip);
     assert_eq!(page.back_hint, "Checkup");
@@ -353,7 +365,7 @@ fn after_a_fix_the_line_turns_green_or_offers_another_try() {
     let green = pages::after_page(Check::SteamIcons, &Outcome::Ok("All fine".into()), 1, 2, false);
     assert_eq!(green.title, "That is fixed");
     assert_eq!(green.mark_of(0), Mark::Done);
-    assert_eq!(green.facts, vec!["Steam icons: All fine"]);
+    assert_eq!(green.facts, vec!["Steam icons: all fine"]);
     assert_eq!(green.options.len(), 1);
     assert_eq!((green.options[0].title.as_str(), green.options[0].action), ("Next problem", Act::Next));
     let last = pages::after_page(Check::SteamIcons, &Outcome::Ok("All fine".into()), 2, 2, true);
@@ -394,6 +406,7 @@ fn the_last_page_counts_what_is_left_and_the_confirm_page_asks_first() {
     assert!(wait.progress.is_some());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn only_a_folder_walk_of_bounded_size_decides_whether_there_is_a_program_to_choose() {
     let dir = tempfile::tempdir().unwrap();

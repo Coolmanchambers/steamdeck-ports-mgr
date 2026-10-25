@@ -8,6 +8,8 @@
 #     reported), then Home again;
 #   - Settings is a page of groups (Settings, Settings: Ports ...): Steam > Artwork sources opens and its Back row returns to
 #     the Steam page, B goes up to Settings, Saves > Cloud backup opens its first page and B returns to the Saves page;
+#   - the background checkup finds the seeded setup's problems and Home shows its "Fix N problems" tile; A on the tile and
+#     Settings > Fix problems open the checkup, B leaves it;
 #   - Ports > Import ports opens and closes without a crash;
 #   - Ports > Add a port opens the page and B returns to the Ports page; Updates > Check for Updates flips in place and keeps
 #     the cursor on it;
@@ -253,6 +255,21 @@ if [ "$alive" = yes ]; then
             press_keys "$ap" Escape; sleep 1.5
             check "B returns from Add a port to Home" '[ -z "$(xdotool search --name "^Add a port$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
         fi
+        # Home's "Fix N problems" tile: the seeded setup has problems (no Steam here, a game file missing), so the background
+        # look put the tile on Home. With nothing played it is the first tile; A opens the checkup, B leaves it.
+        for _ in $(seq 1 20); do grep -q '^checkup: background look' "$OUT/app.log" && break; sleep 0.5; done
+        check "the background checkup found something to fix" 'grep -q "^checkup: background look: [0-9]* problem" "$OUT/app.log"'
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key --delay 250 Left Left Left Left Left; sleep 0.8
+        import -window root "$OUT/home-fix-tile.png" 2>/dev/null
+        xdotool key --delay 250 Return
+        fp=$(find_window '^Fix problems$') || fp=""
+        sleep 2
+        import -window root "$OUT/fix-problems.png" 2>/dev/null
+        check "A on Home's Fix problems tile opens the checkup and it looks over the setup" '[ -n "$fp" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log" && grep -q "^checkup: looked" "$OUT/app.log"'
+        if [ -n "$fp" ]; then
+            press_keys "$fp" Escape; sleep 1.5
+            check "B leaves the checkup for Home" '[ -z "$(xdotool search --name "^Fix problems$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
+        fi
         # Settings is a page of groups: the title bar's Settings button opens it, then the keyboard picks a group and a card
         # (Down presses; Up first, since a page remembers where the cursor was). The pages are one window each, found by
         # name ("Settings", "Settings: Ports"...). Without a window manager keys reach a window only after an explicit
@@ -297,6 +314,17 @@ if [ "$alive" = yes ]; then
         }
         eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
         if [ -n "${X:-}" ] && [ -n "${Y:-}" ]; then
+            # Settings > Fix problems is the card after the groups: it opens the checkup, B leaves it.
+            n_groups=5
+            [ -f "$MENU_SRC" ] && n_groups=$(grep -m1 'pub const ALL: \[Group' "$MENU_SRC" | sed 's/.*= \[//; s/\].*//' | tr ',' '\n' | grep -c 'Group::')
+            open_settings_page
+            sw=$(find_window '^Settings$') && press_keys "$sw" Up Up Up Up Up Up $(downs "$n_groups") Return
+            fp=$(find_window '^Fix problems$') || fp=""
+            sleep 2
+            import -window root "$OUT/settings-fix-problems.png" 2>/dev/null
+            check "Settings > Fix problems opens the checkup" '[ -n "$fp" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+            if [ -n "$fp" ]; then press_keys "$fp" Escape; sleep 1.5; fi
+            xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
             # Settings > Ports > Import ports opens (its scan runs on a worker thread), shows the screen and closes again.
             open_settings_page && settings_entry Ports ImportPorts; sleep 4
             import -window root "$OUT/import-ports.png" 2>/dev/null
