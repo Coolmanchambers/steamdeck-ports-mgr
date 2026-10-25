@@ -12,6 +12,7 @@
 //! get the wizard once too.
 
 pub mod flow;
+pub mod files_state;
 pub mod game_files;
 pub mod notice;
 pub mod places;

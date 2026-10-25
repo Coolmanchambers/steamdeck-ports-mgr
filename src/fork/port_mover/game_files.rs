@@ -89,7 +89,7 @@ fn name_of(path: &Path) -> String {
 }
 
 /// Files under `dir` (not following links into other folders), by lowercase name, a few levels deep.
-fn files_by_name(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
+pub(crate) fn files_by_name(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let path = e.path();

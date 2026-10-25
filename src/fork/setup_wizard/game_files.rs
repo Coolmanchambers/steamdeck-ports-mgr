@@ -7,7 +7,6 @@
 //! never moved or changed; a copy only after its size was shown and approved).
 
 use crate::core::models::Port;
-use crate::fork::port_mover::game_files::{required_not_found, GameFiles};
 use crate::fork::rom_library::{PortStatus, SlotResult, SlotStatus};
 use crate::fork::rom_screens::report::{PortRow, Report};
 use std::collections::HashSet;
@@ -43,17 +42,12 @@ fn first_missing(row: &PortRow) -> String {
         .unwrap_or_else(|| "a game file".to_string())
 }
 
-/// The ports (by key) whose required files are all already in their own folder or connected, or that already
-/// made their game archive from them (`requirements::generated_archives`): nothing to look for, no scan needed.
+/// The ports (by key) whose game files are all already in their own folder or connected, or that already made their
+/// game archive from them (`requirements::generated_archives`): nothing to look for, no scan needed. A port whose entry
+/// names only a game title counts when a game file in its folder carries that title, or a connection was recorded.
+/// The rule is `files_state::files_state`, the one Home uses too.
 pub fn in_folder_keys<'a>(ports: impl Iterator<Item = (&'a Port, PathBuf)>, config_dir: &Path) -> HashSet<String> {
-    ports
-        .filter(|(port, dir)| {
-            let files = GameFiles::for_port(port, config_dir);
-            let made = crate::fork::rom_library::requirements::generated_archives(&port.folder).iter().any(|name| dir.join(name).is_file());
-            !files.required.is_empty() && (made || required_not_found(dir, &files).is_empty())
-        })
-        .map(|(port, _)| port.key().to_string())
-        .collect()
+    ports.filter(|(port, dir)| super::files_state::files_state(port, dir, config_dir) == super::files_state::FilesState::Have).map(|(port, _)| port.key().to_string()).collect()
 }
 
 impl Results {

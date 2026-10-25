@@ -8,6 +8,8 @@ pub enum Badge {
     Ready,
     UpdateAvailable,
     GameFilesMissing,
+    /// The entry names only a game title: the app cannot check for it, so this is a thing to do, not red.
+    AddGameFiles,
     SteamWaiting,
     SavesNotFound,
 }
@@ -19,6 +21,7 @@ impl Badge {
             Badge::Ready => "Ready",
             Badge::UpdateAvailable => "Update ready",
             Badge::GameFilesMissing => "No game files",
+            Badge::AddGameFiles => "Add game files",
             Badge::SteamWaiting => "Steam waiting",
             Badge::SavesNotFound => "Find saves",
         }
@@ -32,6 +35,7 @@ impl Badge {
             Badge::Ready => Mark::Done,
             Badge::UpdateAvailable => Mark::ToDo,
             Badge::GameFilesMissing => Mark::Problem,
+            Badge::AddGameFiles => Mark::ToDo,
             Badge::SteamWaiting => Mark::Waiting,
             Badge::SavesNotFound => Mark::ToDo,
         }
@@ -46,6 +50,8 @@ pub struct PortFacts {
     pub name: String,
     pub update_available: bool,
     pub game_files_missing: bool,
+    /// Names a game by title only and nothing says it is there (not red).
+    pub game_files_to_add: bool,
     pub steam_waiting: bool,
     pub saves_not_found: bool,
     /// When it was last played, seconds since 1970 (the later of the app's record and Steam's), 0 when never.
@@ -59,6 +65,8 @@ pub fn badge(p: &PortFacts) -> Badge {
         Badge::GameFilesMissing
     } else if p.update_available {
         Badge::UpdateAvailable
+    } else if p.game_files_to_add {
+        Badge::AddGameFiles
     } else if p.steam_waiting {
         Badge::SteamWaiting
     } else if p.saves_not_found {
@@ -267,6 +275,13 @@ mod tests {
         assert_eq!(badge(&p), Badge::SteamWaiting);
         p.update_available = true;
         assert_eq!(badge(&p), Badge::UpdateAvailable);
+        p.game_files_to_add = true;
+        assert_eq!(badge(&p), Badge::UpdateAvailable, "an update comes before game files that cannot be checked");
+        p.update_available = false;
+        assert_eq!(badge(&p), Badge::AddGameFiles);
+        assert_eq!(Badge::AddGameFiles.label(), "Add game files");
+        assert_eq!(Badge::AddGameFiles.mark(), crate::fork::page::Mark::ToDo, "not red: the app cannot check a title");
+        p.update_available = true;
         p.game_files_missing = true;
         assert_eq!(badge(&p), Badge::GameFilesMissing, "a game that will not start comes first");
         assert_eq!(Badge::GameFilesMissing.label(), "No game files");

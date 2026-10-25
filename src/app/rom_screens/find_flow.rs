@@ -24,6 +24,7 @@ use crate::app::state::AppState;
 use crate::core::models::Port;
 use crate::core::path_safety::safe_join;
 use crate::fork::rom_library::{load_local_entries, Mapping, RomLibraryStore};
+use crate::fork::setup_wizard::files_state::FilesState;
 use crate::fork::rom_screens::connect_screen::{ConnectScreen, Pick};
 use crate::fork::rom_screens::file_pick::{FileBrowser, Line as FileLine};
 use crate::fork::rom_screens::find::{
@@ -66,13 +67,20 @@ fn request_for(app: &AppState, local: &LocalEntries, port: &Port, mappings: Vec<
 }
 
 /// Installed, needs game files, and does not have them yet: not in its own folder (nor the archive it makes from
-/// them), not connected. What the setup wizard asks about.
+/// them), not connected. What the setup wizard asks about. A port that names only a game title counts as not having
+/// them until a file in its folder carries the title or a connection is recorded (Home shows that one without red:
+/// `port_files_state`).
 pub(crate) fn port_missing_game_files(app: &AppState, port: &Port) -> bool {
+    port_files_state(app, port) != Some(FilesState::Have)
+}
+
+/// Home's view: `None` when the port is not installed or needs no game files, else the state (red only for `Missing`).
+pub(crate) fn port_files_state(app: &AppState, port: &Port) -> Option<FilesState> {
     if !port_needs_game_files(app, port) {
-        return false;
+        return None;
     }
-    let Ok(dir) = crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder) else { return true };
-    !crate::fork::setup_wizard::game_files::in_folder_keys(std::iter::once((port, dir)), &app.paths.config_dir).contains(port.key())
+    let Ok(dir) = crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder) else { return Some(FilesState::Missing) };
+    Some(crate::fork::setup_wizard::files_state::files_state(port, &dir, &app.paths.config_dir))
 }
 
 /// For the Info dialog: is the port installed and does it name files it needs.

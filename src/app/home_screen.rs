@@ -15,6 +15,7 @@ use super::install_launch::activate_port;
 use super::state::AppState;
 use crate::core::models::Port;
 use crate::fork::home::{self, Home, List, PortFacts, TileKind};
+use crate::fork::setup_wizard::files_state::FilesState;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::{AppWindow, HomeTile};
 use std::cell::{Cell, RefCell};
@@ -51,7 +52,7 @@ pub(crate) struct HomeUi {
     round_done: Arc<std::sync::atomic::AtomicBool>,
     updates_seen: Cell<usize>,
     steam: RefCell<Option<(Instant, HashMap<String, i64>)>>,
-    files: RefCell<HashMap<String, (Instant, bool)>>,
+    files: RefCell<HashMap<String, (Instant, Option<FilesState>)>>,
 }
 
 impl HomeUi {
@@ -339,7 +340,8 @@ fn facts_of(app: &AppState, installed: &[Port]) -> Vec<PortFacts> {
             PortFacts {
                 name: p.display_name().to_string(),
                 update_available: home::update_shown(updates.get(&key).copied(), installed_at),
-                game_files_missing: files.get(&key).copied().unwrap_or(false),
+                game_files_missing: files.get(&key).copied().flatten() == Some(FilesState::Missing),
+                game_files_to_add: files.get(&key).copied().flatten() == Some(FilesState::Unverifiable),
                 steam_waiting: queued.contains(&key),
                 saves_not_found: super::save_finder_screen::saves_warning(app, p),
                 last_played: app_played.max(steam.get(&key).copied().unwrap_or(0)),
@@ -349,9 +351,9 @@ fn facts_of(app: &AppState, installed: &[Port]) -> Vec<PortFacts> {
         .collect()
 }
 
-/// "Game files missing" for each port, each answer reused for a few seconds (Home redraws often: covers arriving, the
-/// update poll), since it reads the port's folder and the game files records.
-fn files_missing(app: &AppState, installed: &[Port]) -> HashMap<String, bool> {
+/// The game files state of each port (`None`: needs none), each answer reused for a few seconds (Home redraws often:
+/// covers arriving, the update poll), since it reads the port's folder and the game files records.
+fn files_missing(app: &AppState, installed: &[Port]) -> HashMap<String, Option<FilesState>> {
     let mut cache = app.home.files.borrow_mut();
     installed
         .iter()
@@ -359,7 +361,7 @@ fn files_missing(app: &AppState, installed: &[Port]) -> HashMap<String, bool> {
             let key = p.key().to_string();
             let fresh = cache.get(&key).filter(|(at, _)| at.elapsed() < FILES_TTL).map(|(_, v)| *v);
             let missing = fresh.unwrap_or_else(|| {
-                let v = super::rom_screens::port_missing_game_files(app, p);
+                let v = super::rom_screens::port_files_state(app, p);
                 cache.insert(key.clone(), (Instant::now(), v));
                 v
             });

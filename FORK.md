@@ -351,8 +351,11 @@ The first thing the app shows (Tim, 2026-10-25: "want a better first impression 
 
 - **Your ports**: a grid of cover tiles for the installed ports (covers from the card image cache, the port's name on a
   plain tile while there is none), each with one short status badge drawn with the guided pages' status marks, in
-  this order of priority: "No game files" (red; the game files records), "Update ready" (blue arrow), "Steam waiting"
-  (orange; a change for the port in the Steam queue), "Find saves" (blue arrow; the save finder), else "Ready".
+  this order of priority: "No game files" (red; a file the catalog names is neither in the port's folder nor connected),
+  "Update ready" (blue arrow), "Add game files" (blue arrow; the catalog names only a game title, so the app cannot
+  check, and no connection or title-matching game file in the port's folder is known; `setup_wizard::files_state`, the
+  rule the wizard counts use too), "Steam waiting" (orange; a change for the port in the Steam queue), "Find saves"
+  (blue arrow; the save finder), else "Ready".
 - **Update check**: Play's own check (`jobs::run_update_check_result`), for exactly the ports Play would check
   (`home::update_check_due`, shared with `install_launch`: "check for updates" on, the port's own switch on, a GitHub
   or GitLab release, an install older than Play's stale time). At most one round every 12 hours (`home_update_check_at`
