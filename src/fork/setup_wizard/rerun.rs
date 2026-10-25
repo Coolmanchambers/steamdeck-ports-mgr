@@ -6,6 +6,7 @@
 //! The first page of a rerun, "Your setup", shows one line per step; "Finish what's left" visits only the
 //! Pending ones, in order, so nothing done is redone. No UI here.
 
+use crate::fork::page::Mark;
 use super::flow::Step;
 use super::places::Kind;
 use crate::fork::settings::ForkSettings;
@@ -113,20 +114,23 @@ pub struct StepLine {
     pub state: State,
     /// "Ports folder: SD card".
     pub text: String,
+    /// The mark drawn before it, set where the line is made: done, still to do, waiting (on Steam, on a first start),
+    /// or skipped on purpose (still visited by "Finish what's left").
+    pub mark: Mark,
 }
 
 impl StepLine {
-    /// The mark drawn before the line: done; skipped on purpose; waiting on Steam or on a first start; else still to
-    /// do (what "Finish what's left" visits).
-    pub fn mark(&self) -> crate::fork::page::Mark {
-        use crate::fork::page::Mark;
-        match self.state {
-            State::Done => Mark::Done,
-            State::Waiting => Mark::Waiting,
-            State::Pending if self.text.ends_with(": skipped") || self.text.contains(": skipped,") => Mark::Skipped,
-            State::Pending if self.text.contains("waiting for Steam") => Mark::Waiting,
-            State::Pending => Mark::ToDo,
-        }
+    pub fn mark(&self) -> Mark {
+        self.mark
+    }
+}
+
+/// The mark a state has unless the line says otherwise.
+fn mark_of_state(state: State) -> Mark {
+    match state {
+        State::Done => Mark::Done,
+        State::Pending => Mark::ToDo,
+        State::Waiting => Mark::Waiting,
     }
 }
 
@@ -145,7 +149,8 @@ fn ports(n: usize) -> String {
 
 /// One line per counted step (the old copies included), in the wizard's order.
 pub fn lines(facts: &Facts, progress: &Progress) -> Vec<StepLine> {
-    let line = |step, state, text: String| StepLine { step, state, text };
+    let line = |step, state, text: String| StepLine { step, state, text, mark: mark_of_state(state) };
+    let marked = |step, state, mark, text: String| StepLine { step, state, text, mark };
     let mut out = Vec::new();
     // Ports folder: chosen in a run, or anything but the default in use (a choice made somewhere).
     out.push(if progress.ports_folder || !facts.ports_folder_is_default {
@@ -159,13 +164,13 @@ pub fn lines(facts: &Facts, progress: &Progress) -> Vec<StepLine> {
         _ if moved_in > 0 => line(Step::YourPorts, State::Done, format!("Your ports: {} moved in", moved_in)),
         _ if facts.installed > 0 => line(Step::YourPorts, State::Done, format!("Your ports: {} in your ports folder", ports(facts.installed))),
         Some(true) => line(Step::YourPorts, State::Done, "Your ports: looked for, none found".to_string()),
-        Some(false) => line(Step::YourPorts, State::Pending, "Your ports: skipped".to_string()),
+        Some(false) => marked(Step::YourPorts, State::Pending, Mark::Skipped, "Your ports: skipped".to_string()),
         None => line(Step::YourPorts, State::Pending, "Your ports: not looked for yet".to_string()),
     });
     // Game files.
     out.push(match (&facts.rom_folder, facts.game_files_found.or(progress.game_files_found)) {
         _ if facts.game_files_needed == 0 => line(Step::GameFiles, State::Done, "Game files: nothing missing".to_string()),
-        (None, _) if progress.game_files_skipped => line(Step::GameFiles, State::Pending, "Game files: skipped, no folder set".to_string()),
+        (None, _) if progress.game_files_skipped => marked(Step::GameFiles, State::Pending, Mark::Skipped, "Game files: skipped, no folder set".to_string()),
         (None, _) => line(Step::GameFiles, State::Pending, "Game files: no folder set yet".to_string()),
         (Some(folder), Some((have, total))) => line(Step::GameFiles, State::Done, format!("Game files: {folder}, found for {have} of {total}")),
         (Some(folder), None) => line(Step::GameFiles, State::Pending, format!("Game files: {folder}, not looked at yet")),
@@ -175,11 +180,15 @@ pub fn lines(facts: &Facts, progress: &Progress) -> Vec<StepLine> {
         line(Step::Steam, State::Pending, "Steam: not set up (start Steam once and sign in)".to_string())
     } else if facts.steam_waiting > 0 {
         let wait = if facts.game_mode { "waiting for Desktop Mode" } else { "waiting for Steam to close" };
-        line(Step::Steam, State::Pending, format!("Steam: {} {wait}", facts.steam_waiting))
+        marked(Step::Steam, State::Pending, Mark::Waiting, format!("Steam: {} {wait}", facts.steam_waiting))
     } else if facts.steam_to_add > 0 {
         line(Step::Steam, State::Pending, format!("Steam: {} not in Steam yet", ports(facts.steam_to_add)))
     } else if facts.installed == 0 {
-        line(Step::Steam, if progress.steam_skipped { State::Pending } else { State::Done }, "Steam: no ports to add yet".to_string())
+        if progress.steam_skipped {
+            marked(Step::Steam, State::Pending, Mark::Skipped, "Steam: no ports to add yet".to_string())
+        } else {
+            line(Step::Steam, State::Done, "Steam: no ports to add yet".to_string())
+        }
     } else {
         line(Step::Steam, State::Done, "Steam: your ports are in Steam".to_string())
     });
@@ -277,10 +286,10 @@ mod tests {
         assert_eq!(l[2].mark(), Mark::ToDo, "Game files: no folder set yet");
         assert_eq!(l[3].mark(), Mark::Waiting, "Steam: 4 waiting for Steam to close");
         assert_eq!(l[4].mark(), Mark::Waiting, "Old copies: 4 kept, none ready yet");
-        let skipped = StepLine { step: Step::GameFiles, state: State::Pending, text: "Game files: skipped, no folder set".into() };
-        assert_eq!(skipped.mark(), Mark::Skipped);
-        let skipped2 = StepLine { step: Step::YourPorts, state: State::Pending, text: "Your ports: skipped".into() };
-        assert_eq!(skipped2.mark(), Mark::Skipped);
+        let skipped = lines(&Facts { installed: 1, game_files_needed: 2, ..Facts::default() }, &Progress { game_files_skipped: true, your_ports: Some(false), ..Progress::default() });
+        assert_eq!(skipped[2].mark(), Mark::Skipped, "set where the line is made, not read from its words");
+        let fresh = lines(&Facts { ports_folder_is_default: true, game_files_needed: 2, ..Facts::default() }, &Progress { your_ports: Some(false), steam_skipped: true, ..Progress::default() });
+        assert_eq!((fresh[0].mark(), fresh[1].mark(), fresh[3].mark()), (Mark::ToDo, Mark::Skipped, Mark::Skipped));
         assert!(old_copies_waiting(&l));
     }
 

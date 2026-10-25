@@ -103,7 +103,8 @@ window that changes its content; B usually lands on the choice you were on. The 
 what the buttons do there ("A Choose · B Back · D-pad Move", or what B does instead, such as "B Cancel"). The
 choice the cursor is on has a thick white ring; "Recommended" is a small tag on the suggested choice. One press of A
 or B acts once even when Steam also types Enter or Escape for it. In big mode and in Game Mode the pages fill the
-screen with no title bar. The summary lines carry small coloured marks (done, still to do, waiting, skipped,
+screen with no title bar: B is the way out (on the first page B asks "Skip setup?", which there also offers "Not
+now" to leave and come back to setup next time). Big mode cannot be switched while a page is open. The summary lines carry small coloured marks (done, still to do, waiting, skipped,
 problem), and copying, moving and scanning pages show a bar of how far they are. Other screens it hands over to (the
 folder picker, Settings > Game files) open on their own and the wizard window comes back after them.
 

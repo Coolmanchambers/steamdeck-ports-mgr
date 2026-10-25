@@ -917,6 +917,7 @@ pub(super) fn start_move(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen:
         let ctx2 = ctx.clone();
         let then: Rc<dyn Fn(&Rc<AppState>, &Router, String, Vec<String>)> = Rc::new(move |app, router, text, keys| {
             let outcome = Outcome { moved: 0, lines: vec![linked_line(keys.len())] };
+
             finish_after(app, router, &ctx2, text, VecDeque::new(), keys, false, outcome)
         });
         return offer_link(app, router, linkable, text, then, back);
@@ -1045,7 +1046,8 @@ fn take_off_unmoved(app: &Rc<AppState>, added: &[Added], moved: &[String]) -> Op
 #[derive(Clone, Default)]
 pub(super) struct Outcome {
     pub moved: usize,
-    pub lines: Vec<String>,
+    /// Each line with the mark it is drawn with, set from the outcome it describes.
+    pub lines: Vec<(crate::fork::page::Mark, String)>,
 }
 
 /// Marks what moved as installed, redraws, then continues: the link offer for ports that did not fit,
@@ -1077,9 +1079,10 @@ fn show_result(app: &Rc<AppState>, router: &Router, ctx: &Ctx, summary: Rc<Impor
     let candidates = summary.link_candidates();
     let moved_keys: Vec<String> = summary.moved().map(|i| i.plan.request.port_key.clone()).collect();
     let wants_game_files = summary.wants_game_files();
-    let mut lines = summary.short_problems();
-    lines.extend(summary.short_steam());
-    lines.extend(note);
+    let mut lines = summary.short_problem_lines();
+    lines.extend(summary.short_steam_line());
+    // A note about the import (an entry taken off the port list again, say) is something to read, not a state.
+    lines.extend(note.map(|n| (crate::fork::page::Mark::ToDo, n)));
     let outcome = Outcome { moved: summary.moved_count(), lines };
     if candidates.is_empty() {
         return finish_after(app, router, ctx, text, copies, moved_keys, wants_game_files, outcome);
@@ -1145,11 +1148,12 @@ fn finish_after(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text: String, co
 }
 
 /// "2 linked where they stand." for the link-instead outcome (or its absence).
-fn linked_line(n: usize) -> String {
+fn linked_line(n: usize) -> (crate::fork::page::Mark, String) {
+    use crate::fork::page::Mark;
     match n {
-        0 => "Nothing was linked.".to_string(),
-        1 => "1 port was linked where it stands.".to_string(),
-        n => format!("{n} ports were linked where they stand."),
+        0 => (Mark::Skipped, "Nothing was linked.".to_string()),
+        1 => (Mark::Done, "1 port was linked where it stands.".to_string()),
+        n => (Mark::Done, format!("{n} ports were linked where they stand.")),
     }
 }
 

@@ -32,7 +32,8 @@ const REMOVING_SENTENCE: &str = "Saves are zipped to a backup first. Only the re
 /// back (one window, no flash of the main list). Nothing to choose; B and the X do nothing while it runs, as with the
 /// progress dialog this replaces.
 fn working(origin: Origin, title: &str, sentence: &str, progress: &str) -> crate::fork::page::Page<BatchAction> {
-    let page = working_page(origin, title, sentence, progress);
+    // A sliding bar: the check and the removal say which copy they are on, not how far in bytes.
+    let page = working_page(origin, title, sentence, progress).with_progress(None);
     if crate::app::setup_wizard_screen::active() { page.in_wizard(4, crate::fork::setup_wizard::flow::Step::COUNTED) } else { page }
 }
 

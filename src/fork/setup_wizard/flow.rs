@@ -459,6 +459,8 @@ pub fn press(w: &mut Wizard, action: Action, a: &mut dyn Adapters) {
     match (w.view.clone(), action) {
         (View::Notice(_) | View::SaveFailed(_), Action::Ok) => show_step(w, a),
         (View::SaveFailed(_), Action::CloseAnyway) => a.close(),
+        // "Not now" (the page fills the screen, so there is no title bar X): leave, setup stays unfinished.
+        (View::ConfirmSkipSetup, Action::CloseAnyway) => a.close(),
         (View::ConfirmSkipSetup, Action::Yes) => finish(w, a),
         (View::ConfirmSkipSetup, Action::No) => show_step(w, a),
         (View::PickAccount(_), Action::Back) => show_step(w, a),

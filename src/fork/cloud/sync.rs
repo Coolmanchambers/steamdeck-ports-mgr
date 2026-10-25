@@ -145,6 +145,10 @@ pub fn run_pass(
                     }
                 }
             }
+            // Every step done (not cancelled, no error): the bar ends full.
+            if !report.cancelled && report.error.is_none() {
+                tell(1.0);
+            }
         }
     }
     finish(rec, input, report, save)

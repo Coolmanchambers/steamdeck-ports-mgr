@@ -11,6 +11,7 @@
 //! worker waits.
 
 use super::plan::{PortPlan, SteamWrite};
+use crate::fork::page::Mark;
 use crate::fork::rom_screens::util::human_bytes;
 use crate::fork::screens::short_path;
 use crate::fork::port_mover::game_files::Issue;
@@ -280,16 +281,22 @@ impl ImportSummary {
 
     /// One short line for each port that did not move, without paths (the long text, with them, is behind Details).
     pub fn short_problems(&self) -> Vec<String> {
+        self.short_problem_lines().into_iter().map(|(_, l)| l).collect()
+    }
+
+    /// [`ImportSummary::short_problems`] with the mark each line is drawn with: a port that was not started because
+    /// the user cancelled is skipped; every other one is a problem.
+    pub fn short_problem_lines(&self) -> Vec<(Mark, String)> {
         self.items
             .iter()
             .filter_map(|item| {
                 let name = &item.plan.request.port_name;
                 match &item.outcome {
-                    PortOutcome::Refused { space: true, .. } => Some(format!("{name} was not moved: not enough room.")),
-                    PortOutcome::Refused { .. } => Some(format!("{name} was not moved. Details say why.")),
-                    PortOutcome::Stopped { .. } => Some(format!("{name} was stopped: a game file needs a look.")),
-                    PortOutcome::Failed(_) => Some(format!("{name} had a problem and was not moved. Details say why.")),
-                    PortOutcome::NotStarted => Some(format!("{name} was not started (you cancelled).")),
+                    PortOutcome::Refused { space: true, .. } => Some((Mark::Problem, format!("{name} was not moved: not enough room."))),
+                    PortOutcome::Refused { .. } => Some((Mark::Problem, format!("{name} was not moved. Details say why."))),
+                    PortOutcome::Stopped { .. } => Some((Mark::Problem, format!("{name} was stopped: a game file needs a look."))),
+                    PortOutcome::Failed(_) => Some((Mark::Problem, format!("{name} had a problem and was not moved. Details say why."))),
+                    PortOutcome::NotStarted => Some((Mark::Skipped, format!("{name} was not started (you cancelled)."))),
                     PortOutcome::Planned | PortOutcome::Moved { .. } => None,
                 }
             })
@@ -298,6 +305,18 @@ impl ImportSummary {
 
     /// One short line about Steam shortcuts that followed the moved ports, when any did.
     pub fn short_steam(&self) -> Option<String> {
+        self.short_steam_line().map(|(_, l)| l)
+    }
+
+    /// [`ImportSummary::short_steam`] with its mark: a shortcut that could not be changed is a problem, one still
+    /// queued is waiting, else done.
+    pub fn short_steam_line(&self) -> Option<(Mark, String)> {
+        let (_, queued, failed) = self.steam_counts();
+        let mark = if failed > 0 { Mark::Problem } else if queued > 0 { Mark::Waiting } else { Mark::Done };
+        self.short_steam_text().map(|l| (mark, l))
+    }
+
+    fn short_steam_text(&self) -> Option<String> {
         let (repointed, queued, failed) = self.steam_counts();
         let mut parts = Vec::new();
         if repointed > 0 {
@@ -585,5 +604,7 @@ mod tests {
             move_selected(&engine, plans(&fake_home("engine_short_cancel"), None), &flag, &|_| {}, &NoPrompts)
         };
         assert_eq!(cancelled.short_problems(), ["Ship of Harkinian was not started (you cancelled)."]);
+        assert_eq!(cancelled.short_problem_lines()[0].0, Mark::Skipped, "cancelled is skipped, not a problem");
+        assert!(other.short_problem_lines().iter().all(|(m, _)| *m == Mark::Problem));
     }
 }

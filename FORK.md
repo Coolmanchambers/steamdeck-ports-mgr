@@ -311,18 +311,26 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
   title bar and no X (`full` in `ui/fork/setup-wizard.slint`; `DialogChrome` skips a zero-height bar). The
   "Deck Ports Manager" header line goes; the step counter ("Step 2 of 5", or the page's own header outside the
   wizard) sits at the right of the title, under the step bar. Margins are 30 px instead of 14. Windowed desktop
-  keeps the floating window with its title bar.
+  keeps the floating window with its title bar. With no X in full screen, "Skip setup?" also offers "Not now" (leave;
+  setup stays unfinished and comes back at the next start), as the X does windowed. Big mode cannot be switched while
+  a page is open (the View button reaches only the main window), so a page never changes mode under the user. The
+  body reaches into the right margin, where its scrollbar runs, so its content ends where the step bar ends.
 - **Status marks**: a line of the summary box can carry a `fork::page::Mark` (done, to do, waiting, skipped,
   problem), drawn as a small picture in a coloured disc (`StatusIcon`: a check, an arrow, a clock, a dash, an
   exclamation mark), never as a text character that a font could lack. Used by "Your setup" and the rerun's last
-  page (`rerun::StepLine::mark`), the first run's last page, the import finished page and the old copies status
-  lines. The old text glyphs (check mark, arrow) are gone.
+  page (`rerun::StepLine.mark`), the first run's last page, the import finished page and the old copies status
+  lines. Each mark is set where the line is made, from the typed outcome (`StepLine.mark`, `steam_line` /
+  `game_files_line` returning their mark, `ImportSummary::short_problem_lines` / `short_steam_line`, the import
+  `Outcome.lines`), never read back from the words. A line with no mark keeps the indent of marked lines on the same
+  page. The old text glyphs (check mark, arrow) are gone.
 - **Progress bars**: `Page.progress` draws a bar under the summary box, filled when the work knows how far it is,
   a sliding block otherwise. Background jobs say how far with `Ctl::set_fraction`. Filled: moving ports (bytes of
   each port over the batch), the import's copy (`engine::move_selected_with`, `MoveContext.fraction`), the game
   files scan while it reads (bytes; sliding while it walks the folders), copying back from the cloud (files and
   bytes) and the upload pass (`PassInput.fraction`, files and bytes, shown on the Cloud backup status while a pass
-  runs). Sliding: looking for ports.
+  runs; it ends full when the pass finishes). Sliding: looking for ports, checking and removing old copies. The sliding
+  block is redrawn every frame while shown (`animation-tick`); on the Deck that is a small, constant cost only while a
+  long scan walks folders.
 
 ## Add to Steam (Settings menu)
 

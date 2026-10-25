@@ -701,38 +701,22 @@ pub fn confirm_page(cards: &Cards, free: Option<u64>, blocked: &[(String, String
 /// (the rest were linked where they stand).
 /// The import's Steam line as it reads now: "will follow in Desktop Mode" is replaced by what is true when the
 /// page is drawn (updated, or still the old copies until the shortcuts are updated).
-/// The mark before a line of the finished page (the import summary's short lines, this module's Steam line).
-fn finished_mark(line: &str) -> crate::fork::page::Mark {
+fn steam_line_now(mark: crate::fork::page::Mark, line: &str, steam: SteamWaiting) -> (crate::fork::page::Mark, String) {
     use crate::fork::page::Mark;
-    let l = line.to_lowercase();
-    if l.contains("you cancelled") {
-        Mark::Skipped
-    } else if l.contains("not moved") || l.contains("problem") || l.contains("could not") || l.contains("stopped") || l.contains("needs a look") {
-        Mark::Problem
-    } else if l.contains("still starts the old copies") || l.contains("will follow") {
-        Mark::Waiting
-    } else if l.starts_with("steam shortcuts:") || l.contains("linked") {
-        Mark::Done
-    } else {
-        Mark::None
-    }
-}
-
-fn steam_line_now(line: &str, steam: SteamWaiting) -> String {
     if !(line.starts_with("Steam shortcuts:") && line.contains("will follow in Desktop Mode")) {
-        return line.to_string();
+        return (mark, line.to_string());
     }
     match steam {
-        SteamWaiting::Nothing => "Steam shortcuts: updated.".to_string(),
-        SteamWaiting::Desktop(_) => "Steam still starts the old copies until you update shortcuts.".to_string(),
-        SteamWaiting::GameMode(_) => "Steam still starts the old copies until you finish in Desktop Mode.".to_string(),
+        SteamWaiting::Nothing => (Mark::Done, "Steam shortcuts: updated.".to_string()),
+        SteamWaiting::Desktop(_) => (Mark::Waiting, "Steam still starts the old copies until you update shortcuts.".to_string()),
+        SteamWaiting::GameMode(_) => (Mark::Waiting, "Steam still starts the old copies until you finish in Desktop Mode.".to_string()),
     }
 }
 
 /// In the setup wizard the Steam changes and the game files are left to its own steps, so `steam` and `find_files`
 /// (how many of the ports still miss a game file) only show outside it. `steam_starting`: the close flow just
 /// started Steam again.
-pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[String], wizard: bool, steam: SteamWaiting, steam_starting: bool, find_files: usize) -> Page<CardAction> {
+pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines: &[(crate::fork::page::Mark, String)], wizard: bool, steam: SteamWaiting, steam_starting: bool, find_files: usize) -> Page<CardAction> {
     let title = if moved > 0 {
         format!("{} moved", ports(moved))
     } else if !ports_now.is_empty() {
@@ -741,11 +725,12 @@ pub fn finished_page(moved: usize, ports_now: &[(String, Option<ArtRef>)], lines
         "Nothing was moved".to_string()
     };
     let mut p = base("finished", "", &title);
-    for line in lines.iter().map(|l| steam_line_now(l, steam)) {
-        p.fact(finished_mark(&line), line);
+    for (mark, line) in lines {
+        let (mark, line) = steam_line_now(*mark, line, steam);
+        p.fact(mark, line);
     }
     if steam_starting {
-        p.paragraphs.push("Steam is starting...".to_string());
+        p.fact(crate::fork::page::Mark::Waiting, "Steam is starting...");
     }
     p.tiles = ports_now.iter().map(|(name, art)| Tile::shown(art.clone(), name.clone())).collect();
     p.options = vec![option(if wizard { "Continue setup" } else { "Done" }, "", CardAction::Leave, true)];
@@ -1391,7 +1376,7 @@ mod tests {
     fn the_closing_page_says_how_many_moved_shows_their_covers_and_has_one_button() {
         let art = |f: &str| Some(ArtRef { folder: f.into(), url: None });
         let ports = vec![("Dusklight".to_string(), art("dusklight")), ("SoH".to_string(), art("soh"))];
-        let p = finished_page(2, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false, 0);
+        let p = finished_page(2, &ports, &[(crate::fork::page::Mark::Done, "Steam shortcuts: 1 followed the move.".to_string())], false, SteamWaiting::Nothing, false, 0);
         assert_eq!(p.title, "2 ports moved");
         assert_eq!(p.window_title, "Import ports: finished");
         assert_eq!(p.tiles.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Dusklight", "SoH"]);
@@ -1403,8 +1388,8 @@ mod tests {
         assert_eq!(p.buttons[LEFT].as_ref().unwrap().action, CardAction::Details);
         assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false, 0).options[0].title, "Continue setup");
         assert_eq!(finished_page(1, &ports[..1], &[], true, SteamWaiting::Nothing, false, 0).title, "1 port moved");
-        assert_eq!(finished_page(0, &ports, &["2 ports were linked where they stand.".to_string()], false, SteamWaiting::Nothing, false, 0).title, "2 ports linked");
-        assert_eq!(finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string()], false, SteamWaiting::Nothing, false, 0).title, "Nothing was moved");
+        assert_eq!(finished_page(0, &ports, &[(crate::fork::page::Mark::Done, "2 ports were linked where they stand.".to_string())], false, SteamWaiting::Nothing, false, 0).title, "2 ports linked");
+        assert_eq!(finished_page(0, &[], &[(crate::fork::page::Mark::Done, "Dusklight was not moved: not enough room.".to_string())], false, SteamWaiting::Nothing, false, 0).title, "Nothing was moved");
         for page in [&p, &finished_page(0, &[], &[], true, SteamWaiting::Nothing, false, 0)] {
             let t = all_text(page);
             assert!(!t.contains('/') && !t.contains("~/") && !t.to_lowercase().contains("json"), "{t}");
@@ -1440,17 +1425,17 @@ mod tests {
         assert_eq!(g.options.iter().map(|o| o.action.clone()).collect::<Vec<_>>(), [CardAction::Leave]);
         assert_eq!(g.paragraphs.last().unwrap(), crate::fork::steam_close::GAME_MODE_TEXT);
         // The import's Steam line says what is true when the page is drawn.
-        let line = vec!["Steam shortcuts: 1 will follow in Desktop Mode.".to_string(), "Moved 1 of 1 port.".to_string()];
+        let line = vec![(crate::fork::page::Mark::Waiting, "Steam shortcuts: 1 will follow in Desktop Mode.".to_string()), (crate::fork::page::Mark::Done, "Moved 1 of 1 port.".to_string())];
         let desk = finished_page(1, &ports, &line, false, SteamWaiting::Desktop(1), false, 0);
         assert_eq!(desk.facts[0], "Steam still starts the old copies until you update shortcuts.");
         assert_eq!(desk.mark_of(0), crate::fork::page::Mark::Waiting);
         assert_eq!(finished_page(1, &ports, &line, false, SteamWaiting::GameMode(1), false, 0).facts[0], "Steam still starts the old copies until you finish in Desktop Mode.");
         let after = finished_page(1, &ports, &line, false, SteamWaiting::Nothing, true, 0);
-        assert_eq!(after.facts, ["Steam shortcuts: updated.", "Moved 1 of 1 port."]);
-        assert_eq!(after.paragraphs, ["Steam is starting..."]);
-        let problem = finished_page(0, &[], &["Dusklight was not moved: not enough room.".to_string(), "Zelda was not started (you cancelled).".to_string()], false, SteamWaiting::Nothing, false, 0);
+        assert_eq!(after.facts, ["Steam shortcuts: updated.", "Moved 1 of 1 port.", "Steam is starting..."], "below the summary lines");
+        assert_eq!((after.mark_of(0), after.mark_of(1), after.mark_of(2)), (crate::fork::page::Mark::Done, crate::fork::page::Mark::Done, crate::fork::page::Mark::Waiting));
+        let problem = finished_page(0, &[], &[(crate::fork::page::Mark::Problem, "Dusklight was not moved: not enough room.".to_string()), (crate::fork::page::Mark::Skipped, "Zelda was not started (you cancelled).".to_string())], false, SteamWaiting::Nothing, false, 0);
         assert_eq!((problem.mark_of(0), problem.mark_of(1)), (crate::fork::page::Mark::Problem, crate::fork::page::Mark::Skipped));
-        assert_eq!(finished_page(1, &ports, &["Steam shortcuts: 1 followed the move.".to_string()], false, SteamWaiting::Nothing, false, 0).facts[0], "Steam shortcuts: 1 followed the move.", "a line that is still true stays");
+        assert_eq!(finished_page(1, &ports, &[(crate::fork::page::Mark::Done, "Steam shortcuts: 1 followed the move.".to_string())], false, SteamWaiting::Nothing, false, 0).facts[0], "Steam shortcuts: 1 followed the move.", "a line that is still true stays");
     }
 
     #[test]

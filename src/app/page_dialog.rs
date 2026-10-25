@@ -279,6 +279,7 @@ fn fill_body<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
         Some(p) => p.fraction().map_or((2, 0.0), |f| (1, f)),
     };
     d.set_progress_kind(kind);
+    d.set_facts_marked(page.marks.iter().any(|m| *m != crate::fork::page::Mark::None));
     d.set_progress_value(value);
     d.set_has_card(page.card.is_some());
     d.set_options(model(

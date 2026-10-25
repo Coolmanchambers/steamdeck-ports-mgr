@@ -66,6 +66,7 @@ fn the_upload_says_how_far_it_is_and_ends_full() {
     assert_eq!(seen.first(), Some(&0.0));
     assert!(seen.windows(2).all(|w| w[0] <= w[1]), "never goes back: {seen:?}");
     assert!(seen.iter().all(|f| (0.0..=1.0).contains(f)));
+    assert_eq!(seen.last(), Some(&1.0), "a pass that ran to the end ends full");
 }
 
 #[test]

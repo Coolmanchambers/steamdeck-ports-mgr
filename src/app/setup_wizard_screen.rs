@@ -241,6 +241,8 @@ fn context(app: &AppState, step: crate::fork::setup_wizard::flow::Step) -> Conte
         rom_folder_set: rom_folder(app).is_some(),
         steam: matches!(step, crate::fork::setup_wizard::flow::Step::Steam | crate::fork::setup_wizard::flow::Step::Done).then(|| steam_info(app)),
         overview: None,
+        // The same test the page window uses for filling the screen (`dialogs::build_setup_wizard_dialog`).
+        full_screen: app.window().get_big_mode() || crate::fork::steam_queue::game_mode_from_env(),
     }
 }
 

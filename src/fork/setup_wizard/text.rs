@@ -35,6 +35,8 @@ pub struct Context {
     pub steam: Option<super::steam::Info>,
     /// A rerun's "Your setup" lines (for that page, "Change which step?" and a rerun's last page).
     pub overview: Option<Vec<super::rerun::StepLine>>,
+    /// The page fills the screen (big mode, Game Mode): no title bar X, so "Skip setup?" offers "Not now".
+    pub full_screen: bool,
 }
 
 fn btn(label: impl Into<String>, action: Action) -> Option<PageButton> {
@@ -103,6 +105,9 @@ fn page_inside(w: &Wizard, ctx: &Context) -> Page {
             let mut keep = option("Keep going with setup", "", Action::No);
             keep.recommended = true;
             p.options = vec![keep, option("Skip setup", "Leave without setting anything up", Action::Yes)];
+            if ctx.full_screen {
+                p.options.push(option("Not now", "Leave for now; setup comes back the next time the app starts", Action::CloseAnyway));
+            }
             // A stray A must not skip setup.
             p.initial = Focus::Option(0);
             p
@@ -329,19 +334,21 @@ fn add_all_options(p: &mut Page, info: &super::steam::Info) {
     }
 }
 
-fn steam_line(w: &Wizard, ctx: &Context) -> String {
+/// The Steam line of the last page and its mark (from the outcome, never from the words).
+fn steam_line(w: &Wizard, ctx: &Context) -> (Mark, String) {
     let s = &w.summary;
+    let waiting = ctx.steam.as_ref().map_or(0, |i| i.waiting);
     match &s.steam {
-        Some(SteamOutcome::Queued { count, game_mode: true }) => format!("{} queued for Desktop Mode.", ports_word(*count)),
-        Some(SteamOutcome::Queued { count, game_mode: false }) => format!("{} queued until Steam is closed.", ports_word(*count)),
-        Some(SteamOutcome::Applied(n)) => format!("Steam: {} made.{}", if *n == 1 { "1 change".to_string() } else { format!("{n} changes") }, if s.steam_started { " Steam is starting again." } else { "" }),
+        Some(SteamOutcome::Queued { count, game_mode: true }) => (Mark::Waiting, format!("{} queued for Desktop Mode.", ports_word(*count))),
+        Some(SteamOutcome::Queued { count, game_mode: false }) => (Mark::Waiting, format!("{} queued until Steam is closed.", ports_word(*count))),
+        Some(SteamOutcome::Applied(n)) => (Mark::Done, format!("Steam: {} made.{}", if *n == 1 { "1 change".to_string() } else { format!("{n} changes") }, if s.steam_started { " Steam is starting again." } else { "" })),
         // Added now, while other changes still wait for Steam to close.
-        Some(SteamOutcome::Added(n)) if ctx.steam.as_ref().is_some_and(|i| i.waiting > 0) => format!("{} added to Steam; {} waiting for Steam to close.", ports_word(*n), ctx.steam.as_ref().map_or(0, |i| i.waiting)),
-        Some(SteamOutcome::Added(n)) => format!("{} added to Steam.", ports_word(*n)),
-        _ if s.skipped.contains(&Step::Steam) => "Steam: skipped.".to_string(),
-        _ if ctx.steam.as_ref().is_some_and(|i| i.waiting > 0) => format!("Steam: {} waiting for Steam to close.", ctx.steam.as_ref().map_or(0, |i| i.waiting)),
-        _ if ctx.steam.as_ref().is_some_and(|i| i.to_add == 0) => "Steam: nothing to add.".to_string(),
-        _ => "Steam: not set up yet.".to_string(),
+        Some(SteamOutcome::Added(n)) if waiting > 0 => (Mark::Waiting, format!("{} added to Steam; {} waiting for Steam to close.", ports_word(*n), waiting)),
+        Some(SteamOutcome::Added(n)) => (Mark::Done, format!("{} added to Steam.", ports_word(*n))),
+        _ if s.skipped.contains(&Step::Steam) => (Mark::Skipped, "Steam: skipped.".to_string()),
+        _ if waiting > 0 => (Mark::Waiting, format!("Steam: {} waiting for Steam to close.", waiting)),
+        _ if ctx.steam.as_ref().is_some_and(|i| i.to_add == 0) => (Mark::Done, "Steam: nothing to add.".to_string()),
+        _ => (Mark::ToDo, "Steam: not set up yet.".to_string()),
     }
 }
 
@@ -391,23 +398,26 @@ fn game_files_page(w: &Wizard, ctx: &Context) -> Page {
     p
 }
 
-fn game_files_line(w: &Wizard, ctx: &Context) -> String {
+/// The game files line of the last page and its mark (from the outcome, never from the words).
+fn game_files_line(w: &Wizard, ctx: &Context) -> (Mark, String) {
     let s = &w.summary;
     if s.game_files_needed == Some(0) {
-        return "Game files: nothing is missing.".to_string();
+        return (Mark::Done, "Game files: nothing is missing.".to_string());
     }
     match &s.game_files {
         Some(r) if r.total > 0 => {
             let base = format!("Game files found for {} of {}", r.have(), ports_word(r.total));
+            // Some still missing is still to do; all found is done.
+            let found = if r.have() >= r.total { Mark::Done } else { Mark::ToDo };
             match (s.game_files_connected.filter(|n| *n > 0), r.connectable) {
-                (Some(n), _) => format!("{base}; connected for {}.", ports_word(n)),
-                (None, c) if c > 0 => format!("{base}; not connected yet."),
-                _ => format!("{base}."),
+                (Some(n), _) => (found, format!("{base}; connected for {}.", ports_word(n))),
+                (None, c) if c > 0 => (Mark::ToDo, format!("{base}; not connected yet.")),
+                _ => (found, format!("{base}.")),
             }
         }
-        _ if ctx.rom_folder_set => "A game files folder is set.".to_string(),
-        _ if s.skipped.contains(&Step::GameFiles) => "Game files folder: skipped.".to_string(),
-        _ => "No game files folder yet.".to_string(),
+        _ if ctx.rom_folder_set => (Mark::Done, "A game files folder is set.".to_string()),
+        _ if s.skipped.contains(&Step::GameFiles) => (Mark::Skipped, "Game files folder: skipped.".to_string()),
+        _ => (Mark::ToDo, "No game files folder yet.".to_string()),
     }
 }
 
@@ -493,51 +503,38 @@ fn done_page(w: &Wizard, ctx: &Context) -> Page {
         start_on_the_recommended(&mut p);
         return p;
     }
-    p.facts = vec![
-        ports_where(ctx),
-        match s.imported {
-            Some(n) => moved_line(n),
-            None if s.skipped.contains(&Step::YourPorts) => "Your ports: skipped.".to_string(),
-            None => "Your ports: not looked for.".to_string(),
-        },
-        game_files_line(w, ctx),
-        steam_line(w, ctx),
-    ];
+    // Each line's mark comes from what happened (the summary), not from its words.
+    p.fact(Mark::Done, ports_where(ctx));
+    match s.imported {
+        Some(n) => p.fact(Mark::Done, moved_line(n)),
+        None if s.skipped.contains(&Step::YourPorts) => p.fact(Mark::Skipped, "Your ports: skipped."),
+        None => p.fact(Mark::ToDo, "Your ports: not looked for."),
+    }
+    let (mark, text) = game_files_line(w, ctx);
+    p.fact(mark, text);
+    let (mark, text) = steam_line(w, ctx);
+    p.fact(mark, text);
     if s.old_copies.is_none() && s.old_copies_waiting.is_some_and(|n| n > 0) {
-        p.facts.push(crate::fork::import::old_batch::KEPT_UNTIL_CHECKED.to_string());
+        p.fact(Mark::Waiting, crate::fork::import::old_batch::KEPT_UNTIL_CHECKED);
     }
     if let Some(r) = s.old_copies {
-        p.facts.push(match (r.removed, r.kept) {
-            (0, 0) => "No old copies are kept.".to_string(),
-            (0, 1) => "1 old copy is kept. Remove it later in Settings.".to_string(),
-            (0, n) => format!("{n} old copies are kept. Remove them later in Settings."),
-            (removed, 0) => format!("{} removed.", copies(removed)),
-            (removed, kept) => format!("{} removed, {kept} kept.", copies(removed)),
-        });
+        // Kept or removed, the question was answered: done either way.
+        p.fact(
+            Mark::Done,
+            match (r.removed, r.kept) {
+                (0, 0) => "No old copies are kept.".to_string(),
+                (0, 1) => "1 old copy is kept. Remove it later in Settings.".to_string(),
+                (0, n) => format!("{n} old copies are kept. Remove them later in Settings."),
+                (removed, 0) => format!("{} removed.", copies(removed)),
+                (removed, kept) => format!("{} removed, {kept} kept.", copies(removed)),
+            },
+        );
     }
-    // A mark before each line: the place is always set; the others say done, skipped, waiting or still to do.
-    p.marks = p.facts.iter().enumerate().map(|(i, f)| if i == 0 { Mark::Done } else { done_line_mark(f) }).collect();
     p.footnote = "Anything you skipped can be done later from Settings. Run setup again from Settings > Setup wizard.".to_string();
     p.options = vec![recommended("Finish", "", Action::Finish)];
     nav(&mut p, w);
     start_on_the_recommended(&mut p);
     p
-}
-
-/// The mark of a line of the first run's last page, from its words (they are this file's own).
-fn done_line_mark(line: &str) -> Mark {
-    let l = line.to_lowercase();
-    if l.contains("could not") || l.contains("problem") {
-        Mark::Problem
-    } else if l.contains("skipped") {
-        Mark::Skipped
-    } else if l.contains("waiting") || l.contains("until each port has been checked") {
-        Mark::Waiting
-    } else if l.contains("not looked") || l.contains("not set up") || l.contains("no game files folder") || l.contains("not in steam yet") || l.contains("still miss") {
-        Mark::ToDo
-    } else {
-        Mark::Done
-    }
 }
 
 fn copies(n: usize) -> String {
@@ -564,6 +561,7 @@ mod tests {
             rom_folder_set: false,
             steam: Some(crate::fork::setup_wizard::steam::Info { to_add: 2, immediate: true, ..Default::default() }),
             overview: None,
+            full_screen: false,
         }
     }
 
@@ -994,6 +992,8 @@ mod tests {
         let p = page_for(&w, &ctx());
         assert!(all_text(&p).contains("Nothing will be changed") && all_text(&p).contains("Settings > Setup wizard"));
         assert_eq!(option_actions(&p), [Action::No, Action::Yes]);
+        let full = page_for(&w, &Context { full_screen: true, ..ctx() });
+        assert_eq!(option_actions(&full), [Action::No, Action::Yes, Action::CloseAnyway], "full screen: Not now, as the X does windowed");
         assert_eq!(action_at(&p, initial_focus(&p)), Some(Action::No));
         assert!(p.options[0].recommended);
         assert_eq!(p.title, "Skip setup?");
@@ -1199,7 +1199,7 @@ mod tests {
         use crate::fork::setup_wizard::rerun::{lines as rerun_lines, Facts, Progress};
         let gm = rerun_lines(&Facts { ports_place: Some(Kind::SdCard), installed: 4, old_kept: 4, game_files_needed: 4, steam_waiting: 4, game_mode: true, ..Facts::default() }, &Progress::default());
         assert_eq!(page_for(&w, &Context { overview: Some(gm), ..ctx() }).options[0].detail, "Game files, Steam (Desktop Mode)");
-        let done: Vec<StepLine> = tims_lines().into_iter().map(|l| StepLine { state: State::Done, ..l }).collect();
+        let done: Vec<StepLine> = tims_lines().into_iter().map(|l| StepLine { state: State::Done, mark: Mark::Done, ..l }).collect();
         let p = page_for(&w, &Context { overview: Some(done), ..ctx() });
         assert_eq!(option_actions(&p), [Action::SkipSetup, Action::ChangeStep]);
         assert!(all_text(&p).contains("Everything is set up"));

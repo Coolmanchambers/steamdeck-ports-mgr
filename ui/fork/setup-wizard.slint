@@ -477,6 +477,8 @@ export component SetupWizardDialog inherits Window {
     in property <[WizardFact]> facts: [];
     // A progress bar under the summary box: 0 none, 1 how far (`progress-value`, 0 to 1), 2 a moving bar.
     in property <int> progress-kind: 0;
+    // Some line of the summary box has a mark (the unmarked ones keep the same indent).
+    in property <bool> facts-marked: false;
     in property <float> progress-value: 0;
     // Fills the screen (big mode, Game Mode): no title bar, no X, wider margins, the step counter beside the title.
     in property <bool> full: false;
@@ -724,10 +726,12 @@ export component SetupWizardDialog inherits Window {
                 overflow: elide;
             }
 
+            // The body reaches into the right margin, where its scrollbar runs, so its content ends where the step bar
+            // and the counter end.
             body := Flickable {
                 x: root.gutter;
                 y: chrome.body-y;
-                width: chrome.inner-w;
+                width: chrome.inner-w + root.gutter;
                 height: chrome.footer-y - root.gutter - chrome.body-y;
                 content-width: self.width;
                 content-height: max(self.height, body-layout.preferred-height);
@@ -766,6 +770,10 @@ export component SetupWizardDialog inherits Window {
                                         width: root.body-font * 1.1;
                                         height: root.body-font * 1.1;
                                     }
+                                }
+                                // A line without a mark on a page whose other lines have one keeps their indent.
+                                if f.mark == 0 && root.facts-marked: Rectangle {
+                                    width: root.body-font * 1.1;
                                 }
                                 Text {
                                     text: f.text;
@@ -893,7 +901,7 @@ export component SetupWizardDialog inherits Window {
                 }
             }
             ThemedScrollbar {
-                x: root.gutter + chrome.inner-w - self.width;
+                x: root.gutter + chrome.inner-w + (root.gutter - self.width) / 2;
                 y: body.y;
                 height: body.height;
                 viewport-height: body.content-height;
