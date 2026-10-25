@@ -12,9 +12,9 @@
 
 use super::*;
 use crate::fork::art::thumbs::ArtRef;
-use crate::fork::import::old_batch::{confirm_page, Batch, BatchAction, Checked, ConfirmAction};
+use crate::fork::import::old_batch::{confirm_page, working_page, Batch, BatchAction, Checked, ConfirmAction};
 pub(crate) use crate::fork::import::old_batch::Origin;
-use crate::app::page_dialog::{show_page, Handlers};
+use crate::app::page_dialog::{show_page, show_page_handle, Handlers, PageHandle};
 
 /// Said when the old copies could not be checked at all (the setup wizard shows that text once, on its last page).
 pub(crate) const CHECK_FAILED: &str = "could not be checked";
@@ -22,6 +22,25 @@ pub(crate) const CHECK_FAILED: &str = "could not be checked";
 /// Gets the closing text when the question has been dealt with, or `None` when it was abandoned because
 /// another dialog took the screen while the copies were being checked (they stay listed under Old copies).
 type Then = Rc<dyn Fn(&Rc<AppState>, &Router, Option<String>)>;
+
+const CHECKING: &str = "Checking the old copies";
+const CHECKING_SENTENCE: &str = "Each one is looked at before anything can be removed. Nothing is changed.";
+const REMOVING: &str = "Removing the old copies";
+const REMOVING_SENTENCE: &str = "Saves are zipped to a backup first. Only the ready ones are removed.";
+
+/// The check or the removal as a page in the guided window, so the old copies page that follows takes the same window
+/// back (one window, no flash of the main list). Nothing to choose; B and the X do nothing while it runs, as with the
+/// progress dialog this replaces.
+fn working(origin: Origin, title: &str, sentence: &str, progress: &str) -> crate::fork::page::Page<BatchAction> {
+    let page = working_page(origin, title, sentence, progress);
+    if crate::app::setup_wizard_screen::active() { page.in_wizard(4, crate::fork::setup_wizard::flow::Step::COUNTED) } else { page }
+}
+
+fn show_working(app: &Rc<AppState>, router: &Router, origin: Origin, title: &str, sentence: &str) -> Option<PageHandle<BatchAction>> {
+    let nothing: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(|_, _| {});
+    let handlers = Handlers { on_action: Rc::new(|_, _, _: BatchAction| {}), on_back: nothing.clone(), on_exit: nothing, on_input: None };
+    show_page_handle(app, router, working(origin, title, sentence, ""), handlers)
+}
 
 fn art_of(app: &AppState, key: &str) -> Option<ArtRef> {
     app.catalog.borrow().iter().find(|p| p.key() == key).map(ArtRef::of_port)
@@ -53,12 +72,8 @@ pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, 
             })
             .collect::<Vec<_>>()
     }));
-    open_progress_dialog(app, router, "Checking the old copies", "Checking the old copies...");
-    // Only this dialog is closed when the check ends, never another progress dialog (an install's).
-    let own = match &*app.dialog_nav.dialogs.borrow() {
-        DialogSlot::Progress(d) => Some(d.as_weak()),
-        _ => None,
-    };
+    // Only this page is closed when the check ends, never something that replaced it (an install's progress dialog).
+    let own = show_working(app, router, origin, CHECKING, CHECKING_SENTENCE);
     CHECK_RUNNING.with(|c| c.set(true));
     let (app2, router2) = (app.clone(), router.clone());
     let pending = RefCell::new(Some((summary, then)));
@@ -66,21 +81,15 @@ pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, 
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(150), move || {
             let Some(result) = job.take() else {
                 let text = job.progress();
-                if !text.is_empty() {
-                    if let DialogSlot::Progress(d) = &*app2.dialog_nav.dialogs.borrow() {
-                        update_progress_dialog(&app2, d, &text);
-                    }
+                if let (false, Some(own)) = (text.is_empty(), &own) {
+                    own.update(working(origin, CHECKING, CHECKING_SENTENCE, &text));
                 }
                 return;
             };
             CHECK_TIMER.with(|t| t.stop());
             CHECK_RUNNING.with(|c| c.set(false));
             let Some((summary, then)) = pending.borrow_mut().take() else { return };
-            let ours = own.as_ref().and_then(slint::Weak::upgrade);
-            let showing_ours = match (&*app2.dialog_nav.dialogs.borrow(), &ours) {
-                (DialogSlot::Progress(d), Some(o)) => std::ptr::eq(d.window(), o.window()),
-                _ => false,
-            };
+            let showing_ours = own.as_ref().is_some_and(PageHandle::is_open);
             if showing_ours {
                 close_current_dialog(&app2, &router2);
             } else if super::super::dialogs::dialog_is_open(&app2) {
@@ -278,7 +287,8 @@ fn remove_all(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc
     let wanted: Vec<(OldCopy, Option<Port>)> = batch.removable().into_iter().map(|c| (c.copy.clone(), find_port(app, &c.copy.port_key))).collect();
     let parts = RemovalParts::of(app);
     let saves_dir = app.paths.saves_backup_dir.clone();
-    open_progress_dialog(app, router, "Removing the old copies", "Removing the old copies...");
+    let origin = batch.origin;
+    let own = show_working(app, router, origin, REMOVING, REMOVING_SENTENCE);
     JOB_BUSY.with(|b| b.set(true));
     let total = wanted.len();
     let job = Rc::new(Background::spawn(move |ctl| {
@@ -308,13 +318,17 @@ fn remove_all(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
             let Some(result) = job.take() else {
                 let text = job.progress();
-                if let (false, DialogSlot::Progress(d)) = (text.is_empty(), &*app.dialog_nav.dialogs.borrow()) {
-                    update_progress_dialog(&app, d, &text);
+                if let (false, Some(own)) = (text.is_empty(), &own) {
+                    own.update(working(origin, REMOVING, REMOVING_SENTENCE, &text));
                 }
                 return;
             };
             JOB_TIMER.with(|t| t.stop());
-            close_current_dialog(&app, &router);
+            // Only this page is closed (the result page that follows takes the window back); something that replaced
+            // it stays.
+            if own.as_ref().is_some_and(PageHandle::is_open) {
+                close_current_dialog(&app, &router);
+            }
             if job_finished() {
                 return;
             }

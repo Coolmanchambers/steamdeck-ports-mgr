@@ -18,7 +18,7 @@
 //! - `choose_folder(app, router)` and `consider(app, router, folder)`: the whole ports folder change
 //!   (picker, checks, create, move, switch, old-copy prompts).
 
-use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_progress_dialog, set_picker_items, update_progress_dialog, DialogSlot};
+use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot};
 use super::folder_picker_screen::open_folder_picker;
 use super::page_dialog::{show_page, show_page_handle, Handlers};
 use super::state::AppState;

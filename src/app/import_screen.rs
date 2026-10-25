@@ -322,7 +322,8 @@ fn progress_sentence(title: &str) -> &'static str {
 
 fn progress_page_of(view: &JobView) -> crate::fork::page::Page<ProgressAction> {
     let label = if view.cancelling.get() { "Cancelling" } else { view.cancel_label };
-    progress_page(view.title, progress_sentence(view.title), 2, &view.text.borrow(), label, view.cancelling.get())
+    let step = if super::setup_wizard_screen::active() { 2 } else { 0 };
+    progress_page(view.title, progress_sentence(view.title), step, &view.text.borrow(), label, view.cancelling.get())
 }
 
 /// The progress as a wizard page: Cancel stops the work (the copy in progress is removed), B closes the page like
@@ -354,15 +355,29 @@ fn show_progress_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, c
         })
 
     };
+    // Outside the setup wizard B (and the X) close the page as they closed the progress list it replaces: the work
+    // is cancelled and its late result is dropped (an import still reports what it moved).
+    let in_wizard = super::setup_wizard_screen::active();
+    let on_back: Rc<dyn Fn(&Rc<AppState>, &Router)> = {
+        let on_close = on_close.clone();
+        Rc::new(move |app, router| {
+            on_close(app, router);
+            if !in_wizard {
+                close_current_dialog(app, router);
+            }
+        })
+    };
     let handlers = Handlers {
         on_action: Rc::new({
             let on_cancel = on_cancel.clone();
             move |app, router, _action: ProgressAction| on_cancel(app, router)
         }),
-        on_back: on_close.clone(),
+        on_back: on_back.clone(),
         on_exit: Rc::new(move |app, router| {
-            on_close(app, router);
-            super::setup_wizard_screen::exit_wizard(app, router);
+            on_back(app, router);
+            if in_wizard {
+                super::setup_wizard_screen::exit_wizard(app, router);
+            }
         }),
         on_input: None,
     };
@@ -373,7 +388,9 @@ fn show_progress_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, c
 }
 
 fn show_list(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, cancel: &Rc<dyn Fn()>) {
-    if super::setup_wizard_screen::active() && show_progress_page(app, router, view, cancel) {
+    // A page in the guided window (one window with the cards before it and the old copies page after it); the list
+    // only if the page could not be made.
+    if show_progress_page(app, router, view, cancel) {
         return;
     }
     let rows = job_rows(&view.text.borrow(), view.cancel_label);

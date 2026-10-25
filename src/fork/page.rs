@@ -109,6 +109,8 @@ pub struct Page<A> {
     pub initial: Focus,
     /// What B does, in a word or two, for the controller hint bar ("Back" when empty). See [`Page::b_does`].
     pub back_hint: String,
+    /// B does nothing here (a short check that cannot be stopped): the hint bar leaves B out.
+    pub no_back: bool,
 }
 
 impl<A> Default for Page<A> {
@@ -132,6 +134,7 @@ impl<A> Default for Page<A> {
             primary: None,
             initial: Focus::Button(RIGHT),
             back_hint: String::new(),
+            no_back: false,
         }
     }
 }
@@ -189,12 +192,17 @@ pub fn hints<A>(page: &Page<A>) -> String {
     if can_focus > 0 {
         parts.push("A Choose".into());
     }
-    parts.push(format!("B {back}"));
+    if !page.no_back {
+        parts.push(format!("B {back}"));
+    }
     if can_focus > 1 {
         parts.push("D-pad Move".into());
     }
     if page.input.is_some() {
         parts.push("Steam + X Keyboard".into());
+    }
+    if parts.is_empty() {
+        return "Please wait".into();
     }
     parts.join(HINT_GAP)
 }
@@ -500,6 +508,7 @@ mod tests {
         one.buttons[RIGHT] = Some(PageButton { label: "Cancel".into(), action: Act::Skip });
         assert_eq!(hints(&one.b_means("Cancel")), ["A Choose", "B Cancel"].join(HINT_GAP), "one thing to choose: no D-pad");
         assert!(hints(&input_page()).ends_with("Steam + X Keyboard"));
+        assert_eq!(hints(&Page::<Act> { no_back: true, ..Page::default() }), "Please wait", "a check that cannot be stopped");
     }
 
     #[test]

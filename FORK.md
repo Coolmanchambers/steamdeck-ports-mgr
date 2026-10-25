@@ -233,7 +233,7 @@ Files added by this fork:
 | 2026-10-24 | `src/fork/cloud/` | Cloud backup of the save backups to Google Drive (branch `cloud-backup`): `tokens` (`cloud-tokens.json`, mode 0600), `record` (`cloud-backup.json`), `local`/`plan`/`sync` (what to upload and one pass), `service` (the trait and failure kinds; no delete), `net`/`oauth` (HTTPS client, device-code sign-in and refresh), `build` (the Google client compiled in from CI secrets), `sha256`, `log` |
 | 2026-10-24 | `src/app/cloud_screen.rs` | Settings > Cloud backup: the pages, the sign-in, the status card, the restore list and the passes the hooks start |
 | 2026-10-25 | `src/app/dialogs.rs` | Polish (branch `polish`): `close_current_dialog` hands the guided page window to `page_dialog::park` (4 lines) instead of hiding it at once, so the next page can be drawn in the same window; anything else closes as before |
-| 2026-10-25 | `tools/smoke-test.sh` | Polish: two checks that the first Import ports page and the page B returns to are the wizard's own window (same X window id) |
+| 2026-10-25 | `tools/smoke-test.sh` | Polish: two checks that the first Import ports page and the page B returns to are the wizard's own window (same X window id); one that the wizard's next page after Import ports closes and hands back (a close-first hand-off) is that same window |
 | 2026-10-25 | `src/ui/gamepad_router.rs` | Polish: `dispatch` asks `fork::press_echo::pad` before acting on A or B (an echo of a key Steam typed for the same press is dropped) and runs the target inside `press_echo::while_pad`, so a dialog callback the pad reaches is not taken for a key |
 | 2026-10-25 | `src/app/dialogs.rs` | Polish: `wire_keyboard_nav` (Return) and `wire_dialog_close` (Escape) ask `press_echo::key` first (2 lines) |
 | 2026-10-25 | `ui/app-window.slint`, `src/main.rs` | Polish: Escape on the main list calls a new `escape-pressed` callback; in big mode it leaves big mode (unless it echoes a pad B), in the windowed view Close waits 300 ms and a pad B in that time drops it (`press_echo::hold_main_escape`); Return on the main list asks `press_echo::key` |
@@ -257,9 +257,17 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
   and `update` does nothing, as when its window used to close.
 - **Window close.** The window system's close button runs the page's `on_exit`; when that shows another page in the
   same window, the window stays.
-- **B returns to where you were.** The cursor position on each page shown in the window is remembered by page
-  (window title + question, last 24 pages); when B leads to a page seen before, the cursor starts where it was,
-  if that place still exists. Pages reached forwards start where the page says.
+- **The cursor comes back to where you were.** The cursor position on each page is remembered by page (window
+  title, header, counter such as "Port 2 of 5", and question; last 24 pages). A page shown again (B, a footer Back
+  button, the wizard drawing its page again after a hand-off) starts where the cursor was, if that place still
+  exists; a page seen for the first time starts where the page says. The memory survives hand-offs to other screens
+  and is cleared when the guided pages end (the page window goes and nothing else is open).
+- **Old copies and import progress are pages too.** "Checking the old copies" and "Removing the old copies"
+  (`ports_folder_screen/batch.rs`) used upstream's progress dialog between two pages; they are pages now
+  (`old_batch::working_page`, nothing to choose, B does nothing, as before), so the old copies page takes the same
+  window. The import's progress list outside the setup wizard (Settings > Import ports: "Looking for ports",
+  "Importing ports") is the same progress page the wizard uses, with the Import ports header and no step bar; B
+  closes it and cancels, as B closed the list.
 - **A new page** scrolls the body to the top, re-arms the "resting pointer" guard and gives the keyboard to the page
   (or to its text box when the cursor starts there) (`page-shown()` in `ui/fork/setup-wizard.slint`).
 

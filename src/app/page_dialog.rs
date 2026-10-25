@@ -13,8 +13,8 @@
 //!
 //! Only the controller's D-pad, A and B (and the same keys on a keyboard, or the mouse) reach the window:
 //! the D-pad moves between options and buttons, A chooses, B goes back one page (`on_back`), and the title
-//! bar's X or the window's own close leaves the whole thing (`on_exit`). B lands the cursor where it was on
-//! the page it returns to, when that page was shown in this window before.
+//! bar's X or the window's own close leaves the whole thing (`on_exit`). A page shown again (B, a footer Back
+//! button, the wizard coming back after a hand-off) starts with the cursor where it was, when that place still exists.
 //!
 //! Covers arrive after the page is up: they are fetched and decoded on a background thread
 //! (`fork::art::thumbs`) and a timer swaps them in, so a page never waits on the network. Until a cover is
@@ -57,9 +57,10 @@ impl<A> Clone for Handlers<A> {
 
 const ART_TICK: Duration = Duration::from_millis(150);
 /// How long a closed page window waits for the next page before it is really hidden. Long enough for a page
-/// that its owner shows from a zero-delay timer after closing, short enough that nobody sees it linger.
+/// that its owner shows from a zero-delay timer after closing (Slint runs timers in deadline order, so a 0 ms
+/// timer started after the close fires before this 40 ms one), short enough that nobody sees it linger.
 const PARK: Duration = Duration::from_millis(40);
-/// Pages remembered for "B returns to where you were".
+/// Pages remembered for "the cursor comes back to where you were".
 const HISTORY_LEN: usize = 24;
 
 /// The covers seen so far: `Some(image)`, or `None` when the cover could not be had (keep the name tile).
@@ -69,42 +70,93 @@ struct ArtState {
     images: HashMap<String, Option<slint::Image>>,
 }
 
-/// The page window: its serial (each window built gets a new one; its callbacks carry it), the window itself,
-/// and, while parked, the token of the park that will hide it.
-struct Win {
-    serial: u64,
-    dialog: SetupWizardDialog,
+/// The bookkeeping of the page window, apart from the window itself, so it can be tested without a display.
+#[derive(Default)]
+struct Host {
+    /// The serial of the page window that exists (on screen or parked). Each window built gets a new one; its
+    /// callbacks carry it, so a window that is gone can never reach a page.
+    window: Option<u64>,
+    /// While parked: the token of the park that will hide it.
     parked: Option<u64>,
+    /// The page on screen, with the serial of the window that shows it. `None` while the window is parked: a key
+    /// that reaches a parked window does nothing.
+    page: Option<(u64, Rc<dyn Binding>)>,
+    /// Bumped by every page shown and every park: a [`PageHandle`] is live only while it matches.
+    generation: u64,
+    serials: u64,
+}
+
+impl Host {
+    /// A new page window was built: it is the one from now on (an older one is forgotten).
+    fn new_window(&mut self) -> u64 {
+        self.serials += 1;
+        self.window = Some(self.serials);
+        self.parked = None;
+        self.page = None;
+        self.serials
+    }
+
+    /// A page is now on the window `serial`; its handle's generation.
+    fn show(&mut self, serial: u64, binding: Rc<dyn Binding>) -> u64 {
+        if self.window == Some(serial) {
+            self.parked = None;
+        }
+        self.page = Some((serial, binding));
+        self.generation += 1;
+        self.generation
+    }
+
+    /// The window `serial` was closed by its page's owner: it waits for the next page. The token its timer brings
+    /// back, or `None` when that is not the page window on screen (it is closed normally then).
+    fn park(&mut self, serial: u64) -> Option<u64> {
+        if self.window != Some(serial) || self.parked.is_some() {
+            return None;
+        }
+        self.generation += 1;
+        self.parked = Some(self.generation);
+        self.page = None;
+        self.parked
+    }
+
+    /// A page takes the parked window back: its serial.
+    fn retake(&mut self) -> Option<u64> {
+        self.parked.take()?;
+        self.window
+    }
+
+    /// The park's time is up: true when the window is still parked by it (it is hidden and forgotten now).
+    fn expire(&mut self, token: u64) -> bool {
+        if self.parked != Some(token) {
+            return false;
+        }
+        self.window = None;
+        self.parked = None;
+        true
+    }
+
+    fn bound(&self, serial: u64) -> Option<Rc<dyn Binding>> {
+        self.page.as_ref().filter(|(s, _)| *s == serial).map(|(_, b)| b.clone())
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
+    }
+
+    /// The page window exists and is not parked.
+    fn on_screen(&self) -> bool {
+        self.window.is_some() && self.parked.is_none()
+    }
 }
 
 thread_local! {
     static ART: RefCell<Option<ArtState>> = const { RefCell::new(None) };
     static ART_TIMER: slint::Timer = slint::Timer::default();
-    static WIN: RefCell<Option<Win>> = const { RefCell::new(None) };
-    /// The page on screen and its owner's handlers, with the serial of the window that shows it. `None` while
-    /// the window is parked: a key that reaches a parked window does nothing.
-    static HOST: RefCell<Option<(u64, Rc<dyn Binding>)>> = const { RefCell::new(None) };
-    /// Bumped by every page shown and every park: a [`PageHandle`] is live only while it matches.
-    static GENERATION: Cell<u64> = const { Cell::new(0) };
-    static SERIALS: Cell<u64> = const { Cell::new(0) };
-    /// Where the cursor was on pages shown in this window (page key, focus number), newest last.
+    static HOST: RefCell<Host> = RefCell::new(Host::default());
+    /// The page window itself, with its serial.
+    static WIN: RefCell<Option<(u64, SetupWizardDialog)>> = const { RefCell::new(None) };
+    /// Where the cursor was on pages shown (page key, focus number), newest last. Kept across hand-offs to other
+    /// screens; forgotten when the guided pages end (the page window goes and nothing else is open).
     static HISTORY: RefCell<Vec<(String, usize)>> = const { RefCell::new(Vec::new()) };
-    /// B is being handled: the page shown now is "going back".
-    static GOING_BACK: Cell<bool> = const { Cell::new(false) };
-}
-
-fn next_serial() -> u64 {
-    SERIALS.with(|s| {
-        s.set(s.get() + 1);
-        s.get()
-    })
-}
-
-fn next_generation() -> u64 {
-    GENERATION.with(|g| {
-        g.set(g.get() + 1);
-        g.get()
-    })
 }
 
 fn with_art<R>(app: &AppState, f: impl FnOnce(&mut ArtState) -> R) -> R {
@@ -353,19 +405,20 @@ impl<A: Clone + 'static> Binding for Bound<A> {
     }
 }
 
-/// Names a page for the focus memory: the same window title and question is the same page.
+/// Names a page for the focus memory: the same window title, header, counter ("Port 2 of 5") and question is the
+/// same page.
 fn page_key<A>(page: &Page<A>) -> String {
-    format!("{}\u{1f}{}", page.window_title, page.title)
+    format!("{}\u{1f}{}\u{1f}{}\u{1f}{}", page.window_title, page.header, page.step_text, page.title)
 }
 
 /// The page on the window with this serial, when there is one (not parked, not replaced by a newer window).
 fn bound(serial: u64) -> Option<Rc<dyn Binding>> {
-    HOST.with(|h| h.borrow().as_ref().filter(|(s, _)| *s == serial).map(|(_, b)| b.clone()))
+    HOST.with(|h| h.borrow().bound(serial))
 }
 
-/// Notes where the cursor is on the page being left, so B can come back to it.
+/// Notes where the cursor is on the page being left, so coming back to it finds the same place.
 fn remember_current() {
-    let Some(place) = HOST.with(|h| h.borrow().as_ref().map(|(_, b)| b.place())) else { return };
+    let Some(place) = HOST.with(|h| h.borrow().page.as_ref().map(|(_, b)| b.place())) else { return };
     remember(place);
 }
 
@@ -383,11 +436,10 @@ fn recalled(key: &str) -> Option<usize> {
     HISTORY.with(|h| h.borrow().iter().rev().find(|(k, _)| k == key).map(|(_, f)| *f))
 }
 
-/// Where the cursor starts on `page`: where it was when B brings the user back to a page seen before in this
-/// window (and that place still exists), else the page's own starting place.
-fn starting_focus<A>(page: &Page<A>, going_back: bool) -> usize {
-    let back_to = going_back.then(|| recalled(&page_key(page))).flatten();
-    match back_to {
+/// Where the cursor starts on `page`: where it was when the page was shown before in these guided pages (B, a footer
+/// Back button, a page drawn again after a hand-off), when that place still exists; else the page's own start.
+fn starting_focus<A>(page: &Page<A>) -> usize {
+    match recalled(&page_key(page)) {
         Some(n) if n < page::focusables(page).len() => n,
         _ => page::initial_focus(page),
     }
@@ -433,9 +485,7 @@ fn wire(dialog: &SetupWizardDialog, serial: u64) {
     });
     dialog.on_close_requested(move || {
         if let Some(b) = bound(serial).filter(|_| press_echo::key(Press::Back)) {
-            GOING_BACK.with(|g| g.set(true));
             b.back();
-            GOING_BACK.with(|g| g.set(false));
         }
     });
     dialog.on_exit_requested(move || {
@@ -465,41 +515,28 @@ fn wire_window_close(dialog: &SetupWizardDialog, serial: u64) {
 /// even across a hand-off that closes first). Otherwise it is hidden then, and the main window gets the focus
 /// as a normal close gives it. False when the window is not the page window (the caller closes it normally).
 pub(crate) fn park(app: &Rc<AppState>, dialog: &SetupWizardDialog) -> bool {
-    let token = next_generation();
-    let parked = WIN.with(|w| {
-        let mut w = w.borrow_mut();
-        match w.as_mut() {
-            Some(win) if win.parked.is_none() && same_window(&win.dialog, dialog) => {
-                win.parked = Some(token);
-                true
-            }
-            _ => false,
-        }
-    });
-    if !parked {
-        return false;
-    }
+    let Some(serial) = WIN.with(|w| w.borrow().as_ref().filter(|(_, d)| same_window(d, dialog)).map(|(s, _)| *s)) else { return false };
     remember_current();
-    HOST.with(|h| *h.borrow_mut() = None);
+    let Some(token) = HOST.with(|h| h.borrow_mut().park(serial)) else { return false };
     let app = app.clone();
     slint::Timer::single_shot(PARK, move || {
-        let still = WIN.with(|w| {
-            let mut w = w.borrow_mut();
-            if w.as_ref().is_some_and(|win| win.parked == Some(token)) { w.take() } else { None }
-        });
-        let Some(win) = still else { return };
-        let _ = win.dialog.window().hide();
+        if !HOST.with(|h| h.borrow_mut().expire(token)) {
+            return;
+        }
+        let Some((_, dialog)) = WIN.with(|w| w.borrow_mut().take()) else { return };
+        let _ = dialog.window().hide();
         ART_TIMER.with(|t| t.stop());
-        HISTORY.with(|h| h.borrow_mut().clear());
-        // What `close_current_dialog` does after hiding a dialog. When another dialog opened meanwhile it is in
-        // front already (its own opening brings it there), so the main window is not pulled over it.
+        // What `close_current_dialog` does after hiding a dialog. When another dialog opened meanwhile (a hand-off) it
+        // is in front already and keeps the keyboard, so the main window is left alone, and the cursor memory is kept
+        // for when the pages come back. With nothing open the guided pages have ended.
         if !dialog_is_open(&app) {
+            HISTORY.with(|h| h.borrow_mut().clear());
             if let Some(native) = chrome::native_window(app.window().window()) {
                 chrome::force_foreground_window(native);
             }
+            let main = app.window();
+            main.set_refocus_trigger(!main.get_refocus_trigger());
         }
-        let main = app.window();
-        main.set_refocus_trigger(!main.get_refocus_trigger());
     });
     true
 }
@@ -511,36 +548,37 @@ fn same_window(a: &SetupWizardDialog, b: &SetupWizardDialog) -> bool {
 /// True while the page window is open and showing a page (not parked).
 fn page_window_in_slot(app: &AppState) -> bool {
     let in_slot = app.dialog_nav.dialogs.try_borrow().is_ok_and(|s| matches!(*s, DialogSlot::SetupWizard(_)));
-    in_slot && WIN.with(|w| w.borrow().as_ref().is_some_and(|win| win.parked.is_none()))
+    in_slot && HOST.with(|h| h.borrow().on_screen())
+}
+
+fn page_window() -> Option<(u64, SetupWizardDialog)> {
+    WIN.with(|w| w.borrow().as_ref().map(|(s, d)| (*s, d.clone_strong())))
 }
 
 /// The window to draw the next page in: the one on screen, the parked one, or a new one. The flag says it was
 /// already on screen with a page (nothing to register again).
 fn take_window(app: &Rc<AppState>, router: &Router) -> Option<(SetupWizardDialog, u64, bool)> {
     if page_window_in_slot(app) {
-        return WIN.with(|w| w.borrow().as_ref().map(|win| (win.dialog.clone_strong(), win.serial, true)));
+        if let Some((serial, dialog)) = page_window() {
+            return Some((dialog, serial, true));
+        }
     }
-    let parked = WIN.with(|w| w.borrow().as_ref().filter(|win| win.parked.is_some()).map(|win| (win.dialog.clone_strong(), win.serial)));
-    if let Some((dialog, serial)) = parked {
-        // Whatever else is open (a message shown in the meantime) gives way to the page.
-        close_current_dialog(app, router);
-        WIN.with(|w| {
-            if let Some(win) = w.borrow_mut().as_mut() {
-                win.parked = None;
-            }
-        });
-        return Some((dialog, serial, false));
+    if HOST.with(|h| h.borrow().parked.is_some()) {
+        if let Some((serial, dialog)) = page_window() {
+            // Whatever else is open (a message shown in the meantime) gives way to the page.
+            close_current_dialog(app, router);
+            HOST.with(|h| h.borrow_mut().retake());
+            return Some((dialog, serial, false));
+        }
     }
     // A page window that is still up but no longer in the slot (something replaced it without closing it) goes.
-    if let Some(old) = WIN.with(|w| w.borrow_mut().take()) {
-        let _ = old.dialog.window().hide();
+    if let Some((_, old)) = WIN.with(|w| w.borrow_mut().take()) {
+        let _ = old.window().hide();
     }
     let dialog = build_setup_wizard_dialog(app, router)?;
-    let serial = next_serial();
+    let serial = HOST.with(|h| h.borrow_mut().new_window());
     wire(&dialog, serial);
-    // A window left from before (hidden by a park that already ran, or replaced) is forgotten.
-    WIN.with(|w| *w.borrow_mut() = Some(Win { serial, dialog: dialog.clone_strong(), parked: None }));
-    HISTORY.with(|h| h.borrow_mut().clear());
+    WIN.with(|w| *w.borrow_mut() = Some((serial, dialog.clone_strong())));
     Some((dialog, serial, false))
 }
 
@@ -556,7 +594,7 @@ pub(crate) struct PageHandle<A> {
 impl<A: Clone + 'static> PageHandle<A> {
     /// True while this page is still the one on screen (no other page or dialog replaced it).
     pub(crate) fn is_open(&self) -> bool {
-        GENERATION.with(Cell::get) == self.generation && self.weak.upgrade().is_some_and(|d| d.window().is_visible())
+        HOST.with(|h| h.borrow().is_current(self.generation)) && self.weak.upgrade().is_some_and(|d| d.window().is_visible())
     }
 
     /// Draws `page` in its place; the cursor stays where it was when that place still exists. False when the
@@ -584,10 +622,8 @@ pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router,
 
 /// [`show_page`], giving back the handle that replaces the page later.
 pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, page: Page<A>, handlers: Handlers<A>) -> Option<PageHandle<A>> {
-    let going_back = GOING_BACK.with(Cell::get);
     remember_current();
     let (dialog, serial, on_screen) = take_window(app, router)?;
-    let generation = next_generation();
     let cur: Current<A> = Rc::new(RefCell::new(Rc::new(page)));
     let focus = Rc::new(Cell::new(0usize));
     let first = page_now(&cur);
@@ -595,13 +631,13 @@ pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &
     dialog.set_input_placeholder(first.input.as_ref().map(|i| i.placeholder.clone()).unwrap_or_default().into());
     dialog.set_input_text(first.input.as_ref().map(|i| i.text.clone()).unwrap_or_default().into());
     load_art(app, &dialog, &cur);
-    select(&dialog, &first, &focus, starting_focus(&first, going_back));
+    select(&dialog, &first, &focus, starting_focus(&first));
     // A new page: the body scrolls back to the top, a resting pointer cannot take the highlight, and the
     // keyboard goes to the page (or its text box when that is where the cursor starts).
     dialog.invoke_page_shown();
 
     let binding: Rc<dyn Binding> = Rc::new(Bound { app: app.clone(), router: router.clone(), weak: dialog.as_weak(), cur: cur.clone(), focus: focus.clone(), handlers });
-    HOST.with(|h| *h.borrow_mut() = Some((serial, binding)));
+    let generation = HOST.with(|h| h.borrow_mut().show(serial, binding));
 
     if !on_screen {
         let _ = dialog.show();
@@ -628,13 +664,88 @@ mod tests {
         HISTORY.with(|h| h.borrow_mut().clear());
     }
 
+    /// A page that only says it was asked something.
+    struct Stub;
+    impl Binding for Stub {
+        fn option(&self, _: i32) {}
+        fn tile(&self, _: i32) {}
+        fn button(&self, _: i32) {}
+        fn hover(&self, _: i32) {}
+        fn move_by(&self, _: i32, _: i32) {}
+        fn activate(&self) {}
+        fn input(&self, _: &str) {}
+        fn back(&self) {}
+        fn exit(&self) {}
+        fn place(&self) -> (String, usize) {
+            ("stub".into(), 0)
+        }
+    }
+
+    fn stub() -> Rc<dyn Binding> {
+        Rc::new(Stub)
+    }
+
     #[test]
-    fn b_returns_the_cursor_to_where_it_was_on_a_page_seen_before() {
+    fn a_parked_window_answers_nothing_and_its_old_page_handle_is_stale() {
+        let mut h = Host::default();
+        let w = h.new_window();
+        let first = h.show(w, stub());
+        assert!(h.bound(w).is_some() && h.is_current(first) && h.on_screen());
+        let token = h.park(w).expect("the page window parks");
+        assert!(h.bound(w).is_none(), "a key that reaches the parked window does nothing");
+        assert!(!h.is_current(first), "a progress page shown before the park stops updating");
+        assert!(!h.on_screen());
+        assert!(h.park(w).is_none(), "a second close of the same window does not park it twice");
+        assert!(h.park(w + 7).is_none(), "another window is closed normally");
+        assert!(h.expire(token), "and with no page in time the park ends it");
+    }
+
+    #[test]
+    fn a_page_shown_while_parked_takes_the_window_back_and_the_park_timer_then_does_nothing() {
+        let mut h = Host::default();
+        let w = h.new_window();
+        h.show(w, stub());
+        let token = h.park(w).unwrap();
+        assert_eq!(h.retake(), Some(w), "the same window, not a new one");
+        assert!(h.parked.is_none());
+        let second = h.show(w, stub());
+        assert!(h.bound(w).is_some() && h.is_current(second) && h.on_screen());
+        assert!(!h.expire(token), "the 40 ms timer finds the window taken back and leaves it");
+        assert_eq!(h.window, Some(w));
+    }
+
+    #[test]
+    fn with_no_page_in_time_the_park_ends_the_window() {
+        let mut h = Host::default();
+        let w = h.new_window();
+        h.show(w, stub());
+        let token = h.park(w).unwrap();
+        assert!(h.expire(token));
+        assert_eq!(h.window, None);
+        assert!(h.retake().is_none(), "nothing left to take back");
+        assert!(!h.expire(token), "a late second timer does nothing");
+        let w2 = h.new_window();
+        assert_ne!(w, w2, "a new window gets a new serial, so the old window's callbacks reach nothing");
+        h.show(w2, stub());
+        assert!(h.bound(w).is_none() && h.bound(w2).is_some());
+    }
+
+    #[test]
+    fn every_page_shown_makes_older_handles_stale() {
+        let mut h = Host::default();
+        let w = h.new_window();
+        let a = h.show(w, stub());
+        let b = h.show(w, stub());
+        assert!(!h.is_current(a) && h.is_current(b));
+    }
+
+    #[test]
+    fn the_cursor_comes_back_to_where_it_was_on_a_page_seen_before() {
         clear();
         let first = page("Where are your ports?", 3);
+        assert_eq!(starting_focus(&first), page::initial_focus(&first), "the first time it starts where the page says");
         remember((page_key(&first), 2));
-        assert_eq!(starting_focus(&first, true), 2, "B back to the page: the third option again");
-        assert_eq!(starting_focus(&first, false), page::initial_focus(&first), "reaching it forwards starts where the page says");
+        assert_eq!(starting_focus(&first), 2, "back to the page (B, a Back button, after a hand-off): the third option again");
     }
 
     #[test]
@@ -643,15 +754,15 @@ mod tests {
         let before = page("Your ports", 4);
         remember((page_key(&before), 4));
         let now = page("Your ports", 1);
-        assert_eq!(starting_focus(&now, true), page::initial_focus(&now));
+        assert_eq!(starting_focus(&now), page::initial_focus(&now));
     }
 
     #[test]
-    fn an_unseen_page_starts_where_it_says_even_on_b() {
+    fn an_unseen_page_starts_where_it_says() {
         clear();
         remember((page_key(&page("Other", 3)), 1));
         let p = page("Never shown", 3);
-        assert_eq!(starting_focus(&p, true), page::initial_focus(&p));
+        assert_eq!(starting_focus(&p), page::initial_focus(&p));
     }
 
     #[test]
@@ -677,5 +788,8 @@ mod tests {
         let mut c = a.clone();
         c.paragraphs = vec!["a new count".into()];
         assert_eq!(page_key(&a), page_key(&c), "the same question with fresh numbers is the same page");
+        let mut d = a.clone();
+        d.step_text = "Port 2 of 5".into();
+        assert_ne!(page_key(&a), page_key(&d), "the next card with the same question is another page");
     }
 }

@@ -237,6 +237,23 @@ impl Batch {
     }
 }
 
+/// While the old copies are checked or removed (a few seconds): a page in the same window as the old copies page, with
+/// the worker's progress line. Nothing to choose and B does nothing, as with the progress dialog it replaces.
+pub fn working_page(origin: Origin, title: &str, sentence: &str, progress: &str) -> Page<BatchAction> {
+    let window = origin.window_title().split(':').next().unwrap_or_default();
+    let mut p = Page::<BatchAction> {
+        window_title: format!("{window}: {}", title.to_lowercase()),
+        large: true,
+        header: origin.header().to_string(),
+        title: title.to_string(),
+        paragraphs: vec![sentence.to_string()],
+        no_back: true,
+        ..Page::default()
+    };
+    p.facts = vec![if progress.trim().is_empty() { "Starting...".to_string() } else { progress.trim().to_string() }];
+    p
+}
+
 /// "Does Majora's Mask start from its new place?": one card, `index` of `count`.
 pub fn confirm_page(c: &Checked, index: usize, count: usize, origin: Origin) -> Page<ConfirmAction> {
     let mut p = Page::<ConfirmAction> {

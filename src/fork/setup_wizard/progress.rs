@@ -25,8 +25,9 @@ pub fn split_cancel_label(label: &str) -> (String, String) {
     }
 }
 
-/// `step` is the wizard step the job belongs to (2 for Import ports, 3 for the game files scan); `text` is what
-/// the worker reports, one line per port or the one thing it is doing.
+/// `step` is the wizard step the job belongs to (2 for Import ports, 3 for the game files scan), or 0 outside the
+/// wizard (Settings > Import ports: its own header, no step bar); `text` is what the worker reports, one line per
+/// port or the one thing it is doing.
 pub fn progress_page(title: &str, sentence: &str, step: usize, text: &str, cancel_label: &str, cancelling: bool) -> Page<ProgressAction> {
     let mut p = Page::<ProgressAction> {
         window_title: format!("Import ports: {}", title.to_lowercase()),
@@ -51,7 +52,11 @@ pub fn progress_page(title: &str, sentence: &str, step: usize, text: &str, cance
     }];
     p.initial = Focus::Option(0);
     // B stops the work like the Cancel choice does; the hint bar says so.
-    let p = if cancelling { p.b_means("Cancel") } else { p.b_does(&ProgressAction::Cancel) };
+    let mut p = if cancelling { p.b_means("Cancel") } else { p.b_does(&ProgressAction::Cancel) };
+    if step == 0 {
+        p.header = crate::fork::import::cards::HEADER.to_string();
+        return p;
+    }
     p.in_wizard(step, super::flow::Step::COUNTED)
 }
 
@@ -78,6 +83,13 @@ mod tests {
         assert!(!p.options[0].enabled && p.options[0].title == "Cancelling...");
         let q = progress_page("Looking for ports", "x", 2, "Looking in 3 folders...", "Cancel", false);
         assert_eq!((q.options[0].title.as_str(), q.options[0].detail.as_str()), ("Cancel", ""));
+    }
+
+    #[test]
+    fn outside_the_wizard_the_page_has_its_own_header_and_no_step_bar() {
+        let p = progress_page("Importing ports", "x", 0, "Demo Wolf: copying", "Cancel", false);
+        assert_eq!((p.header.as_str(), p.step_text.as_str(), p.step_count), (crate::fork::import::cards::HEADER, "", 0));
+        assert_eq!(p.back_hint, "Cancel");
     }
 
     #[test]

@@ -476,6 +476,11 @@ export component SetupWizardDialog inherits Window {
         root.pointer-armed = false;
         root.seen-id = -2;
         body.content-y = 0px;
+        // A cursor that starts further down (a remembered place) is brought into view, even when its number is the
+        // same as on the page before (then "changed selected-option" does not fire).
+        if (root.selected-option >= 0) {
+            root.reveal(root.selected-option);
+        }
         if (root.has-input && root.selected-index == root.input-focus) {
             text-in.focus();
         } else {

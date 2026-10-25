@@ -174,10 +174,14 @@ rm -f "$FRESH_DIR/fork-settings.json"
 start_fresh
 walked=yes
 w=$(find_window '^Setup wizard: Ports folder$') || walked="no (never saw the ports folder question)"
+first_page="$w"
 [ "$walked" = yes ] && press_keys "$w" Return                      # keep the folder in use
 [ "$walked" = yes ] && { skip_import || walked="no (never saw Import ports)"; }
 if [ "$walked" = yes ]; then
     w=$(find_window '^Setup wizard: Steam$') || walked="no (never saw the Steam page)"
+    # Next on "nothing found" closes Import ports first, then the wizard draws its next page: the closed window is
+    # taken back (one window across a close-first hand-off), not a new one.
+    [ "$walked" = yes ] && check "after Import ports closes and hands back, the wizard's next page is the same window" '[ -n "$first_page" ] && [ "$w" = "$first_page" ]'
     [ "$walked" = yes ] && press_keys "$w" Down Return             # Continue (Try again is first)
 fi
 [ "$walked" = yes ] && { w=$(find_window '^Setup wizard: all done$') || walked="no (never saw the last page)"; }
