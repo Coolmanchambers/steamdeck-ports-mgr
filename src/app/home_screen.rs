@@ -16,7 +16,6 @@ use crate::core::models::{Port, SourceType};
 use crate::fork::home::{self, Home, List, PortFacts, TileKind};
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::{AppWindow, HomeTile};
-use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

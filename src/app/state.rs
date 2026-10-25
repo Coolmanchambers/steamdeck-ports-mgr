@@ -414,6 +414,10 @@ impl AppState {
             let query = self.windowed_nav.search_query.borrow().clone();
             self.rebuild_windowed(&query);
         }
+        // Fork: Home lays its tiles out for the new mode (now that the window says which it is).
+        if self.home.is_active() {
+            super::home_screen::rebuild(self);
+        }
     }
 
     pub(crate) fn enter_fullscreen(&self) {
