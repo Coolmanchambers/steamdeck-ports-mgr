@@ -13,17 +13,19 @@ pub enum Badge {
 }
 
 impl Badge {
+    /// Short, so it fits under a tile on a 7 inch screen.
     pub fn label(self) -> &'static str {
         match self {
             Badge::Ready => "Ready",
-            Badge::UpdateAvailable => "Update available",
-            Badge::GameFilesMissing => "Game files missing",
+            Badge::UpdateAvailable => "Update ready",
+            Badge::GameFilesMissing => "No game files",
             Badge::SteamWaiting => "Steam waiting",
-            Badge::SavesNotFound => "Saves not found",
+            Badge::SavesNotFound => "Find saves",
         }
     }
 
-    /// The status mark drawn with it (the same pictures as the guided pages' summary lines).
+    /// The status mark drawn with it (the same pictures as the guided pages' summary lines). Red only for a game that
+    /// will not start; saves to find and an update are things to do.
     pub fn mark(self) -> crate::fork::page::Mark {
         use crate::fork::page::Mark;
         match self {
@@ -31,7 +33,7 @@ impl Badge {
             Badge::UpdateAvailable => Mark::ToDo,
             Badge::GameFilesMissing => Mark::Problem,
             Badge::SteamWaiting => Mark::Waiting,
-            Badge::SavesNotFound => Mark::Problem,
+            Badge::SavesNotFound => Mark::ToDo,
         }
     }
 }
@@ -151,6 +153,24 @@ impl List {
         }
     }
 
+    /// The next list as the screen is: in big mode All ports shows only the installed ports (upstream's card grid), so
+    /// the list of ports to install (Deck-ready) comes right after Home there.
+    pub fn next_in(self, big_mode: bool) -> List {
+        if !big_mode {
+            return self.next();
+        }
+        match self {
+            List::Home => List::DeckReady,
+            List::DeckReady => List::AllPorts,
+            List::AllPorts => List::Home,
+        }
+    }
+
+    /// Where "Browse ports" goes: a list of ports to install.
+    pub fn browse(big_mode: bool) -> List {
+        if big_mode { List::DeckReady } else { List::AllPorts }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             List::Home => "Home",
@@ -158,6 +178,55 @@ impl List {
             List::DeckReady => "Deck-ready",
         }
     }
+}
+
+/// Whether Play's own update check is due for an installed port: "check for updates" on, the port follows a GitHub or
+/// GitLab release, the port's own update switch on (no record counts as on), and the install older than the time
+/// Play waits before asking again. Play and the home screen both ask this.
+pub fn update_check_due(release_sync: bool, source: &crate::core::models::SourceType, port_update_on: Option<bool>, installed_at: &str) -> bool {
+    use crate::core::models::SourceType;
+    release_sync && matches!(source, SourceType::Github | SourceType::Gitlab) && port_update_on.unwrap_or(true) && crate::core::state::is_stale_for_update_check(installed_at)
+}
+
+/// The home screen asks for updates at most this often (and only when "check for updates" is on).
+pub const UPDATE_CHECK_EVERY_SECS: i64 = 12 * 3600;
+
+/// Whether the home screen's update check may run now, after the last one at `last` (seconds since 1970).
+pub fn update_round_due(last: Option<i64>, now: i64) -> bool {
+    last.is_none_or(|t| now < t || now - t >= UPDATE_CHECK_EVERY_SECS)
+}
+
+/// What a check found for one port and when (seconds since 1970). Shown until a newer check or a newer install.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdateSeen {
+    pub available: bool,
+    pub at: i64,
+}
+
+/// The badge's "Update ready": a check found one after the port was last installed.
+pub fn update_shown(seen: Option<UpdateSeen>, installed_at: i64) -> bool {
+    seen.is_some_and(|s| s.available && s.at >= installed_at)
+}
+
+/// The results kept in `fork-settings.json` (`home_update_checks`), read back.
+pub fn updates_from_json(v: Option<&serde_json::Value>) -> std::collections::HashMap<String, UpdateSeen> {
+    v.and_then(serde_json::Value::as_object)
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, e)| Some((k.clone(), UpdateSeen { available: e.get("available")?.as_bool()?, at: e.get("at")?.as_i64()? })))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn updates_to_json(m: &std::collections::HashMap<String, UpdateSeen>) -> serde_json::Value {
+    serde_json::Value::Object(m.iter().map(|(k, s)| (k.clone(), serde_json::json!({ "available": s.available, "at": s.at }))).collect())
+}
+
+/// A failed check that means "stop asking for now" (the API's rate limit).
+pub fn is_rate_limit(error: &str) -> bool {
+    let e = error.to_lowercase();
+    e.contains("rate limit") || e.contains("429") || e.contains("too many requests")
 }
 
 /// When a port was last played by the app's record ("2026-10-24T18:00:00Z"), seconds since 1970; 0 when never or
@@ -186,7 +255,9 @@ mod tests {
         assert_eq!(badge(&p), Badge::UpdateAvailable);
         p.game_files_missing = true;
         assert_eq!(badge(&p), Badge::GameFilesMissing, "a game that will not start comes first");
-        assert_eq!(Badge::GameFilesMissing.label(), "Game files missing");
+        assert_eq!(Badge::GameFilesMissing.label(), "No game files");
+        assert_eq!(Badge::SavesNotFound.mark(), crate::fork::page::Mark::ToDo, "red only for a game that will not start");
+        assert_eq!(Badge::GameFilesMissing.mark(), crate::fork::page::Mark::Problem);
     }
 
     #[test]
@@ -223,6 +294,43 @@ mod tests {
         assert_eq!(List::Home.next(), List::AllPorts);
         assert_eq!(List::AllPorts.next(), List::DeckReady);
         assert_eq!(List::DeckReady.next(), List::Home);
+    }
+
+    #[test]
+    fn in_big_mode_the_ports_to_install_come_right_after_home() {
+        assert_eq!(List::Home.next_in(true), List::DeckReady, "big-mode All ports shows only installed ports");
+        assert_eq!(List::DeckReady.next_in(true), List::AllPorts);
+        assert_eq!(List::AllPorts.next_in(true), List::Home);
+        assert_eq!(List::Home.next_in(false), List::AllPorts);
+        assert_eq!((List::browse(true), List::browse(false)), (List::DeckReady, List::AllPorts));
+    }
+
+    #[test]
+    fn the_update_check_is_due_exactly_when_plays_is() {
+        use crate::core::models::SourceType;
+        let old = "2020-01-01T00:00:00Z";
+        assert!(update_check_due(true, &SourceType::Github, Some(true), old));
+        assert!(update_check_due(true, &SourceType::Gitlab, None, old), "no record counts as the switch on");
+        assert!(!update_check_due(false, &SourceType::Github, Some(true), old), "check for updates off");
+        assert!(!update_check_due(true, &SourceType::Github, Some(false), old), "the port's own switch off");
+        assert!(!update_check_due(true, &SourceType::DirectUrl, Some(true), old), "no release to compare with");
+        let just_now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        assert!(!update_check_due(true, &SourceType::Github, Some(true), &just_now), "installed a moment ago");
+    }
+
+    #[test]
+    fn the_home_check_runs_at_most_every_12_hours_and_keeps_what_it_found() {
+        assert!(update_round_due(None, 1_000));
+        assert!(!update_round_due(Some(1_000), 1_000 + UPDATE_CHECK_EVERY_SECS - 1));
+        assert!(update_round_due(Some(1_000), 1_000 + UPDATE_CHECK_EVERY_SECS));
+        assert!(update_round_due(Some(5_000), 1_000), "a clock set back does not block it for good");
+        let mut m = std::collections::HashMap::new();
+        m.insert("a/b".to_string(), UpdateSeen { available: true, at: 900 });
+        assert_eq!(updates_from_json(Some(&updates_to_json(&m))), m, "a restart shows the last known badge");
+        assert!(update_shown(m.get("a/b").copied(), 800));
+        assert!(!update_shown(m.get("a/b").copied(), 950), "installed after the check: the update is in");
+        assert!(is_rate_limit("GitHub API rate limit reached. Add a token in state.json."));
+        assert!(!is_rate_limit("No release found for a/b."));
     }
 
     #[test]

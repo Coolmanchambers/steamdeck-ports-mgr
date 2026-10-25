@@ -20,9 +20,11 @@ component Tile inherits Rectangle {
     in property <bool> selected: false;
     in property <length> font-px: 14px;
     callback clicked();
-    callback hovered();
+    // The pointer really moved over the tile (its position inside it), for the resting-pointer guard.
+    callback moved(length, length);
     property <length> pad: root.font-px * 0.5;
-    property <length> text-h: root.font-px * 3.4;
+    // Two lines of title and the badge line.
+    property <length> text-h: root.font-px * 4.4;
 
     background: root.selected ? FocusLook.fill : Theme.search-background;
     border-width: 1px;
@@ -30,9 +32,9 @@ component Tile inherits Rectangle {
 
     TouchArea {
         clicked => { root.clicked(); }
-        changed has-hover => {
-            if (self.has-hover) {
-                root.hovered();
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.move) {
+                root.moved(self.mouse-x, self.mouse-y);
             }
         }
     }
@@ -96,20 +98,21 @@ component Tile inherits Rectangle {
     }
     Text {
         x: root.pad;
-        y: cover.y + cover.height + root.font-px * 0.25;
+        y: cover.y + cover.height + root.font-px * 0.2;
         width: root.width - root.pad * 2;
-        height: root.font-px * 1.4;
+        height: root.font-px * 2.7;
         text: root.tile.title;
         color: Theme.list-text;
         font-size: root.font-px;
         font-weight: 700;
+        wrap: word-wrap;
         overflow: elide;
-        vertical-alignment: center;
+        vertical-alignment: top;
     }
     // The badge: one mark and its words.
     if root.tile.badge != "": HorizontalLayout {
         x: root.pad;
-        y: cover.y + cover.height + root.font-px * 1.75;
+        y: cover.y + cover.height + root.font-px * 2.95;
         width: root.width - root.pad * 2;
         height: root.font-px * 1.3;
         spacing: root.font-px * 0.35;
@@ -192,6 +195,33 @@ export component HomeView inherits Rectangle {
     callback browse-requested();
     callback empty-hovered(int);
 
+    // A pointer that merely rests where the tiles are drawn must not take the highlight from the controller: the first
+    // pointer event only records where it is; the highlight follows once the pointer really moves (as on the guided
+    // pages). New tiles arm the guard again.
+    property <bool> pointer-armed: false;
+    property <int> seen-id: -2;
+    property <length> seen-x: 0px;
+    property <length> seen-y: 0px;
+    changed tiles => {
+        root.pointer-armed = false;
+        root.seen-id = -2;
+    }
+    function pointer-moved(id: int, x: length, y: length) {
+        if (!root.pointer-armed) {
+            if (root.seen-id == -2) {
+                root.seen-id = id;
+                root.seen-x = x;
+                root.seen-y = y;
+                return;
+            }
+            if (id == root.seen-id && Math.abs(x - root.seen-x) + Math.abs(y - root.seen-y) < 4px) {
+                return;
+            }
+            root.pointer-armed = true;
+        }
+        root.tile-hovered(id);
+    }
+
     property <length> gap: root.font-px * 0.9;
     property <length> top-h: root.font-px * 2.4;
     property <length> hint-h: root.hint-text == "" ? 0px : root.font-px * 2.0;
@@ -218,7 +248,8 @@ export component HomeView inherits Rectangle {
         size: root.top-h * 0.8;
         hover-color: #AA8ED6;
         hover-stroke-color: SemanticColors.text-on-accent;
-        icon-commands: "M 22 50 A 28 28 0 1 1 78 50 A 28 28 0 1 1 22 50 Z";
+        // A gear: a ring and eight teeth.
+        icon-commands: "M 32 50 A 18 18 0 1 1 68 50 A 18 18 0 1 1 32 50 Z M 50 12 L 50 26 M 50 74 L 50 88 M 12 50 L 26 50 M 74 50 L 88 50 M 23 23 L 33 33 M 67 67 L 77 77 M 77 23 L 67 33 M 33 67 L 23 77";
         clicked => { root.settings-requested(); }
     }
     if root.cloud > 0: HorizontalLayout {
@@ -286,81 +317,75 @@ export component HomeView inherits Rectangle {
             selected: i == root.selected;
             font-px: root.font-px;
             clicked => { root.tile-activated(i); }
-            hovered => { root.tile-hovered(i); }
+            moved(x, y) => { root.pointer-moved(i, x, y); }
         }
     }
 
     // Nothing installed: one card.
+    // The title, the sentence and the two buttons are stacked, so a narrow window wraps them without overlap.
     if root.empty: Rectangle {
         property <length> card-w: min(root.width, root.font-px * 36);
-        property <length> card-h: root.font-px * 13;
+        property <length> card-h: card-layout.preferred-height;
         x: (root.width - self.card-w) / 2;
-        y: root.top-h + max(root.gap, (root.height - root.top-h - root.hint-h - self.card-h) / 2);
+        y: root.top-h + max(root.gap * 0.5, (root.height - root.top-h - root.hint-h - self.card-h) / 2);
         width: self.card-w;
         height: self.card-h;
         background: Theme.search-background;
         border-width: 1px;
         border-color: Theme.border-color;
-        Text {
-            x: root.gap * 1.5;
-            y: root.gap * 1.2;
-            width: parent.width - root.gap * 3;
-            text: "Set up Deck Ports Manager";
-            color: Theme.list-text;
-            font-size: root.font-px * 1.5;
-            font-weight: 700;
-            wrap: word-wrap;
-        }
-        Text {
-            x: root.gap * 1.5;
-            y: root.gap * 1.2 + root.font-px * 2.6;
-            width: parent.width - root.gap * 3;
-            text: "Choose where ports go, bring in the ones already on this Deck, and add them to Steam. Or browse the ports you can install.";
-            color: Theme.list-text;
-            font-size: root.font-px;
-            wrap: word-wrap;
-        }
-        setup-btn := CardButton {
-            x: root.gap * 1.5;
-            y: parent.height - self.height - root.gap * 1.2;
-            width: self.text-w + root.font-px * 2.4;
-            height: root.font-px * 2.8;
-            text: "Set up";
-            primary: true;
-            selected: root.selected == 0;
-            font-px: root.font-px;
-            clicked => { root.setup-requested(); }
-            hovered => { root.empty-hovered(0); }
-        }
-        CardButton {
-            x: setup-btn.x + setup-btn.width + root.gap;
-            y: setup-btn.y;
-            width: self.text-w + root.font-px * 2.4;
-            height: setup-btn.height;
-            text: "Browse ports";
-            selected: root.selected == 1;
-            font-px: root.font-px;
-            clicked => { root.browse-requested(); }
-            hovered => { root.empty-hovered(1); }
+        card-layout := VerticalLayout {
+            padding: root.gap * 1.2;
+            spacing: root.gap * 0.8;
+            Text {
+                text: "Set up Deck Ports Manager";
+                color: Theme.list-text;
+                font-size: root.font-px * 1.5;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "Choose where ports go, bring in the ones already on this Deck, and add them to Steam. Or browse the ports you can install.";
+                color: Theme.list-text;
+                font-size: root.font-px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: root.gap;
+                alignment: start;
+                CardButton {
+                    width: self.text-w + root.font-px * 2.4;
+                    height: root.font-px * 2.8;
+                    text: "Set up";
+                    primary: true;
+                    selected: root.selected == 0;
+                    font-px: root.font-px;
+                    clicked => { root.setup-requested(); }
+                    hovered => { root.empty-hovered(0); }
+                }
+                CardButton {
+                    width: self.text-w + root.font-px * 2.4;
+                    height: root.font-px * 2.8;
+                    text: "Browse ports";
+                    selected: root.selected == 1;
+                    font-px: root.font-px;
+                    clicked => { root.browse-requested(); }
+                    hovered => { root.empty-hovered(1); }
+                }
+            }
         }
     }
 
     // What the controller's buttons do here.
-    if root.hint-text != "": Rectangle {
+    // Plain small text along the bottom, as the Deck-ready list shows its hints.
+    if root.hint-text != "": Text {
         x: 0px;
         y: root.height - root.hint-h;
         width: root.width;
         height: root.hint-h;
-        background: Theme.search-background;
-        Text {
-            width: 100%;
-            height: 100%;
-            text: root.hint-text;
-            color: Theme.list-text;
-            font-size: root.font-px * 0.95;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            overflow: elide;
-        }
+        text: root.hint-text;
+        color: Theme.list-text;
+        font-size: root.font-px * 0.85;
+        vertical-alignment: center;
+        overflow: elide;
     }
 }

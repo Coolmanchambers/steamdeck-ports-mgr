@@ -41,11 +41,22 @@ pub fn run_update_check(
     github_token: Option<&str>,
     gitlab_token: Option<&str>,
 ) -> bool {
+    run_update_check_result(port, installed_tag, installed_at, github_token, gitlab_token).unwrap_or(false)
+}
+
+/// Fork (home screen): [`run_update_check`] that tells a failed check (a rate limit, no network) from "no update".
+pub fn run_update_check_result(
+    port: &Port,
+    installed_tag: Option<&str>,
+    installed_at: &str,
+    github_token: Option<&str>,
+    gitlab_token: Option<&str>,
+) -> Result<bool, String> {
     let repo = port.repo.as_deref().unwrap_or_default();
     match port.source_type {
         SourceType::Github => update_available(port, installed_tag, installed_at, |preferred| github_api::fetch_latest_tag_and_date_preferring(repo, github_token, preferred)),
         SourceType::Gitlab => update_available(port, installed_tag, installed_at, |preferred| gitlab_api::fetch_latest_tag_and_date_preferring(repo, gitlab_token, preferred)),
-        SourceType::DirectUrl | SourceType::None => false,
+        SourceType::DirectUrl | SourceType::None => Ok(false),
     }
 }
 
@@ -56,9 +67,9 @@ fn update_available(
     installed_tag: Option<&str>,
     installed_at: &str,
     fetch_latest: impl FnOnce(Option<&str>) -> Result<(String, Option<String>), AssetSelectionError>,
-) -> bool {
+) -> Result<bool, String> {
     let preferred = port.preferred_asset.as_ref().and_then(resolve_preferred_asset);
-    fetch_latest(preferred.as_deref()).is_ok_and(|(tag, date)| update_decision(installed_tag, installed_at, &tag, date.as_deref()))
+    fetch_latest(preferred.as_deref()).map(|(tag, date)| update_decision(installed_tag, installed_at, &tag, date.as_deref())).map_err(|e| e.message().to_string())
 }
 
 pub fn run_extra_install(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMut(&str)) -> Result<(), String> {
@@ -128,7 +139,15 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     fn check(port: &Port, releases: &[Value]) -> bool {
-        update_available(port, Some("release-3.0.0"), "2026-10-18T00:00:00Z", |preferred| github_api::latest_tag_and_date(releases.to_vec(), preferred))
+        update_available(port, Some("release-3.0.0"), "2026-10-18T00:00:00Z", |preferred| github_api::latest_tag_and_date(releases.to_vec(), preferred)).unwrap_or(false)
+    }
+
+    #[test]
+    fn a_failed_check_is_an_error_not_no_update() {
+        let port = crate::core::models::port_from_value(&serde_json::json!({"name": "X", "folder": "x", "source": "https://github.com/a/x"})).unwrap();
+        let rate = update_available(&port, Some("v1"), "2026-01-01T00:00:00Z", |_| Err(AssetSelectionError::Message("GitHub API rate limit reached. Add a token in state.json.".into())));
+        assert!(rate.is_err_and(|e| e.contains("rate limit")));
+        assert_eq!(update_available(&port, Some("v1"), "2026-01-01T00:00:00Z", |_| Ok(("v2".into(), None))), Ok(true));
     }
 
     #[test]

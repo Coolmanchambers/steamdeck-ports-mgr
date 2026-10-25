@@ -12,7 +12,7 @@
 use super::dialogs::dialog_is_open;
 use super::install_launch::activate_port;
 use super::state::AppState;
-use crate::core::models::{Port, SourceType};
+use crate::core::models::Port;
 use crate::fork::home::{self, Home, List, PortFacts, TileKind};
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::{AppWindow, HomeTile};
@@ -27,6 +27,15 @@ type Router = Rc<RefCell<GamepadRouter>>;
 
 /// How long Steam's play times are reused before `shortcuts.vdf` is read again.
 const STEAM_TTL: Duration = Duration::from_secs(30);
+/// How long a port's "game files missing" answer is reused (it reads the port's folder and the game files records).
+const FILES_TTL: Duration = Duration::from_secs(10);
+
+/// THE SWITCH for the update check at start (Tim decides whether it stays): false turns it off; the badges then show
+/// only what an earlier check found, and Play keeps its own check as before.
+const CHECK_UPDATES_AT_START: bool = true;
+/// `fork-settings.json` keys: when the last round ran, and what each port's check found and when.
+const KEY_CHECKED_AT: &str = "home_update_check_at";
+const KEY_RESULTS: &str = "home_update_checks";
 
 #[derive(Default)]
 pub(crate) struct HomeUi {
@@ -34,11 +43,14 @@ pub(crate) struct HomeUi {
     selected: Cell<usize>,
     empty: Cell<bool>,
     tiles: RefCell<Vec<home::Tile>>,
-    /// What the background update check found, by port key.
-    updates: Arc<Mutex<HashMap<String, bool>>>,
-    /// The number of results already drawn (the poll redraws when more arrive).
+    /// What the update checks found, by port key (loaded from `fork-settings.json`, added to by a round).
+    updates: Arc<Mutex<HashMap<String, home::UpdateSeen>>>,
+    /// The number of results a round has added so far, and whether it ended (the poll redraws and saves as they come).
+    round_added: Arc<Mutex<usize>>,
+    round_done: Arc<std::sync::atomic::AtomicBool>,
     updates_seen: Cell<usize>,
     steam: RefCell<Option<(Instant, HashMap<String, i64>)>>,
+    files: RefCell<HashMap<String, (Instant, bool)>>,
 }
 
 impl HomeUi {
@@ -77,7 +89,7 @@ pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
     }
     {
         let (app, router) = (app.clone(), router.clone());
-        window.on_home_browse_requested(move || next_list(&app, &router));
+        window.on_home_browse_requested(move || browse(&app, &router));
     }
     start(app);
 }
@@ -98,7 +110,7 @@ fn set_home(app: &AppState, on: bool) {
         window.invoke_clear_search();
         app.windowed_nav.search_query.borrow_mut().clear();
     }
-    window.set_next_list_text(current_list(app).next().name().into());
+    window.set_next_list_text(current_list(app).next_in(window.get_big_mode()).name().into());
 }
 
 /// The list on screen now.
@@ -117,13 +129,35 @@ pub(crate) fn next_list(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
     }
-    let next = current_list(app).next();
+    go_to(app, router, current_list(app).next_in(app.window().get_big_mode()));
+}
+
+/// "Browse ports" on the empty card: a list of ports to install (All ports windowed; in big mode, where All ports
+/// shows only installed ports, the Deck-ready list).
+fn browse(app: &Rc<AppState>, router: &Router) {
+    if !dialog_is_open(app) {
+        go_to(app, router, List::browse(app.window().get_big_mode()));
+    }
+}
+
+fn go_to(app: &Rc<AppState>, router: &Router, next: List) {
+    if current_list(app) == next {
+        return;
+    }
     match next {
         List::AllPorts => {
+            if app.deck_ready.is_active() {
+                super::deck_ready_screen::toggle(app, router);
+            }
             set_home(app, false);
             app.refresh_current_view();
         }
-        List::DeckReady => super::deck_ready_screen::toggle(app, router),
+        List::DeckReady => {
+            if app.home.is_active() {
+                set_home(app, false);
+            }
+            super::deck_ready_screen::toggle(app, router);
+        }
         List::Home => {
             if app.deck_ready.is_active() {
                 super::deck_ready_screen::toggle(app, router);
@@ -132,7 +166,8 @@ pub(crate) fn next_list(app: &Rc<AppState>, router: &Router) {
             app.refresh_current_view();
         }
     }
-    app.window().set_next_list_text(current_list(app).next().name().into());
+    let window = app.window();
+    window.set_next_list_text(current_list(app).next_in(window.get_big_mode()).name().into());
     eprintln!("list: {}", current_list(app).name());
 }
 
@@ -271,17 +306,20 @@ fn open_setup(app: &Rc<AppState>, router: &Router) {
 fn facts_of(app: &AppState, installed: &[Port]) -> Vec<PortFacts> {
     let queued: HashSet<String> = crate::fork::steam_queue::load(&crate::fork::steam_queue::queue_path(&app.paths.config_dir)).queue.entries.iter().map(|e| e.port_key.clone()).collect();
     let updates = app.home.updates.lock().map(|u| u.clone()).unwrap_or_default();
+    let files = files_missing(app, installed);
     let steam = steam_played(app, installed);
     let state = app.state.borrow();
     installed
         .iter()
         .map(|p| {
             let key = p.key().to_string();
-            let app_played = state.get(&key).map_or(0, |i| home::app_played_at(&i.last_played_at));
+            let info = state.get(&key);
+            let app_played = info.map_or(0, |i| home::app_played_at(&i.last_played_at));
+            let installed_at = info.map_or(0, |i| home::app_played_at(&i.installed_at));
             PortFacts {
                 name: p.display_name().to_string(),
-                update_available: updates.get(&key).copied().unwrap_or(false),
-                game_files_missing: super::rom_screens::port_missing_game_files(app, p),
+                update_available: home::update_shown(updates.get(&key).copied(), installed_at),
+                game_files_missing: files.get(&key).copied().unwrap_or(false),
                 steam_waiting: queued.contains(&key),
                 saves_not_found: super::save_finder_screen::saves_warning(app, p),
                 last_played: app_played.max(steam.get(&key).copied().unwrap_or(0)),
@@ -291,8 +329,27 @@ fn facts_of(app: &AppState, installed: &[Port]) -> Vec<PortFacts> {
         .collect()
 }
 
-/// When Steam last started each port's shortcut (its program inside the port's folder), from every account's
-/// `shortcuts.vdf`; reused for half a minute.
+/// "Game files missing" for each port, each answer reused for a few seconds (Home redraws often: covers arriving, the
+/// update poll), since it reads the port's folder and the game files records.
+fn files_missing(app: &AppState, installed: &[Port]) -> HashMap<String, bool> {
+    let mut cache = app.home.files.borrow_mut();
+    installed
+        .iter()
+        .map(|p| {
+            let key = p.key().to_string();
+            let fresh = cache.get(&key).filter(|(at, _)| at.elapsed() < FILES_TTL).map(|(_, v)| *v);
+            let missing = fresh.unwrap_or_else(|| {
+                let v = super::rom_screens::port_missing_game_files(app, p);
+                cache.insert(key.clone(), (Instant::now(), v));
+                v
+            });
+            (key, missing)
+        })
+        .collect()
+}
+
+/// When Steam last started each port's shortcut (its program inside the port's folder, the longest matching folder
+/// when folders nest), from every account's `shortcuts.vdf`; reused for half a minute.
 fn steam_played(app: &AppState, installed: &[Port]) -> HashMap<String, i64> {
     if let Some((at, known)) = app.home.steam.borrow().as_ref() {
         if at.elapsed() < STEAM_TTL {
@@ -302,18 +359,20 @@ fn steam_played(app: &AppState, installed: &[Port]) -> HashMap<String, i64> {
     let mut out = HashMap::new();
     if let Some(home) = home_dir() {
         let library = app.paths.library_dir();
-        let dirs: Vec<(String, PathBuf)> = installed.iter().filter_map(|p| crate::core::path_safety::safe_join(&library, &p.folder).ok().map(|d| (p.key().to_string(), d))).collect();
+        // Each port's folder once, as the file system names it (a link to the SD card, say).
+        let dirs: Vec<(String, PathBuf)> = installed
+            .iter()
+            .filter_map(|p| crate::core::path_safety::safe_join(&library, &p.folder).ok().map(|d| (p.key().to_string(), std::fs::canonicalize(&d).unwrap_or(d))))
+            .collect();
         for account in crate::fork::port_mover::steam::device_accounts(&home) {
             let Ok(file) = crate::fork::store::ShortcutsFile::load(&account.shortcuts) else { continue };
             for s in crate::fork::shortcuts::list(&file.doc) {
-                if s.last_play_time == 0 {
+                if s.last_play_time == 0 || s.exe_path().is_empty() {
                     continue;
                 }
-                for (key, dir) in &dirs {
-                    if inside(s.exe_path(), dir) {
-                        let t = out.entry(key.clone()).or_insert(0i64);
-                        *t = (*t).max(i64::from(s.last_play_time));
-                    }
+                if let Some(key) = owner_of(Path::new(s.exe_path()), &dirs) {
+                    let t = out.entry(key.to_string()).or_insert(0i64);
+                    *t = (*t).max(i64::from(s.last_play_time));
                 }
             }
         }
@@ -322,58 +381,126 @@ fn steam_played(app: &AppState, installed: &[Port]) -> HashMap<String, i64> {
     out
 }
 
-fn inside(exe: &str, dir: &Path) -> bool {
-    crate::fork::port_mover::steam::moved_path(exe, dir, dir).is_some()
+/// The port whose folder holds `exe` (as written, or as the file system names it); the longest folder wins.
+fn owner_of<'a>(exe: &Path, dirs: &'a [(String, PathBuf)]) -> Option<&'a str> {
+    let canonical = std::fs::canonicalize(exe).ok();
+    dirs.iter()
+        .filter(|(_, d)| exe.starts_with(d) || canonical.as_ref().is_some_and(|c| c.starts_with(d)))
+        .max_by_key(|(_, d)| d.as_os_str().len())
+        .map(|(k, _)| k.as_str())
 }
 
 // -- The update check -----------------------------------------------------------------------------------------
 
-/// Once per start, in the background: the same check Play runs (the port's newest release against the installed
-/// one), for the installed ports that follow a GitHub or GitLab release, when "check for updates" is on.
+fn settings_path(app: &AppState) -> PathBuf {
+    app.paths.config_dir.join(crate::fork::settings::FILE_NAME)
+}
+
+fn unix_now() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// At start: the badges show what earlier checks found (kept in `fork-settings.json`, so a restart asks nothing).
+/// Then, when the switch is on, "check for updates" is on and the last round is 12 hours old or more, one round in the
+/// background: Play's own check (`jobs::run_update_check_result`) for each installed port it is due for
+/// (`home::update_check_due`, the same rule Play follows), one after another, stopping at the first rate-limit answer.
+/// Each request has the API agent's 30 s limit, and the poll stops after the round or at a deadline.
 fn start_update_check(app: &Rc<AppState>) {
+    let mut settings = crate::fork::settings::ForkSettings::load(&settings_path(app));
+    let known = home::updates_from_json(settings.get(KEY_RESULTS));
+    if let Ok(mut u) = app.home.updates.lock() {
+        *u = known;
+    }
+    if !CHECK_UPDATES_AT_START {
+        return;
+    }
+    let last = settings.get(KEY_CHECKED_AT).and_then(serde_json::Value::as_i64);
+    let now = unix_now();
+    if !home::update_round_due(last, now) {
+        return;
+    }
     let (wanted, tokens) = {
         let state = app.state.borrow();
-        let wanted: Vec<(Port, Option<String>, String)> = if state.release_sync {
-            app.catalog
-                .borrow()
-                .iter()
-                .filter(|p| matches!(p.source_type, SourceType::Github | SourceType::Gitlab) && app.is_installed(p))
-                .filter_map(|p| {
-                    let info = state.get(p.key())?;
-                    Some((p.clone(), info.installed_tag.clone(), info.installed_at.clone()))
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let wanted: Vec<(Port, Option<String>, String)> = app
+            .catalog
+            .borrow()
+            .iter()
+            .filter(|p| app.is_installed(p))
+            .filter_map(|p| {
+                let info = state.get(p.key());
+                let installed_at = info.map(|i| i.installed_at.clone()).unwrap_or_default();
+                home::update_check_due(state.release_sync, &p.source_type, info.map(|i| i.update), &installed_at).then(|| (p.clone(), info.and_then(|i| i.installed_tag.clone()), installed_at))
+            })
+            .collect();
         (wanted, app.api_tokens())
     };
     if wanted.is_empty() {
         return;
     }
-    let total = wanted.len();
-    let results = app.home.updates.clone();
+    // Stamped before it starts, so a crash or a quit half way does not make every start ask again.
+    if let Err(e) = settings.set(KEY_CHECKED_AT, serde_json::json!(now)) {
+        eprintln!("home: could not note the update check time ({e})");
+    }
+    eprintln!("home: checking {} installed ports for updates", wanted.len());
+    let deadline = Instant::now() + Duration::from_secs(35 * wanted.len() as u64 + 10);
+    let (results, added, done) = (app.home.updates.clone(), app.home.round_added.clone(), app.home.round_done.clone());
     std::thread::spawn(move || {
         for (port, tag, installed_at) in wanted {
-            let available = crate::core::jobs::run_update_check(&port, tag.as_deref(), &installed_at, tokens.0.as_deref(), tokens.1.as_deref());
-            if let Ok(mut r) = results.lock() {
-                r.insert(port.key().to_string(), available);
+            match crate::core::jobs::run_update_check_result(&port, tag.as_deref(), &installed_at, tokens.0.as_deref(), tokens.1.as_deref()) {
+                Ok(available) => {
+                    if let Ok(mut r) = results.lock() {
+                        r.insert(port.key().to_string(), home::UpdateSeen { available, at: unix_now() });
+                    }
+                    if let Ok(mut n) = added.lock() {
+                        *n += 1;
+                    }
+                }
+                Err(e) if home::is_rate_limit(&e) => {
+                    eprintln!("home: update check stopped: {e}");
+                    break;
+                }
+                // No network, no release: the last known answer stays.
+                Err(e) => eprintln!("home: no update answer for {}: {e}", port.key()),
             }
         }
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
     });
     let app = app.clone();
     UPDATE_POLL.with(|t| {
         t.start(slint::TimerMode::Repeated, Duration::from_secs(2), move || {
-            let n = app.home.updates.lock().map(|r| r.len()).unwrap_or(0);
+            let n = app.home.round_added.lock().map(|n| *n).unwrap_or(0);
+            let finished = app.home.round_done.load(std::sync::atomic::Ordering::Relaxed) || Instant::now() >= deadline;
             if n != app.home.updates_seen.get() {
                 app.home.updates_seen.set(n);
+                save_results(&app);
                 if app.home.is_active() {
                     app.refresh_current_view();
                 }
             }
-            if n >= total {
+            if finished {
                 UPDATE_POLL.with(slint::Timer::stop);
             }
         });
     });
+}
+
+fn save_results(app: &AppState) {
+    let Ok(map) = app.home.updates.lock().map(|m| m.clone()) else { return };
+    let mut settings = crate::fork::settings::ForkSettings::load(&settings_path(app));
+    if let Err(e) = settings.set(KEY_RESULTS, home::updates_to_json(&map)) {
+        eprintln!("home: could not keep the update check results ({e})");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shortcut_belongs_to_the_port_with_the_longest_matching_folder() {
+        let dirs = vec![("outer".to_string(), PathBuf::from("/lib/Games")), ("inner".to_string(), PathBuf::from("/lib/Games/Soh"))];
+        assert_eq!(owner_of(Path::new("/lib/Games/Soh/soh.appimage"), &dirs), Some("inner"));
+        assert_eq!(owner_of(Path::new("/lib/Games/other/x"), &dirs), Some("outer"));
+        assert_eq!(owner_of(Path::new("/elsewhere/x"), &dirs), None);
+    }
 }

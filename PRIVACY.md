@@ -1,7 +1,7 @@
 # Privacy policy
 
 Applies to **Deck Ports Manager** (the `steamdeck-ports-mgr` build of Ports Launcher), published at
-https://github.com/Coolmanchambers/steamdeck-ports-mgr. Last updated 2026-10-24.
+https://github.com/Coolmanchambers/steamdeck-ports-mgr. Last updated 2026-10-25.
 
 The short version: the app runs on your own device, keeps its data on your own device, and has no
 server of its own. Nothing is sent to the developer. Backing up your saves to Google Drive is optional
@@ -31,7 +31,8 @@ only things it sends that identify you are the keys, logins or tokens you entere
 - **GitHub, GitLab, or the site a port's author hosts it on (shown in the catalog):** to look up and
   download port releases, and to check for updates to this app. Those sites see an ordinary web request
   from your IP address. If you add a GitHub or GitLab token in `state.json`, it is sent to that site
-  with each request.
+  with each request. The home screen checks your installed ports for updates at most every 12 hours when
+  "check for updates" is on; switching that setting off stops it.
 - **Image servers named in the catalog (SteamGridDB's and others):** to show each port's icon and cover.
   No key is used for these.
 - **SteamGridDB, TheGamesDB and ScreenScraper:** to look up game art, when you use game-art lookup. The

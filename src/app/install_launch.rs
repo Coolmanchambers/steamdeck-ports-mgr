@@ -236,11 +236,9 @@ fn launch_with_update_check(app: &Rc<AppState>, router: &Router, port: &Port) {
     let check = {
         let state = app.state.borrow();
         let info = state.get(port.key());
-        let wanted = state.release_sync
-            && matches!(port.source_type, SourceType::Github | SourceType::Gitlab)
-            && info.is_none_or(|i| i.update);
         let installed_at = info.map(|i| i.installed_at.clone()).unwrap_or_default();
-        (wanted && crate::core::state::is_stale_for_update_check(&installed_at)).then(|| (info.and_then(|i| i.installed_tag.clone()), installed_at))
+        // Fork: one rule for Play and the home screen (crate::fork::home::update_check_due).
+        crate::fork::home::update_check_due(state.release_sync, &port.source_type, info.map(|i| i.update), &installed_at).then(|| (info.and_then(|i| i.installed_tag.clone()), installed_at))
     };
     let Some((tag, installed_at)) = check else {
         return launch_flow(app, router, port);

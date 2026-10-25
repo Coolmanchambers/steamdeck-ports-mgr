@@ -94,10 +94,12 @@ still open from the same folder is recognized too; quit old copies from the tray
 
 ## Home
 
-The app opens on **Home**: "Your ports" as cover tiles, each with one status (Ready, Update available, Game files
-missing, Steam waiting, Saves not found). The port you played last is first, tagged Continue. A plays, X opens Info,
+The app opens on **Home**: "Your ports" as cover tiles, each with one status (Ready, Update ready, No game files,
+Steam waiting, Find saves). The port you played last is first, tagged Continue. A plays, X opens Info,
 Y opens Settings. L1/R1 (or Tab) go to All ports (every port you can install, with search), then the Deck-ready list,
-then back to Home. With nothing installed yet, Home shows one card: Set up, or Browse ports. Typing on Home searches
+then back to Home (in big mode and Game Mode the Deck-ready list comes right after Home, since All ports there shows
+only installed ports). With nothing installed yet, Home shows one card: Set up, or Browse ports. Home checks your
+installed ports for updates at most every 12 hours, only when "check for updates" is on. Typing on Home searches
 All ports. The top line shows the cloud backup status (when you are signed in) and the Settings gear.
 
 ## First launch: the setup wizard

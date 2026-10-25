@@ -247,6 +247,8 @@ Files added by this fork:
 | 2026-10-25 | `src/app/state.rs` | Home screen: `home` field; `current_selected_port`, `move_selection` and `refresh_current_view` hand over to Home while it is shown (3 guards); `apply_live_mode` redraws Home for the new size; `ensure_card_images_cached` made `pub(crate)` |
 | 2026-10-25 | `src/app/cards.rs`, `src/app/install_launch.rs`, `src/main.rs`, `src/app/mod.rs` | Home screen: `load_cached_card_image` made `pub(crate)`; `activate_selection` hands over to Home; `home` field initialised; one module line |
 | 2026-10-25 | `src/app/gamepad_target.rs` | Home screen: L1/R1 go round the lists (Home, All ports, Deck-ready); B in the Deck-ready list goes on to Home |
+| 2026-10-25 | `src/core/jobs.rs` | Home review: `run_update_check_result` tells a failed check (rate limit, no network) from "no update"; `run_update_check` and the private `update_available` now go through it (same behaviour for Play); 1 test |
+| 2026-10-25 | `src/app/install_launch.rs` | Home review: Play's "is the update check due" test is `fork::home::update_check_due`, the one the home screen uses too (same rule) |
 | 2026-10-25 | `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh` | Home screen: the new Slint file is linted; the smoke test checks the app opens on Home, All ports is one Tab away, Deck-ready the next, and Home after that |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
@@ -342,18 +344,27 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
 The first thing the app shows (Tim, 2026-10-25: "want a better first impression screen").
 
 - **Your ports**: a grid of cover tiles for the installed ports (covers from the card image cache, the port's name on a
-  plain tile while there is none), each with one status badge drawn with the guided pages' status marks: Game files
-  missing (from the game files records), Update available (the same check Play runs, made once per start in the
-  background for ports that follow a GitHub or GitLab release, only when "check for updates" is on), Steam waiting (a
-  change for the port in the Steam queue), Saves not found (the save finder), else Ready, in that order of priority.
+  plain tile while there is none), each with one short status badge drawn with the guided pages' status marks, in
+  this order of priority: "No game files" (red; the game files records), "Update ready" (blue arrow), "Steam waiting"
+  (orange; a change for the port in the Steam queue), "Find saves" (blue arrow; the save finder), else "Ready".
+- **Update check**: Play's own check (`jobs::run_update_check_result`), for exactly the ports Play would check
+  (`home::update_check_due`, shared with `install_launch`: "check for updates" on, the port's own switch on, a GitHub
+  or GitLab release, an install older than Play's stale time). At most one round every 12 hours (`home_update_check_at`
+  in `fork-settings.json`, stamped when a round starts), one port after another in the background, stopping at the first
+  rate-limit answer; each request has the API agent's 30 s limit and the poll stops at a deadline. Results are kept per
+  port with their time (`home_update_checks`), so a restart shows the last known badge without asking; a result older
+  than the port's last install is not shown. One switch turns the round off: `CHECK_UPDATES_AT_START` in
+  `src/app/home_screen.rs`.
 - **Continue**: the port played last (the later of the app's play record and Steam's `LastPlayTime` for a shortcut
   whose program is inside the port's folder) is the first tile, tagged Continue, and not repeated below; the rest are
   by name. While setup was never finished, a "Finish setting up" tile comes first.
 - **Nothing installed**: one card, "Set up Deck Ports Manager" (the setup wizard) and "Browse ports" (All ports).
 - **Top line**: "Your ports", a small cloud backup status (cloud outline, a status mark and "Backed up", "Backing up",
   "Backup problem" or "Not backed up yet"; nothing when not signed in) and the Settings gear.
-- **Lists**: L1/R1, Tab and the footer button go Home, All ports, Deck-ready, then Home. All ports is upstream's list
-  (or card grid in big mode), unchanged; B in the Deck-ready list goes on to Home. The search bar stays on Home: typing
+- **Lists**: L1/R1, Tab and the footer button go Home, All ports, Deck-ready, then Home. In big mode, where All ports
+  is upstream's card grid of installed ports only, the order is Home, Deck-ready, All ports, so the next list after Home
+  is one to install from; "Browse ports" goes to All ports windowed and to the Deck-ready list in big mode. All ports
+  itself is unchanged; B in the Deck-ready list goes on to Home. The search bar stays on Home: typing
   searches All ports (the app switches to it with what was typed).
 - **Buttons on Home**: A plays (or sets up on the Setup tile and the empty card), X opens Info, Y opens Settings, B does
   nothing; the hint bar says so ("A Play · X Info · D-pad Move · Y Settings · L1/R1 Lists").
