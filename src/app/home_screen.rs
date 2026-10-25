@@ -102,6 +102,7 @@ fn start(app: &Rc<AppState>) {
     eprintln!("list: {}", List::Home.name());
     app.refresh_current_view();
     start_update_check(app);
+    super::checkup_screen::start(app);
 }
 
 fn set_home(app: &AppState, on: bool) {
@@ -200,7 +201,9 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
     let facts = facts_of(app, &installed);
     let setup_done = crate::fork::setup_wizard::setup_state(&app.paths.config_dir.join(crate::fork::settings::FILE_NAME)) == crate::fork::setup_wizard::SetupState::Done;
     let window = app.window();
-    match home::build(&facts, setup_done) {
+    // Fork (checkup): the "Fix N problems" tile reads the last answer; looking again happens in the background.
+    let checkup = super::checkup_screen::home_tile();
+    match home::build(&facts, setup_done, checkup.as_ref()) {
         Home::Empty => {
             app.home.empty.set(true);
             app.home.tiles.borrow_mut().clear();
@@ -215,17 +218,22 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
                 .iter()
                 .map(|t| {
                     let image = by_key.get(t.key.as_str()).map(|p| super::cards::load_cached_card_image(&app.grid_nav.card_image_cache, &app.paths.cache_dir, &p.folder)).unwrap_or_default();
-                    let badge = if matches!(t.kind, TileKind::Setup | TileKind::Add) { String::new() } else { t.badge.label().to_string() };
+                    let badge = match (&t.checkup, t.kind) {
+                        (Some(c), _) => c.note.clone(),
+                        (None, TileKind::Setup | TileKind::Add) => String::new(),
+                        (None, _) => t.badge.label().to_string(),
+                    };
                     HomeTile {
                         title: t.title.clone().into(),
                         image,
                         badge: badge.into(),
-                        mark: t.badge.mark().code(),
+                        mark: t.checkup.as_ref().map_or_else(|| t.badge.mark(), |c| c.mark).code(),
                         kind: match t.kind {
                             TileKind::Port => 0,
                             TileKind::Continue => 1,
                             TileKind::Setup => 2,
                             TileKind::Add => 3,
+                            TileKind::Checkup => 4,
                         },
                     }
                 })
@@ -296,7 +304,7 @@ pub(crate) fn selected_port(app: &AppState) -> Option<Port> {
     if app.home.empty.get() {
         return None;
     }
-    let key = app.home.tiles.borrow().get(app.home.selected.get()).filter(|t| !matches!(t.kind, TileKind::Setup | TileKind::Add)).map(|t| t.key.clone())?;
+    let key = app.home.tiles.borrow().get(app.home.selected.get()).filter(|t| !matches!(t.kind, TileKind::Setup | TileKind::Add | TileKind::Checkup)).map(|t| t.key.clone())?;
     app.catalog.borrow().iter().find(|p| p.key() == key).cloned()
 }
 
@@ -309,10 +317,18 @@ pub(crate) fn activate(app: &Rc<AppState>, router: &Router) {
     match focused_kind(app) {
         Some(TileKind::Setup) => return open_setup(app, router),
         Some(TileKind::Add) => return open_add(app, router),
+        Some(TileKind::Checkup) => return open_checkup(app, router),
         _ => {}
     }
     if let Some(port) = selected_port(app) {
         activate_port(app, router, &port);
+    }
+}
+
+/// The "Fix N problems" tile: the checkup (a fresh look first).
+fn open_checkup(app: &Rc<AppState>, router: &Router) {
+    if !dialog_is_open(app) {
+        super::checkup_screen::open(app, router);
     }
 }
 
@@ -349,6 +365,22 @@ fn facts_of(app: &AppState, installed: &[Port]) -> Vec<PortFacts> {
             }
         })
         .collect()
+}
+
+/// Fork (checkup): the same answers Home badges with. `fresh` asks again instead of reusing what was read a few seconds ago
+/// (the checkup after a fix must show what is true now).
+pub(crate) fn file_states(app: &AppState, installed: &[Port], fresh: bool) -> HashMap<String, Option<FilesState>> {
+    if fresh {
+        app.home.files.borrow_mut().clear();
+    }
+    files_missing(app, installed)
+}
+
+/// Fork (checkup): Home would badge this installed port "Update ready" (a check found one after it was installed).
+pub(crate) fn update_ready(app: &AppState, key: &str) -> bool {
+    let installed_at = app.state.borrow().get(key).map_or(0, |i| home::app_played_at(&i.installed_at));
+    let seen = app.home.updates.lock().ok().and_then(|u| u.get(key).copied());
+    home::update_shown(seen, installed_at)
 }
 
 /// The game files state of each port (`None`: needs none), each answer reused for a few seconds (Home redraws often:

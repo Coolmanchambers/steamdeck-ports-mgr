@@ -37,6 +37,10 @@ pub(crate) fn open_group(app: &Rc<AppState>, router: &Router, group: Group) {
     if super::setup_wizard_screen::resume_instead_of_menu(app, router, crate::fork::setup_wizard::flow::Menu::Settings) {
         return;
     }
+    // Fork (checkup): a screen the Fix problems checkup opened leads back to the checkup, not to Settings.
+    if super::checkup_screen::resume_instead_of_menu(app, router) {
+        return;
+    }
     show_group(app, router, group);
 }
 
@@ -50,6 +54,8 @@ fn show_top(app: &Rc<AppState>, router: &Router) {
         on_action: Rc::new(|app, router, act| match act {
             Act::Open(group) => show_group(app, router, group),
             Act::Back => leave(app, router),
+            // The checkup closes this page itself, then looks.
+            Act::Checkup => super::checkup_screen::open(app, router),
             Act::Do(_) => {}
         }),
         on_back: Rc::new(leave),
@@ -65,7 +71,7 @@ fn show_group(app: &Rc<AppState>, router: &Router, group: Group) {
         on_action: Rc::new(move |app, router, act| match act {
             Act::Do(entry) => choose(app, router, group, entry),
             Act::Back => show_top(app, router),
-            Act::Open(_) => {}
+            Act::Open(_) | Act::Checkup => {}
         }),
         on_back: Rc::new(show_top),
         on_exit: Rc::new(leave),
@@ -167,5 +173,6 @@ fn facts(app: &AppState) -> Facts {
         check_updates: state.release_sync,
         discord: state.discord_rpc_enabled,
         version: version(),
+        checkup: super::checkup_screen::summary(),
     }
 }

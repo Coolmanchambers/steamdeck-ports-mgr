@@ -226,7 +226,16 @@ pub(crate) fn startup_check(app: &Rc<AppState>, router: &Router, startup: Startu
     slint::Timer::single_shot(Duration::from_millis(300), move || show_missing(&app, &router, false));
 }
 
-fn show_missing(app: &Rc<AppState>, router: &Router, again: bool) {
+/// Fork (checkup): the switches cut short (the app closed between the ports folder setting and Steam) whose new copy is in
+/// use, by port name: what Settings > Ports folder offers to finish. A read of the records, nothing more.
+pub(crate) fn unfinished_switches(app: &AppState) -> Vec<String> {
+    let old = old_copies::load(&app.paths.config_dir).unwrap_or_default();
+    let active = RemovalParts::of(app).active;
+    old.into_iter().filter(|o| !o.switched && active.contains(&o.new_path)).map(|o| o.name).collect()
+}
+
+/// The "Ports folder not available" message (also reached from the checkup): try again, choose another, or go on.
+pub(crate) fn show_missing(app: &Rc<AppState>, router: &Router, again: bool) {
     let dir = app.paths.library_dir();
     let Some(why) = ports_folder::availability(&dir, &system_mounts(), &default_media_roots()) else {
         STARTUP_PENDING.with(|p| p.set(false));
@@ -266,6 +275,10 @@ fn show_missing(app: &Rc<AppState>, router: &Router, again: bool) {
 pub(crate) fn open_menu(app: &Rc<AppState>, router: &Router) {
     // Fork (setup wizard): backing out of a screen the wizard opened lands here; go back to the wizard.
     if super::setup_wizard_screen::resume_instead_of_menu(app, router, crate::fork::setup_wizard::flow::Menu::PortsFolder) {
+        return;
+    }
+    // Fork (checkup): the same for a screen the Fix problems checkup opened.
+    if super::checkup_screen::resume_instead_of_menu(app, router) {
         return;
     }
     let dir = app.paths.library_dir();

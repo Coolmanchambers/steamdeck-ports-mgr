@@ -17,6 +17,7 @@ pub mod art;
 pub mod artwork;
 pub mod backups;
 pub mod catalog_extras;
+pub mod checkup;
 pub mod cloud;
 pub mod deck_ready;
 pub mod folder_picker;

@@ -2,6 +2,7 @@
 pub mod add_port_screen;
 pub mod art_screens;
 pub mod cards;
+pub mod checkup_screen;
 pub mod cloud_screen;
 pub mod deck_ready_screen;
 pub mod dialogs;

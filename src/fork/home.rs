@@ -85,6 +85,8 @@ pub enum TileKind {
     Setup,
     /// "Add a port": always the last tile; opens the Add a port page.
     Add,
+    /// "Fix N problems": only while the checkup (`fork::checkup`) found something; opens the Fix problems pages.
+    Checkup,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +96,8 @@ pub struct Tile {
     pub key: String,
     pub title: String,
     pub badge: Badge,
+    /// The Checkup tile's own badge line and mark (the other tiles use `badge`).
+    pub checkup: Option<crate::fork::checkup::HomeTile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,25 +119,30 @@ pub fn continue_pick(ports: &[PortFacts]) -> Option<usize> {
 }
 
 /// The home screen for these installed ports. With none, the empty card. Otherwise: a Setup tile first while setup
-/// is not done, then Continue (the port played last, not repeated below), then every other port by name, and last the
-/// "Add a port" tile.
-pub fn build(ports: &[PortFacts], setup_done: bool) -> Home {
+/// is not done, then Continue (the port played last, not repeated below), then "Fix N problems" while the checkup has
+/// something (just after Continue, so the cursor still starts on the game to play), then every other port by name, and
+/// last the "Add a port" tile.
+pub fn build(ports: &[PortFacts], setup_done: bool, checkup: Option<&crate::fork::checkup::HomeTile>) -> Home {
     if ports.is_empty() {
         return Home::Empty;
     }
+    let tile = |kind, key: &str, title: &str, badge| Tile { kind, key: key.to_string(), title: title.to_string(), badge, checkup: None };
     let mut tiles = Vec::new();
     if !setup_done {
-        tiles.push(Tile { kind: TileKind::Setup, key: String::new(), title: "Finish setting up".into(), badge: Badge::Ready });
+        tiles.push(tile(TileKind::Setup, "", "Finish setting up", Badge::Ready));
     }
     let first = continue_pick(ports);
     if let Some(i) = first {
         let p = &ports[i];
-        tiles.push(Tile { kind: TileKind::Continue, key: p.key.clone(), title: p.name.clone(), badge: badge(p) });
+        tiles.push(tile(TileKind::Continue, &p.key, &p.name, badge(p)));
+    }
+    if let Some(c) = checkup {
+        tiles.push(Tile { checkup: Some(c.clone()), ..tile(TileKind::Checkup, "", &c.title, Badge::Ready) });
     }
     let mut rest: Vec<&PortFacts> = ports.iter().enumerate().filter(|(i, _)| Some(*i) != first).map(|(_, p)| p).collect();
     rest.sort_by_key(|p| p.name.to_lowercase());
-    tiles.extend(rest.into_iter().map(|p| Tile { kind: TileKind::Port, key: p.key.clone(), title: p.name.clone(), badge: badge(p) }));
-    tiles.push(Tile { kind: TileKind::Add, key: String::new(), title: "Add a port".into(), badge: Badge::Ready });
+    tiles.extend(rest.into_iter().map(|p| tile(TileKind::Port, &p.key, &p.name, badge(p))));
+    tiles.push(tile(TileKind::Add, "", "Add a port", Badge::Ready));
     Home::Tiles(tiles)
 }
 
@@ -145,6 +154,7 @@ pub fn hints(focused: Option<TileKind>) -> String {
         None => ["A Choose", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(TileKind::Setup) => ["A Set up", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(TileKind::Add) => ["A Add", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
+        Some(TileKind::Checkup) => ["A Fix", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
         Some(_) => ["A Play", "X Info", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
     }
 }
@@ -295,8 +305,8 @@ mod tests {
         ports[0].update_available = true;
         ports[1].game_files_missing = true;
         ports[3].steam_waiting = true;
-        let Home::Tiles(tiles) = build(&ports, true) else { panic!("tiles") };
-        assert_eq!(tiles[0], Tile { kind: TileKind::Continue, key: "soh".into(), title: "SOH".into(), badge: Badge::Ready });
+        let Home::Tiles(tiles) = build(&ports, true, None) else { panic!("tiles") };
+        assert_eq!(tiles[0], Tile { kind: TileKind::Continue, key: "soh".into(), title: "SOH".into(), badge: Badge::Ready, checkup: None });
         let rest: Vec<(&str, Badge)> = tiles[1..tiles.len() - 1].iter().map(|t| (t.key.as_str(), t.badge)).collect();
         assert_eq!(rest, [("2ship", Badge::SteamWaiting), ("abuse", Badge::GameFilesMissing), ("dusk", Badge::UpdateAvailable)], "by name, Continue not repeated");
         assert!(tiles[1..tiles.len() - 1].iter().all(|t| t.kind == TileKind::Port));
@@ -304,18 +314,39 @@ mod tests {
     }
 
     #[test]
+    fn the_fix_problems_tile_comes_after_continue_only_when_there_is_something_to_fix() {
+        use crate::fork::checkup::HomeTile;
+        let ports = [port("a", 10), port("b", 30)];
+        let Home::Tiles(quiet) = build(&ports, true, None) else { panic!() };
+        assert!(quiet.iter().all(|t| t.kind != TileKind::Checkup), "no tile when the checkup found nothing");
+        let tile = HomeTile { title: "Fix 2 problems".into(), note: "Game files and 1 more".into(), mark: crate::fork::page::Mark::Problem };
+        let Home::Tiles(tiles) = build(&ports, true, Some(&tile)) else { panic!() };
+        let kinds: Vec<TileKind> = tiles.iter().map(|t| t.kind).collect();
+        assert_eq!(kinds, [TileKind::Continue, TileKind::Checkup, TileKind::Port, TileKind::Add], "the cursor still starts on the game to play");
+        assert_eq!(tiles[1].title, "Fix 2 problems");
+        assert_eq!(tiles[1].checkup.as_ref().map(|c| c.mark), Some(crate::fork::page::Mark::Problem));
+        let Home::Tiles(setup) = build(&ports, false, Some(&tile)) else { panic!() };
+        assert_eq!(setup.iter().map(|t| t.kind).collect::<Vec<_>>(), [TileKind::Setup, TileKind::Continue, TileKind::Checkup, TileKind::Port, TileKind::Add]);
+        let Home::Tiles(unplayed) = build(&[port("a", 0)], true, Some(&tile)) else { panic!() };
+        assert_eq!(unplayed.iter().map(|t| t.kind).collect::<Vec<_>>(), [TileKind::Checkup, TileKind::Port, TileKind::Add]);
+        assert_eq!(build(&[], true, Some(&tile)), Home::Empty, "nothing installed: nothing to fix");
+        assert!(hints(Some(TileKind::Checkup)).starts_with("A Fix"));
+        assert!(!hints(Some(TileKind::Checkup)).contains("X Info"));
+    }
+
+    #[test]
     fn continue_is_the_port_played_last_and_absent_when_none_was_played() {
         assert_eq!(continue_pick(&[port("a", 10), port("b", 30), port("c", 20)]), Some(1));
         assert_eq!(continue_pick(&[port("a", 0), port("b", 0)]), None);
-        let Home::Tiles(tiles) = build(&[port("a", 0), port("b", 0)], true) else { panic!() };
+        let Home::Tiles(tiles) = build(&[port("a", 0), port("b", 0)], true, None) else { panic!() };
         assert!(tiles.iter().filter(|t| t.kind != TileKind::Add).all(|t| t.kind == TileKind::Port), "nothing played: no Continue tile");
     }
 
     #[test]
     fn nothing_installed_is_the_empty_card_and_unfinished_setup_puts_its_tile_first() {
-        assert_eq!(build(&[], true), Home::Empty);
-        assert_eq!(build(&[], false), Home::Empty);
-        let Home::Tiles(tiles) = build(&[port("a", 5)], false) else { panic!() };
+        assert_eq!(build(&[], true, None), Home::Empty);
+        assert_eq!(build(&[], false, None), Home::Empty);
+        let Home::Tiles(tiles) = build(&[port("a", 5)], false, None) else { panic!() };
         assert_eq!((tiles[0].kind, tiles[1].kind), (TileKind::Setup, TileKind::Continue));
         assert_eq!(tiles.len(), 3, "Setup, Continue, and the Add a port tile");
     }

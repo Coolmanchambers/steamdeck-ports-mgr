@@ -6,7 +6,8 @@
 import { SemanticColors, Theme, TitleBarIconButton } from "../shared.slint";
 import { FocusLook, FocusRing, StatusIcon } from "setup-wizard.slint";
 
-// kind: 0 a port, 1 Continue (the port played last), 2 Finish setting up, 3 Add a port. `mark` is fork::page::Mark::code.
+// kind: 0 a port, 1 Continue (the port played last), 2 Finish setting up, 3 Add a port, 4 Fix N problems (the checkup; its badge
+// line says which checks). `mark` is fork::page::Mark::code.
 export struct HomeTile {
     title: string,
     image: image,
@@ -88,6 +89,18 @@ component Tile inherits Rectangle {
             commands: "M 50 8 L 50 92 M 8 50 L 92 50";
             stroke: SemanticColors.info;
             stroke-width: root.font-px * 0.55;
+        }
+        // Fix problems: an exclamation mark in a circle, red when a game will not start, else amber.
+        if root.tile.kind == 4: Path {
+            width: 44%;
+            height: 44%;
+            x: parent.width * 0.28;
+            y: parent.height * 0.28;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 6 50 A 44 44 0 1 1 94 50 A 44 44 0 1 1 6 50 Z M 50 26 V 56 M 50 70 V 72";
+            stroke: root.tile.mark == 5 ? SemanticColors.danger : SemanticColors.warning;
+            stroke-width: root.font-px * 0.45;
         }
         // Continue: a tag over the top of the cover.
         if root.tile.kind == 1: Rectangle {

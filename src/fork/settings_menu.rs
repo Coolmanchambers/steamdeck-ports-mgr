@@ -166,6 +166,16 @@ pub struct Facts {
     pub check_updates: bool,
     pub discord: bool,
     pub version: String,
+    /// What the checkup found last ("2 problems", "Everything looks fine"); `None` before its first look finished.
+    pub checkup: Option<String>,
+}
+
+/// The first page's last card: the checkup (`fork::checkup`, `src/app/checkup_screen.rs`).
+pub const CHECKUP_TITLE: &str = "Fix problems";
+
+/// The line under the Fix problems card: what the checkup found last, or what it does.
+pub fn checkup_summary(f: &Facts) -> String {
+    f.checkup.clone().unwrap_or_else(|| "Look over your setup and fix what is wrong".to_string())
 }
 
 /// The translated upstream labels the screen reads with `tr`, for the entries that keep upstream's words. A switch's
@@ -337,6 +347,8 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
 pub enum Act {
     /// A card of the first page: that group's page.
     Open(Group),
+    /// The Fix problems card of the first page.
+    Checkup,
     /// A card of a group's page.
     Do(Entry),
     /// B or the Back button: up one level.
@@ -355,7 +367,10 @@ pub fn top_page(l: &Labels, f: &Facts) -> Page<Act> {
         p.options.push(PageOption { title: g.title().to_string(), detail: summary(g, f), choice: None, enabled: true, recommended: false, action: Act::Open(g) });
         p = p.icon(i, g.icon());
     }
-    p
+    // Last, so the five groups keep their places; it says "N problems" when there are some.
+    let last = p.options.len();
+    p.options.push(PageOption { title: CHECKUP_TITLE.to_string(), detail: checkup_summary(f), choice: None, enabled: true, recommended: false, action: Act::Checkup });
+    p.icon(last, Icon::Fix)
 }
 
 /// A group's page: its actions as cards; switches show On or Off.
@@ -377,7 +392,7 @@ mod tests {
     use crate::fork::page::{action_at, focus_number, hints, Focus, HINT_GAP, LEFT};
 
     fn facts() -> Facts {
-        Facts { ports_place: Some("SD card".into()), installed: 5, steam_waiting: 0, last_backup_days: Some(2), cloud: Cloud::On, check_updates: true, discord: false, version: "1.2.3".into() }
+        Facts { ports_place: Some("SD card".into()), installed: 5, steam_waiting: 0, last_backup_days: Some(2), cloud: Cloud::On, check_updates: true, discord: false, version: "1.2.3".into(), checkup: None }
     }
 
     #[test]
@@ -414,7 +429,7 @@ mod tests {
     #[test]
     fn the_first_page_has_a_card_for_each_group_with_a_picture_and_a_summary() {
         let p = top_page(&Labels::english("1.2.3"), &facts());
-        assert_eq!(p.options.len(), 5);
+        assert_eq!(p.options.len(), 6, "the five groups and Fix problems");
         assert_eq!(p.title, "Settings");
         for (i, g) in Group::ALL.into_iter().enumerate() {
             assert_eq!(p.options[i].action, Act::Open(g));
@@ -425,6 +440,22 @@ mod tests {
         assert_eq!(p.options[0].detail, "SD card, 5 ports");
         assert_eq!(p.options[2].detail, "Last backup 2 days ago, cloud on");
         assert_eq!(action_at(&p, crate::fork::page::initial_focus(&p)), Some(Act::Open(Group::Ports)));
+    }
+
+    #[test]
+    fn fix_problems_is_the_last_card_of_the_first_page_with_the_checkups_live_line() {
+        let mut f = facts();
+        let p = top_page(&Labels::english("1.2.3"), &f);
+        let last = p.options.len() - 1;
+        assert_eq!((p.options[last].title.as_str(), p.options[last].action), ("Fix problems", Act::Checkup));
+        assert_eq!(p.options[last].detail, "Look over your setup and fix what is wrong", "before the first look finished");
+        assert_eq!(p.icon_of(last), Icon::Fix);
+        assert_eq!(p.options[0].action, Act::Open(Group::Ports), "the groups keep their places");
+        f.checkup = Some("2 problems".into());
+        assert_eq!(top_page(&Labels::english("1.2.3"), &f).options[last].detail, "2 problems");
+        f.checkup = Some("Everything looks fine".into());
+        assert_eq!(top_page(&Labels::english("1.2.3"), &f).options[last].detail, "Everything looks fine");
+        assert_eq!(Icon::Fix.code(), 10);
     }
 
     #[test]

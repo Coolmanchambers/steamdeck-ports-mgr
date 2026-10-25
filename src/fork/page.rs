@@ -127,6 +127,8 @@ pub enum Icon {
     Gear,
     /// An arrow circling: updates.
     Update,
+    /// A check in a circle: the Fix problems checkup.
+    Fix,
 }
 
 impl Icon {
@@ -143,6 +145,7 @@ impl Icon {
             Icon::Saves => 7,
             Icon::Gear => 8,
             Icon::Update => 9,
+            Icon::Fix => 10,
         }
     }
 }
