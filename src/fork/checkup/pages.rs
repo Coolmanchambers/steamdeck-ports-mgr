@@ -121,7 +121,8 @@ pub fn overview_page(results: &Results) -> CheckupPage {
     if skipped > 0 {
         p.options.push(unskip);
     }
-    p.options.push(option("Not now", "Nothing is changed.", Act::NotNow, false));
+    // "Not now" is a footer button next to "Check again": both stay in reach however long the list is.
+    p.buttons[RIGHT] = Some(PageButton { label: "Not now".to_string(), action: Act::NotNow });
     p.b_means("Not now")
 }
 

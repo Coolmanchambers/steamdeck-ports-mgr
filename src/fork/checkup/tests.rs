@@ -324,9 +324,9 @@ fn the_overview_has_one_line_per_check_and_leads_with_fixing_when_there_is_somet
     assert_eq!(page.mark_of(icons), Mark::Skipped, "a check that cannot run says why on its own line");
     assert_eq!(page.facts[3], "7 other checks are fine");
     assert_eq!(page.paragraphs, vec!["I found 1 thing to fix."]);
-    assert_eq!(page.options.len(), 2);
+    assert_eq!(page.options.len(), 1);
     assert_eq!((page.options[0].title.as_str(), page.options[0].recommended, page.options[0].action), ("Fix it", true, Act::FixAll));
-    assert_eq!((page.options[1].title.as_str(), page.options[1].action), ("Not now", Act::NotNow));
+    assert_eq!(page.buttons[crate::fork::page::RIGHT].as_ref().map(|b| (b.label.as_str(), b.action)), Some(("Not now", Act::NotNow)), "Not now is in the footer, in reach without scrolling");
     assert_eq!(action_at(&page, initial_focus(&page)), Some(Act::FixAll));
     assert_eq!(page.back_hint, "Not now");
 
@@ -478,7 +478,7 @@ fn the_overview_says_skipped_and_offers_to_bring_them_back() {
     assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::Done, Act::Unskip]);
     f.saves = vec![named("soh")];
     let page = pages::overview_page(&run(&f));
-    assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::FixAll, Act::Unskip, Act::NotNow]);
+    assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::FixAll, Act::Unskip]);
     assert!(page.paragraphs[0].contains("1 thing to fix") && page.paragraphs[0].contains("1 skipped earlier"));
 }
 

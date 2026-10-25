@@ -449,7 +449,7 @@ these in the future." Spec: `docs/design/checkup-wizard.md` in the project folde
   `old_copies::readiness_read_only` (never `readiness_now`, which writes a note into the record): a Steam start counts when it
   is later than the recorded switch, else later than the newest `shortcuts.vdf.bak-*` backup.
 - **The pages** (one question each): "Looking over your setup" (Cancel), "Checkup" (a line for each check that needs a look and
-  one for all the fine ones, "Fix them one by one" recommended, "Check again" in the footer; with everything fine all ten lines
+  one for all the fine ones, "Fix them one by one" recommended, "Check again" and "Not now" in the footer; with everything fine all ten lines
   and "Done"), one page per problem (its line, the real values behind it in the small text, the fix card, "Skip this one"; B goes
   back to the checkup), the page after a fix (the line looked at again: "That is fixed", "Queued, not finished", "One done, more
   to go" with "Fix the next one", or "Not fixed yet" with Try again / Check again / Next problem), and "All done" / "Done for now"
