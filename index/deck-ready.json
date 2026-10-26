@@ -1,10 +1,56 @@
 {
  "schema": 1,
- "generated": "2026-10-21",
+ "generated": "2026-10-26",
  "about": "Projects whose latest release has a Steam Deck build or a non-ARM Linux build. Sources: Ports Launcher catalog, maintainers' .recomp.json files, GitHub topics. Ratings come from release asset names and are not hand-checked; a test launch on the Deck is the proof. Show kind 'game' by default and 'likely_game' (found by topic only, may include tools) behind a toggle. catalog_disabled means upstream's catalog disables the entry. archived, catalog_disabled and readme_mentions_deck can be null when unknown. Key on id, not name. Entries with missing_since were not found in the latest refresh and are removed after one more cycle. `generated` is the date the list last changed, not the date it was last checked.",
- "count": 374,
- "no_longer_found": 0,
+ "count": 432,
+ "no_longer_found": 4,
  "projects": [
+  {
+   "id": "github:thefixinhixon/splosionmanrecomp",
+   "github_id": 1402612798,
+   "name": "'Splosion Man",
+   "system": "Xbox 360",
+   "repo": "thefixinhixon/SplosionManRecomp",
+   "repo_url": "https://github.com/thefixinhixon/SplosionManRecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v2.0",
+     "date": "2026-10-04T04:12:38Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "SplosionMan-Linux-v2.0.zip",
+     "SplosionMan-x86_64-v2.0.AppImage"
+    ],
+    "windows_assets": [],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "'Splosion Man",
+    "system": "Xbox 360",
+    "type": "recomp",
+    "status": "released",
+    "targets": [
+     "Linux",
+     "Windows"
+    ],
+    "toolchain": "ReXGlue"
+   },
+   "first_seen": "2026-10-20"
+  },
   {
    "id": "github:omegakatana92/1944-the-loop-master-recomp",
    "github_id": 1422474021,
@@ -206,6 +252,49 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:gnomechimpsky/actionmanrecomp",
+   "github_id": 1427481947,
+   "name": "ActionMan",
+   "system": "PS1",
+   "repo": "GnomeChimpsky/ActionManRecomp",
+   "repo_url": "https://github.com/GnomeChimpsky/ActionManRecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.4.5",
+     "date": "2026-10-24T20:26:30Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Action-Man-Recomp-0.4.5-linux-x64.zip"
+    ],
+    "windows_assets": [
+     "Action-Man-Recomp-0.4.5-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "ActionMan",
+    "system": "PS1",
+    "type": "recomp",
+    "status": "in-progress",
+    "targets": null,
+    "toolchain": "psxrecomp"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:derrickgold/ar-recomp",
    "github_id": 1288456020,
    "name": "ActRaiser",
@@ -225,8 +314,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0803",
-     "date": "2026-10-17T01:41:43Z",
+     "tag": "v0804",
+     "date": "2026-10-23T02:58:58Z",
      "prerelease": true
     },
     "deck_assets": [
@@ -261,6 +350,46 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:lunarlaurus/adams-ant-farm-recomp",
+   "github_id": 1424261441,
+   "name": "adams-ant-farm-recomp",
+   "system": "PC",
+   "repo": "LunarLaurus/adams-ant-farm-recomp",
+   "repo_url": "https://github.com/LunarLaurus/adams-ant-farm-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:decompilation",
+    "topic:n64recomp",
+    "topic:pc-port",
+    "topic:recompilation",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.10.2",
+     "date": "2026-10-21T14:00:04Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "adams-ant-farm-linux-x86_64-v0.10.2.tar.gz"
+    ],
+    "windows_assets": [
+     "adams-ant-farm-windows-x86_64-v0.10.2.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:alondero/aerogauge-recomp",
    "github_id": 1297170576,
    "name": "AeroGauge (aerogauge-recomp)",
@@ -277,7 +406,9 @@
    "archived": false,
    "sources": [
     "catalog",
-    "recomp_json"
+    "recomp_json",
+    "topic:n64recomp",
+    "topic:recompilation"
    ],
    "evidence": {
     "release": {
@@ -310,6 +441,44 @@
     ]
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:spitzdano/aidynrechronicled",
+   "github_id": 1421568804,
+   "name": "AidynReChronicled",
+   "system": "N64",
+   "repo": "spitzdano/AidynReChronicled",
+   "repo_url": "https://github.com/spitzdano/AidynReChronicled",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:n64recomp",
+    "topic:recompilation",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.8.0",
+     "date": "2026-10-25T23:55:42Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "AidynReChronicled-0.8.0-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "AidynReChronicled-0.8.0-windows-x86_64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/alien-resurrection-recomp",
@@ -496,8 +665,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v6.1-deuteros-lemmings-lotus2-pinballfantasies-pirates-settlers-pinballfantasiesaga",
-     "date": "2026-10-19T14:14:41Z",
+     "tag": "v7.0-superfrog",
+     "date": "2026-10-21T09:19:14Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -508,7 +677,8 @@
      "pinballfantasies-linux-x86_64.AppImage",
      "pinballfantasiesaga-linux-x86_64.AppImage",
      "pirates-linux-x86_64.AppImage",
-     "settlers-linux-x86_64.AppImage"
+     "settlers-linux-x86_64.AppImage",
+     "superfrog-linux-x86_64.AppImage"
     ],
     "windows_assets": [
      "deuteros-windows-x86_64.exe",
@@ -517,9 +687,10 @@
      "pinballfantasies-windows-x86_64.exe",
      "pinballfantasiesaga-windows-x86_64.exe",
      "pirates-windows-x86_64.exe",
-     "settlers-windows-x86_64.exe"
+     "settlers-windows-x86_64.exe",
+     "superfrog-windows-x86_64.exe"
     ],
-    "asset_count": 28
+    "asset_count": 32
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -600,7 +771,7 @@
    "id": "github:jackgllghr/bigmission-recomp",
    "github_id": 1421083635,
    "name": "Ape Escape: Mind Over Monkey (bigmission-recomp)",
-   "system": "PS1",
+   "system": "PSP",
    "repo": "jackgllghr/bigmission-recomp",
    "repo_url": "https://github.com/jackgllghr/bigmission-recomp",
    "host": "github",
@@ -612,7 +783,8 @@
    "readme_mentions_deck": false,
    "archived": false,
    "sources": [
-    "catalog"
+    "catalog",
+    "recomp_json"
    ],
    "evidence": {
     "release": {
@@ -631,8 +803,56 @@
     ],
     "asset_count": 8
    },
-   "recomp_json": null,
+   "recomp_json": {
+    "game": "Saru Get You: Saru Saru Daisakusen",
+    "system": "PSP",
+    "type": "recomp",
+    "status": "playable",
+    "targets": [
+     "Windows",
+     "macOS",
+     "Linux",
+     "Android"
+    ],
+    "toolchain": "PSPRecomp"
+   },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:mustafasamer93/apocalypse-pc-native-port",
+   "github_id": 1384039512,
+   "name": "Apocalypse (Apocalypse-PC-Native-Port)",
+   "system": "PS1",
+   "repo": "MustafaSamer93/Apocalypse-PC-Native-Port",
+   "repo_url": "https://github.com/MustafaSamer93/Apocalypse-PC-Native-Port",
+   "host": "github",
+   "catalog_folder": "Apocalypse-PC-Native-Port",
+   "catalog_disabled": true,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "catalog"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0",
+     "date": "2026-10-13T17:26:10Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Repocalypse-v1.0-linux-x64.tar.gz"
+    ],
+    "windows_assets": [
+     "Repocalypse-v1.0-win64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/apocalypse-recomp",
@@ -643,7 +863,7 @@
    "repo_url": "https://github.com/alexbeavs-ps1-ports/apocalypse-recomp",
    "host": "github",
    "catalog_folder": "apocalypse-recomp",
-   "catalog_disabled": false,
+   "catalog_disabled": true,
    "website": "https://alexbeav.github.io/psxrecomp-ports/",
    "kind": "game",
    "deck_rating": "linux_build",
@@ -848,8 +1068,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.9.0",
-     "date": "2026-10-17T20:36:29Z",
+     "tag": "v0.10.0",
+     "date": "2026-10-25T22:23:12Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -859,7 +1079,7 @@
     "windows_assets": [
      "lamborghini-recomp-windows-x64.zip"
     ],
-    "asset_count": 12
+    "asset_count": 18
    },
    "recomp_json": {
     "game": "Automobili Lamborghini",
@@ -971,16 +1191,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "1.1.0",
-     "date": "2026-08-17T02:20:38Z",
+     "tag": "1.2.0",
+     "date": "2026-10-23T02:20:57Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Lighthouse-Hatteras-Alfa-Linux.zip"
+     "lighthouse.appimage"
     ],
     "windows_assets": [
-     "Lighthouse-Hatteras-Alfa-Win64.zip"
+     "Lighthouse-Montauk-Alfa-Win64.zip"
     ],
     "asset_count": 3
    },
@@ -1007,8 +1227,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "beta6",
-     "date": "2026-10-19T02:59:18Z",
+     "tag": "beta12",
+     "date": "2026-10-26T09:32:17Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -1132,6 +1352,50 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:salman95/battlehunterrecomp",
+   "github_id": 1415147471,
+   "name": "BattleHunter",
+   "system": "PS1",
+   "repo": "salman95/BattleHunterRecomp",
+   "repo_url": "https://github.com/salman95/BattleHunterRecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.2.1",
+     "date": "2026-10-18T02:34:19Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "BattleHunter-Recompiled-v0.2.1-x86_64.AppImage",
+     "bh-0.2.1-linux-x64.zip"
+    ],
+    "windows_assets": [
+     "bh-0.2.1-windows-x64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "BattleHunter",
+    "system": "PS1",
+    "type": "recomp",
+    "status": "playable",
+    "targets": null,
+    "toolchain": "psxrecomp"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:stellargames/bakagain",
    "github_id": 1390267956,
    "name": "Betrayal at Krondor",
@@ -1151,16 +1415,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.2.0-beta",
-     "date": "2026-10-19T07:56:38Z",
+     "tag": "v0.3.1-beta",
+     "date": "2026-10-25T20:44:44Z",
      "prerelease": true
     },
     "deck_assets": [],
     "linux_assets": [
-     "BaK-Again-v0.2.0-beta-linux-x64.zip"
+     "BaK-Again-v0.3.1-beta-linux-x64.zip"
     ],
     "windows_assets": [
-     "BaK-Again-v0.2.0-beta-windows-x64.zip"
+     "BaK-Again-v0.3.1-beta-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -1179,6 +1443,251 @@
     ]
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:gabrielnnk/bigodao",
+   "github_id": 1405112974,
+   "name": "Bigodao",
+   "system": "PC",
+   "repo": "GABRIELNNK/Bigodao",
+   "repo_url": "https://github.com/GABRIELNNK/Bigodao",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "1.5.0",
+     "date": "2026-10-26T04:36:35Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "bigodao_1.5_linux.zip"
+    ],
+    "windows_assets": [
+     "bigodao_1.5_win.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:bigredreport/bigredreport",
+   "github_id": 1432613550,
+   "name": "bigredreport",
+   "system": "PC",
+   "repo": "BigRedReport/bigredreport",
+   "repo_url": "https://github.com/BigRedReport/bigredreport",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:pc-port"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.13.0",
+     "date": "2026-10-25T13:19:39Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "BigRedReport-Linux.tar.gz"
+    ],
+    "windows_assets": [
+     "BigRedReport-Windows.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:katon17/black-linux",
+   "github_id": 1431084198,
+   "name": "black-linux",
+   "system": "Xbox",
+   "repo": "Katon17/black-linux",
+   "repo_url": "https://github.com/Katon17/black-linux",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.2",
+     "date": "2026-10-23T13:29:19Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "black-linux_0.1.2_amd64.deb"
+    ],
+    "windows_assets": [],
+    "asset_count": 1
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:djultra64/power-dozer",
+   "github_id": 1413479537,
+   "name": "Blast Corps",
+   "system": "N64",
+   "repo": "djultra64/Power-Dozer",
+   "repo_url": "https://github.com/djultra64/Power-Dozer",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json",
+    "topic:n64recomp",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.84",
+     "date": "2026-10-12T04:24:48Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "power-dozer-v0.84-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "power-dozer-v0.84-windows-x86_64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "Blast Corps",
+    "system": "N64",
+    "type": "recomp",
+    "status": "released",
+    "targets": [
+     "Windows",
+     "Linux"
+    ],
+    "toolchain": "N64recomp"
+   },
+   "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:doridian/blastcorps",
+   "github_id": 1363091017,
+   "name": "Blast Corps",
+   "system": "N64",
+   "repo": "Doridian/BlastCorps",
+   "repo_url": "https://github.com/Doridian/BlastCorps",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.9.1",
+     "date": "2026-10-25T22:30:43Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "blastcorps-linux-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "blastcorps-windows-x86_64.exe"
+    ],
+    "asset_count": 5
+   },
+   "recomp_json": {
+    "game": "Blast Corps",
+    "system": "N64",
+    "type": [
+     "decomp",
+     "port"
+    ],
+    "status": "playable",
+    "targets": [
+     "N64",
+     "Linux",
+     "macOS",
+     "Windows",
+     "Browser"
+    ],
+    "toolchain": null
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:pdromnt/blaze_decomp",
+   "github_id": 1427735407,
+   "name": "blaze_decomp",
+   "system": null,
+   "repo": "pdromnt/blaze_decomp",
+   "repo_url": "https://github.com/pdromnt/blaze_decomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:decompilation",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "0.1",
+     "date": "2026-10-23T23:49:53Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "blaze-0.1-linux-x64.tar.gz"
+    ],
+    "windows_assets": [
+     "blaze-0.1-windows-arm64.zip",
+     "blaze-0.1-windows-x64.zip",
+     "blaze-0.1-windows-x86.zip"
+    ],
+    "asset_count": 5
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/blood-omen-legacy-of-kain-recomp",
@@ -1552,16 +2061,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.2.0",
-     "date": "2026-10-17T17:08:22Z",
+     "tag": "v0.2.1",
+     "date": "2026-10-22T12:05:14Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Takedawn-0.2.0-linux-x86_64.AppImage"
+     "Takedawn-0.2.1-linux-x86_64.AppImage"
     ],
     "windows_assets": [
-     "Takedawn-0.2.0-windows-x64-setup.exe"
+     "Takedawn-0.2.1-windows-x64-setup.exe"
     ],
     "asset_count": 5
    },
@@ -1579,6 +2088,42 @@
     "toolchain": "Xboxrecomp"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:shipa-2/xerenge",
+   "github_id": 1359183526,
+   "name": "Burnout Revenge (Xerenge)",
+   "system": "Xbox 360",
+   "repo": "shipa-2/Xerenge",
+   "repo_url": "https://github.com/shipa-2/Xerenge",
+   "host": "github",
+   "catalog_folder": "Xerenge",
+   "catalog_disabled": false,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "catalog"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.4.8",
+     "date": "2026-10-22T06:18:22Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Burnout_Revenge_Installer-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "Burnout_Revenge_Installer-win-amd64.exe"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/bushido-blade-2-recomp",
@@ -1615,6 +2160,117 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:haehnchen/c64-ghostbusters",
+   "github_id": 1381847495,
+   "name": "c64-ghostbusters",
+   "system": null,
+   "repo": "Haehnchen/c64-ghostbusters",
+   "repo_url": "https://github.com/Haehnchen/c64-ghostbusters",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "nightly",
+     "date": "2026-09-22T15:51:35Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "ghostbusters-Linux-x86_64-bundled.zip",
+     "ghostbusters-Linux-x86_64.zip"
+    ],
+    "windows_assets": [
+     "ghostbusters-Windows-x86_64-bundled.zip"
+    ],
+    "asset_count": 5
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:haehnchen/c64-river-raid",
+   "github_id": 1402900205,
+   "name": "c64-river-raid",
+   "system": null,
+   "repo": "Haehnchen/c64-river-raid",
+   "repo_url": "https://github.com/Haehnchen/c64-river-raid",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "nightly",
+     "date": "2026-10-03T09:19:29Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "river-raid-Linux-x86_64-bundled.zip",
+     "river-raid-Linux-x86_64.zip"
+    ],
+    "windows_assets": [
+     "river-raid-Windows-x86_64-bundled.zip"
+    ],
+    "asset_count": 5
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:haehnchen/c64-weatherwar-2",
+   "github_id": 1377150052,
+   "name": "c64-weatherwar-2",
+   "system": null,
+   "repo": "Haehnchen/c64-weatherwar-2",
+   "repo_url": "https://github.com/Haehnchen/c64-weatherwar-2",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "nightly",
+     "date": "2026-09-19T13:18:57Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "weatherwar-Linux-x86_64-bundled.zip",
+     "weatherwar-Linux-x86_64.zip"
+    ],
+    "windows_assets": [
+     "weatherwar-Windows-x86_64-bundled.zip"
+    ],
+    "asset_count": 5
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:second-impressions/caesar2-port",
@@ -1710,16 +2366,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.2.27",
-     "date": "2026-09-28T19:30:34Z",
+     "tag": "v0.2.29",
+     "date": "2026-10-23T15:17:26Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "LodRecomp-v0.2.27-linux-x64.tar.gz"
+     "LodRecomp-v0.2.29-linux-x64.tar.gz"
     ],
     "windows_assets": [
-     "LodRecomp-v0.2.27-windows-x64.zip"
+     "LodRecomp-v0.2.29-windows-x64.zip"
     ],
     "asset_count": 3
    },
@@ -1839,6 +2495,45 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:crownparkcomputing/chihiro-xberecomp",
+   "github_id": 1431806513,
+   "name": "Chihiro-XBERecomp",
+   "system": null,
+   "repo": "CrownParkComputing/Chihiro-XBERecomp",
+   "repo_url": "https://github.com/CrownParkComputing/Chihiro-XBERecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0-preview.1",
+     "date": "2026-10-24T04:21:57Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "GhostSquad-Linux-x86_64.tar.gz",
+     "HOTD3-Linux-x86_64.tar.gz",
+     "MaximumTune1-Linux-x86_64.tar.gz",
+     "MaximumTune2-Linux-x86_64.tar.gz",
+     "OutRun2-Linux-x86_64.tar.gz",
+     "VCop3-Linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [],
+    "asset_count": 7
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:djultra64/clayfighter64",
    "github_id": 1418345372,
    "name": "ClayFighter 63⅓ (ClayFighter64)",
@@ -1854,7 +2549,8 @@
    "readme_mentions_deck": false,
    "archived": false,
    "sources": [
-    "catalog"
+    "catalog",
+    "recomp_json"
    ],
    "evidence": {
     "release": {
@@ -1871,7 +2567,20 @@
     ],
     "asset_count": 4
    },
-   "recomp_json": null,
+   "recomp_json": {
+    "game": "ClayFighter 63⅓",
+    "system": "N64",
+    "type": "recomp",
+    "status": "released",
+    "targets": [
+     "Windows",
+     "Linux"
+    ],
+    "toolchain": [
+     "N64recomp",
+     "RSPRecomp"
+    ]
+   },
    "first_seen": "2026-10-20"
   },
   {
@@ -1933,8 +2642,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.5.2",
-     "date": "2026-10-20T20:27:46Z",
+     "tag": "v1.7.0",
+     "date": "2026-10-25T14:06:45Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -2059,6 +2768,43 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:rashevskyv/conker-lr-recomp",
+   "github_id": 1431324263,
+   "name": "conker-lr-recomp",
+   "system": "Xbox",
+   "repo": "rashevskyv/conker-lr-recomp",
+   "repo_url": "https://github.com/rashevskyv/conker-lr-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recompilation",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0",
+     "date": "2026-10-23T17:20:15Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "conker-lr-recomp-linux-v0.1.0.tar.gz"
+    ],
+    "windows_assets": [
+     "conker-lr-recomp-windows-v0.1.0.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:dahsidiabdallah/conkerbfdreloaded",
    "github_id": 1398880009,
    "name": "ConkerBFDReloaded",
@@ -2079,18 +2825,18 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.4.1",
-     "date": "2026-10-17T14:37:10Z",
+     "tag": "v1.4.6",
+     "date": "2026-10-23T17:58:14Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "ConkerBFDReloaded-v1.4.1-Linux.tar.gz"
+     "ConkerBFDReloaded-v1.4.6-Linux.tar.gz"
     ],
     "windows_assets": [
-     "ConkerBFDReloaded-v1.4.1-Windows.zip"
+     "ConkerBFDReloaded-v1.4.6-Windows.zip"
     ],
-    "asset_count": 6
+    "asset_count": 4
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -2190,8 +2936,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.4.0-beta.3",
-     "date": "2026-10-19T06:24:02Z",
+     "tag": "v0.4.0-beta.6",
+     "date": "2026-10-25T14:24:50Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -2229,16 +2975,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.5.0",
-     "date": "2026-10-21T03:05:39Z",
+     "tag": "v0.6.2",
+     "date": "2026-10-25T17:23:52Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "CrackdownRecompiled-v0.5.0-x86_64.AppImage"
+     "CrackdownRecompiled-v0.6.2-x86_64.AppImage"
     ],
     "windows_assets": [
-     "Crackdown-v0.5.0-windows-x64.zip"
+     "Crackdown-v0.6.2-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -2276,8 +3022,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "2.2",
-     "date": "2026-10-14T10:18:51Z",
+     "tag": "2.3.1",
+     "date": "2026-10-21T13:16:44Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -2285,9 +3031,10 @@
      "CrashBandicoot-Linux"
     ],
     "windows_assets": [
+     "CrashBandicoot-arm64.exe",
      "CrashBandicoot.exe"
     ],
-    "asset_count": 2
+    "asset_count": 4
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -2422,8 +3169,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.09",
-     "date": "2026-10-20T14:17:13Z",
+     "tag": "v1.10",
+     "date": "2026-10-21T10:07:13Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -2659,21 +3406,23 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.30.5",
-     "date": "2026-10-20T20:49:12Z",
+     "tag": "v0.30.7",
+     "date": "2026-10-26T11:38:10Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Decomp.Buddy-0.30.5.AppImage",
-     "decomp-buddy_0.30.5_amd64.deb",
+     "Decomp.Buddy-0.30.7-x86_64.flatpak",
+     "Decomp.Buddy-0.30.7.AppImage",
+     "Decomp.Buddy-x86_64.flatpak",
+     "decomp-buddy_0.30.7_amd64.deb",
      "latest-linux.yml"
     ],
     "windows_assets": [
-     "Decomp.Buddy.0.30.5.Portable.exe",
-     "Decomp.Buddy.Setup.0.30.5.exe"
+     "Decomp.Buddy.0.30.7.Portable.exe",
+     "Decomp.Buddy.Setup.0.30.7.exe"
     ],
-    "asset_count": 14
+    "asset_count": 16
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -2701,16 +3450,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.10.6",
-     "date": "2026-10-20T16:00:44Z",
+     "tag": "v0.12.0",
+     "date": "2026-10-25T19:52:50Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "DefJamSetup-0.10.6-linux-x64.tar.gz"
+     "DefJamSetup-0.12.0-linux-x64.tar.gz"
     ],
     "windows_assets": [
-     "DefJamSetup-0.10.6-windows-x64.exe"
+     "DefJamSetup-0.12.0-windows-x64.exe"
     ],
     "asset_count": 2
    },
@@ -2728,6 +3477,49 @@
     "toolchain": "Xboxrecomp"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:jonathandc64/demonssoulsrecomp",
+   "github_id": 1284347398,
+   "name": "Demon's Souls",
+   "system": "PS3",
+   "repo": "JonathanDC64/DemonsSoulsRecomp",
+   "repo_url": "https://github.com/JonathanDC64/DemonsSoulsRecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "llvm-linux-22.1.8-2",
+     "date": "2026-10-25T18:07:20Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "llvm-linux-x64-22.1.8-2.tar.xz"
+    ],
+    "windows_assets": [],
+    "asset_count": 1
+   },
+   "recomp_json": {
+    "game": "Demon's Souls",
+    "system": "PS3",
+    "type": "recomp",
+    "status": "in-progress",
+    "targets": [
+     "Windows"
+    ],
+    "toolchain": "ps3recomp"
+   },
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/destruction-derby-2-recomp",
@@ -2933,21 +3725,21 @@
    ],
    "evidence": {
     "release": {
-     "tag": "Version1.0.8",
-     "date": "2026-10-20T14:23:12Z",
+     "tag": "Version1.0.11",
+     "date": "2026-10-25T19:51:14Z",
      "prerelease": false
     },
     "deck_assets": [
-     "DKR-R-1.0.8-SteamDeck-x86_64.AppImage"
+     "DKR-R-1.0.11-SteamDeck-x86_64.AppImage"
     ],
     "linux_assets": [
-     "DKR-R-1.0.8-Linux-x86_64.AppImage",
-     "DKR-R-1.0.8-SteamDeck-x86_64.AppImage"
+     "DKR-R-1.0.11-Linux-x86_64.AppImage",
+     "DKR-R-1.0.11-SteamDeck-x86_64.AppImage"
     ],
     "windows_assets": [
-     "DKR-R-1.0.8-Windows-x64.zip"
+     "DKR-R-1.0.11-Windows-x64.zip"
     ],
-    "asset_count": 5
+    "asset_count": 4
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -3215,6 +4007,42 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:mikeravenelle/digimonworld3-recomp",
+   "github_id": 1413654562,
+   "name": "DigimonWorld3-Recomp",
+   "system": "PS1",
+   "repo": "MikeRavenelle/DigimonWorld3-Recomp",
+   "repo_url": "https://github.com/MikeRavenelle/DigimonWorld3-Recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.0.1",
+     "date": "2026-10-22T00:44:40Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "DW3Recomp-v0.0.1-linux-x64.tar.gz"
+    ],
+    "windows_assets": [
+     "DW3Recomp-v0.0.1-windows-x64.zip"
+    ],
+    "asset_count": 4
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:alexbeavs-ps1-ports/dino-crisis-recomp",
    "github_id": 1359598591,
    "name": "Dino Crisis (dino-crisis-recomp)",
@@ -3344,14 +4172,14 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.5.0",
-     "date": "2026-10-21T00:22:43Z",
+     "tag": "v0.8.0",
+     "date": "2026-10-24T05:11:48Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "DisruptorRecomp-0.5.0-linux-delta.nupkg",
-     "DisruptorRecomp-0.5.0-linux-full.nupkg",
+     "DisruptorRecomp-0.8.0-linux-delta.nupkg",
+     "DisruptorRecomp-0.8.0-linux-full.nupkg",
      "DisruptorRecomp-linux.intoto.jsonl",
      "DisruptorRecomp.AppImage"
     ],
@@ -3419,17 +4247,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.51.1",
-     "date": "2026-10-20T15:45:49Z",
+     "tag": "v1.51.2",
+     "date": "2026-10-24T16:47:16Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "sdoj-recomp-linux-amd64.tar.gz"
+     "sdoj.recomp.1.51.2.linux-amd64.tar.gz"
     ],
     "windows_assets": [
-     "sdoj.recomp.1.51.1.win-amd64.vulkan.zip",
-     "sdoj.recomp.1.51.1.win-amd64.zip"
+     "sdoj.recomp.1.51.2.win-amd64.vulkan.zip",
+     "sdoj.recomp.1.51.2.win-amd64.zip"
     ],
     "asset_count": 3
    },
@@ -3530,17 +4358,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.03",
-     "date": "2026-10-13T21:23:55Z",
+     "tag": "v0.04",
+     "date": "2026-10-22T20:56:39Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "DoomSNESRecomp-v0.03-Linux-x64.zip"
+     "DoomSNESRecomp-v0.04-Linux-x64.zip"
     ],
     "windows_assets": [
-     "DoomSNESRecomp-v0.03-Windows-x64.zip",
-     "DoomSNESRecomp-v0.03-Windows-x86.zip"
+     "DoomSNESRecomp-v0.04-Windows-x64.zip",
+     "DoomSNESRecomp-v0.04-Windows-x86.zip"
     ],
     "asset_count": 5
    },
@@ -3605,16 +4433,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.5.1.3",
-     "date": "2026-10-20T00:48:51Z",
+     "tag": "v1.5.5.4",
+     "date": "2026-10-24T20:58:46Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "DBZ-Budokai-3-HD-Collection-v1.5.1.3-linux-amd64.tar.gz"
+     "DBZ-Budokai-3-HD-Collection-v1.5.5.4-linux-amd64.tar.gz"
     ],
     "windows_assets": [],
-    "asset_count": 3
+    "asset_count": 2
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -3639,8 +4467,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.38",
-     "date": "2026-10-20T23:57:19Z",
+     "tag": "v0.1.38.7",
+     "date": "2026-10-24T23:01:20Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -3677,13 +4505,13 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.6.2-alpha",
-     "date": "2026-10-19T06:58:13Z",
+     "tag": "v0.7.2-alpha",
+     "date": "2026-10-22T12:30:26Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "DBZ-Burst-Limit-Recompiled-v0.6.2-alpha-linux.zip"
+     "DBZ-Burst-Limit-Recompiled-v0.7.2-alpha-linux.zip"
     ],
     "windows_assets": [],
     "asset_count": 2
@@ -3749,16 +4577,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.7.0",
-     "date": "2026-10-21T01:17:32Z",
+     "tag": "v0.7.1",
+     "date": "2026-10-23T18:41:30Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "DragonsCrownProPC-v0.7.0-x86_64.AppImage"
+     "DragonsCrownProPC-v0.7.1-x86_64.AppImage"
     ],
     "windows_assets": [
-     "DragonsCrownProPC-v0.7.0-windows-x64.zip"
+     "DragonsCrownProPC-v0.7.1-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -3993,10 +4821,59 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:omegakatana92/dungeons-and-dragons-tower-of-doom-recomp",
+   "github_id": 1431451773,
+   "name": "Dungeons & Dragons: Tower of Doom",
+   "system": "Arcade",
+   "repo": "omegakatana92/Dungeons-and-Dragons-Tower-of-Doom-Recomp",
+   "repo_url": "https://github.com/omegakatana92/Dungeons-and-Dragons-Tower-of-Doom-Recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json",
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0-beta.1",
+     "date": "2026-10-23T19:13:56Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Dungeons-and-Dragons-Tower-of-Doom-linux-x86_64.AppImage",
+     "Dungeons-and-Dragons-Tower-of-Doom-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "Dungeons-and-Dragons-Tower-of-Doom-windows-x64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "Dungeons & Dragons: Tower of Doom",
+    "system": "Arcade",
+    "type": "recomp",
+    "status": "in-progress",
+    "targets": [
+     "Windows",
+     "Linux",
+     "Steam Deck"
+    ],
+    "toolchain": "cps2recomp"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:gascarcella/dw2003recomp",
    "github_id": 1406430347,
    "name": "dw2003recomp",
-   "system": "PS1",
+   "system": "PC",
    "repo": "gascarcella/dw2003recomp",
    "repo_url": "https://github.com/gascarcella/dw2003recomp",
    "host": "github",
@@ -4005,24 +4882,24 @@
    "website": null,
    "kind": "likely_game",
    "deck_rating": "linux_build",
-   "readme_mentions_deck": false,
+   "readme_mentions_deck": true,
    "archived": false,
    "sources": [
     "topic:decompilation"
    ],
    "evidence": {
     "release": {
-     "tag": "v0.4.1",
-     "date": "2026-10-20T21:24:36Z",
+     "tag": "v0.5.5",
+     "date": "2026-10-25T17:17:58Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "dw2003-0.4.1-x86_64.AppImage"
+     "dw2003-0.5.5-x86_64.AppImage"
     ],
     "windows_assets": [
-     "dw2003-0.4.1-windows-x86_64-symbols.zip",
-     "dw2003-0.4.1-windows-x86_64.zip"
+     "dw2003-0.5.5-windows-x86_64-symbols.zip",
+     "dw2003-0.5.5-windows-x86_64.zip"
     ],
     "asset_count": 4
    },
@@ -4068,6 +4945,52 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:theslackbringer/dw5xl-recomp",
+   "github_id": 1419907365,
+   "name": "Dynasty Warriors 5: Xtreme Legends",
+   "system": "PS2",
+   "repo": "TheSlackbringer/dw5xl-recomp",
+   "repo_url": "https://github.com/TheSlackbringer/dw5xl-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0-beta.1",
+     "date": "2026-10-25T16:06:25Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "DW5XL-v0.1.0-alpha.4-linux-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "DW5XL-v0.1.0-alpha.4-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "Dynasty Warriors 5: Xtreme Legends",
+    "system": "PS2",
+    "type": "recomp",
+    "status": "in-progress",
+    "targets": [
+     "Linux",
+     "Windows"
+    ],
+    "toolchain": "Ps2recomp"
+   },
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:harold0777/eagle_five_recomp",
@@ -4246,13 +5169,13 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.9.5",
-     "date": "2026-10-19T23:23:14Z",
+     "tag": "v0.9.6",
+     "date": "2026-10-24T20:35:29Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "EternalDarkness-linux-x86_64-202610200025-1cb3fe6.tar.gz"
+     "EternalDarkness-linux-x86_64-202610242126-e9ff8d6.tar.gz"
     ],
     "windows_assets": [
      "EternalDarkness-windows-x64-202610200024-1cb3fe6.zip"
@@ -4283,16 +5206,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.3.2",
-     "date": "2026-10-20T16:40:38Z",
+     "tag": "v1.3.4",
+     "date": "2026-10-24T00:24:15Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "eternalsonata-v1.3.2-linux-amd64.tar.gz"
+     "eternalsonata-v1.3.4-linux-amd64.tar.gz"
     ],
     "windows_assets": [
-     "eternalsonata-v1.3.2-win-amd64.zip"
+     "eternalsonata-v1.3.4-win-amd64.zip"
     ],
     "asset_count": 3
    },
@@ -4582,7 +5505,7 @@
    "id": "github:fataldecomp/roller",
    "github_id": 883409588,
    "name": "Fatal Racing (ROLLER)",
-   "system": "Xbox",
+   "system": "DOS",
    "repo": "FatalDecomp/ROLLER",
    "repo_url": "https://github.com/FatalDecomp/ROLLER",
    "host": "github",
@@ -4594,24 +5517,38 @@
    "readme_mentions_deck": false,
    "archived": false,
    "sources": [
-    "catalog"
+    "catalog",
+    "recomp_json"
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.1-dev.20261019",
-     "date": "2026-10-19T07:32:57Z",
+     "tag": "v0.1.1-dev.20261024",
+     "date": "2026-10-24T07:03:55Z",
      "prerelease": true
     },
     "deck_assets": [],
     "linux_assets": [
-     "roller-linux-x86_64-0.1.1-dev.20261019.tar.gz"
+     "roller-linux-x86_64-0.1.1-dev.20261024.tar.gz"
     ],
     "windows_assets": [
-     "roller-windows-x86_64-0.1.1-dev.20261019.zip"
+     "roller-windows-x86_64-0.1.1-dev.20261024.zip"
     ],
     "asset_count": 5
    },
-   "recomp_json": null,
+   "recomp_json": {
+    "game": "Whiplash / Fatal Racing",
+    "system": "PC (DOS)",
+    "type": "port",
+    "status": "complete",
+    "targets": [
+     "Windows",
+     "Linux",
+     "macOS",
+     "Android",
+     "Browser"
+    ],
+    "toolchain": null
+   },
    "first_seen": "2026-10-20"
   },
   {
@@ -4685,6 +5622,43 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:samuelit0davila/fifa-street-pc-port",
+   "github_id": 1408180734,
+   "name": "fifa-street-pc-port",
+   "system": null,
+   "repo": "samuelit0davila/fifa-street-pc-port",
+   "repo_url": "https://github.com/samuelit0davila/fifa-street-pc-port",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:recomp",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v2.1.3-online-beta",
+     "date": "2026-10-26T13:38:36Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "ReStreet-Linux-launcher.tar.gz"
+    ],
+    "windows_assets": [
+     "ReStreet-2.1.3-Setup.exe"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/fighting-force-recomp",
@@ -4865,17 +5839,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v2.0",
-     "date": "2026-10-19T23:37:40Z",
+     "tag": "v2.1",
+     "date": "2026-10-23T00:31:55Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "FFTARecomp-v2.0-linux-x64.zip",
-     "FFTARecomp-v2.0-linux-x86_64.AppImage"
+     "FFTARecomp-v2.1-linux-x64.zip",
+     "FFTARecomp-v2.1-linux-x86_64.AppImage"
     ],
     "windows_assets": [
-     "FFTARecomp-v2.0-windows-x64.zip"
+     "FFTARecomp-v2.1-windows-x64.zip"
     ],
     "asset_count": 3
    },
@@ -4991,8 +5965,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.6.0",
-     "date": "2026-10-17T20:44:35Z",
+     "tag": "v0.6.1",
+     "date": "2026-10-21T21:59:26Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -5006,12 +5980,12 @@
    "first_seen": "2026-10-20"
   },
   {
-   "id": "github:dyotson/forzahorizon1-reimagined",
+   "id": "github:fh1-reimagined/forzahorizon1-reimagined",
    "github_id": 1413230318,
    "name": "ForzaHorizon1-ReImagined",
    "system": "Xbox 360",
-   "repo": "Dyotson/ForzaHorizon1-ReImagined",
-   "repo_url": "https://github.com/Dyotson/ForzaHorizon1-ReImagined",
+   "repo": "FH1-ReImagined/ForzaHorizon1-ReImagined",
+   "repo_url": "https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined",
    "host": "github",
    "catalog_folder": null,
    "catalog_disabled": null,
@@ -5026,21 +6000,19 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.24",
-     "date": "2026-10-19T00:17:16Z",
+     "tag": "v0.1.36",
+     "date": "2026-10-25T21:41:39Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
      "ForzaHorizon1-ReImagined-linux-x86_64.tar.gz",
-     "ForzaHorizon1-ReImagined-x86_64.flatpak",
-     "rexglue-overlay-linux-amd64.tar.gz"
+     "ForzaHorizon1-ReImagined-x86_64.flatpak"
     ],
     "windows_assets": [
-     "ForzaHorizon1-ReImagined-Setup-0.1.24.exe",
-     "rexglue-overlay-windows-amd64.tar.gz"
+     "ForzaHorizon1-ReImagined-Setup-0.1.36.exe"
     ],
-    "asset_count": 5
+    "asset_count": 3
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -5102,8 +6074,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "1.0",
-     "date": "2026-10-18T07:40:48Z",
+     "tag": "1.2",
+     "date": "2026-10-23T18:46:47Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -5293,20 +6265,20 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.3.2-alpha.3",
-     "date": "2026-10-21T02:54:22Z",
+     "tag": "v2.1.1-alpha.3",
+     "date": "2026-10-25T10:56:59Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "GauntletDarkLegacy-1.3.2-alpha.3-linux-x64-runtime.zip",
-     "GauntletDarkLegacy-1.3.2-alpha.3-linux-x64-setup-licenses.zip",
-     "GauntletDarkLegacy-1.3.2-alpha.3-linux-x64-setup.tar.gz"
+     "GauntletDarkLegacy-2.1.1-alpha.3-linux-x64-runtime.zip",
+     "GauntletDarkLegacy-2.1.1-alpha.3-linux-x64-setup-licenses.zip",
+     "GauntletDarkLegacy-2.1.1-alpha.3-linux-x64-setup.tar.gz"
     ],
     "windows_assets": [
-     "GauntletDarkLegacy-1.3.2-alpha.3-windows-x64-runtime.zip",
-     "GauntletDarkLegacy-1.3.2-alpha.3-windows-x64-setup-licenses.zip",
-     "GauntletDarkLegacy-1.3.2-alpha.3-windows-x64-setup.exe"
+     "GauntletDarkLegacy-2.1.1-alpha.3-windows-x64-runtime.zip",
+     "GauntletDarkLegacy-2.1.1-alpha.3-windows-x64-setup-licenses.zip",
+     "GauntletDarkLegacy-2.1.1-alpha.3-windows-x64-setup.exe"
     ],
     "asset_count": 6
    },
@@ -5447,16 +6419,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.4.0",
-     "date": "2026-10-17T05:59:08Z",
+     "tag": "v0.6.1",
+     "date": "2026-10-25T18:56:40Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "GeometryWarsRetroEvolved2Recompiled-v0.4.0-x86_64.AppImage"
+     "GeometryWarsRetroEvolved2Recompiled-v0.6.1-x86_64.AppImage"
     ],
     "windows_assets": [
-     "GeometryWarsRetroEvolved2-v0.4.0-windows-x64.zip"
+     "GeometryWarsRetroEvolved2-v0.6.1-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -5509,6 +6481,44 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:mooncellar-team/glassline",
+   "github_id": 1427576606,
+   "name": "Glassline",
+   "system": null,
+   "repo": "MoonCellar-Team/Glassline",
+   "repo_url": "https://github.com/MoonCellar-Team/Glassline",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:decompilation",
+    "topic:pc-port"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.2",
+     "date": "2026-10-24T14:20:41Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "glassline-linux-x64-1.2.AppImage",
+     "glassline-linux-x64-1.2.tar.gz"
+    ],
+    "windows_assets": [
+     "glassline-windows-x64-1.2.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:catmidori/gogoackman1recomp",
@@ -5577,8 +6587,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "windows-v2.6.0",
-     "date": "2026-10-19T21:59:06Z",
+     "tag": "windows-v2.7.0",
+     "date": "2026-10-22T04:28:45Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -5732,8 +6742,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "1.2",
-     "date": "2026-10-20T17:06:33Z",
+     "tag": "1.3",
+     "date": "2026-10-23T18:16:02Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -5813,8 +6823,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v2026.10.17-fd637d0",
-     "date": "2026-10-17T15:10:30Z",
+     "tag": "v2026.10.24-a2e69a1",
+     "date": "2026-10-24T03:01:09Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -5828,6 +6838,42 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:ugatec/grand-prix-circuit-recomp",
+   "github_id": 1430166514,
+   "name": "grand-prix-circuit-recomp",
+   "system": null,
+   "repo": "UgaTEC/grand-prix-circuit-recomp",
+   "repo_url": "https://github.com/UgaTEC/grand-prix-circuit-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0.0",
+     "date": "2026-10-22T19:51:35Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "GrandPrixCircuit_Linux_x64.tar.gz"
+    ],
+    "windows_assets": [
+     "GrandPrixCircuit_Windows_x64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:saulob/hard-corps-uprising-recompiled",
@@ -5852,16 +6898,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.6.1",
-     "date": "2026-10-16T20:17:01Z",
+     "tag": "v0.7.1",
+     "date": "2026-10-25T22:17:04Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "HardCorpsUprisingRecompiled-v0.6.1-x86_64.AppImage"
+     "HardCorpsUprisingRecompiled-v0.7.1-x86_64.AppImage"
     ],
     "windows_assets": [
-     "HardCorpsUprising-v0.6.1-windows-x64.zip"
+     "HardCorpsUprising-v0.7.1-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -5972,8 +7018,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.5.5",
-     "date": "2026-10-18T11:19:53Z",
+     "tag": "v0.5.6",
+     "date": "2026-10-23T22:00:56Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -5987,6 +7033,57 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:ogdanimal/hybridheaven-recomp",
+   "github_id": 1319620620,
+   "name": "Hybrid Heaven",
+   "system": "N64",
+   "repo": "ogdanimal/HybridHeaven-Recomp",
+   "repo_url": "https://github.com/ogdanimal/HybridHeaven-Recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0.1",
+     "date": "2026-10-04T23:53:17Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "HybridHeaven-1.0.1-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "HybridHeaven-1.0.1-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "Hybrid Heaven",
+    "system": "N64",
+    "type": "recomp",
+    "status": "released",
+    "targets": [
+     "Windows",
+     "Linux",
+     "Android"
+    ],
+    "toolchain": [
+     "N64recomp",
+     "N64ModernRuntime",
+     "RT64"
+    ]
+   },
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:hunkstalker/hybrid-heaven-recomp",
@@ -6027,6 +7124,43 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:monscriser/hydrothunderport",
+   "github_id": 1419954433,
+   "name": "HydroThunderPORT",
+   "system": null,
+   "repo": "monscriser/HydroThunderPORT",
+   "repo_url": "https://github.com/monscriser/HydroThunderPORT",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:pc-port",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.9.1-experimentalbuild",
+     "date": "2026-10-17T02:54:13Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "HydroThunder-revisao-9.1.0.AppImage"
+    ],
+    "windows_assets": [
+     "Hydro-Thunder-Windows-revisao-9.1.0.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:nathanialf/ico-pc",
    "github_id": 1402542609,
    "name": "Ico (ico-pc)",
@@ -6047,24 +7181,60 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.8.2",
-     "date": "2026-10-20T19:20:39Z",
+     "tag": "v0.9.1",
+     "date": "2026-10-26T12:08:52Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "ico-pc-v0.8.2-linux-portable.tar.gz",
-     "ico-pc-v0.8.2-linux-x86_64.AppImage",
-     "ico-pc-v0.8.2-linux.tar.gz"
+     "ico-pc-v0.9.1-linux-portable.tar.gz",
+     "ico-pc-v0.9.1-linux-x86_64.AppImage",
+     "ico-pc-v0.9.1-linux.tar.gz"
     ],
     "windows_assets": [
-     "ico-pc-v0.8.2-win-portable.zip",
-     "ico-pc-v0.8.2-win.zip"
+     "ico-pc-v0.9.1-win-portable.zip",
+     "ico-pc-v0.9.1-win.zip"
     ],
     "asset_count": 6
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:xesf/ignition",
+   "github_id": 1431572867,
+   "name": "ignition",
+   "system": null,
+   "repo": "xesf/ignition",
+   "repo_url": "https://github.com/xesf/ignition",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:decomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.3.0",
+     "date": "2026-10-25T21:18:51Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "ignition-linux-x86_64-v0.3.0.AppImage"
+    ],
+    "windows_assets": [
+     "ignition-windows-x86_64-v0.3.0.zip"
+    ],
+    "asset_count": 6
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:ikemen-engine/ikemen-go",
@@ -6195,8 +7365,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v2026.10.19-d3995fe",
-     "date": "2026-10-19T06:58:16Z",
+     "tag": "v1.0",
+     "date": "2026-10-22T07:11:21Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -6220,6 +7390,40 @@
     "toolchain": "bbport"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:vantageex/infamous-first-light-pc",
+   "github_id": 1428108817,
+   "name": "infamous-first-light-pc",
+   "system": "PC",
+   "repo": "VantageEX/infamous-first-light-pc",
+   "repo_url": "https://github.com/VantageEX/infamous-first-light-pc",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:pc-port"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.3.8",
+     "date": "2026-10-25T20:35:46Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "inFAMOUS-First-Light-PC-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:brawmario/infinite-mario-64-ever",
@@ -6269,7 +7473,7 @@
    "catalog_disabled": null,
    "website": null,
    "kind": "game",
-   "deck_rating": "linux_build",
+   "deck_rating": "deck_build",
    "readme_mentions_deck": true,
    "archived": false,
    "sources": [
@@ -6277,19 +7481,22 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.5.0-beta.3",
-     "date": "2026-10-11T04:35:03Z",
+     "tag": "v0.6.0-beta.1",
+     "date": "2026-10-22T04:16:17Z",
      "prerelease": true
     },
-    "deck_assets": [],
+    "deck_assets": [
+     "ISSDNative-v0.6.0-beta.1-steamos-x64.AppImage"
+    ],
     "linux_assets": [
-     "ISSDNative-v0.5.0-beta.3-linux-x64.tar.gz"
+     "ISSDNative-v0.6.0-beta.1-linux-x64.tar.gz",
+     "ISSDNative-v0.6.0-beta.1-steamos-x64.AppImage"
     ],
     "windows_assets": [
-     "ISSDModStudio-v0.5.0-beta.3-windows-x64.zip",
-     "ISSDNative-v0.5.0-beta.3-windows-x64.zip"
+     "ISSDModStudio-v0.6.0-beta.1-windows-x64.zip",
+     "ISSDNative-v0.6.0-beta.1-windows-x64.zip"
     ],
-    "asset_count": 7
+    "asset_count": 8
    },
    "recomp_json": {
     "game": "International Superstar Soccer Deluxe",
@@ -6300,6 +7507,80 @@
     "toolchain": "SNESRecomp"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:omegakatana92/ironclad-recomp",
+   "github_id": 1433621968,
+   "name": "Ironclad-Recomp",
+   "system": "Neo Geo",
+   "repo": "omegakatana92/Ironclad-Recomp",
+   "repo_url": "https://github.com/omegakatana92/Ironclad-Recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:recompilation",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0",
+     "date": "2026-10-26T01:03:10Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "IronClad-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "Ironclad-Recomp-Windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:mabec-games/iss2000-recomp",
+   "github_id": 1423013483,
+   "name": "iss2000-recomp",
+   "system": "N64",
+   "repo": "Mabec-games/iss2000-recomp",
+   "repo_url": "https://github.com/Mabec-games/iss2000-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:n64recomp",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.2",
+     "date": "2026-10-18T14:21:58Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Mabecs_ISS2000_Widescreen-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "Mabecs_ISS2000_Widescreen-Windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/jackie-chan-stuntmaster-recomp",
@@ -6431,8 +7712,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.4.9",
-     "date": "2026-10-20T21:53:20Z",
+     "tag": "v0.5.7",
+     "date": "2026-10-26T10:29:20Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -6650,18 +7931,18 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.4.4",
-     "date": "2026-10-18T10:51:52Z",
+     "tag": "v0.15.3",
+     "date": "2026-10-24T19:02:51Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "ChaotixRecompiled-0.4.4-linux-x64.tar.gz"
+     "ChaotixRecompiled-0.15.3-linux-x64.tar.gz"
     ],
     "windows_assets": [
-     "ChaotixRecompiled-0.4.4-windows-x64.zip"
+     "ChaotixRecompiled-0.15.3-windows-x64.zip"
     ],
-    "asset_count": 2
+    "asset_count": 3
    },
    "recomp_json": {
     "game": "Knuckles' Chaotix",
@@ -6748,6 +8029,43 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:hunkstalker/kult-atari-st-pc-port",
+   "github_id": 1432563877,
+   "name": "kult-atari-st-pc-port",
+   "system": null,
+   "repo": "hunkstalker/kult-atari-st-pc-port",
+   "repo_url": "https://github.com/hunkstalker/kult-atari-st-pc-port",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:pc-port"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.2.0",
+     "date": "2026-10-26T12:55:35Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "kult-1.2.0-linux-x86_64.tar.gz",
+     "kult-1.2.0-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "kult-1.2.0-win64.zip"
+    ],
+    "asset_count": 4
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/legacy-of-kain-soul-reaver-recomp",
@@ -6842,17 +8160,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.0.6",
-     "date": "2026-10-19T04:32:05Z",
+     "tag": "v1.1.0",
+     "date": "2026-10-26T01:12:52Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "LostOdysseyRecomp-linux-x64-v1.0.6.AppImage",
-     "LostOdysseyRecomp-linux-x64-v1.0.6.flatpak"
+     "LostOdysseyRecomp-linux-x64-v1.1.0.AppImage",
+     "LostOdysseyRecomp-linux-x64-v1.1.0.flatpak"
     ],
     "windows_assets": [
-     "LostOdysseyRecomp-windows-x64-v1.0.6.zip"
+     "LostOdysseyRecomp-windows-x64-v1.1.0.zip"
     ],
     "asset_count": 3
    },
@@ -6917,6 +8235,42 @@
     "toolchain": "snesrecomp"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:rob646464/luigis-mansion-recompiled",
+   "github_id": 1418382875,
+   "name": "Luigi's Mansion (luigis-mansion-recompiled)",
+   "system": "GameCube",
+   "repo": "rob646464/luigis-mansion-recompiled",
+   "repo_url": "https://github.com/rob646464/luigis-mansion-recompiled",
+   "host": "github",
+   "catalog_folder": "luigis-mansion-recompiled",
+   "catalog_disabled": false,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "catalog"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.1.4",
+     "date": "2026-10-22T14:53:25Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "LuigisMansionRecompiled-1.1.4-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "LuigisMansionRecompiled-1.1.4-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:the-new-platinum-team/openmbg",
@@ -7047,8 +8401,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.2.36",
-     "date": "2026-10-19T20:14:52Z",
+     "tag": "v0.9.3",
+     "date": "2026-10-25T13:12:41Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -7134,6 +8488,152 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:omegakatana92/marvel-super-heroes-recomp",
+   "github_id": 1429856835,
+   "name": "Marvel Super Heroes",
+   "system": "Arcade",
+   "repo": "omegakatana92/Marvel-Super-Heroes-Recomp",
+   "repo_url": "https://github.com/omegakatana92/Marvel-Super-Heroes-Recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0-beta.1",
+     "date": "2026-10-22T15:20:17Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Marvel-Super-Heroes-linux-x86_64.AppImage",
+     "Marvel-Super-Heroes-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "Marvel-Super-Heroes-windows-x64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "Marvel Super Heroes",
+    "system": "Arcade",
+    "type": "recomp",
+    "status": "in-progress",
+    "targets": [
+     "Windows",
+     "Linux",
+     "Steam Deck"
+    ],
+    "toolchain": "cps2recomp"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:omegakatana92/marvel-super-heroes-vs-street-fighter-recomp",
+   "github_id": 1429716006,
+   "name": "Marvel Super Heroes vs. Street Fighter",
+   "system": "Arcade",
+   "repo": "omegakatana92/Marvel-Super-Heroes-vs-Street-Fighter-Recomp",
+   "repo_url": "https://github.com/omegakatana92/Marvel-Super-Heroes-vs-Street-Fighter-Recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.3.0-beta.1",
+     "date": "2026-10-22T18:34:21Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Marvel-Super-Heroes-vs-Street-Fighter-linux-x86_64.AppImage",
+     "Marvel-Super-Heroes-vs-Street-Fighter-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "Marvel-Super-Heroes-vs-Street-Fighter-windows-x64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "Marvel Super Heroes vs. Street Fighter",
+    "system": "Arcade",
+    "type": "recomp",
+    "status": "in-progress",
+    "targets": [
+     "Windows",
+     "Linux",
+     "Steam Deck"
+    ],
+    "toolchain": "cps2recomp"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:saulob/marvel-ultimate-alliance-bundle-recompiled",
+   "github_id": 1427381881,
+   "name": "Marvel: Ultimate Alliance",
+   "system": "Xbox 360",
+   "repo": "saulob/marvel-ultimate-alliance-bundle-recompiled",
+   "repo_url": "https://github.com/saulob/marvel-ultimate-alliance-bundle-recompiled",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.0",
+     "date": "2026-10-26T01:20:16Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "MarvelUltimateAlliance-v0.1.0-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "MarvelUltimateAlliance-v0.1.0-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "Marvel: Ultimate Alliance",
+    "system": "Xbox 360",
+    "type": "recomp",
+    "status": "released",
+    "targets": [
+     "Windows",
+     "Linux",
+     "Steam Deck"
+    ],
+    "toolchain": "Rexglue"
+   },
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/mdk-recomp",
@@ -7458,16 +8958,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v2.2.12-alpha",
-     "date": "2026-10-20T15:16:55Z",
+     "tag": "v2.3.3",
+     "date": "2026-10-23T05:54:04Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "MegaManXSNESRecomp-linux-2.2.12-alpha-x86_64.AppImage"
+     "MegaManXSNESRecomp-linux-2.3.3-x86_64.AppImage"
     ],
     "windows_assets": [
-     "MegaManXSNESRecomp-windows-2.2.12-alpha.zip"
+     "MegaManXSNESRecomp-windows-2.3.3.zip"
     ],
     "asset_count": 2
    },
@@ -7494,16 +8994,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.1-coop-playtest.21",
-     "date": "2026-10-14T23:58:42Z",
+     "tag": "v1.0.11",
+     "date": "2026-10-26T03:52:56Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "MegaManX4Recomp-v0.1.1-coop-playtest.21-linux-x86_64.AppImage"
+     "MegaManX4Recomp-v1.0.11-linux-x86_64.AppImage"
     ],
     "windows_assets": [
-     "MegaManX4Recomp-v0.1.1-coop-playtest.21-windows-x64.zip"
+     "MegaManX4Recomp-v1.0.11-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -7675,21 +9175,21 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.31.0",
-     "date": "2026-10-20T23:38:07Z",
+     "tag": "v0.33.1",
+     "date": "2026-10-25T12:09:42Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
      "MetroidPrime-x86_64.AppImage",
      "MetroidPrimePort.flatpak",
-     "metroid-prime-port-0.31.0-linux-x86_64.tar.gz"
+     "metroid-prime-port-0.33.1-linux-x86_64.tar.gz"
     ],
     "windows_assets": [
-     "metroid-prime-port-0.31.0-windows-arm64.zip",
-     "metroid-prime-port-0.31.0-windows-x86_64.zip"
+     "metroid-prime-port-0.33.1-windows-arm64.zip",
+     "metroid-prime-port-0.33.1-windows-x86_64.zip"
     ],
-    "asset_count": 6
+    "asset_count": 8
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -7826,8 +9326,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v2026.10.19.15",
-     "date": "2026-10-19T16:21:40Z",
+     "tag": "v0.2.70",
+     "date": "2026-10-26T13:39:49Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -7881,6 +9381,52 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:gurecomp/suyu-gurecomp",
+   "github_id": 1402797448,
+   "name": "Monster Hunter Generations Ultimate",
+   "system": "Switch",
+   "repo": "GURecomp/SUYU-GURecomp",
+   "repo_url": "https://github.com/GURecomp/SUYU-GURecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.10.0-test",
+     "date": "2026-10-22T13:35:19Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "suyu-mhgu-0.10.0-test-linux-x64.tar.xz"
+    ],
+    "windows_assets": [
+     "suyu-mhgu-0.10.0-test-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "Monster Hunter Generations Ultimate",
+    "system": "Switch",
+    "type": "recomp",
+    "status": "playable",
+    "targets": [
+     "Windows",
+     "Linux"
+    ],
+    "toolchain": "a32recomp"
+   },
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:teamgdb/yakumo",
@@ -8238,20 +9784,23 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.6.0",
-     "date": "2026-10-19T11:16:59Z",
+     "tag": "v0.8.0",
+     "date": "2026-10-26T00:13:45Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "mw2-v0.6.0-linux-lan.tar.gz",
-     "mw2-v0.6.0-linux-steam.tar.gz"
+     "mw2-relay-v0.8.0-linux-x86_64",
+     "mw2-v0.8.0-linux-lan.tar.gz",
+     "mw2-v0.8.0-linux-steam.tar.gz",
+     "mw2-v0.8.0-linux.tar.gz"
     ],
     "windows_assets": [
-     "mw2-v0.6.0-windows-lan.zip",
-     "mw2-v0.6.0-windows-steam.zip"
+     "mw2-v0.8.0-windows-lan.zip",
+     "mw2-v0.8.0-windows-steam.zip",
+     "mw2-v0.8.0-windows.zip"
     ],
-    "asset_count": 4
+    "asset_count": 7
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -8276,8 +9825,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "0.9.0",
-     "date": "2026-10-14T23:33:49Z",
+     "tag": "0.9.3",
+     "date": "2026-10-25T14:18:20Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -8293,10 +9842,10 @@
      "TimeCrisis-x86_64.AppImage",
      "TimeCrisis2-x86_64.AppImage",
      "TokyoWars-x86_64.AppImage",
-     "namco-2x-systems_0.9.0_amd64.deb"
+     "namco-2x-systems_0.9.3_amd64.deb"
     ],
     "windows_assets": [
-     "windows-release-0.9.0.zip"
+     "windows-release-0.9.3.zip"
     ],
     "asset_count": 14
    },
@@ -8412,6 +9961,52 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:mayhemdotcpp/nfs4-recomp",
+   "github_id": 1420072261,
+   "name": "Need for Speed: High Stakes",
+   "system": "PS1",
+   "repo": "mayhemdotcpp/nfs4-recomp",
+   "repo_url": "https://github.com/mayhemdotcpp/nfs4-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.4",
+     "date": "2026-10-23T18:31:34Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "nfs4-linux-x64.tar.xz"
+    ],
+    "windows_assets": [
+     "nfs4-win-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "Need for Speed: High Stakes",
+    "system": "PS1",
+    "type": "recomp",
+    "status": "playable",
+    "targets": [
+     "Windows",
+     "Linux"
+    ],
+    "toolchain": "Recompone"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:sp00nznet/neodriftout",
    "github_id": 1187938519,
    "name": "neodriftout",
@@ -8468,17 +10063,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.5.0",
-     "date": "2026-10-19T17:42:37Z",
+     "tag": "v0.6.3",
+     "date": "2026-10-25T23:32:35Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "NSMBU-v0.5.0-linux-x86_64.AppImage",
-     "NSMBU-v0.5.0-linux-x86_64.zip"
+     "NSMBU-v0.6.3-linux-x86_64.AppImage",
+     "NSMBU-v0.6.3-linux-x86_64.zip"
     ],
     "windows_assets": [
-     "NSMBU-v0.5.0-windows-x86_64.zip"
+     "NSMBU-v0.6.3-windows-x86_64.zip"
     ],
     "asset_count": 6
    },
@@ -8507,8 +10102,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.9.25",
-     "date": "2026-10-20T22:16:53Z",
+     "tag": "v0.9.31",
+     "date": "2026-10-26T00:11:22Z",
      "prerelease": true
     },
     "deck_assets": [],
@@ -8615,22 +10210,73 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.20",
-     "date": "2026-10-19T21:11:30Z",
+     "tag": "v0.2.3",
+     "date": "2026-10-26T07:05:41Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "xrevive_0.1.20_amd64.AppImage"
+     "xrevive_0.2.3_amd64.AppImage"
     ],
     "windows_assets": [
-     "xrevive_0.1.20_x64-setup.exe",
-     "xrevive_0.1.20_x64-win7-setup.exe"
+     "xrevive_0.2.3_x64-setup.exe",
+     "xrevive_0.2.3_x64-win7-setup.exe"
     ],
     "asset_count": 3
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:nearlytrex/nocturnedecomp",
+   "github_id": 1086792509,
+   "name": "Nocturne",
+   "system": "PC",
+   "repo": "NearlyTRex/NocturneDecomp",
+   "repo_url": "https://github.com/NearlyTRex/NocturneDecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.8",
+     "date": "2026-10-25T20:25:01Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "nocturne-0.1.8-exe-linux-vanilla-x86_64.tar.gz",
+     "nocturne-0.1.8-exe-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "nocturne-0.1.8-exe-windows-vanilla-x86_64.zip",
+     "nocturne-0.1.8-exe-windows-x86_64.zip"
+    ],
+    "asset_count": 10
+   },
+   "recomp_json": {
+    "game": "Nocturne",
+    "system": "PC (Windows)",
+    "type": [
+     "decomp",
+     "port"
+    ],
+    "status": "playable",
+    "targets": [
+     "Windows",
+     "Linux"
+    ],
+    "toolchain": "Ghidra"
+   },
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/oddworld-abe-s-oddysee-recomp",
@@ -8688,20 +10334,20 @@
    ],
    "evidence": {
     "release": {
-     "tag": "launcher-v0.8.4",
-     "date": "2026-10-20T19:34:08Z",
+     "tag": "launcher-v0.9.0",
+     "date": "2026-10-25T15:29:54Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "OpenRAC.Launcher-0.8.4-1.fc44.x86_64.rpm",
-     "OpenRAC.Launcher-0.8.4-1.x86_64.rpm",
-     "OpenRAC.Launcher_0.8.4_amd64.AppImage",
-     "OpenRAC.Launcher_0.8.4_amd64.deb"
+     "OpenRAC.Launcher-0.9.0-1.fc44.x86_64.rpm",
+     "OpenRAC.Launcher-0.9.0-1.x86_64.rpm",
+     "OpenRAC.Launcher_0.9.0_amd64.AppImage",
+     "OpenRAC.Launcher_0.9.0_amd64.deb"
     ],
     "windows_assets": [
-     "OpenRAC.Launcher_0.8.4_x64-setup.exe",
-     "OpenRAC.Launcher_0.8.4_x64_en-US.msi"
+     "OpenRAC.Launcher_0.9.0_x64-setup.exe",
+     "OpenRAC.Launcher_0.9.0_x64_en-US.msi"
     ],
     "asset_count": 10
    },
@@ -8766,8 +10412,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.0.7",
-     "date": "2026-10-19T17:49:45Z",
+     "tag": "v1.0.8",
+     "date": "2026-10-22T23:04:05Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -8900,6 +10546,116 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:haehnchen/pc-game-moorhuhn",
+   "github_id": 1411927741,
+   "name": "pc-game-moorhuhn",
+   "system": null,
+   "repo": "Haehnchen/pc-game-moorhuhn",
+   "repo_url": "https://github.com/Haehnchen/pc-game-moorhuhn",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "nightly",
+     "date": "2026-10-09T14:48:06Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "moorhuhn-Linux-x86_64-bundled.zip",
+     "moorhuhn-Linux-x86_64.zip"
+    ],
+    "windows_assets": [
+     "moorhuhn-Windows-x86_64-bundled.zip"
+    ],
+    "asset_count": 5
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:haehnchen/pc-game-moorhuhn-2",
+   "github_id": 1421108530,
+   "name": "pc-game-moorhuhn-2",
+   "system": null,
+   "repo": "Haehnchen/pc-game-moorhuhn-2",
+   "repo_url": "https://github.com/Haehnchen/pc-game-moorhuhn-2",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "nightly",
+     "date": "2026-10-15T18:52:06Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "moorhuhn2-Linux-x86_64-bundled.zip",
+     "moorhuhn2-Linux-x86_64.zip"
+    ],
+    "windows_assets": [
+     "moorhuhn2-Windows-x86_64-bundled.zip"
+    ],
+    "asset_count": 5
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:haehnchen/pc-game-toca-touring-car-championship",
+   "github_id": 1433143886,
+   "name": "pc-game-toca-touring-car-championship",
+   "system": null,
+   "repo": "Haehnchen/pc-game-toca-touring-car-championship",
+   "repo_url": "https://github.com/Haehnchen/pc-game-toca-touring-car-championship",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recomp"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "nightly",
+     "date": "2026-10-25T12:21:26Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "toca-Linux-x86_64.zip"
+    ],
+    "windows_assets": [
+     "toca-Windows-x86_64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:dabdavis/perfect-dark-dabs-mod",
    "github_id": 1353360049,
    "name": "Perfect Dark (perfect-dark-dabs-mod)",
@@ -9001,8 +10757,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "1,4",
-     "date": "2026-10-20T21:23:33Z",
+     "tag": "1.5",
+     "date": "2026-10-23T18:22:55Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -9049,8 +10805,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "1.6",
-     "date": "2026-10-17T09:10:34Z",
+     "tag": "1.8",
+     "date": "2026-10-23T19:13:54Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -9111,7 +10867,8 @@
     "asset_count": 3
    },
    "recomp_json": null,
-   "first_seen": "2026-10-20"
+   "first_seen": "2026-10-20",
+   "missing_since": "2026-10-26"
   },
   {
    "id": "github:noahvl/birdman64",
@@ -9136,8 +10893,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.3.0",
-     "date": "2026-10-17T12:31:35Z",
+     "tag": "v1.5.1",
+     "date": "2026-10-21T10:30:45Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -9238,6 +10995,42 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:chanadinh/pokemon-x-decomp",
+   "github_id": 1431294080,
+   "name": "pokemon-x-decomp",
+   "system": "PC",
+   "repo": "chanadinh/pokemon-x-decomp",
+   "repo_url": "https://github.com/chanadinh/pokemon-x-decomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:decompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.6",
+     "date": "2026-10-25T19:48:25Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "PokemonX-v0.1.6-linux.tar.gz"
+    ],
+    "windows_assets": [
+     "PokemonX-v0.1.6-windows.zip"
+    ],
+    "asset_count": 4
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:bryanthaboi/gen1recomp",
    "github_id": 1304486109,
    "name": "Pokémon Gen 1 (pokemon-gen1-recomp-project)",
@@ -9257,17 +11050,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.3.95",
-     "date": "2026-10-21T02:42:51Z",
+     "tag": "v0.3.96",
+     "date": "2026-10-23T21:49:15Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "gen1recomp-0.3.95-linux-x86_64.AppImage",
-     "gen1recomp-0.3.95-linux.flatpak"
+     "gen1recomp-0.3.96-linux-x86_64.AppImage",
+     "gen1recomp-0.3.96-linux.flatpak"
     ],
     "windows_assets": [
-     "gen1recomp-0.3.95-windows.zip"
+     "gen1recomp-0.3.96-windows.zip"
     ],
     "asset_count": 11
    },
@@ -9297,17 +11090,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.1.5",
-     "date": "2026-10-17T21:01:57Z",
+     "tag": "v1.1.6",
+     "date": "2026-10-23T19:35:15Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Snap64Recomp-1.1.5-linux-x86_64.flatpak",
-     "Snap64Recomp-1.1.5-linux-x86_64.tar.gz"
+     "Snap64Recomp-1.1.6-linux-x86_64.flatpak",
+     "Snap64Recomp-1.1.6-linux-x86_64.tar.gz"
     ],
     "windows_assets": [
-     "Snap64Recomp-1.1.5-win64.zip"
+     "Snap64Recomp-1.1.6-win64.zip"
     ],
     "asset_count": 5
    },
@@ -9358,43 +11151,6 @@
     ],
     "toolchain": "ssrecomp"
    },
-   "first_seen": "2026-10-20"
-  },
-  {
-   "id": "github:djultra64/power-dozer",
-   "github_id": 1413479537,
-   "name": "Power-Dozer",
-   "system": "PC",
-   "repo": "djultra64/Power-Dozer",
-   "repo_url": "https://github.com/djultra64/Power-Dozer",
-   "host": "github",
-   "catalog_folder": null,
-   "catalog_disabled": null,
-   "website": null,
-   "kind": "likely_game",
-   "deck_rating": "linux_build",
-   "readme_mentions_deck": false,
-   "archived": false,
-   "sources": [
-    "topic:n64recomp",
-    "topic:recompilation"
-   ],
-   "evidence": {
-    "release": {
-     "tag": "v0.84",
-     "date": "2026-10-12T04:24:48Z",
-     "prerelease": false
-    },
-    "deck_assets": [],
-    "linux_assets": [
-     "power-dozer-v0.84-linux-x86_64.tar.gz"
-    ],
-    "windows_assets": [
-     "power-dozer-v0.84-windows-x86_64.zip"
-    ],
-    "asset_count": 3
-   },
-   "recomp_json": null,
    "first_seen": "2026-10-20"
   },
   {
@@ -9471,6 +11227,147 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:leafyjerk/ps5_luigismansion",
+   "github_id": 1431824189,
+   "name": "PS5_LuigisMansion",
+   "system": "GameCube",
+   "repo": "leafyjerk/PS5_LuigisMansion",
+   "repo_url": "https://github.com/leafyjerk/PS5_LuigisMansion",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:recompilation",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0.0",
+     "date": "2026-10-24T04:51:04Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "LuigisMansion-PS5-Builder-1.0.0-linux.zip"
+    ],
+    "windows_assets": [
+     "LuigisMansion-PS5-Builder-1.0.0-windows.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:bmbelo87/decomp-it-up-the-exceed-2",
+   "github_id": 1400742859,
+   "name": "Pump It Up: Exceed 2",
+   "system": null,
+   "repo": "bmbelo87/decomp-it-up-the-exceed-2",
+   "repo_url": "https://github.com/bmbelo87/decomp-it-up-the-exceed-2",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "exceed-v0.3.1",
+     "date": "2026-10-23T20:49:03Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "PumpyReconstructed-exceed-v0.3.1-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "Exceed2Reconstructed-exceed-v0.3.1-win32.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "Pump It Up: Exceed 2",
+    "system": [
+     "Arcade",
+     "PC (Windows)"
+    ],
+    "type": "decomp",
+    "status": "released",
+    "targets": [
+     "Windows",
+     "Linux"
+    ],
+    "toolchain": [
+     "Ghidra",
+     "SDL2",
+     "OpenGL"
+    ]
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:bmbelo87/decomp-it-up-zero",
+   "github_id": 1400723902,
+   "name": "Pump It Up: Zero",
+   "system": "Arcade",
+   "repo": "bmbelo87/decomp-it-up-Zero",
+   "repo_url": "https://github.com/bmbelo87/decomp-it-up-Zero",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.3.0",
+     "date": "2026-10-11T22:39:41Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "PumpyReconstructed-v0.3.0-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "decomp-it-up-Zero-win32.zip",
+     "decomp-it-up-Zero-win64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "Pump It Up: Zero",
+    "system": "Arcade",
+    "type": "decomp",
+    "status": "in-progress",
+    "targets": [
+     "Windows",
+     "Linux"
+    ],
+    "toolchain": [
+     "Ghidra",
+     "SDL2",
+     "OpenGL"
+    ]
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:alexbeavs-ps1-ports/quake-ii-recomp",
    "github_id": 1355812922,
    "name": "Quake II (quake-ii-recomp)",
@@ -9543,6 +11440,78 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:mortify7612/rallisportchallenge2-decomp",
+   "github_id": 1421064396,
+   "name": "RalliSport Challenge 2 (RallisportChallenge2-decomp)",
+   "system": "Xbox",
+   "repo": "Mortify7612/RallisportChallenge2-decomp",
+   "repo_url": "https://github.com/Mortify7612/RallisportChallenge2-decomp",
+   "host": "github",
+   "catalog_folder": "RallisportChallenge2-decomp",
+   "catalog_disabled": false,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "catalog"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.7.0",
+     "date": "2026-10-22T18:25:54Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "rsc2-v0.7.0-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [],
+    "asset_count": 1
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:sp00nznet/rampage",
+   "github_id": 1159841650,
+   "name": "Rampage",
+   "system": "N64",
+   "repo": "sp00nznet/Rampage",
+   "repo_url": "https://github.com/sp00nznet/Rampage",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:n64recomp",
+    "topic:recompilation",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.3.0",
+     "date": "2026-10-26T10:35:56Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Rampage-Installer-linux-x64.tar.gz"
+    ],
+    "windows_assets": [
+     "Rampage-Installer-windows-x64.exe"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:jjmhalew/rampagere",
    "github_id": 1409385784,
    "name": "Rampage: Total Destruction",
@@ -9562,16 +11531,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.10.19",
-     "date": "2026-10-18T21:34:21Z",
+     "tag": "v1.1.1",
+     "date": "2026-10-25T22:17:43Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "RampageRE-linux-x86_64-v0.10.19.tar.gz"
+     "RampageRE-linux-x86_64-v1.1.1.tar.gz"
     ],
     "windows_assets": [
-     "RampageRE-windows-v0.10.19.zip"
+     "RampageRE-windows-v1.1.1.zip"
     ],
     "asset_count": 4
    },
@@ -9582,7 +11551,7 @@
      "recomp",
      "port"
     ],
-    "status": "playable",
+    "status": "released",
     "targets": [
      "Windows",
      "Linux",
@@ -9597,7 +11566,7 @@
    "id": "github:re-rac/rerac-launcher",
    "github_id": 1389718577,
    "name": "Ratchet and Clank (rerac-launcher)",
-   "system": "PS4",
+   "system": "PS2",
    "repo": "re-rac/rerac-launcher",
    "repo_url": "https://github.com/re-rac/rerac-launcher",
    "host": "github",
@@ -9613,17 +11582,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.2.1-alpha",
-     "date": "2026-10-05T12:45:42Z",
+     "tag": "v0.3.1-alpha",
+     "date": "2026-10-23T11:24:26Z",
      "prerelease": true
     },
     "deck_assets": [],
     "linux_assets": [
-     "ReRAC.Launcher_0.2.1_amd64.AppImage",
+     "ReRAC.Launcher_0.3.1_amd64.AppImage",
      "rerac-launcher-linux-x86_64.AppImage"
     ],
     "windows_assets": [
-     "ReRAC.Launcher_0.2.1_x64_en-US.msi",
+     "ReRAC.Launcher_0.3.1_x64_en-US.msi",
      "rerac-launcher-windows-x64.msi"
     ],
     "asset_count": 6
@@ -9697,6 +11666,95 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:tokeneffortports/recompiledsteel",
+   "github_id": 1416015333,
+   "name": "Real Steel",
+   "system": "Xbox 360",
+   "repo": "tokeneffortports/ReCompiledSteel",
+   "repo_url": "https://github.com/tokeneffortports/ReCompiledSteel",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.2.0",
+     "date": "2026-10-15T18:36:03Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "ReCompiledSteel-linux-x64-0.2.0.tar.gz"
+    ],
+    "windows_assets": [
+     "ReCompiledSteel-windows-x64-0.2.0.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "Real Steel",
+    "system": "Xbox 360",
+    "type": "recomp",
+    "status": "playable",
+    "targets": [
+     "Windows",
+     "Linux",
+     "Steam Deck",
+     "Android"
+    ],
+    "toolchain": [
+     "Rexglue",
+     "Xenosrecomp"
+    ]
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:maselko-95/recopile",
+   "github_id": 1417311068,
+   "name": "REcopile",
+   "system": null,
+   "repo": "MASELKO-95/REcopile",
+   "repo_url": "https://github.com/MASELKO-95/REcopile",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.2.2-beta.4",
+     "date": "2026-10-22T17:08:19Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Recopile-0.2.2-beta.4-linux-amd64.deb",
+     "Recopile-0.2.2-beta.4-linux-x64.pkg.tar.xz",
+     "Recopile-0.2.2-beta.4-linux-x86_64.AppImage",
+     "beta-linux.yml",
+     "latest-linux.yml"
+    ],
+    "windows_assets": [],
+    "asset_count": 6
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:jillsandwich1998/regh2",
    "github_id": 1427692384,
    "name": "reGH2",
@@ -9717,8 +11775,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.0",
-     "date": "2026-10-21T00:45:43Z",
+     "tag": "v0.1.2",
+     "date": "2026-10-21T16:50:33Z",
      "prerelease": true
     },
     "deck_assets": [],
@@ -9751,19 +11809,20 @@
    ],
    "evidence": {
     "release": {
-     "tag": "residentevil-v1.3.0",
-     "date": "2026-09-27T03:08:12Z",
+     "tag": "residentevil-v1.4.1",
+     "date": "2026-10-23T20:27:24Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "residentevil-1.3.0-linux-x86.tar.gz"
+     "asset-migrator-1.4.1-linux-x86_64.tar.gz",
+     "residentevil-1.4.1-linux-x86.tar.gz"
     ],
     "windows_assets": [
-     "asset-migrator-1.3.0-windows-x64.zip",
-     "residentevil-1.3.0-windows-x86.zip"
+     "asset-migrator-1.4.1-windows-x64.zip",
+     "residentevil-1.4.1-windows-x86.zip"
     ],
-    "asset_count": 3
+    "asset_count": 4
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -9824,21 +11883,22 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.1.8",
-     "date": "2026-10-20T08:59:42Z",
+     "tag": "v1.5.2",
+     "date": "2026-10-25T20:18:44Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Retro-Recomp-1.1.8-linux-x86_64-install.run",
-     "Retro-Recomp-1.1.8-linux-x86_64.tar.gz",
-     "Retro-Recomp-linux-x86_64"
+     "Retro-Recomp-1.5.2-linux-x86_64-install.run",
+     "Retro-Recomp-1.5.2-linux-x86_64.tar.gz",
+     "Retro-Recomp-linux-x86_64",
+     "retro-recomp_1.5.2_amd64.deb"
     ],
     "windows_assets": [
-     "Retro-Recomp-1.1.8-windows-x64-setup.exe",
+     "Retro-Recomp-1.5.2-windows-x64-setup.exe",
      "Retro-Recomp.exe"
     ],
-    "asset_count": 5
+    "asset_count": 6
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -9863,18 +11923,21 @@
    ],
    "evidence": {
     "release": {
-     "tag": "0.6.5-alpha",
-     "date": "2026-09-09T23:00:39Z",
+     "tag": "0.6.10-alpha",
+     "date": "2026-10-22T21:40:09Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Rage-Racer-0.6.5-alpha-linux-x86_64.zip"
+     "Rage-Racer-0.6.10-alpha-linux-x86_64.zip",
+     "Rage-Racer-Editor-0.6.10-alpha-linux-amd64.deb",
+     "Rage-Racer-Editor-0.6.10-alpha-linux-x86_64.zip"
     ],
     "windows_assets": [
-     "Rage-Racer-0.6.5-alpha-windows-x86_64.zip"
+     "Rage-Racer-0.6.10-alpha-windows-x86_64.zip",
+     "Rage-Racer-Editor-0.6.10-alpha-windows-x86_64.zip"
     ],
-    "asset_count": 3
+    "asset_count": 7
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -10120,13 +12183,13 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.0.29",
-     "date": "2026-10-21T02:32:00Z",
+     "tag": "v1.0.34",
+     "date": "2026-10-25T02:19:07Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Rush2Recompiled-1.0.29-x86_64.AppImage"
+     "Rush2Recompiled-1.0.34-x86_64.AppImage"
     ],
     "windows_assets": [],
     "asset_count": 2
@@ -10247,6 +12310,42 @@
     "toolchain": "ReXGlue SDK"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:m1ndcrap/sega-superstars-tennis-rematch",
+   "github_id": 1176473403,
+   "name": "Sega Superstars Tennis (Sega-Superstars-Tennis-ReMatch)",
+   "system": "Xbox 360",
+   "repo": "m1ndcrap/Sega-Superstars-Tennis-ReMatch",
+   "repo_url": "https://github.com/m1ndcrap/Sega-Superstars-Tennis-ReMatch",
+   "host": "github",
+   "catalog_folder": "Sega-Superstars-Tennis-ReMatch",
+   "catalog_disabled": false,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "catalog"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.6.1",
+     "date": "2026-10-24T16:39:28Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "sst_rematch_linux.tar.gz"
+    ],
+    "windows_assets": [
+     "sst_rematch_windows.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:laurentgarcia/sega-rally-recomp",
@@ -10552,7 +12651,8 @@
      "ModernGekko"
     ]
    },
-   "first_seen": "2026-10-21"
+   "first_seen": "2026-10-21",
+   "missing_since": "2026-10-26"
   },
   {
    "id": "github:jjmhalew/skipperre",
@@ -10604,6 +12704,44 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:mflr0/skylauncher",
+   "github_id": 1339899873,
+   "name": "Skylauncher",
+   "system": null,
+   "repo": "mflr0/Skylauncher",
+   "repo_url": "https://github.com/mflr0/Skylauncher",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.3.1",
+     "date": "2026-10-25T13:56:46Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Skylauncher-x86_64.AppImage",
+     "ssa-kit-linux-x64.zip"
+    ],
+    "windows_assets": [
+     "Skylauncher.exe",
+     "ssa-kit-windows-x64.zip"
+    ],
+    "asset_count": 6
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:theclub654/projectcane",
    "github_id": 686500346,
    "name": "Sly Cooper (ProjectCane)",
@@ -10624,16 +12762,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.4.1-beta.1",
-     "date": "2026-10-15T01:25:34Z",
+     "tag": "decompilation",
+     "date": "2026-10-21T07:59:36Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "ProjectCane-Beta-0.4.1-Linux-x64.rar"
+     "ProjectCane-Linux-x64.rar"
     ],
     "windows_assets": [
-     "ProjectCane-Beta-0.4.1-Windows-x64.rar"
+     "ProjectCane-Windows-x64.rar"
     ],
     "asset_count": 2
    },
@@ -10863,16 +13001,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.10.16",
-     "date": "2026-10-20T20:19:36Z",
+     "tag": "v0.10.35",
+     "date": "2026-10-26T04:50:31Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "FreeRidersRecompiled-0.10.16-linux-x64.tar.gz"
+     "FreeRidersRecompiled-0.10.35-linux-x64.tar.gz"
     ],
     "windows_assets": [
-     "FreeRidersRecompiled-0.10.16-windows-x64.zip"
+     "FreeRidersRecompiled-0.10.35-windows-x64.zip"
     ],
     "asset_count": 6
    },
@@ -10884,7 +13022,9 @@
     "targets": [
      "Windows",
      "Linux",
-     "Android"
+     "macOS",
+     "Android",
+     "iOS"
     ],
     "toolchain": [
      "XenonRecomp",
@@ -10985,19 +13125,19 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.6.9",
-     "date": "2026-10-15T20:32:46Z",
+     "tag": "v1.6.10",
+     "date": "2026-10-21T03:45:23Z",
      "prerelease": false
     },
     "deck_assets": [
-     "RingOut-1.6.9-steamdeck-x86_64.zip"
+     "RingOut-1.6.10-steamdeck-x86_64.zip"
     ],
     "linux_assets": [
-     "RingOut-1.6.9-linux-x86_64.zip"
+     "RingOut-1.6.10-linux-x86_64.zip"
     ],
     "windows_assets": [
-     "RingOut-1.6.9-windows-x64-setup.exe",
-     "RingOut-1.6.9-windows-x64.zip"
+     "RingOut-1.6.10-windows-x64-setup.exe",
+     "RingOut-1.6.10-windows-x64.zip"
     ],
     "asset_count": 4
    },
@@ -11063,8 +13203,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.7",
-     "date": "2026-10-18T05:25:42Z",
+     "tag": "v0.2.0",
+     "date": "2026-10-26T03:26:48Z",
      "prerelease": false
     },
     "deck_assets": [
@@ -11181,41 +13321,6 @@
      "EdgeOfTimeRecomp-v1.0.0-20261004_2039-win-amd64.zip"
     ],
     "asset_count": 3
-   },
-   "recomp_json": null,
-   "first_seen": "2026-10-20"
-  },
-  {
-   "id": "github:thefixinhixon/splosionmanrecomp",
-   "github_id": 1402612798,
-   "name": "SplosionManRecomp",
-   "system": "Xbox 360",
-   "repo": "thefixinhixon/SplosionManRecomp",
-   "repo_url": "https://github.com/thefixinhixon/SplosionManRecomp",
-   "host": "github",
-   "catalog_folder": null,
-   "catalog_disabled": null,
-   "website": null,
-   "kind": "likely_game",
-   "deck_rating": "linux_build",
-   "readme_mentions_deck": false,
-   "archived": false,
-   "sources": [
-    "topic:recompilation"
-   ],
-   "evidence": {
-    "release": {
-     "tag": "v2.0",
-     "date": "2026-10-04T04:12:38Z",
-     "prerelease": false
-    },
-    "deck_assets": [],
-    "linux_assets": [
-     "SplosionMan-Linux-v2.0.zip",
-     "SplosionMan-x86_64-v2.0.AppImage"
-    ],
-    "windows_assets": [],
-    "asset_count": 2
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -11707,10 +13812,10 @@
     },
     "deck_assets": [],
     "linux_assets": [
-     "3SX-66fc7de-linux-x86_64.tar.gz"
+     "3SX-6187364-linux-x86_64.tar.gz"
     ],
     "windows_assets": [
-     "3SX-66fc7de-windows.zip"
+     "3SX-6187364-windows.zip"
     ],
     "asset_count": 3
    },
@@ -12028,18 +14133,18 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.4.10",
-     "date": "2026-10-20T15:36:28Z",
+     "tag": "v0.5.0",
+     "date": "2026-10-25T15:50:49Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Marchwind64-0.4.10-linux-x64.tar.gz"
+     "Marchwind64-0.5.0-linux-x64.tar.gz"
     ],
     "windows_assets": [
-     "Marchwind64-0.4.10-windows-x64.zip"
+     "Marchwind64-0.5.0-windows-x64.zip"
     ],
-    "asset_count": 3
+    "asset_count": 4
    },
    "recomp_json": {
     "game": "Super Robot Wars 64",
@@ -12051,7 +14156,8 @@
      "macOS",
      "Linux",
      "Steam Deck",
-     "Android"
+     "Android",
+     "Switch"
     ],
     "toolchain": [
      "N64recomp",
@@ -12157,16 +14263,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.0",
-     "date": "2026-10-18T22:14:50Z",
+     "tag": "v0.2.1",
+     "date": "2026-10-25T15:46:32Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "SSF2THDRemix-v0.1.0-x86_64.AppImage"
+     "SSF2THDRemix-v0.2.1-x86_64.AppImage"
     ],
     "windows_assets": [
-     "SSF2THDRemix-v0.1.0-windows-x64.zip"
+     "SSF2THDRemix-v0.2.1-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -12204,16 +14310,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.1.1",
-     "date": "2026-10-17T19:37:57Z",
+     "tag": "v2.2.9",
+     "date": "2026-10-25T18:01:35Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "superbomberman5-1.1.1-linux-x86_64.AppImage"
+     "superbomberman5-2.2.9-linux-x86_64.AppImage"
     ],
     "windows_assets": [
-     "superbomberman5-1.1.1-windows-x64.zip"
+     "superbomberman5-2.2.9-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -12293,6 +14399,78 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:shihabal3amri/tekken-tag-tournament-2-pc",
+   "github_id": 1416152559,
+   "name": "Tekken Tag Tournament 2 (tekken-tag-tournament-2-pc)",
+   "system": "Xbox 360",
+   "repo": "shihabal3amri/tekken-tag-tournament-2-pc",
+   "repo_url": "https://github.com/shihabal3amri/tekken-tag-tournament-2-pc",
+   "host": "github",
+   "catalog_folder": "tekken-tag-tournament-2-pc",
+   "catalog_disabled": false,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "catalog"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.7",
+     "date": "2026-10-23T20:23:16Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "ttt2-server-0.1.7-linux-amd64.tar.gz"
+    ],
+    "windows_assets": [
+     "ttt2-server-0.1.7-windows-amd64.zip",
+     "ttt2_setup.exe"
+    ],
+    "asset_count": 4
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:mabec-games/tekken-3-for-linux",
+   "github_id": 1427923109,
+   "name": "Tekken-3-for-Linux",
+   "system": null,
+   "repo": "Mabec-games/Tekken-3-for-Linux",
+   "repo_url": "https://github.com/Mabec-games/Tekken-3-for-Linux",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0",
+     "date": "2026-10-21T05:40:28Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Tekken_3_for_Linux-x86_64.AppImage",
+     "Tekken_3_for_Linux-x86_64.flatpak"
+    ],
+    "windows_assets": [],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:omarma/tekken3-expanded",
    "github_id": 1391252860,
    "name": "tekken3-expanded",
@@ -12312,16 +14490,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.3.0",
-     "date": "2026-10-14T21:12:16Z",
+     "tag": "v1.4.0",
+     "date": "2026-10-25T14:18:31Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "Tekken3Expanded-1.3.0-Linux.zip"
+     "Tekken3Expanded-1.4.0-Linux.zip"
     ],
     "windows_assets": [
-     "Tekken3Expanded-1.3.0-Windows.zip"
+     "Tekken3Expanded-1.4.0-Windows.zip"
     ],
     "asset_count": 4
    },
@@ -12535,23 +14713,23 @@
    "website": null,
    "kind": "game",
    "deck_rating": "linux_build",
-   "readme_mentions_deck": false,
+   "readme_mentions_deck": true,
    "archived": false,
    "sources": [
     "catalog"
    ],
    "evidence": {
     "release": {
-     "tag": "beta_4",
-     "date": "2026-10-15T03:07:44Z",
+     "tag": "beta_5.2",
+     "date": "2026-10-25T04:51:13Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "LAS.Recomp-beta_4-linux-x86_64.AppImage"
+     "LAS.Recomp-beta_5.2-linux-x86_64.AppImage"
     ],
     "windows_assets": [
-     "LAS.Recomp-beta_4-windows.zip"
+     "LAS.Recomp-beta_5.2-windows.zip"
     ],
     "asset_count": 3
    },
@@ -12689,8 +14867,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.7",
-     "date": "2026-10-19T22:57:42Z",
+     "tag": "v0.1.9",
+     "date": "2026-10-24T04:13:54Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -12761,17 +14939,17 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.8.0-beta.1.1",
-     "date": "2026-10-18T08:50:58Z",
+     "tag": "v0.8.0-beta.1.2",
+     "date": "2026-10-22T13:11:57Z",
      "prerelease": true
     },
     "deck_assets": [],
     "linux_assets": [
-     "TriAevum-v0.8.0-beta.1.1-Linux-x86_64.AppImage",
-     "TriAevum-v0.8.0-beta.1.1-Linux-x86_64.flatpak"
+     "TriAevum-v0.8.0-beta.1.2-Linux-x86_64.AppImage",
+     "TriAevum-v0.8.0-beta.1.2-Linux-x86_64.flatpak"
     ],
     "windows_assets": [
-     "TriAevum-v0.8.0-beta.1.1-Windows-x64.zip"
+     "TriAevum-v0.8.0-beta.1.2-Windows-x64.zip"
     ],
     "asset_count": 3
    },
@@ -12798,9 +14976,9 @@
    ],
    "evidence": {
     "release": {
-     "tag": "nightly",
-     "date": "2026-10-20T17:20:05Z",
-     "prerelease": true
+     "tag": "v1.0.2",
+     "date": "2026-10-24T16:48:28Z",
+     "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
@@ -12834,19 +15012,20 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.0.5",
-     "date": "2026-10-20T05:17:11Z",
+     "tag": "v2.0.2",
+     "date": "2026-10-26T02:31:48Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "SkyRecomp-v1.0.5-Linux.tar.gz",
-     "SkyRecomp-v1.0.5-Linux.zip"
+     "Sky.Recomp-v2.0.2-linux-x86_64.AppImage",
+     "SkyRecomp-v2.0.2-Linux.tar.gz",
+     "SkyRecomp-v2.0.2-Linux.zip"
     ],
     "windows_assets": [
-     "SkyRecomp-v1.0.5-Windows.zip"
+     "SkyRecomp-v2.0.2-Windows.zip"
     ],
-    "asset_count": 4
+    "asset_count": 5
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -12871,18 +15050,18 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.3.0",
-     "date": "2026-10-15T08:38:34Z",
+     "tag": "v0.4.0",
+     "date": "2026-10-21T16:35:19Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "WindWakerHD-v0.3.0-linux-x86_64.AppImage",
-     "WindWakerHD-v0.3.0-linux-x86_64.zip"
+     "WindWakerHD-v0.4.0-linux-x86_64.AppImage",
+     "WindWakerHD-v0.4.0-linux-x86_64.zip"
     ],
     "windows_assets": [
-     "WindWakerHD-v0.3.0-windows-arm64.zip",
-     "WindWakerHD-v0.3.0-windows-x86_64.zip"
+     "WindWakerHD-v0.4.0-windows-arm64.zip",
+     "WindWakerHD-v0.4.0-windows-x86_64.zip"
     ],
     "asset_count": 7
    },
@@ -12960,6 +15139,51 @@
     "asset_count": 4
    },
    "recomp_json": null,
+   "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:thefixinhixon/themawrecomp",
+   "github_id": 1403814124,
+   "name": "The Maw",
+   "system": "Xbox 360",
+   "repo": "thefixinhixon/TheMawRecomp",
+   "repo_url": "https://github.com/thefixinhixon/TheMawRecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0",
+     "date": "2026-10-04T04:21:34Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "TheMaw-Linux-v1.0.zip",
+     "TheMaw-x86_64-v1.0.AppImage"
+    ],
+    "windows_assets": [],
+    "asset_count": 2
+   },
+   "recomp_json": {
+    "game": "The Maw",
+    "system": "Xbox 360",
+    "type": "recomp",
+    "status": "released",
+    "targets": [
+     "Linux"
+    ],
+    "toolchain": "ReXGlue"
+   },
    "first_seen": "2026-10-20"
   },
   {
@@ -13054,8 +15278,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.0-preview.4",
-     "date": "2026-10-18T23:06:35Z",
+     "tag": "v0.2.2",
+     "date": "2026-10-24T21:10:54Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -13063,7 +15287,7 @@
      "order1886-linux-x86_64.tar.gz"
     ],
     "windows_assets": [
-     "order1886-windows.zip"
+     "order1886-go-windows.zip"
     ],
     "asset_count": 2
    },
@@ -13153,41 +15377,6 @@
    "first_seen": "2026-10-20"
   },
   {
-   "id": "github:thefixinhixon/themawrecomp",
-   "github_id": 1403814124,
-   "name": "TheMawRecomp",
-   "system": "Xbox 360",
-   "repo": "thefixinhixon/TheMawRecomp",
-   "repo_url": "https://github.com/thefixinhixon/TheMawRecomp",
-   "host": "github",
-   "catalog_folder": null,
-   "catalog_disabled": null,
-   "website": null,
-   "kind": "likely_game",
-   "deck_rating": "linux_build",
-   "readme_mentions_deck": false,
-   "archived": false,
-   "sources": [
-    "topic:recompilation"
-   ],
-   "evidence": {
-    "release": {
-     "tag": "v1.0",
-     "date": "2026-10-04T04:21:34Z",
-     "prerelease": false
-    },
-    "deck_assets": [],
-    "linux_assets": [
-     "TheMaw-Linux-v1.0.zip",
-     "TheMaw-x86_64-v1.0.AppImage"
-    ],
-    "windows_assets": [],
-    "asset_count": 2
-   },
-   "recomp_json": null,
-   "first_seen": "2026-10-20"
-  },
-  {
    "id": "github:alexbeavs-ps1-ports/threads-of-fate-recomp",
    "github_id": 1359598769,
    "name": "Threads of Fate (threads-of-fate-recomp)",
@@ -13224,6 +15413,49 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:phobos665/split2-recomp",
+   "github_id": 1382250397,
+   "name": "TimeSplitters 2",
+   "system": "Xbox",
+   "repo": "phobos665/split2-recomp",
+   "repo_url": "https://github.com/phobos665/split2-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.4.1",
+     "date": "2026-10-25T13:41:35Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "split2-v0.4.1-linux-x86_64.tar.xz"
+    ],
+    "windows_assets": [
+     "split2-v0.4.1-windows-x86_64.zip"
+    ],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "TimeSplitters 2",
+    "system": "Xbox",
+    "type": "recomp",
+    "status": "released",
+    "targets": null,
+    "toolchain": "xboxrecomp"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:hayatog/tlg_pc",
    "github_id": 1416366647,
    "name": "tlg_pc",
@@ -13243,8 +15475,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v2026.10.17-b8d5f41",
-     "date": "2026-10-17T15:12:31Z",
+     "tag": "v2026.10.24-1a130dd",
+     "date": "2026-10-24T03:00:35Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -13329,7 +15561,8 @@
     "asset_count": 3
    },
    "recomp_json": null,
-   "first_seen": "2026-10-20"
+   "first_seen": "2026-10-20",
+   "missing_since": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/tony-hawk-s-pro-skater-recomp",
@@ -13516,6 +15749,43 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:thibautbus/top",
+   "github_id": 1391290392,
+   "name": "top",
+   "system": null,
+   "repo": "thibautbus/top",
+   "repo_url": "https://github.com/thibautbus/top",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:pc-port"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.3.0",
+     "date": "2026-10-25T11:51:02Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "the-oracles-project-1.3.0-linux-x86_64.AppImage",
+     "the-oracles-project-1.3.0-linux-x86_64.tar.gz"
+    ],
+    "windows_assets": [
+     "the-oracles-project-1.3.0-windows.zip"
+    ],
+    "asset_count": 6
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:periblugaming/toystory2recomp",
    "github_id": 1316533604,
    "name": "ToyStory2",
@@ -13528,23 +15798,23 @@
    "website": null,
    "kind": "game",
    "deck_rating": "linux_build",
-   "readme_mentions_deck": false,
+   "readme_mentions_deck": true,
    "archived": false,
    "sources": [
     "recomp_json"
    ],
    "evidence": {
     "release": {
-     "tag": "v0.3.0",
-     "date": "2026-10-20T14:47:32Z",
+     "tag": "v0.4.0",
+     "date": "2026-10-23T13:54:32Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "toystory2-0.3.0-linux-x64.zip"
+     "toystory2-0.4.0-linux-x64.zip"
     ],
     "windows_assets": [
-     "toystory2-0.3.0-windows-x64.zip"
+     "toystory2-0.4.0-windows-x64.zip"
     ],
     "asset_count": 4
    },
@@ -13557,6 +15827,42 @@
     "toolchain": "psxrecomp"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:maryncrt/ultimate-mortal-kombat-3-ios-decompiled",
+   "github_id": 1333724367,
+   "name": "Ultimate-Mortal-Kombat-3-iOS-Decompiled",
+   "system": "PC",
+   "repo": "MaryNCRT/Ultimate-Mortal-Kombat-3-iOS-Decompiled",
+   "repo_url": "https://github.com/MaryNCRT/Ultimate-Mortal-Kombat-3-iOS-Decompiled",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:decompilation",
+    "topic:pc-port",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.11-beta",
+     "date": "2026-10-23T20:24:00Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "UMK3-PC-0.1.11-beta-linux-x64.tar.gz"
+    ],
+    "windows_assets": [],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:pdromnt/uprising_decomp",
@@ -13596,6 +15902,50 @@
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:thiagordsfx/urban-reign-recomp",
+   "github_id": 1416172677,
+   "name": "Urban Reign",
+   "system": "PS2",
+   "repo": "thiagordsfx/urban-reign-recomp",
+   "repo_url": "https://github.com/thiagordsfx/urban-reign-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.4.0",
+     "date": "2026-10-23T01:24:26Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "UrbanReignPC-1.4.0-linux-x86_64.tar.gz",
+     "urban-reign_1.4.0_amd64.deb"
+    ],
+    "windows_assets": [],
+    "asset_count": 3
+   },
+   "recomp_json": {
+    "game": "Urban Reign",
+    "system": "PS2",
+    "type": "recomp",
+    "status": "playable",
+    "targets": [
+     "Windows"
+    ],
+    "toolchain": "Ps2recomp"
+   },
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/valkyrie-profile-recomp",
@@ -13815,8 +16165,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.12",
-     "date": "2026-10-19T23:15:30Z",
+     "tag": "v0.1.15",
+     "date": "2026-10-25T03:43:23Z",
      "prerelease": false
     },
     "deck_assets": [
@@ -13826,7 +16176,7 @@
     "windows_assets": [
      "VirtuaFighter2Recomp-windows.zip"
     ],
-    "asset_count": 3
+    "asset_count": 4
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -13851,8 +16201,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.5-alpha",
-     "date": "2026-10-20T13:30:10Z",
+     "tag": "v0.1.10-alpha",
+     "date": "2026-10-25T08:40:35Z",
      "prerelease": false
     },
     "deck_assets": [
@@ -13862,7 +16212,7 @@
     "windows_assets": [
      "VirtuaFighter3Recomp-windows.zip"
     ],
-    "asset_count": 3
+    "asset_count": 4
    },
    "recomp_json": null,
    "first_seen": "2026-10-20"
@@ -13959,16 +16309,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "1.13.0",
-     "date": "2026-10-01T22:35:45Z",
+     "tag": "1.14.0",
+     "date": "2026-10-24T12:29:50Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "retip_1.13.0_linux.tar.xz"
+     "retip_1.14.0_linux_amd64.tar.gz"
     ],
     "windows_assets": [
-     "retip_1.13.0_windows.zip"
+     "retip_1.14.0_windows_amd64.zip"
     ],
     "asset_count": 2
    },
@@ -14009,7 +16359,8 @@
     "asset_count": 4
    },
    "recomp_json": null,
-   "first_seen": "2026-10-20"
+   "first_seen": "2026-10-20",
+   "missing_since": "2026-10-26"
   },
   {
    "id": "github:solessfir/openvyruz",
@@ -14032,16 +16383,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v1.0.0",
-     "date": "2026-10-16T21:17:23Z",
+     "tag": "v1.1.0",
+     "date": "2026-10-24T23:44:16Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "OpenVyruz-v1.0.0-linux-x64.tar.gz"
+     "OpenVyruz-v1.1.0-linux-x64.tar.gz"
     ],
     "windows_assets": [
-     "OpenVyruz-v1.0.0-windows-x64.zip"
+     "OpenVyruz-v1.1.0-windows-x64.zip"
     ],
     "asset_count": 2
    },
@@ -14056,10 +16407,45 @@
     ],
     "toolchain": [
      "Vulkan",
-     "GLFW"
+     "GLFW",
+     "ENet"
     ]
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:biorhythmicstudios/warioland4",
+   "github_id": 1422452935,
+   "name": "Wario Land 4 (warioland4)",
+   "system": "GBA",
+   "repo": "BioRhythmicStudios/warioland4",
+   "repo_url": "https://github.com/BioRhythmicStudios/warioland4",
+   "host": "github",
+   "catalog_folder": "warioland4",
+   "catalog_disabled": true,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "catalog"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "linux-v0.1.0-beta",
+     "date": "2026-10-22T17:59:17Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "Wario_Land_4-v0.1.0-beta-x86_64.AppImage"
+    ],
+    "windows_assets": [],
+    "asset_count": 1
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:nikolaygorb/wetrecomp",
@@ -14082,8 +16468,8 @@
    ],
    "evidence": {
     "release": {
-     "tag": "1.4",
-     "date": "2026-10-20T09:17:14Z",
+     "tag": "1.5",
+     "date": "2026-10-23T17:39:55Z",
      "prerelease": false
     },
     "deck_assets": [],
@@ -14108,6 +16494,82 @@
     "toolchain": "ReXGlue SDK"
    },
    "first_seen": "2026-10-20"
+  },
+  {
+   "id": "github:tekrantgaming/whopping-recompilation-collection",
+   "github_id": 1433852725,
+   "name": "whopping-recompilation-collection",
+   "system": "Xbox 360",
+   "repo": "TekRantGaming/whopping-recompilation-collection",
+   "repo_url": "https://github.com/TekRantGaming/whopping-recompilation-collection",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": true,
+   "archived": false,
+   "sources": [
+    "topic:pc-port",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0.6",
+     "date": "2026-10-26T06:44:57Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "WhoppingCollection-v1.0.6-linux-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "WhoppingCollection-v1.0.6-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:arelkair/wiiparty-recomp",
+   "github_id": 1377405647,
+   "name": "wiiparty-recomp",
+   "system": "Wii",
+   "repo": "arelkair/wiiparty-recomp",
+   "repo_url": "https://github.com/arelkair/wiiparty-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:pc-port",
+    "topic:recompilation",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.19-alpha",
+     "date": "2026-10-25T22:24:44Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "wiipartyrecomp-launcher-x86_64.AppImage"
+    ],
+    "windows_assets": [
+     "wiipartyrecomp-launcher.exe",
+     "wiipartyrecomp-offline-windows.zip"
+    ],
+    "asset_count": 4
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
   },
   {
    "id": "github:alexbeavs-ps1-ports/wild-arms-recomp",
@@ -14238,16 +16700,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "v0.1.1",
-     "date": "2026-10-20T01:25:56Z",
+     "tag": "v0.2.0",
+     "date": "2026-10-23T03:10:11Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "wipeoutxl-0.1.1-linux-x64.zip"
+     "wipeoutxl-0.2.0-linux-x64.zip"
     ],
     "windows_assets": [
-     "wipeoutxl-0.1.1-windows-x64.zip"
+     "wipeoutxl-0.2.0-windows-x64.zip"
     ],
     "asset_count": 4
    },
@@ -14376,6 +16838,88 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:alondero/worlddriverchampionship-recomp",
+   "github_id": 1380558566,
+   "name": "worlddriverchampionship-recomp",
+   "system": "N64",
+   "repo": "alondero/worlddriverchampionship-recomp",
+   "repo_url": "https://github.com/alondero/worlddriverchampionship-recomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:n64recomp",
+    "topic:recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v0.1.1",
+     "date": "2026-10-24T18:43:00Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "worlddriverchampionship-recomp-linux-x64.zip"
+    ],
+    "windows_assets": [
+     "worlddriverchampionship-recomp-windows-x64.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
+   "id": "github:nvdemu/wormsworldpartyrecomp",
+   "github_id": 1428474414,
+   "name": "WormsWorldParty",
+   "system": "PS1",
+   "repo": "NVDEMU/WormsWorldPartyRecomp",
+   "repo_url": "https://github.com/NVDEMU/WormsWorldPartyRecomp",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "recomp_json"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "Nightly",
+     "date": "2026-10-21T16:16:33Z",
+     "prerelease": true
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "wwp-0.0.0-nightly-linux-x64.AppImage",
+     "wwp-0.0.0-nightly-linux-x64.zip"
+    ],
+    "windows_assets": [
+     "wwp-0.0.0-nightly-windows-x64.exe",
+     "wwp-0.0.0-nightly-windows-x64.zip"
+    ],
+    "asset_count": 8
+   },
+   "recomp_json": {
+    "game": "WormsWorldParty",
+    "system": "PS1",
+    "type": "recomp",
+    "status": "exploring",
+    "targets": null,
+    "toolchain": "psxrecomp"
+   },
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:alexbeavs-ps1-ports/xena-warrior-princess-recomp",
    "github_id": 1355813965,
    "name": "Xena: Warrior Princess (xena-warrior-princess-recomp)",
@@ -14412,6 +16956,44 @@
    "first_seen": "2026-10-20"
   },
   {
+   "id": "github:crabsmack/xmen2-pc",
+   "github_id": 1431860035,
+   "name": "xmen2-pc",
+   "system": "Genesis",
+   "repo": "crabsmack/xmen2-pc",
+   "repo_url": "https://github.com/crabsmack/xmen2-pc",
+   "host": "github",
+   "catalog_folder": null,
+   "catalog_disabled": null,
+   "website": null,
+   "kind": "likely_game",
+   "deck_rating": "linux_build",
+   "readme_mentions_deck": false,
+   "archived": false,
+   "sources": [
+    "topic:decompilation",
+    "topic:pc-port",
+    "topic:static-recompilation"
+   ],
+   "evidence": {
+    "release": {
+     "tag": "v1.0.1",
+     "date": "2026-10-25T20:41:09Z",
+     "prerelease": false
+    },
+    "deck_assets": [],
+    "linux_assets": [
+     "xmen2-native-linux.zip"
+    ],
+    "windows_assets": [
+     "xmen2-native-windows.zip"
+    ],
+    "asset_count": 2
+   },
+   "recomp_json": null,
+   "first_seen": "2026-10-26"
+  },
+  {
    "id": "github:wootbeer/dinotale",
    "github_id": 1413705209,
    "name": "Yoshi's Story (dinotale)",
@@ -14431,16 +17013,16 @@
    ],
    "evidence": {
     "release": {
-     "tag": "0.1.5",
-     "date": "2026-10-17T13:30:30Z",
+     "tag": "0.1.6",
+     "date": "2026-10-21T14:12:02Z",
      "prerelease": false
     },
     "deck_assets": [],
     "linux_assets": [
-     "DinoTale-0.1.5-linux.tar.gz"
+     "DinoTale-0.1.6-linux.tar.gz"
     ],
     "windows_assets": [
-     "DinoTale-0.1.5-windows.zip"
+     "DinoTale-0.1.6-windows.zip"
     ],
     "asset_count": 2
    },
