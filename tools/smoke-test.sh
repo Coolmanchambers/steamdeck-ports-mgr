@@ -297,14 +297,14 @@ if [ "$alive" = yes ]; then
         fi
         # The lists' Home button: Add a port > Deck-ready ports, type a search, click "< Home" (top left) -> Home.
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key --delay 250 Right Right Right Right Right Right Right Return; sleep 1.5
-        ap3=$(find_window '^Add a port$') || ap3=""
+        ap3=$(find_window '^Deck Ports Manager: Add a port$') || ap3=""
         if [ -n "$ap3" ]; then
             press_keys "$ap3" Return; sleep 2
             xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool type --delay 120 "zel"; sleep 1
             eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
             xdotool mousemove $((X + 40)) $((Y + 300)); sleep 0.3; xdotool mousemove $((X + 45)) $((Y + 72)); sleep 0.3; xdotool mousemove $((X + 47)) $((Y + 74)); sleep 0.3; xdotool click 1; sleep 1.5
             import -window root "$OUT/home-button.png" 2>/dev/null
-            check "Deck-ready from Add a port, a search, then the Home button goes Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -2 | head -1)" = "list: Deck-ready" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -z "$(xdotool search --name "^Add a port$" 2>/dev/null)" ]'
+            check "Deck-ready from Add a port, a search, then the Home button goes Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -2 | head -1)" = "list: Deck-ready" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -z "$(xdotool search --name "^Deck Ports Manager: Add a port$" 2>/dev/null)" ]'
         else
             check "the Add a port tile opens its page again" false
         fi
