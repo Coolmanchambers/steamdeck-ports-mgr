@@ -1,9 +1,9 @@
-
 use super::dialogs::{dialog_is_open, open_error_dialog, open_info_dialog, open_message_dialog, open_picker_dialog, open_progress_dialog, open_update_toggle_dialog, tr};
 use super::events::{lock, AppEvent};
 use super::playtime::is_port_running;
 use super::state::AppState;
 use crate::core::executable_detect::ExecutableSelectionError;
+use crate::core::forge::Forge;
 use crate::core::installer::{InstallOverrides, InstallPaths};
 use crate::core::jobs::InstallOutcome;
 use crate::core::models::{Port, SourceType};
@@ -89,12 +89,11 @@ pub(crate) fn open_version_picker(app: &Rc<AppState>, router: &Router, port: Por
     let (github_token, gitlab_token) = app.api_tokens();
     let events = app.events.clone();
     let repo = port.repo.clone().unwrap_or_default();
-    let source_type = port.source_type;
+    let forge = Forge::of(port.source_type);
     std::thread::spawn(move || {
-        let result = match source_type {
-            SourceType::Github => crate::core::github_api::list_releases(&repo, github_token.as_deref(), VERSION_CHOICES),
-            SourceType::Gitlab => crate::core::gitlab_api::list_releases(&repo, gitlab_token.as_deref(), VERSION_CHOICES),
-            SourceType::DirectUrl | SourceType::None => Ok(Vec::new()),
+        let result = match forge {
+            Some(forge) => forge.list_releases(&repo, forge.token(github_token.as_deref(), gitlab_token.as_deref()), VERSION_CHOICES),
+            None => Ok(Vec::new()),
         };
         let event = match result {
             Ok(releases) if !releases.is_empty() => AppEvent::VersionsFetched { key, releases },
@@ -170,7 +169,11 @@ fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Pat
     let runtime = &app.install_runtime;
     runtime.running_processes.borrow_mut().insert(key.clone(), child);
     runtime.launch_started_at.borrow_mut().insert(key.clone(), Instant::now());
-    if app.state.borrow().discord_rpc_enabled {
+    let show_game_presence = {
+        let state = app.state.borrow();
+        state.discord_rpc_enabled && !state.custom_presence_active()
+    };
+    if show_game_presence {
         let large_image = port.icon.clone().or_else(|| port.image.clone());
         let handle = crate::core::discord_presence::start(port.display_name().to_string(), port.folder.clone(), large_image);
         runtime.discord_presence.borrow_mut().insert(key, handle);
@@ -183,8 +186,10 @@ fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Pat
     true
 }
 
-pub(crate) fn launch_flow(app: &Rc<AppState>, router: &Router, port: &Port) {
-    // Fork: the tray's recent games call this directly; never start a game while it installs, updates or
+// Starts the installed program with no update check (upstream's name since 2026-10-30; the fork's `launch_flow`).
+// `pub(crate)`: events.rs launches straight after a failed or cancelled Play update.
+pub(crate) fn launch_installed(app: &Rc<AppState>, router: &Router, port: &Port) {
+    // Fork: the tray's recent games end up here; never start a game while it installs, updates or
     // has its saves restored (the install slot is held for all three).
     if app.install_runtime.installing.borrow().contains(port.key()) {
         // Its progress dialog is usually up; leave that in place rather than replacing it with this note.
@@ -256,26 +261,32 @@ pub(crate) fn activate_port(app: &Rc<AppState>, router: &Router, port: &Port) {
         return;
     }
     if app.is_installed(port) {
-        launch_with_update_check(app, router, port);
+        play_port(app, router, port);
     } else {
         start_install(app, router, port.clone(), None, None);
     }
 }
 
-fn launch_with_update_check(app: &Rc<AppState>, router: &Router, port: &Port) {
+pub(crate) fn play_port(app: &Rc<AppState>, router: &Router, port: &Port) {
+    if is_port_running(app, port.key()) {
+        return;
+    }
     let check = {
         let state = app.state.borrow();
         let info = state.get(port.key());
-        let installed_at = info.map(|i| i.installed_at.clone()).unwrap_or_default();
-        // Fork: one rule for Play and the home screen (crate::fork::home::update_check_due).
-        crate::fork::home::update_check_due(state.release_sync, &port.source_type, info.map(|i| i.update), &installed_at).then(|| (info.and_then(|i| i.installed_tag.clone()), installed_at))
+        let last_check = info.map(|i| i.last_update_check.clone()).unwrap_or_default();
+        // Fork: one rule for Play and the home screen (crate::fork::home::update_check_due); since the upstream
+        // catch-up it is "12 h since the last check" (`last_update_check`), not "24 h since the install".
+        crate::fork::home::update_check_due(state.release_sync, &port.source_type, info.map(|i| i.update), &last_check)
+            .then(|| (info.and_then(|i| i.installed_tag.clone()), info.map(|i| i.installed_at.clone()).unwrap_or_default()))
     };
     let Some((tag, installed_at)) = check else {
-        return launch_flow(app, router, port);
+        return launch_installed(app, router, port);
     };
     if try_claim_op_slot(app, port).is_none() {
         return;
     }
+    app.state.borrow_mut().mark_update_checked(port.key());
     let (github_token, gitlab_token) = app.api_tokens();
     let port = port.clone();
     let events = app.events.clone();
@@ -283,6 +294,16 @@ fn launch_with_update_check(app: &Rc<AppState>, router: &Router, port: &Port) {
         let available = crate::core::jobs::run_update_check(&port, tag.as_deref(), &installed_at, github_token.as_deref(), gitlab_token.as_deref());
         lock(&events).push(AppEvent::PlayUpdateChecked { port: Box::new(port), available });
     });
+}
+
+pub(crate) fn finish_play_update_check(app: &Rc<AppState>, router: &Router, port: Port, available: bool) {
+    app.install_runtime.installing.borrow_mut().remove(port.key());
+    if available {
+        app.install_runtime.pending_launch_after_install.borrow_mut().insert(port.key().to_string());
+        start_install(app, router, port, None, None);
+    } else {
+        launch_installed(app, router, &port);
+    }
 }
 
 pub(crate) fn activate_selection(app: &Rc<AppState>, router: &Router) {

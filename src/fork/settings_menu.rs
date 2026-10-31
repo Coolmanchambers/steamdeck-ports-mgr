@@ -1,4 +1,4 @@
-//! Settings as pages instead of one long list. The first page has a card for each group (Ports, Steam, Saves, App,
+﻿//! Settings as pages instead of one long list. The first page has a card for each group (Ports, Steam, Saves, App,
 //! Updates), each with a one-line summary of where that stands; a group's page has its actions as cards, and a card
 //! that is a switch shows On or Off and flips in place. Pure data for `fork::page`: the groups, what each entry
 //! says, the summaries. What an entry does is `src/app/settings_menu_screen.rs::run_entry`; the screens are
@@ -53,7 +53,7 @@ impl Group {
             Group::Ports => &[Entry::AddPort, Entry::ImportPorts, Entry::PortsFolder, Entry::GameFiles, Entry::OpenPortsFolder, Entry::KeptFiles],
             Group::Steam => &[Entry::AddToSteam, Entry::ArtSources],
             Group::Saves => &[Entry::BackupSaves, Entry::RestoreSaves, Entry::CloudBackup],
-            Group::App => &[Entry::SetupWizard, Entry::Themes, Entry::Language, Entry::Files, Entry::DiscordRpc],
+            Group::App => &[Entry::SetupWizard, Entry::Themes, Entry::Language, Entry::Files, Entry::Tools, Entry::DiscordRpc, Entry::CustomRpc],
             Group::Updates => &[Entry::CheckUpdates, Entry::ForceUpdate, Entry::Version],
         }
     }
@@ -83,14 +83,18 @@ pub enum Entry {
     BackupSaves,
     RestoreSaves,
     CloudBackup,
+    /// Upstream (2026-10-30): the catalog's "tools" links (7-Zip and the like).
+    Tools,
     CheckUpdates,
     ForceUpdate,
     DiscordRpc,
+    /// Upstream (2026-10-30): a fixed Discord status (text and icon from custom_presence in state.json) instead of the game.
+    CustomRpc,
     Version,
 }
 
 impl Entry {
-    pub const ALL: [Entry; 19] = [
+    pub const ALL: [Entry; 21] = [
         Entry::AddPort,
         Entry::SetupWizard,
         Entry::Themes,
@@ -106,15 +110,17 @@ impl Entry {
         Entry::BackupSaves,
         Entry::RestoreSaves,
         Entry::CloudBackup,
+        Entry::Tools,
         Entry::CheckUpdates,
         Entry::ForceUpdate,
         Entry::DiscordRpc,
+        Entry::CustomRpc,
         Entry::Version,
     ];
 
     /// A switch: flips where it is, shows On or Off.
     pub fn is_switch(self) -> bool {
-        matches!(self, Entry::CheckUpdates | Entry::DiscordRpc)
+        matches!(self, Entry::CheckUpdates | Entry::DiscordRpc | Entry::CustomRpc)
     }
 
     /// Reads or writes saves, so it waits while a save restore runs (the old list's guard).
@@ -168,6 +174,7 @@ pub struct Facts {
     pub cloud: Cloud,
     pub check_updates: bool,
     pub discord: bool,
+    pub custom_presence: bool,
     pub version: String,
     /// What the checkup found last ("2 problems", "Everything looks fine"); `None` before its first look finished.
     pub checkup: Option<String>,
@@ -190,11 +197,13 @@ pub struct Labels {
     pub themes: String,
     pub language: String,
     pub files: String,
+    pub tools: String,
     /// Upstream's "Library": the card that opens the ports folder.
     pub library: String,
     pub backup_saves: String,
     pub check_updates: String,
     pub discord: String,
+    pub custom_rpc: String,
     pub version: String,
 }
 
@@ -205,10 +214,12 @@ impl Labels {
             themes: "Themes".into(),
             language: "Language".into(),
             files: "Files".into(),
+            tools: "Tools".into(),
             library: "Library".into(),
             backup_saves: "Save Backup".into(),
             check_updates: "Check for Updates".into(),
             discord: "Discord Rich Presence".into(),
+            custom_rpc: "Custom Rich Presence".into(),
             version: format!("Version: {version}"),
         }
     }
@@ -340,7 +351,9 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::Themes => plain(&l.themes, "Change how the app looks"),
         Entry::Language => plain(&l.language, "Choose the app's language"),
         Entry::Files => plain(&l.files, "Open the app's own data files"),
+        Entry::Tools => plain(&l.tools, "Links to tools the catalog recommends"),
         Entry::DiscordRpc => Card { title: l.discord.clone(), detail: "Show what you are playing on Discord".into(), switch: Some(f.discord) },
+        Entry::CustomRpc => Card { title: l.custom_rpc.clone(), detail: "Show your own Discord status instead (text set in state.json)".into(), switch: Some(f.custom_presence) },
         Entry::CheckUpdates => Card { title: l.check_updates.clone(), detail: "Look for new versions of your ports and this app".into(), switch: Some(f.check_updates) },
         Entry::ForceUpdate => plain("Update the app now", "Install the newest version of this app"),
         Entry::Version => plain(&l.version, "See what is new on GitHub"),
@@ -396,7 +409,7 @@ mod tests {
     use crate::fork::page::{action_at, focus_number, hints, Focus, HINT_GAP, LEFT};
 
     fn facts() -> Facts {
-        Facts { ports_place: Some("SD card".into()), installed: 5, steam_waiting: 0, last_backup_days: Some(2), cloud: Cloud::On, check_updates: true, discord: false, version: "1.2.3".into(), checkup: None }
+        Facts { ports_place: Some("SD card".into()), installed: 5, steam_waiting: 0, last_backup_days: Some(2), cloud: Cloud::On, check_updates: true, discord: false, custom_presence: false, version: "1.2.3".into(), checkup: None }
     }
 
     #[test]
@@ -496,9 +509,9 @@ mod tests {
         assert_eq!(p.window_title, "Settings: App");
         assert_eq!(p.title, "App");
         let acts: Vec<Act> = p.options.iter().map(|o| o.action).collect();
-        assert_eq!(acts, [Act::Do(Entry::SetupWizard), Act::Do(Entry::Themes), Act::Do(Entry::Language), Act::Do(Entry::Files), Act::Do(Entry::DiscordRpc)]);
+        assert_eq!(acts, [Act::Do(Entry::SetupWizard), Act::Do(Entry::Themes), Act::Do(Entry::Language), Act::Do(Entry::Files), Act::Do(Entry::Tools), Act::Do(Entry::DiscordRpc), Act::Do(Entry::CustomRpc)]);
         let switches: Vec<Option<bool>> = (0..p.options.len()).map(|i| p.toggle_of(i)).collect();
-        assert_eq!(switches, [None, None, None, None, Some(false)], "Discord is off in these facts");
+        assert_eq!(switches, [None, None, None, None, None, Some(false), Some(false)], "Discord and the custom status are off in these facts");
         let updates = group_page(Group::Updates, &l, &f);
         assert_eq!((updates.toggle_of(0), updates.toggle_of(1), updates.toggle_of(2)), (Some(true), None, None));
         assert_eq!(updates.options[0].title, "Check for Updates", "the card's own On/Off says the state");
@@ -515,7 +528,7 @@ mod tests {
         let guarded: Vec<Entry> = Entry::ALL.into_iter().filter(|e| e.waits_for_restore()).collect();
         assert_eq!(guarded, [Entry::BackupSaves, Entry::RestoreSaves, Entry::ForceUpdate], "the save-restore refusal guard of the old list");
         let switches: Vec<Entry> = Entry::ALL.into_iter().filter(|e| e.is_switch()).collect();
-        assert_eq!(switches, [Entry::CheckUpdates, Entry::DiscordRpc]);
+        assert_eq!(switches, [Entry::CheckUpdates, Entry::DiscordRpc, Entry::CustomRpc], "upstream's two switches plus Custom Rich Presence (2026-10-30)");
     }
 
     #[test]
@@ -599,7 +612,7 @@ mod tests {
         assert_eq!(group_page(Group::Ports, &en, &f).options[4].title, "Open the ports folder");
         assert_eq!(group_page(Group::Saves, &en, &f).options[0].title, "Back up saves now");
         assert_eq!(plain_or_translated("Library", "Library", "Open the ports folder"), "Open the ports folder");
-        assert_eq!(plain_or_translated("Bibliothèque", "Library", "Open the ports folder"), "Bibliothèque");
+        assert_eq!(plain_or_translated("BibliothÃ¨que", "Library", "Open the ports folder"), "BibliothÃ¨que");
         assert_eq!(group_page(Group::Saves, &l, &f).options[0].title, "Sauvegarde");
     }
 

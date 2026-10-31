@@ -1,4 +1,3 @@
-
 use super::dialogs::{open_message_dialog, tr};
 use super::events::{lock, AppEvent};
 use super::state::AppState;
@@ -62,9 +61,11 @@ pub(crate) fn start_self_update_check(app: &AppState, force: bool) {
     let events = app.events.clone();
     std::thread::spawn(move || {
         // Fork (upstream bug O5): compare commits (BUILD_INFO vs the release notes), dates only as a fallback.
+        // A check that finds no update clears the flag (upstream 2026-10-30, `SelfUpdateChecked`); an error
+        // leaves it alone.
         match crate::core::github_api::candidate_releases(SELF_REPO, github_token.as_deref()).and_then(self_update::offer_from_releases) {
-            Ok(offer) if self_update::is_update(&running, &offer) => lock(&events).push(AppEvent::SelfUpdateAvailable(offer)),
-            Ok(_) => {}
+            Ok(offer) if self_update::is_update(&running, &offer) => lock(&events).push(AppEvent::SelfUpdateChecked { offer: Some(offer) }),
+            Ok(_) => lock(&events).push(AppEvent::SelfUpdateChecked { offer: None }),
             Err(e) => eprintln!("self-update check failed: {}", e.message()),
         }
     });

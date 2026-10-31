@@ -1,4 +1,4 @@
-//! "Find this port's game files": the screens around `fork::rom_screens::find`.
+﻿//! "Find this port's game files": the screens around `fork::rom_screens::find`.
 //!
 //! Entry points (all `pub(crate)`, re-exported from `app::rom_screens`):
 //! - [`after_install`]: called by the app when an install finishes. Once per port, only for a port
@@ -16,7 +16,7 @@
 //! user's yes (the Connect step asks), and game files are only read.
 
 use super::{choose_folder, load_store, message, open_list, run_job, store_path, Back, JobUi, Router, Then, JOB_RUNNING, TITLE};
-use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, DialogSlot};
+use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog_or, DialogSlot};
 use crate::app::page_dialog::{show_page, Handlers};
 use crate::fork::page::Page;
 use crate::fork::port_page::paths::{human_path, Places};
@@ -469,9 +469,9 @@ fn apply_pages(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<crate::
 /// A message; with a `then` it is a Continue dialog (also on B) that runs it.
 fn notice_then(app: &Rc<AppState>, router: &Router, text: &str, then: &Option<Back>) {
     let Some(then) = then else { return message(app, router, TITLE, text) };
-    let on_confirm = then.clone();
-    open_confirm_dialog(app, router, TITLE.into(), format!("{text}\n").into(), "Continue".into(), move |app, router| on_confirm(app, router));
-    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
+    let (on_confirm, on_cancel) = (then.clone(), then.clone());
+    open_confirm_dialog_or(app, router, TITLE.into(), format!("{text}\n").into(), "Continue".into(), move |app, router| on_confirm(app, router), move |app, router| on_cancel(app, router));
+    if let DialogSlot::TwoButton(d) = &*app.dialog_nav.dialogs.borrow() {
         let (app, router, then) = (app.clone(), router.clone(), then.clone());
         d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             close_current_dialog(&app, &router);

@@ -595,13 +595,21 @@ fn start_update_check(app: &Rc<AppState>) {
             .filter_map(|p| {
                 let info = state.get(p.key());
                 let installed_at = info.map(|i| i.installed_at.clone()).unwrap_or_default();
-                home::update_check_due(state.release_sync, &p.source_type, info.map(|i| i.update), &installed_at).then(|| (p.clone(), info.and_then(|i| i.installed_tag.clone()), installed_at))
+                let last_check = info.map(|i| i.last_update_check.clone()).unwrap_or_default();
+                home::update_check_due(state.release_sync, &p.source_type, info.map(|i| i.update), &last_check).then(|| (p.clone(), info.and_then(|i| i.installed_tag.clone()), installed_at))
             })
             .collect();
         (wanted, app.api_tokens())
     };
     if wanted.is_empty() {
         return;
+    }
+    // Stamped like Play's own check (`last_update_check`), so Play does not ask again within 12 h of this round.
+    {
+        let mut state = app.state.borrow_mut();
+        for (port, ..) in &wanted {
+            state.mark_update_checked(port.key());
+        }
     }
     // Stamped before it starts, so a crash or a quit half way does not make every start ask again.
     if let Err(e) = settings.set(KEY_CHECKED_AT, serde_json::json!(now)) {

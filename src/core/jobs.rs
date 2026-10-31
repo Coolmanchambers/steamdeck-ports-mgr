@@ -1,9 +1,8 @@
-
 use super::asset_select::AssetSelectionError;
+use super::forge::Forge;
 use super::installer::{self, InstallError, InstallOverrides, InstallPaths};
-use super::models::{Port, SourceType};
+use super::models::Port;
 use super::platform_resolve::resolve_preferred_asset;
-use super::{github_api, gitlab_api};
 use serde_json::Value;
 use std::path::Path;
 
@@ -45,6 +44,9 @@ pub fn run_update_check(
 }
 
 /// Fork (home screen): [`run_update_check`] that tells a failed check (a rate limit, no network) from "no update".
+/// The check must look at the same asset the installer picks (`preferred`), or a port with a "preferred_asset"
+/// is compared against the wrong release and gets flagged for an update every day (F5; upstream fixed it the
+/// same way on 2026-10-30).
 pub fn run_update_check_result(
     port: &Port,
     installed_tag: Option<&str>,
@@ -52,16 +54,11 @@ pub fn run_update_check_result(
     github_token: Option<&str>,
     gitlab_token: Option<&str>,
 ) -> Result<bool, String> {
+    let Some(forge) = Forge::of(port.source_type) else { return Ok(false) };
     let repo = port.repo.as_deref().unwrap_or_default();
-    match port.source_type {
-        SourceType::Github => update_available(port, installed_tag, installed_at, |preferred| github_api::fetch_latest_tag_and_date_preferring(repo, github_token, preferred)),
-        SourceType::Gitlab => update_available(port, installed_tag, installed_at, |preferred| gitlab_api::fetch_latest_tag_and_date_preferring(repo, gitlab_token, preferred)),
-        SourceType::DirectUrl | SourceType::None => Ok(false),
-    }
+    update_available(port, installed_tag, installed_at, |preferred| forge.fetch_latest_tag_and_date(repo, forge.token(github_token, gitlab_token), preferred))
 }
 
-// The check must look at the same asset the installer picks, or a port with a "preferred_asset" is compared
-// against the wrong release and gets flagged for an update every day.
 fn update_available(
     port: &Port,
     installed_tag: Option<&str>,
@@ -81,6 +78,7 @@ pub fn run_extra_install(port: &Port, library_dir: &Path, on_progress: &mut dyn 
 
 #[cfg(test)]
 mod tests {
+    use super::super::github_api;
     use super::*;
 
     #[test]

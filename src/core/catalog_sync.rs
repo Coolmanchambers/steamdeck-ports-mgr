@@ -1,4 +1,3 @@
-
 use super::{config, http};
 use serde_json::Value;
 use std::path::Path;
@@ -80,6 +79,8 @@ fn fetch_with(agent: &ureq::Agent, url: &str, known_etag: &str, validate: impl F
     if !known_etag.is_empty() {
         req = req.header("If-None-Match", known_etag);
     }
+    // Upstream (2026-10-30) matches a 304 `Ok` response here too; the fork's `interpret` does the same (F12) and
+    // also refuses a 304 to a request that sent no ETag (F13), so that arm is not taken.
     match req.call() {
         Ok(mut resp) => {
             let status = resp.status().as_u16();

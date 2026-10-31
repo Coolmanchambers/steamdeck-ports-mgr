@@ -1,6 +1,5 @@
-
-use super::dialogs::{apply_theme, close_current_dialog, dialog_is_open, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
-use super::install_launch::{launch_flow, start_install};
+﻿use super::dialogs::{apply_theme, close_current_dialog, dialog_is_open, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
+use super::install_launch::{finish_play_update_check, launch_installed, play_port, start_install};
 use super::playtime::{any_process_running, checkpoint_playtime, refresh_live_playtime_display};
 use super::state::AppState;
 use crate::core::models::Port;
@@ -24,8 +23,9 @@ pub(crate) enum AppEvent {
     InstallError { key: String, message: String },
     ExtraInstallDone { key: String, result: Result<(), String> },
     PlayUpdateChecked { port: Box<Port>, available: bool },
-    // Fork: carries what raised the flag, so a later start can tell whether it still applies (O4).
-    SelfUpdateAvailable(crate::fork::self_update::Offer),
+    // Fork: `Some(offer)` carries what raised the flag, so a later start can tell whether it still applies (O4);
+    // `None` means the check found no update and clears the flag (upstream 2026-10-30).
+    SelfUpdateChecked { offer: Option<crate::fork::self_update::Offer> },
     VersionsFetched { key: String, releases: Vec<Value> },
     VersionsFetchError { key: String, message: String },
     ImageCached { folder: String },
@@ -93,7 +93,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 app.refresh_current_view();
                 if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
                     if let Some(port) = port {
-                        launch_flow(app, router, &port);
+                        play_port(app, router, &port);
                     }
                 } else if let (Some(text), Some(port)) = (versioned, &port) {
                     open_message_dialog(app, router, port.display_name(), &text);
@@ -123,7 +123,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                             let (app, router) = (app.clone(), router.clone());
                             d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
                                 close_current_dialog(&app, &router);
-                                launch_flow(&app, &router, &installed);
+                                launch_installed(&app, &router, &installed);
                             });
                         }
                     }
@@ -150,10 +150,10 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 // A failed update must not lock the player out of the game that is already installed.
                 if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
                     if let Some(port) = app.find_port(&key) {
-                        launch_flow(app, router, &port);
+                        launch_installed(app, router, &port);
                     }
                 }
-                // launch_flow may have opened its own dialog (executable picker); the launch matters more than this message.
+                // launch_installed may have opened its own dialog (executable picker); the launch matters more than this message.
                 if !dialog_is_open(app) {
                     open_message_dialog(app, router, &tr!(app).invoke_dialog_title_installation_error(), &message);
                 }
@@ -168,22 +168,17 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 };
                 open_message_dialog(app, router, &tr.invoke_dialog_title_extras(), &message);
             }
-            AppEvent::PlayUpdateChecked { port, available } => {
-                app.install_runtime.installing.borrow_mut().remove(port.key());
-                if available {
-                    app.install_runtime.pending_launch_after_install.borrow_mut().insert(port.key().to_string());
-                    start_install(app, router, *port, None, None);
-                } else {
-                    launch_flow(app, router, &port);
+            AppEvent::PlayUpdateChecked { port, available } => finish_play_update_check(app, router, *port, available),
+            AppEvent::SelfUpdateChecked { offer } => {
+                if let Some(offer) = &offer {
+                    let mut settings = crate::fork::settings::ForkSettings::load(&app.paths.config_dir.join(crate::fork::settings::FILE_NAME));
+                    if let Err(e) = crate::fork::self_update::save_offer(&mut settings, offer) {
+                        eprintln!("self-update: could not remember the offer ({e})");
+                    }
                 }
-            }
-            AppEvent::SelfUpdateAvailable(offer) => {
-                let mut settings = crate::fork::settings::ForkSettings::load(&app.paths.config_dir.join(crate::fork::settings::FILE_NAME));
-                if let Err(e) = crate::fork::self_update::save_offer(&mut settings, &offer) {
-                    eprintln!("self-update: could not remember the offer ({e})");
-                }
-                app.window().set_self_update_available(true);
-                app.state.borrow_mut().set_launcher_update_available(true);
+                let mut state = app.state.borrow_mut();
+                state.set_launcher_update_available(offer.is_some());
+                app.window().set_self_update_available(state.show_launcher_update());
             }
             AppEvent::ImageCached { folder } => {
                 app.grid_nav.pending_image_fetches.borrow_mut().remove(&folder);

@@ -107,8 +107,10 @@ fn owner_rule(linux_desktop: bool, page: bool) -> bool {
 fn slot_open(slot: &DialogSlot) -> Option<Open> {
     let title = match slot {
         DialogSlot::None => return None,
-        DialogSlot::Confirm(_) => return Some(Open::Question),
-        DialogSlot::Error(_) => return Some(Open::Message),
+        // Upstream's one TwoButtonDialog (2026-10-30) is both the confirm ("Question") and the launch error
+        // dialog; the latter has the Info shortcut (Y opens Info).
+        DialogSlot::TwoButton(d) if d.get_info_shortcut() => return Some(Open::Message),
+        DialogSlot::TwoButton(_) => return Some(Open::Question),
         DialogSlot::Message(d) => d.get_dialog_title(),
         DialogSlot::Info(d) => d.get_dialog_title(),
         DialogSlot::Progress(d) => d.get_dialog_title(),

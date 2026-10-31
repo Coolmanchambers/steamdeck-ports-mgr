@@ -7,6 +7,7 @@ mod contract_tests;
 pub mod discord_presence;
 pub mod executable_detect;
 pub mod files;
+pub mod forge;
 pub mod gamepad;
 pub mod github_api;
 pub mod gitlab_api;

@@ -1,4 +1,4 @@
-//! Settings as pages (`crate::fork::settings_menu` says what they show; the window is `page_dialog::show_page`).
+﻿//! Settings as pages (`crate::fork::settings_menu` says what they show; the window is `page_dialog::show_page`).
 //!
 //! The first page has a card for each group with a line of where it stands; a group's page has its actions as cards,
 //! and the two switches (Check for updates, Discord status) flip in place. B goes up one level: group page, Settings,
@@ -9,7 +9,7 @@
 //! The lines are read when a page is drawn and none of them waits on slow input or output: the mount table, the queue
 //! file, one look at the backup folder.
 
-use super::dialogs::{close_current_dialog, dialog_is_open, open_files_picker, open_language_picker, open_theme_picker, start_save_backup};
+use super::dialogs::{close_current_dialog, dialog_is_open, open_files_picker, open_language_picker, open_theme_picker, open_tools_picker, start_save_backup};
 use super::page_dialog::{show_page, Handlers};
 use super::state::AppState;
 use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts};
@@ -90,11 +90,20 @@ fn choose(app: &Rc<AppState>, router: &Router, group: Group, entry: menu::Entry)
         menu::Entry::CheckUpdates => {
             let value = !app.state.borrow().release_sync;
             app.state.borrow_mut().set_release_sync(value);
+            // Upstream (2026-10-30): the footer's Update button follows the switch.
+            app.window().set_self_update_available(app.state.borrow().show_launcher_update());
             show_group(app, router, group);
         }
         menu::Entry::DiscordRpc => {
             let value = !app.state.borrow().discord_rpc_enabled;
             app.state.borrow_mut().set_discord_rpc_enabled(value);
+            app.refresh_custom_presence(); // Upstream (2026-10-30): a custom presence set in state.json follows the switch
+            show_group(app, router, group);
+        }
+        menu::Entry::CustomRpc => {
+            let value = !app.state.borrow().custom_presence_enabled;
+            app.state.borrow_mut().set_custom_presence_enabled(value);
+            app.refresh_custom_presence();
             show_group(app, router, group);
         }
         _ => run_entry(app, router, entry),
@@ -111,6 +120,7 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
         Entry::Themes => open_theme_picker(app, router),
         Entry::Language => open_language_picker(app, router),
         Entry::Files => open_files_picker(app, router),
+        Entry::Tools => open_tools_picker(app, router),
         Entry::OpenPortsFolder => crate::core::launch::open_folder(&app.paths.library_dir()),
         Entry::PortsFolder => super::ports_folder_screen::open_menu(app, router),
         Entry::AddToSteam => super::steam_screens::open_steam_screen(app, router),
@@ -125,7 +135,7 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
         Entry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
         Entry::ForceUpdate => super::sync::launch_self_update(app, router),
         Entry::AddPort => super::add_port_screen::open(app, router, true),
-        Entry::CheckUpdates | Entry::DiscordRpc => {}
+        Entry::CheckUpdates | Entry::DiscordRpc | Entry::CustomRpc => {}
     }
 }
 
@@ -138,10 +148,12 @@ fn labels(app: &AppState) -> Labels {
         themes: tr.invoke_label_themes().to_string(),
         language: tr.invoke_label_language().to_string(),
         files: tr.invoke_label_files().to_string(),
+        tools: tr.invoke_label_tools().to_string(),
         library: tr.invoke_label_library().to_string(),
         backup_saves: tr.invoke_label_backup_saves().to_string(),
         check_updates: menu::without_state(&tr.invoke_label_check_updates_on()),
         discord: menu::without_state(&tr.invoke_label_discord_rpc_on()),
+        custom_rpc: menu::without_state(&tr.invoke_label_custom_rpc_on()),
         version: tr.invoke_version_tag(version().into()).to_string(),
     }
 }
@@ -173,6 +185,7 @@ fn facts(app: &AppState) -> Facts {
         cloud: Cloud::from_mark(super::cloud_screen::home_status(app).0),
         check_updates: state.release_sync,
         discord: state.discord_rpc_enabled,
+        custom_presence: state.custom_presence_enabled,
         version: version(),
         checkup: super::checkup_screen::summary(),
     }

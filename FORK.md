@@ -266,6 +266,20 @@ Files added by this fork:
 | 2026-10-25 | `ui/dialogs/simple.slint`, `ui/dialogs/picker.slint`, `ui/dialogs/info.slint` | Branch `one-window`: window titles read "Deck Ports Manager: <title>" (one line per window) |
 | 2026-10-25 | `src/app/mod.rs`, `src/main.rs`, `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh`, `tools/test-app-update.sh` | Branch `one-window`: module line `dialog_layer`; `src/main.rs` one line wiring the layer's "Go back to it"; the new Slint file linted; the scripts find windows by the new titles, and the smoke test checks the layer (shown with Settings, Return, a click and Escape ask for the Settings window by id, cleared on close) |
 | 2026-10-25 | `src/core/launch.rs` | Branch `deck-fixes-3` (O9): a launcher script without its `#!` line (spawn error ENOEXEC) is run through `sh` |
+| 2026-10-31 | `src/core/forge.rs` | Upstream catch-up: upstream's new `Forge` enum kept, its release methods delegate to the fork's `github_api` / `gitlab_api` functions (see "Upstream catch-up of 2026-10-31") |
+| 2026-10-31 | `src/core/jobs.rs` | Upstream catch-up: `run_update_check_result` goes through `Forge`; the private `update_available` and its 3 tests stay |
+| 2026-10-31 | `src/core/asset_select.rs` | Upstream catch-up: upstream's `release_for_update_check` and its 2 tests not taken (the fork's `choose_release` covers it); 2 contract tests in their place |
+| 2026-10-31 | `src/core/catalog_sync.rs` | Upstream catch-up: upstream's 304 arm in `fetch_with` not taken (`interpret` handles it, F12 + F13); one comment |
+| 2026-10-31 | `src/core/save_backup.rs` | Upstream catch-up: `restore_after_install` keeps the fork's "nowhere to restore into, keep the copy" rule and takes upstream's single-file restore; `backup_before_update` takes a file save too (`copy_save`), folder guards on folders only |
+| 2026-10-31 | `src/core/state/throttles.rs` | Upstream catch-up: `is_due_for_update_check` (12 h since `last_update_check`) replaces `is_stale_for_update_check`; launcher check interval stays 12 h (O7); `deferred_check_stamp` kept |
+| 2026-10-31 | `src/app/sync.rs`, `src/app/events.rs` | Upstream catch-up: `AppEvent::SelfUpdateChecked { offer: Option<Offer> }` (an update saves the offer and sets the flag, no update clears it); `launch_installed` is upstream's name for the fork's `launch_flow` (busy guard kept, `pub(crate)` for the failed/cancelled Play update paths) |
+| 2026-10-31 | `src/app/install_launch.rs` | Upstream catch-up: `play_port` asks `fork::home::update_check_due` with `last_update_check`; `launch_installed` keeps the fork's "being installed" guard |
+| 2026-10-31 | `src/app/dialogs.rs` | Upstream catch-up: `open_confirm_dialog_or` (Cancel runs an action, see the table); `open_tools_picker`, `open_files_picker`, `open_language_picker` `pub(crate)` for the Settings pages; the fork's folder picker and text entry dialogs sized by `main_sized_dialog_size`; upstream's Settings list code not taken (the pages do it) |
+| 2026-10-31 | `src/app/gamepad_target.rs` | Upstream catch-up: Y on a `TwoButtonDialog` with the Info shortcut, behind the fork's `main_in_front` guard |
+| 2026-10-31 | `src/main.rs` | Upstream catch-up: `refresh_custom_presence()` at start; upstream's Escape-closes-dialog and right-click-Info wiring not taken (comments say why); `start_self_update_check(&app, recheck)` kept |
+| 2026-10-31 | `ui/app-window.slint`, `ui/card-grid.slint` | Upstream catch-up: `TwoButtonDialog` import/export; the sway wrapper (67 cheat) around the fork's `CardGrid` with `card-saves-requested` and `card-options`; `card-info-requested` removed (the fork's right-click opens the port page) |
+| 2026-10-31 | `ui/dialogs/simple.slint` | Upstream catch-up: `TwoButtonDialog` with the fork's window title line; `ErrorDialog` gone |
+| 2026-10-31 | `src/app/mod.rs`, `src/core/http.rs` | Upstream catch-up: blank first line dropped, fork content unchanged |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -1569,6 +1583,48 @@ Notes:
   branch alone. If upstream moves again, or no PR is open, the branch is rebuilt, so put fix-ups on
   a separate branch.
 - To test without touching `main`, start it by hand with `base_branch` set to a scratch branch.
+
+## Upstream catch-up of 2026-10-31 (Nyaldee's new history)
+
+On 2026-10-30 upstream replaced its whole history with a new root commit (`49fddf8` "Present Day,
+Present Time") plus the daily catalog commits. The new root also carries code that the old history
+never had (65 non-catalog files against our last common commit `051bb20`). Nothing shared, so the
+daily sync could not merge. How it was re-anchored, so the sync works again and future upstream code
+is still seen:
+
+1. A synthetic commit with upstream's tree (`c5b6679`) on the old parent `051bb20`, merged into `main`
+   as a real three-way merge (17 code files conflicted, resolved by hand as below).
+2. `git merge -s ours c5b6679 --allow-unrelated-histories`, so upstream's new root is an ancestor of
+   `main`. Never do step 2 alone: the sync would then skip every code change upstream made before it.
+
+What upstream changed and what this fork did with it:
+
+| Upstream change | Decision | Why |
+|---|---|---|
+| `Forge` enum (`src/core/forge.rs`) replaces the per-site release functions | Adapt | Kept; every method delegates to the fork's `github_api` / `gitlab_api` functions (O2 picker rule, O3 stable-first, update check dated by the newest candidate file). Upstream's `release_for_update_check` not taken |
+| Update check passes `preferred_asset` (upstream's own F5 fix) | Take | Same fix as ours; `run_update_check_result` now goes through `Forge` |
+| Per-port update check every 12 h since the last check (`last_update_check`, `mark_update_checked`), not 24 h since the install | Take | Play and the home screen's round both use it (`fork::home::update_check_due`); the home round stamps each port it checks |
+| `SelfUpdateChecked { available }`: a check that finds no update clears the footer flag; `should_check_launcher_update` no longer blocked by the flag (upstream's O4) | Adapt | `SelfUpdateChecked { offer: Option<Offer> }`: our commit-based check (O5) still saves the offer, and "no update" now clears the flag too. `settle_self_update_flag` at start kept. Interval stays 12 h (O7) |
+| `show_launcher_update()`: the footer's Update button hides when "Check for updates" is off | Take | Used at start and when the switch flips |
+| `ConfirmDialog` + `ErrorDialog` merged into one `TwoButtonDialog` (`DialogSlot::TwoButton`, `two_button_nav_index`, `info_shortcut`) | Take + adapt | Cancel is now a `secondary-requested`, not a `close-requested`; the three fork screens that run something on Cancel use `open_confirm_dialog_or` so the button, B, Escape and the X all agree. The dim layer tells the two apart by `info_shortcut` |
+| Big mode: dialogs scale 1.6x, capped at 90 % of the screen (`dialog_geometry`, `DialogContext`, `main_sized_dialog_size`) | Take | The fork's folder picker and text entry dialogs follow Info |
+| Search: several words in any order, accents ignored, tighter fuzzy window, 100-character cap (`core::search`, `name_lower` normalized) | Take | Main search, the theme/language/tools pickers |
+| Settings > Tools (the catalog's `tools` links) | Adapt | A card under Settings > App (`settings_menu::Entry::Tools`, opens upstream's `open_tools_picker`) |
+| Custom Rich Presence (state `custom_presence`, `refresh_custom_presence`) | Adapt | A switch under Settings > App; the text and icon are set in `state.json` as upstream documents |
+| Discord presence reconnects and refreshes every 15 s | Take | |
+| A save that is one file (`copy_save`): preserved, restored and in the global backup | Take + adapt | The fork's update backup (`backup_before_update`) takes a file too; its folder guards run on folders only. The fork's "a kept copy is never deleted when there is nowhere to restore it" rule stays |
+| Download URLs percent-encoded, file names decoded (`http::encode_url` / `decode_url`) | Take | |
+| Catalog 304 handled as `Ok` (upstream's F12) | Skip | The fork's `interpret` already does it and also refuses a 304 to a request that sent no ETag (F13) |
+| Escape on the main window closes an open dialog (`on_key_intercepted`) | Skip | The fork's dim layer owns the keyboard while a dialog is open; Escape on it goes back to the page |
+| Right-click on a card opens Info (`card-info-requested`) | Skip | The fork's right-click opens the port page, which has Info under More |
+| Cheats: za warudo, patema (flip), 67 (sway) | Take | Harmless; the sway wrapper sits around the fork's card grid |
+| `Ports Launcher.jpg` replaced by `.webp`, 7-Zip binaries updated, 3 new strings per language, README text for Tools and Custom RPC | Take | The fork's README header is unchanged |
+| One blank first line dropped in about 30 files | Take | |
+
+Contract tests added for what the fork depends on: `jobs::a_failed_check_is_an_error_not_no_update`
+(kept), `asset_select::the_update_check_sees_the_newest_release_even_when_its_file_must_be_picked`,
+`asset_select::the_update_check_respects_preferred_asset`, `home::the_update_check_is_due_exactly_when_plays_is`
+(never-checked case), and the settings menu tests cover the two new App cards.
 
 ## The Deck-ready list
 

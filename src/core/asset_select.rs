@@ -1,4 +1,3 @@
-
 use super::platform_resolve::get_platform_key;
 use serde_json::Value;
 
@@ -401,6 +400,27 @@ mod tests {
             Err(AssetSelectionError::Ambiguous(a)) => assert_eq!(a.len(), 1),
             other => panic!("attendu Ambiguous, obtenu {other:?}"),
         }
+    }
+
+    // Upstream's `release_for_update_check` (2026-10-30) is not taken: the fork's `choose_release` already answers
+    // "newest release, picker needed" (O2) and the update check is dated by that release's newest file.
+    #[test]
+    fn the_update_check_sees_the_newest_release_even_when_its_file_must_be_picked() {
+        let releases = vec![release_with_assets(&["game-full.zip", "game-lite.zip"]), release_with_assets(&["old-full.zip", "old-lite.zip"])];
+        match choose_release(releases.clone(), None, pick_from_release).unwrap() {
+            ReleaseChoice::AskForNewest { release, candidates } => {
+                assert_eq!(release, releases[0]);
+                assert_eq!(candidates.len(), 2);
+            }
+            ReleaseChoice::Picked { .. } => panic!("two usable files on the newest release need the picker"),
+        }
+    }
+
+    #[test]
+    fn the_update_check_respects_preferred_asset() {
+        let releases = vec![release_with_assets(&["SRB2-v2216-Full.zip", "SRB2-v2216-Installer.exe"])];
+        let (_, asset) = latest_installable_release(releases, Some("Full.zip"), pick_from_release).unwrap();
+        assert_eq!(asset_name(&asset), "SRB2-v2216-Full.zip");
     }
 
     #[test]

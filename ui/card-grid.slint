@@ -170,6 +170,8 @@ export component CardGrid {
                     root.card-activated(self.hovered-row, self.hovered-column);
                 }
             }
+            // Upstream (2026-10-30) opens Info on a right-click (`card-info-requested`); skipped: the fork's
+            // right-click opens the port page, which has Info under More.
             changed pressed => {
                 if (self.pressed) {
                     self.drag-start-mouse-y = self.mouse-y;

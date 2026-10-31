@@ -1,7 +1,7 @@
 import { ListView } from "std-widgets.slint";
 import { CardGrid, CardItem, CardRow } from "card-grid.slint";
 import { SemanticColors, Theme, ThemedScrollbar, InertialScroller, TitleBarIconButton } from "shared.slint";
-import { MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr } from "dialogs.slint";
+import { MessageDialog, TwoButtonDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr } from "dialogs.slint";
 // Fork: the Deck-ready list and its Info dialog.
 import { DeckReadyList, DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog } from "fork/deck-ready.slint";
 // Fork: the setup wizard page.
@@ -21,7 +21,7 @@ export struct PortItem {
     saves-warning: bool,
 }
 
-export { CardItem, CardRow, SemanticColors, Theme, MessageDialog, ConfirmDialog, ErrorDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr }
+export { CardItem, CardRow, SemanticColors, Theme, MessageDialog, TwoButtonDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr }
 export { DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog }
 // Fork: the in-app folder picker (src/app/folder_picker_screen.rs).
 export { FolderPickerDialog, FolderRow } from "fork/folder-picker.slint";
@@ -194,6 +194,7 @@ export component AppWindow inherits Window {
     property <length> action-button-height: row-height - row-spacing * 2;
     property <length> scrollbar-width: 6px / Theme.scale-factor;
     public function clear-search() { search-input.text = ""; }
+    public function set-search(text: string) { search-input.text = text; }
 
     public function barrel-roll() { root.roll-angle += 360deg; }
     property <angle> roll-angle: 0deg;
@@ -211,12 +212,19 @@ export component AppWindow inherits Window {
     property <length> shake-x: root.shake-amplitude * Math.sin(root.shake-ticks * 137deg);
     property <length> shake-y: root.shake-amplitude * Math.sin(root.shake-ticks * 211deg);
 
+    in property <bool> flipped: false;
+
+    public function six-seven() { root.sway-ticks = 60; }
+    property <int> sway-ticks: 0;
+    property <angle> sway-angle: 4deg * Math.min(root.sway-ticks, 15) / 15 * Math.sin(root.sway-ticks * 30deg);
+
     Timer {
         interval: 33ms;
-        running: root.shake-ticks > 0 || root.head-ticks > 0;
+        running: root.shake-ticks > 0 || root.head-ticks > 0 || root.sway-ticks > 0;
         triggered => {
             root.shake-ticks = Math.max(0, root.shake-ticks - 1);
             root.head-ticks = Math.max(0, root.head-ticks - 1);
+            root.sway-ticks = Math.max(0, root.sway-ticks - 1);
         }
     }
 
@@ -425,28 +433,34 @@ export component AppWindow inherits Window {
                     content-body := Rectangle {
                         vertical-stretch: root.big-mode ? 1 : 0;
                         preferred-height: root.big-mode ? 0px : content-body-height;
-                        transform-rotation: root.roll-angle + root.tilt-angle;
+                        transform-rotation: root.roll-angle + root.tilt-angle + (root.flipped ? 180deg : 0deg);
                         transform-scale-x: root.head-scale * 100%;
                         transform-scale-y: root.head-scale * 100%;
                         animate transform-rotation { duration: 1s; easing: ease-in-out; }
 
-                        if root.big-mode && !root.deck-ready-mode && !root.home-mode: CardGrid {
+                        if root.big-mode && !root.deck-ready-mode && !root.home-mode: Rectangle {
                             x: root.shake-x;
                             y: root.shake-y;
                             width: 100%;
                             height: 100%;
-                            rows: root.card-rows;
-                            card-width: root.card-width;
-                            card-height: root.card-height;
-                            card-spacing: root.card-spacing;
-                            columns: root.grid-columns;
-                            selected-row-index: root.grid-selected-row;
-                            scroll-trigger: root.scroll-trigger;
-                            card-activated(r, c) => { root.card-activated(r, c); }
-                            card-saves-requested(r, c) => { root.card-saves-requested(r, c); }
-                            card-hovered(r, c) => { root.card-hovered(r, c); }
-                            card-options(r, c) => { root.card-options(r, c); }
-                            card-unhovered() => { root.card-unhovered(); }
+                            transform-rotation: root.sway-angle;
+
+                            CardGrid {
+                                width: 100%;
+                                height: 100%;
+                                rows: root.card-rows;
+                                card-width: root.card-width;
+                                card-height: root.card-height;
+                                card-spacing: root.card-spacing;
+                                columns: root.grid-columns;
+                                selected-row-index: root.grid-selected-row;
+                                scroll-trigger: root.scroll-trigger;
+                                card-activated(r, c) => { root.card-activated(r, c); }
+                                card-saves-requested(r, c) => { root.card-saves-requested(r, c); }
+                                card-hovered(r, c) => { root.card-hovered(r, c); }
+                                card-options(r, c) => { root.card-options(r, c); }
+                                card-unhovered() => { root.card-unhovered(); }
+                            }
                         }
 
                         if !root.big-mode && !root.deck-ready-mode && !root.home-mode: list-container := Rectangle {
@@ -454,6 +468,7 @@ export component AppWindow inherits Window {
                             y: root.shake-y;
                             width: 100%;
                             height: 100%;
+                            transform-rotation: root.sway-angle;
 
                             list-inertia := InertialScroller {
                                 min-viewport-y: Math.min(0px, port-list.visible-height - port-list.content-height);

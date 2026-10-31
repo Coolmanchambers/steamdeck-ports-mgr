@@ -1,4 +1,3 @@
-
 use super::{now_timestamp, StateManager};
 use crate::core::models::InstalledInfo;
 
@@ -20,6 +19,11 @@ impl StateManager {
 
     pub fn mark_removed(&mut self, key: &str) {
         self.installed.remove(key);
+        self.save();
+    }
+
+    pub fn mark_update_checked(&mut self, key: &str) {
+        self.entry(key).last_update_check = now_timestamp();
         self.save();
     }
 

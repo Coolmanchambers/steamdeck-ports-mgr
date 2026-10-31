@@ -1,4 +1,4 @@
-//! Fork: Settings > Ports folder..., the "ports folder is not available" message at startup, the move
+﻿//! Fork: Settings > Ports folder..., the "ports folder is not available" message at startup, the move
 //! of installed ports to a new ports folder, and the old-copy prompts. The rules live in
 //! `crate::fork::ports_folder`, the engine in `crate::fork::port_mover` and the lists in
 //! `crate::fork::ports_folder_view` (all tested without UI); this file draws them and runs the copies
@@ -18,7 +18,7 @@
 //! - `choose_folder(app, router)` and `consider(app, router, folder)`: the whole ports folder change
 //!   (picker, checks, create, move, switch, old-copy prompts).
 
-use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot};
+use super::dialogs::{build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog_or, open_message_dialog, set_picker_items, DialogSlot};
 use super::folder_picker_screen::open_folder_picker;
 use super::page_dialog::{show_page, show_page_handle, Handlers};
 use super::state::AppState;
@@ -91,8 +91,8 @@ fn open_model(app: &Rc<AppState>, router: &Router, title: &str, model: ListModel
 
 /// A confirm dialog whose Cancel (and B) runs `on_cancel` instead of only closing.
 fn confirm_or(app: &Rc<AppState>, router: &Router, title: &str, text: String, confirm: &str, on_confirm: impl Fn(&Rc<AppState>, &Router) + 'static, on_cancel: fn(&Rc<AppState>, &Router)) {
-    open_confirm_dialog(app, router, title.into(), format!("{text}\n").into(), confirm.into(), on_confirm);
-    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
+    open_confirm_dialog_or(app, router, title.into(), format!("{text}\n").into(), confirm.into(), on_confirm, on_cancel);
+    if let DialogSlot::TwoButton(d) = &*app.dialog_nav.dialogs.borrow() {
         let (app, router) = (app.clone(), router.clone());
         d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
             close_current_dialog(&app, &router);

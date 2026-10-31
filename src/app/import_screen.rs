@@ -1,4 +1,4 @@
-//! "Import ports..." (Settings menu, and step c of the setup wizard): finds ports installed outside the
+﻿//! "Import ports..." (Settings menu, and step c of the setup wizard): finds ports installed outside the
 //! ports folder and moves them in. It replaces "Adopt installed ports".
 //!
 //! The user sees cards, not lists: a page of what was found, one card per port to confirm, and one page to
@@ -18,7 +18,7 @@
 //! previous page, not out of the flow.
 
 use super::dialogs::{
-    build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, set_picker_items, DialogSlot,
+    build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog_or, open_message_dialog, set_picker_items, DialogSlot,
 };
 use super::folder_picker_screen::open_folder_picker;
 use super::page_dialog::{show_page, show_page_handle, Handlers};
@@ -153,11 +153,12 @@ pub(super) fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, tex
         }
         return;
     }
-    open_confirm_dialog(app, router, title.into(), padded(text).into(), label.into(), on_confirm);
-    if let DialogSlot::Confirm(d) = &*app.dialog_nav.dialogs.borrow() {
+    let button_cancel = on_cancel.clone();
+    open_confirm_dialog_or(app, router, title.into(), padded(text).into(), label.into(), on_confirm, move |app, router| button_cancel(app, router));
+    if let DialogSlot::TwoButton(d) = &*app.dialog_nav.dialogs.borrow() {
         if preselect_cancel {
             d.set_selected_index(1);
-            app.dialog_nav.confirm_nav_index.set(1);
+            app.dialog_nav.two_button_nav_index.set(1);
         }
         let (app, router) = (app.clone(), router.clone());
         let (b_app, b_router, b_cancel) = (app.clone(), router.clone(), on_cancel.clone());

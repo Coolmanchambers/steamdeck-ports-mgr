@@ -224,11 +224,12 @@ impl List {
 }
 
 /// Whether Play's own update check is due for an installed port: "check for updates" on, the port follows a GitHub or
-/// GitLab release, the port's own update switch on (no record counts as on), and the install older than the time
-/// Play waits before asking again. Play and the home screen both ask this.
-pub fn update_check_due(release_sync: bool, source: &crate::core::models::SourceType, port_update_on: Option<bool>, installed_at: &str) -> bool {
+/// GitLab release, the port's own update switch on (no record counts as on), and the last check (`last_update_check`,
+/// empty = never) older than the time Play waits before asking again (12 h since the upstream catch-up of
+/// 2026-10-31; before it was 24 h since the install). Play and the home screen both ask this.
+pub fn update_check_due(release_sync: bool, source: &crate::core::models::SourceType, port_update_on: Option<bool>, last_update_check: &str) -> bool {
     use crate::core::models::SourceType;
-    release_sync && matches!(source, SourceType::Github | SourceType::Gitlab) && port_update_on.unwrap_or(true) && crate::core::state::is_stale_for_update_check(installed_at)
+    release_sync && matches!(source, SourceType::Github | SourceType::Gitlab) && port_update_on.unwrap_or(true) && crate::core::state::is_due_for_update_check(last_update_check)
 }
 
 /// The home screen asks for updates at most this often (and only when "check for updates" is on).
@@ -395,7 +396,8 @@ mod tests {
         assert!(!update_check_due(true, &SourceType::Github, Some(false), old), "the port's own switch off");
         assert!(!update_check_due(true, &SourceType::DirectUrl, Some(true), old), "no release to compare with");
         let just_now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        assert!(!update_check_due(true, &SourceType::Github, Some(true), &just_now), "installed a moment ago");
+        assert!(!update_check_due(true, &SourceType::Github, Some(true), &just_now), "checked a moment ago");
+        assert!(update_check_due(true, &SourceType::Github, Some(true), ""), "never checked");
     }
 
     #[test]
