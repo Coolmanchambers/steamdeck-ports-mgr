@@ -336,16 +336,11 @@ fn gather(i: DiskInput) -> (DiskFacts, super::checkup_screen::PortSys) {
         .map(|e| (e.file_name().to_string_lossy().into_owned(), crate::fork::save_restore::tree_size_capped(&e.path(), u64::MAX / 2, 50_000).0))
         .collect();
     previous.sort();
-    let mut inside: Vec<String> = archives_in(dir);
-    for m in &mine {
-        if let Some(dest) = m.dest.as_ref().filter(|d| d.starts_with(dir)) {
-            let name = file_name(dest);
-            if !inside.contains(&name) {
-                inside.push(name);
-            }
-        }
-    }
-    let files = model::FilesFacts { dir: dir.clone(), size: Some(size), size_capped, previous, game_files_inside: inside };
+    // What an uninstall keeps (Saves Backup/Kept files): the same plan the uninstall runs.
+    let keep_items = crate::fork::uninstall_keep::plan(port, dir, Some(&i.config_dir));
+    let keep = crate::fork::uninstall_keep::KeepSummary::of(&keep_items, dir);
+    let kept_dir = crate::fork::uninstall_keep::kept_dir_for(&i.saves_backup_dir, &port.folder);
+    let files = model::FilesFacts { dir: dir.clone(), size: Some(size), size_capped, previous, keep, kept_dir };
 
     let disk = DiskFacts { checkup: None, program, saves, settings, game_files, steam, files };
     (disk, i.look.gather())
@@ -374,26 +369,6 @@ fn count_files(dir: &Path, cap: usize) -> (usize, bool) {
         }
     }
     (n, false)
-}
-
-/// The game archives a port makes from your game files (`.o2r`, `.otr`), two levels deep.
-fn archives_in(dir: &Path) -> Vec<String> {
-    let is_archive = |p: &Path| p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("o2r") || e.eq_ignore_ascii_case("otr"));
-    let mut out = Vec::new();
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        if p.is_file() && is_archive(&p) {
-            out.push(file_name(&p));
-        } else if p.is_dir() && !file_name(&p).starts_with('.') {
-            for f in std::fs::read_dir(&p).into_iter().flatten().flatten() {
-                if f.path().is_file() && is_archive(&f.path()) {
-                    out.push(file_name(&f.path()));
-                }
-            }
-        }
-    }
-    out.sort();
-    out
 }
 
 /// The backups that hold this port's saves (its own zips, and the all-ports zips that have its folder) and when the newest

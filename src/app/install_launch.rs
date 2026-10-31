@@ -325,11 +325,15 @@ pub(crate) fn delete_port(app: &Rc<AppState>, router: &Router, port: &Port) {
     if dialog_is_open(app) || installing || port.user_managed || is_port_running(app, port.key()) {
         return;
     }
-    match crate::core::installer::uninstall_port(port, &app.paths.library_dir(), &app.paths.saves_backup_dir) {
-        Ok(()) => {
+    // Fork: game files and older versions are kept (fork::uninstall_keep); the message says where they went.
+    match crate::core::installer::uninstall_port_keeping(port, &app.paths.library_dir(), &app.paths.saves_backup_dir, Some(&app.paths.config_dir)) {
+        Ok(kept) => {
             app.state.borrow_mut().mark_removed(port.key());
             app.refresh_current_view();
             app.refresh_tray_recent_games();
+            if let Some(kept) = kept {
+                open_message_dialog(app, router, &format!("{} was uninstalled", port.display_name()), &kept.line());
+            }
         }
         Err(message) => open_message_dialog(app, router, &tr!(app).invoke_dialog_title_uninstall_error(), &message),
     }

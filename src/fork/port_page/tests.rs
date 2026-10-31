@@ -323,3 +323,28 @@ fn the_project_link_is_a_web_page_never_a_download() {
     assert_eq!(project_url(&port_of(serde_json::json!({"name": "C", "folder": "c", "source": "https://example.com/c.zip", "website": "https://c.example"}))).as_deref(), Some("https://c.example"));
     assert_eq!(project_url(&port_of(serde_json::json!({"name": "D", "folder": "d", "source": "https://example.com/d.zip", "website": "file:///etc/passwd"}))), None);
 }
+
+#[test]
+fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
+    let places = deck_places();
+    let keep = crate::fork::uninstall_keep::KeepSummary { game_files: 3, keys_and_dumps: 0, older_versions: 1, names: vec!["oot.o2r".into(), "oot-mq.o2r".into(), "zelda.z64".into()] };
+    let f = FilesFacts {
+        dir: "/home/deck/Ports/shipwright".into(),
+        size: Some(300_000_000),
+        keep,
+        kept_dir: "/home/deck/Saves Backup/Kept files/shipwright".into(),
+        ..FilesFacts::default()
+    };
+    let saves = SavesFacts::default();
+    let page = uninstall_page(&port(), Some(&f), Some(&saves), &places);
+    assert!(page.facts.iter().any(|l| l.starts_with("3 game files and 1 older version will be moved to Kept files, saves are backed up.")), "{:?}", page.facts);
+    assert!(page.facts.iter().any(|l| l.contains("Kept files") && l.contains("shipwright")), "{:?}", page.facts);
+    assert!(page.paragraphs.iter().any(|l| l == "Kept: oot.o2r, oot-mq.o2r, zelda.z64."), "{:?}", page.paragraphs);
+    assert!(page.paragraphs.iter().any(|l| l.starts_with("The rest of its folder is deleted")), "{:?}", page.paragraphs);
+    let go = page.options.iter().find(|o| o.action == Act::UninstallYes).unwrap();
+    assert_eq!(go.detail, "Keep the game files, delete the rest now");
+
+    let plain = uninstall_page(&port(), Some(&FilesFacts { dir: "/home/deck/Ports/dusk".into(), ..FilesFacts::default() }), Some(&saves), &places);
+    assert!(plain.facts.iter().all(|l| !l.contains("Kept files")));
+    assert!(plain.paragraphs.iter().any(|l| l.starts_with("Its folder is deleted")));
+}

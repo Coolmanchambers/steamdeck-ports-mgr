@@ -258,8 +258,10 @@ pub struct FilesFacts {
     pub size_capped: bool,
     /// Older versions kept in `.previous`: their names and sizes.
     pub previous: Vec<(String, u64)>,
-    /// Game files inside the port's folder (archives it made, copies connected into it): an uninstall deletes them too.
-    pub game_files_inside: Vec<String>,
+    /// What an uninstall moves to Kept files (`fork::uninstall_keep`): game files, keys and dumps, older versions.
+    pub keep: crate::fork::uninstall_keep::KeepSummary,
+    /// Where they go: `<Saves Backup>/Kept files/<port folder>`.
+    pub kept_dir: PathBuf,
 }
 
 /// What the worker read from the disk.
@@ -752,17 +754,29 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
         page.paragraphs.push(format!("{} is a port you added yourself: the app never deletes its folder. Remove it in Desktop Mode if you want it gone.", p.name));
         return page;
     }
+    let saves_kept = !saves.is_some_and(|s| s.unknown_on_linux);
+    let keeps = files.and_then(|f| f.keep.what());
     match files {
         Some(f) => {
             let size = f.size.map(|s| format!(" ({}{})", if f.size_capped { "over " } else { "" }, size_text(s))).unwrap_or_default();
-            page.paragraphs.push(format!("Its folder is deleted: {}{size}.", human_path(&f.dir, places)));
-            if !f.game_files_inside.is_empty() {
-                page.fact(Mark::Problem, format!("These game files in its folder go with it: {}. Keep a copy first if you need them.", f.game_files_inside.join(", ")));
+            if let Some(what) = &keeps {
+                let mut line = format!("{what} will be moved to Kept files");
+                if saves_kept {
+                    line.push_str(", saves are backed up");
+                }
+                line.push_str(&format!(". Kept files: {}.", human_path(&f.kept_dir, places)));
+                page.fact(Mark::Done, line);
+                if !f.keep.names.is_empty() {
+                    page.paragraphs.push(format!("Kept: {}.", f.keep.names.join(", ")));
+                }
+                page.paragraphs.push(format!("The rest of its folder is deleted: {}{size}.", human_path(&f.dir, places)));
+            } else {
+                page.paragraphs.push(format!("Its folder is deleted: {}{size}.", human_path(&f.dir, places)));
             }
         }
-        None => page.paragraphs.push("Its folder is deleted.".into()),
+        None => page.paragraphs.push("Its folder is deleted. Game files, keys and older versions in it are moved to Kept files first.".into()),
     }
-    if saves.is_some_and(|s| s.unknown_on_linux) {
+    if !saves_kept {
         page.fact(Mark::Problem, "Saves are not kept: no Linux save folder is known for this port. Copy any save inside its folder yourself first.");
     } else {
         page.paragraphs.push("Saves inside its folder are copied to Saves Backup first and come back if you install it again. Saves kept elsewhere are not touched.".into());
@@ -771,7 +785,7 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
     let mut keep = option("Keep it", "Nothing is changed", Act::Back);
     keep.recommended = true;
     page.options.push(keep);
-    let go = option("Uninstall", "Delete the port's folder now", Act::UninstallYes);
+    let go = option("Uninstall", if keeps.is_some() { "Keep the game files, delete the rest now" } else { "Delete the port's folder now" }, Act::UninstallYes);
     page.options.push(if p.running || p.busy { disabled(PageOption { detail: "Not while it runs, installs or restores".into(), ..go }) } else { go });
     page
 }

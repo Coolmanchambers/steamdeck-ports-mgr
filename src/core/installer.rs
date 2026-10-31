@@ -515,15 +515,25 @@ pub(crate) fn apply_archive(
     Ok(())
 }
 
+// Fork: the app calls `uninstall_port_keeping`; this keeps upstream's tests and name.
+#[cfg(test)]
 pub fn uninstall_port(port: &Port, library_dir: &Path, saves_backup_dir: &Path) -> Result<(), String> {
+    uninstall_port_keeping(port, library_dir, saves_backup_dir, None).map(|_| ())
+}
+
+// Fork: game files, `.o2r` archives, keys, dumps and `.previous/` are moved to Saves Backup/Kept files before the
+// folder is removed (fork::uninstall_keep); `config_dir` lets it read the port's connected game files.
+pub fn uninstall_port_keeping(port: &Port, library_dir: &Path, saves_backup_dir: &Path, config_dir: Option<&Path>) -> Result<Option<crate::fork::uninstall_keep::Kept>, String> {
     let dest_dir = safe_join(library_dir, &port.folder)?;
+    let mut kept = None;
     if dest_dir.exists() {
         if !save_backup::preserve_all_before_uninstall(port, saves_backup_dir, &dest_dir) {
             return Err("Couldn't back up the local save (disk full or permission denied?) -- uninstall cancelled to avoid losing it.".to_string());
         }
+        kept = crate::fork::uninstall_keep::keep_before_uninstall(port, &dest_dir, config_dir, saves_backup_dir)?;
         fs::remove_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     }
-    Ok(())
+    Ok(kept)
 }
 
 pub fn is_installed(port: &Port, library_dir: &Path) -> bool {

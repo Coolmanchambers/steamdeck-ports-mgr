@@ -49,5 +49,6 @@ pub mod steam_queue;
 pub mod steam_sync;
 pub mod steam_user;
 pub mod store;
+pub mod uninstall_keep;
 pub mod vdf;
 pub mod versioned;

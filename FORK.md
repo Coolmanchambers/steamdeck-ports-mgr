@@ -1308,6 +1308,22 @@ the Home button, X on Home), `src/app/dialogs.rs` (two helpers `pub(crate)`, Web
 `ui/app-window.slint` (callbacks, the Home button, row right-click, B hint in the title), `ui/card-grid.slint` (right-click),
 `tools/smoke-test.sh` (Port page and Home button checks).
 
+## Uninstall keeps game files (`src/fork/uninstall_keep.rs`)
+
+Upstream's uninstall backs up the saves and then deletes the whole port folder. The fork never deletes game files, so
+before the folder goes, these are moved to `<Saves Backup>/Kept files/<port folder>/<time>/` (relative paths kept) with a
+`kept.json` manifest (source, kind, size, time): `.o2r`/`.otr` archives; game files connected into the folder
+(`rom_library.json`) or named as required by the port's entry; files with a console ROM or disc image extension (not the
+generic `bin`, `zip`, `7z`, `dat`, `img`, `md`, `swf` a port ships as data); keys (`*.keys`); BIOS and boot dumps; the
+`.previous/` folder of older versions. Links are never followed: removing the folder removes a link, not its target. A
+move that fails puts back what had moved and cancels the uninstall with nothing deleted. The Port page's Uninstall
+confirm page says what will be kept and where ("3 game files and 1 older version will be moved to Kept files, saves are
+backed up"), and after the uninstall a message names the Kept files folder (Info's uninstall too). Kept files are not
+offered back on reinstall yet.
+
+Upstream files touched (`// Fork:` comments): `src/core/installer.rs` (`uninstall_port_keeping`; `uninstall_port` is now
+a test-only wrapper), `src/app/install_launch.rs` (`delete_port` passes the config folder and shows the result).
+
 ## Fixes to upstream behavior
 
 Changes that fix upstream defects. The first ones fixed gaps found while validating Tim's catalog
