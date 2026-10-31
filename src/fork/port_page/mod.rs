@@ -782,14 +782,16 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
             let gone = f.size.map(|s| s.saturating_sub(f.keep.bytes));
             let size = gone.map(|s| format!(" ({}{})", if f.size_capped { "over " } else { "" }, size_text(s))).unwrap_or_default();
             if let Some(why) = &blocked {
-                page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything until the record can be read (Settings > Ports > Game files)."));
+                page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything until the record can be read. To go on, fix or remove rom_library.json in the app's config folder (Desktop Mode)."));
             } else if let Some(what) = &keeps {
                 let mut line = format!("{what} will be moved to Kept files");
                 if saves_kept {
                     line.push_str(", saves are backed up");
                 }
                 line.push_str(&format!(". Kept files: {}.", human_path(&f.kept_dir, places)));
-                page.fact(Mark::Done, line);
+                // One sequence of paragraphs (the page draws paragraphs above its facts box): what moves, which files, that
+                // they are not put back, then what is deleted.
+                page.paragraphs.push(line);
                 if !f.keep.names.is_empty() {
                     page.paragraphs.push(format!("Kept: {}.", f.keep.names.join(", ")));
                 }
@@ -838,6 +840,14 @@ pub fn notice_page(p: &PortFacts, card: Card, title: &str, paragraphs: Vec<Strin
     page.title = title.to_string();
     page.paragraphs = paragraphs;
     page.initial = Focus::Button(LEFT);
+    page
+}
+
+/// The page after the port is gone (uninstalled): its one button closes the Port page, so it says Close, not Back.
+pub fn done_page(p: &PortFacts, card: Card, title: &str, paragraphs: Vec<String>) -> Page<Act> {
+    let mut page = notice_page(p, card, title, paragraphs);
+    page.buttons = [Some(PageButton { label: "Close".to_string(), action: Act::Back }), None, None, None];
+    page.back_hint = "Close".to_string();
     page
 }
 

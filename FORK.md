@@ -1315,7 +1315,8 @@ before the folder goes, these are moved to `<Saves Backup>/Kept files/<port fold
 `kept.json` manifest (source, kind, size, time): `.o2r`/`.otr` archives; game files connected into the folder
 (`rom_library.json`) or named as required by the port's entry; ROM and disc images by extension, cue sheets (`.cue`,
 `.gdi`, `.toc`) and the tracks they name; keys (`*.keys`); BIOS, boot and flash dumps (`*bios*`, `*boot*`, `*flash*`,
-`scph*`); any other generic data file (`bin`, `img`, `zip`, `7z`, `dat`, `swf`, `md`) over 1 MB, as "maybe game data"; the
+`scph*`, `sega_*`, `mpr-*`, `panafz*`, `*neogeo*`, `*kick*`); any other generic data file (`bin`, `img`, `zip`, `7z`, `dat`,
+`swf`, `md`) of 256 KB or more, as "maybe game data"; the
 `.previous/` folder of older versions. Links are never followed: removing the folder removes a link, not its target. A
 record of connected game files that cannot be read stops the uninstall before anything moves. A move that fails puts back
 what had moved (a half-made copy across drives is removed first) and cancels the uninstall with nothing deleted.

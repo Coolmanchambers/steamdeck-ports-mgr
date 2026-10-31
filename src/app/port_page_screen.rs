@@ -820,7 +820,8 @@ fn uninstall(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, port: &Port) 
             }
         };
         if is_current(&s) {
-            let page = model::notice_page(&port_facts(&app, &s, &port), Card::Uninstall, &title, text);
+            let facts = port_facts(&app, &s, &port);
+            let page = if gone { model::done_page(&facts, Card::Uninstall, &title, text) } else { model::notice_page(&facts, Card::Uninstall, &title, text) };
             show_built(&app, &router, &s, if gone { Screen::Done(Card::Uninstall) } else { Screen::Notice(Card::Uninstall) }, page);
         } else if !dialog_is_open(&app) {
             super::dialogs::open_message_dialog(&app, &router, &title, &text.join("\n\n"));

@@ -7,10 +7,11 @@
 //!   names as required;
 //! - files with a console ROM or disc image extension (`rom_library::system::is_rom_extension`), and cue sheets
 //!   (`.cue`, `.gdi`, `.toc`) with the tracks they name;
-//! - keys (`*.keys`) and BIOS, boot and flash dumps (a ROM-like name with `bios`, `boot`, `flash`, or starting `scph`:
+//! - keys (`*.keys`) and BIOS, boot and flash dumps (a ROM-like name with `bios`, `boot`, `flash`, `kick`, `neogeo`, or
+//!   starting `scph`, `sega_`, `mpr-`, `panafz`: `sega_101.bin`, `panafz10.bin`, `neogeo.zip`, `kick31.rom`,
 //!   `dc_boot.bin`, `dc_flash.bin`, `scph1001.bin`);
 //! - a generic data file (`bin`, `img`, `zip`, `7z`, `dat`, `swf`, `md`) that none of the above names is kept when it is
-//!   over 1 MB, as "maybe game data" (a hand-placed disc image looks like this; the cost is disk space only);
+//!   of 256 KB or more, as "maybe game data" (a hand-placed disc image looks like this; the cost is disk space only);
 //! - the `.previous/` folder of older versions (`fork::versioned`).
 //!
 //! A link is never followed and never kept: removing the folder removes the link only, its target stays where it is.
@@ -33,8 +34,8 @@ pub const KEPT_DIR: &str = "Kept files";
 pub const MANIFEST: &str = "kept.json";
 /// How deep the walk looks inside the port folder.
 const MAX_DEPTH: usize = 8;
-/// A generic data file over this size is kept anyway.
-pub const MAYBE_GAME_DATA_BYTES: u64 = 1024 * 1024;
+/// A generic data file of this size or more is kept anyway (small BIOS dumps without a telling name are 256 KB and up).
+pub const MAYBE_GAME_DATA_BYTES: u64 = 256 * 1024;
 /// Cue sheets read for the tracks they name; bigger "sheets" are not sheets.
 const SHEET_MAX_BYTES: u64 = 1024 * 1024;
 
@@ -51,7 +52,7 @@ pub enum KeepKind {
     Key,
     /// A BIOS, boot or flash dump.
     Dump,
-    /// A generic data file over 1 MB that nothing names.
+    /// A generic data file of 256 KB or more that nothing names.
     MaybeGameData,
     /// The `.previous/` folder of older versions.
     Previous,
@@ -171,7 +172,7 @@ const GENERIC: [&str; 7] = ["bin", "zip", "7z", "dat", "img", "md", "swf"];
 const SHEETS: [&str; 3] = ["cue", "gdi", "toc"];
 
 fn is_dump_name(name: &str) -> bool {
-    name.contains("bios") || name.contains("boot") || name.contains("flash") || name.starts_with("scph")
+    name.contains("bios") || name.contains("boot") || name.contains("flash") || name.contains("kick") || name.contains("neogeo") || ["scph", "sega_", "mpr-", "panafz"].iter().any(|p| name.starts_with(p))
 }
 
 /// The kind of a file, or `None` for an ordinary program file. `name` is the file name, `named_by_sheet` says a cue
@@ -195,7 +196,7 @@ pub fn classify(name: &str, size: u64, named_by_sheet: bool) -> Option<KeepKind>
     if named_by_sheet {
         return Some(KeepKind::Rom);
     }
-    (size > MAYBE_GAME_DATA_BYTES).then_some(KeepKind::MaybeGameData)
+    (size >= MAYBE_GAME_DATA_BYTES).then_some(KeepKind::MaybeGameData)
 }
 
 /// Lowercase names of the files the port's entry says it needs, and the connected copies inside `dir`. An unreadable
@@ -572,6 +573,15 @@ mod tests {
         assert_eq!(k("dc_boot.bin"), Some(KeepKind::Dump));
         assert_eq!(k("dc_flash.bin"), Some(KeepKind::Dump));
         assert_eq!(classify("data.bin", 2 * 1024 * 1024, false), Some(KeepKind::MaybeGameData));
+        // Small BIOS dumps whose names say nothing of a BIOS: kept by name, whatever their size.
+        assert_eq!(classify("sega_101.bin", 512 * 1024, false), Some(KeepKind::Dump), "Saturn");
+        assert_eq!(classify("panafz10.bin", 1024 * 1024, false), Some(KeepKind::Dump), "3DO");
+        assert_eq!(classify("neogeo.zip", 10, false), Some(KeepKind::Dump), "Neo Geo");
+        assert_eq!(classify("kick31.rom", 10, false), Some(KeepKind::Dump), "Amiga kickstart");
+        assert_eq!(classify("mpr-17933.bin", 10, false), Some(KeepKind::Dump));
+        // Nameless generic files: 256 KB and up are kept, smaller ones are program data.
+        assert_eq!(classify("unknown.bin", MAYBE_GAME_DATA_BYTES, false), Some(KeepKind::MaybeGameData));
+        assert_eq!(classify("unknown.bin", MAYBE_GAME_DATA_BYTES - 1, false), None);
         assert_eq!(classify("track 02.bin", 10, true), Some(KeepKind::Rom));
         for plain in ["game.exe", "README.md", "config.bin", "assets.zip", "level.dat", "lib.so", "soh.appimage", "save.sav"] {
             assert_eq!(k(plain), None, "{plain}");

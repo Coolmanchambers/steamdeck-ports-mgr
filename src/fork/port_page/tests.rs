@@ -339,11 +339,13 @@ fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
     };
     let saves = SavesFacts::default();
     let page = uninstall_page(&port(), Some(&f), Some(&saves), &places);
-    assert!(page.facts.iter().any(|l| l.starts_with("3 game files and 1 older version will be moved to Kept files, saves are backed up.")), "{:?}", page.facts);
-    assert!(page.facts.iter().any(|l| l.contains("Kept files") && l.contains("shipwright")), "{:?}", page.facts);
-    assert!(page.paragraphs.iter().any(|l| l == "Kept: oot.o2r, oot-mq.o2r, zelda.z64."), "{:?}", page.paragraphs);
-    assert!(page.paragraphs.iter().any(|l| l == "The rest of its folder is deleted: Internal storage > Ports > shipwright (200 MB)."), "the kept files are not counted as deleted: {:?}", page.paragraphs);
-    assert!(page.paragraphs.iter().any(|l| l.starts_with("The app will not put them back when you reinstall")), "{:?}", page.paragraphs);
+    // One sequence, top to bottom: what moves and where, which files, not put back, then what is deleted.
+    let p = &page.paragraphs;
+    assert_eq!(p[0], "3 game files and 1 older version will be moved to Kept files, saves are backed up. Kept files: Internal storage > Saves Backup > Kept files > shipwright.", "{p:?}");
+    assert_eq!(p[1], "Kept: oot.o2r, oot-mq.o2r, zelda.z64.");
+    assert!(p[2].starts_with("The app will not put them back when you reinstall"), "{p:?}");
+    assert_eq!(p[3], "The rest of its folder is deleted: Internal storage > Ports > shipwright (200 MB).", "the kept files are not counted as deleted");
+    assert!(page.facts.is_empty(), "nothing about keeping sits below in the facts box: {:?}", page.facts);
     let go = page.options.iter().find(|o| o.action == Act::UninstallYes).unwrap();
     assert_eq!(go.detail, "Keep the game files, delete the rest now");
 
@@ -356,7 +358,7 @@ fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
 fn an_unreadable_game_files_record_disables_uninstall_and_says_why() {
     let f = FilesFacts { dir: "/home/deck/Ports/dusk".into(), keep_error: Some(crate::fork::uninstall_keep::UNREADABLE_RECORD.into()), ..FilesFacts::default() };
     let page = uninstall_page(&port(), Some(&f), Some(&SavesFacts::default()), &deck_places());
-    assert!(page.facts.iter().any(|l| l.starts_with("The game files record could not be read")), "{:?}", page.facts);
+    assert!(page.facts.iter().any(|l| l.starts_with("The game files record could not be read") && l.contains("fix or remove rom_library.json in the app's config folder (Desktop Mode)")), "{:?}", page.facts);
     let go = page.options.iter().find(|o| o.action == Act::UninstallYes).unwrap();
     assert!(!go.enabled);
 }
@@ -380,4 +382,12 @@ fn the_fix_card_says_busy_instead_of_looking_forever_while_another_job_runs() {
     assert_eq!(summary(Card::Fix, &p, Some(&busy), &places), CHECKUP_BUSY);
     let fine = DiskFacts { checkup: Some(("Everything looks fine".into(), 0)), ..DiskFacts::default() };
     assert_eq!(summary(Card::Fix, &p, Some(&fine), &places), "Everything looks fine");
+}
+
+#[test]
+fn the_page_after_an_uninstall_says_close_because_it_leaves_the_port_page() {
+    let page = done_page(&port(), Card::Uninstall, "Dusklight was uninstalled", vec!["x".into()]);
+    assert_eq!(page.buttons[LEFT].as_ref().map(|b| b.label.as_str()), Some("Close"));
+    assert_eq!(page.back_hint, "Close");
+    assert_eq!(notice_page(&port(), Card::Uninstall, "Nothing was removed", vec![]).buttons[LEFT].as_ref().map(|b| b.label.as_str()), Some("Back"));
 }
