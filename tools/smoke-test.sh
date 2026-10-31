@@ -282,7 +282,7 @@ if [ "$alive" = yes ]; then
         tx=$(( X + 12 + (WIDTH - 24) * 3 / (2 * cols) )); ty=$(( Y + 200 ))
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.3
         xdotool mousemove $((X + 40)) $((Y + 600)); sleep 0.3; xdotool mousemove "$tx" "$ty"; sleep 0.3; xdotool mousemove $((tx + 5)) $((ty + 5)); sleep 0.3; xdotool click 3
-        pp=$(find_window '^Port: ') || pp=""
+        pp=$(find_window '^Deck Ports Manager: Port: ') || pp=""
         sleep 2
         import -window root "$OUT/port-page.png" 2>/dev/null
         check "a right-click on a Home tile opens its Port page" '[ -n "$pp" ] && kill -0 "$APP" 2>/dev/null && grep -q "^port page: opened for" "$OUT/app.log"'
@@ -290,10 +290,10 @@ if [ "$alive" = yes ]; then
             press_keys "$pp" Down Down Return; sleep 1.5
             pc=$(find_window ': Program to start$') || pc=""
             check "a card of the Port page opens its own page (Program to start)" '[ -n "$pc" ]'
-            press_keys "$(find_window '^Port: ')" Escape; sleep 1.2
-            check "B on a card page returns to the Port page" '[ -z "$(xdotool search --onlyvisible --name ": Program to start$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Port: " 2>/dev/null)" ]'
-            press_keys "$(find_window '^Port: ')" Escape; sleep 1.5
-            check "B on the Port page returns to Home" '[ -z "$(xdotool search --onlyvisible --name "^Port: " 2>/dev/null)" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
+            press_keys "$(find_window '^Deck Ports Manager: Port: ')" Escape; sleep 1.2
+            check "B on a card page returns to the Port page" '[ -z "$(xdotool search --onlyvisible --name ": Program to start$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Port: " 2>/dev/null)" ]'
+            press_keys "$(find_window '^Deck Ports Manager: Port: ')" Escape; sleep 1.5
+            check "B on the Port page returns to Home" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Port: " 2>/dev/null)" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
         fi
         # The lists' Home button: Add a port > Deck-ready ports, type a search, click "< Home" (top left) -> Home.
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key --delay 250 Right Right Right Right Right Right Right Return; sleep 1.5

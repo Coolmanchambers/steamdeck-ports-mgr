@@ -114,6 +114,18 @@ pub fn window_title(name: &str, card: Option<Card>) -> String {
     }
 }
 
+/// The port a Port page window is about, from its window title ("Port: 3D Pinball for Windows: Space Cadet: Saves: Backup
+/// made" is "3D Pinball for Windows: Space Cadet"): the text after "Port: " up to the first card title. For the main
+/// window's layer, which names the page that is open ("Port: Dusklight is open"). `None` for any other window.
+pub fn port_in_window_title(title: &str) -> Option<String> {
+    let rest = title.strip_prefix(&format!("{TITLE}: "))?;
+    let parts: Vec<&str> = rest.split(": ").collect();
+    let upto = parts.iter().skip(1).position(|p| Card::ALL.iter().any(|c| c.title() == *p)).map_or(parts.len(), |i| i + 1);
+    let name = parts[..upto].join(": ");
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 // -- Facts ----------------------------------------------------------------------------------------------------
 
 /// What "Check for an update now" found this time the page was open.

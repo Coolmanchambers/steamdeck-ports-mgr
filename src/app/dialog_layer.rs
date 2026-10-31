@@ -59,6 +59,10 @@ fn layer_text(open: &Open) -> String {
         Open::Question => "A question is open".into(),
         Open::Message => "A message is open".into(),
         Open::Titled(title) => {
+            // A Port page names its port, never its card ("Port: Dusklight is open").
+            if let Some(port) = crate::fork::port_page::port_in_window_title(title) {
+                return format!("{}: {port} is open", crate::fork::port_page::TITLE);
+            }
             let name = title.split(':').next().unwrap_or("").trim();
             if name.is_empty() {
                 "A window of this app is open".into()
@@ -206,6 +210,10 @@ mod tests {
         assert_eq!(layer_text(&titled("Settings: Ports")), "Settings is open");
         assert_eq!(layer_text(&titled("Import ports: nothing found")), "Import ports is open");
         assert_eq!(layer_text(&titled(": odd")), "A window of this app is open");
+        // A Port page names its port (whose own name may hold ':'), never its card or the card's step.
+        assert_eq!(layer_text(&titled("Port: Dusklight")), "Port: Dusklight is open");
+        assert_eq!(layer_text(&titled("Port: 3D Pinball for Windows: Space Cadet: Saves: Backup made")), "Port: 3D Pinball for Windows: Space Cadet is open");
+        assert_eq!(layer_text(&titled("Port: Dusklight: Uninstall")), "Port: Dusklight is open");
     }
 
     #[test]
