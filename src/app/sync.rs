@@ -1,4 +1,3 @@
-
 use super::dialogs::{open_message_dialog, tr};
 use super::events::{lock, AppEvent};
 use super::state::AppState;
@@ -38,10 +37,8 @@ pub(crate) fn start_self_update_check(app: &AppState) {
     };
     let events = app.events.clone();
     std::thread::spawn(move || {
-        if let Ok((_, Some(latest_date))) = crate::core::github_api::fetch_latest_tag_and_date(SELF_REPO, github_token.as_deref()) {
-            if is_newer_date(&latest_date, APP_VERSION) {
-                lock(&events).push(AppEvent::SelfUpdateAvailable);
-            }
+        if let Ok((_, Some(latest_date))) = crate::core::forge::Forge::Github.fetch_latest_tag_and_date(SELF_REPO, github_token.as_deref(), None) {
+            lock(&events).push(AppEvent::SelfUpdateChecked { available: is_newer_date(&latest_date, APP_VERSION) });
         }
     });
 }

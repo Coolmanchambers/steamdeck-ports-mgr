@@ -1,4 +1,3 @@
-
 use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
 use super::install_launch::{delete_port, open_favorite_exe_picker, open_version_picker, start_extra_install, start_install};
@@ -12,8 +11,8 @@ use crate::ui::font_sizing::FontSizes;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::ui::theme::{SemanticPalette, ThemeColors, ThemeConfig};
 use crate::{
-    AppWindow, ConfirmDialog, ErrorDialog, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog, SearchListDialog,
-    SemanticColors, Theme, Tr,
+    AppWindow, InfoDialog, ListPickerDialog, MessageDialog, PickerItem, ProgressDialog, SearchListDialog, SemanticColors, Theme, Tr,
+    TwoButtonDialog,
 };
 use serde_json::Value;
 use slint::ComponentHandle;
@@ -138,11 +137,30 @@ fn horizontal(delta: i32) -> (i32, i32) {
     (delta, 0)
 }
 
-fn dialog_context(app: &AppState) -> (FontSizes, slint::SharedString, i32, i32) {
+struct DialogContext {
+    fonts: FontSizes,
+    family: slint::SharedString,
+    work_w: i32,
+    work_h: i32,
+    big_mode: bool,
+}
+
+fn dialog_context(app: &AppState) -> DialogContext {
     let window = app.window();
-    let fonts = if window.get_big_mode() { app.window_geometry.fullscreen_mode.borrow().fonts } else { app.window_geometry.normal_mode.borrow().fonts };
+    let big_mode = window.get_big_mode();
+    let fonts = if big_mode { app.window_geometry.fullscreen_mode.borrow().fonts } else { app.window_geometry.normal_mode.borrow().fonts };
     let (_, _, work_w, work_h) = chrome::work_area_under_cursor();
-    (fonts, window.get_font_family(), work_w, work_h)
+    DialogContext { fonts, family: window.get_font_family(), work_w, work_h, big_mode }
+}
+
+fn main_sized_dialog_size(app: &AppState, ctx: &DialogContext) -> (i32, i32) {
+    if !ctx.big_mode {
+        return main_window_size(app);
+    }
+    let scale = app.window_geometry.scale.get();
+    let normal = app.window_geometry.normal_mode.borrow();
+    let (w, h) = ((normal.logical_width * scale) as i32, (normal.logical_height * scale) as i32);
+    crate::ui::dialog_geometry::main_sized_dialog_size(w, h, ctx.work_w, ctx.work_h, true)
 }
 
 fn revert_theme_preview(app: &Rc<AppState>) {
@@ -154,8 +172,7 @@ fn revert_theme_preview(app: &Rc<AppState>) {
 pub(crate) enum DialogSlot {
     None,
     Message(MessageDialog),
-    Confirm(ConfirmDialog),
-    Error(ErrorDialog),
+    TwoButton(TwoButtonDialog),
     Info(InfoDialog),
     Progress(ProgressDialog),
     Picker(ListPickerDialog),
@@ -167,8 +184,7 @@ impl DialogSlot {
         match self {
             DialogSlot::None => None,
             DialogSlot::Message(d) => Some(d.window()),
-            DialogSlot::Confirm(d) => Some(d.window()),
-            DialogSlot::Error(d) => Some(d.window()),
+            DialogSlot::TwoButton(d) => Some(d.window()),
             DialogSlot::Info(d) => Some(d.window()),
             DialogSlot::Progress(d) => Some(d.window()),
             DialogSlot::Picker(d) => Some(d.window()),
@@ -180,8 +196,7 @@ impl DialogSlot {
         match self {
             DialogSlot::None => DialogSlot::None,
             DialogSlot::Message(d) => DialogSlot::Message(d.clone_strong()),
-            DialogSlot::Confirm(d) => DialogSlot::Confirm(d.clone_strong()),
-            DialogSlot::Error(d) => DialogSlot::Error(d.clone_strong()),
+            DialogSlot::TwoButton(d) => DialogSlot::TwoButton(d.clone_strong()),
             DialogSlot::Info(d) => DialogSlot::Info(d.clone_strong()),
             DialogSlot::Progress(d) => DialogSlot::Progress(d.clone_strong()),
             DialogSlot::Picker(d) => DialogSlot::Picker(d.clone_strong()),
@@ -259,13 +274,13 @@ pub(crate) fn dialog_is_open(app: &AppState) -> bool {
 
 pub(crate) fn open_message_dialog(app: &Rc<AppState>, router: &Router, title: &str, message: &str) {
     close_current_dialog(app, router);
-    let (fonts, family, work_w, work_h) = dialog_context(app);
+    let ctx = dialog_context(app);
     let (dw, dh) = crate::ui::dialog_geometry::message_dialog_size(
-        work_w, work_h, &family, fonts.item_font_px, fonts.title_bar_height_px, app.window_geometry.border_width.get(), message,
+        ctx.work_w, ctx.work_h, &ctx.family, ctx.fonts.item_font_px, ctx.fonts.title_bar_height_px, app.window_geometry.border_width.get(), message, ctx.big_mode,
     );
     let (x, y) = centered_position(app, dw, dh);
     let Ok(dialog) = MessageDialog::new() else { return };
-    style_dialog!(dialog, app, fonts);
+    style_dialog!(dialog, app, ctx.fonts);
     dialog.set_dialog_title(title.into());
     dialog.set_message_text(message.into());
     position_dialog!(dialog, app, dw, dh, x, y);
@@ -275,9 +290,9 @@ pub(crate) fn open_message_dialog(app: &Rc<AppState>, router: &Router, title: &s
 }
 
 pub(crate) fn update_progress_dialog(app: &AppState, dialog: &ProgressDialog, status: &str) {
-    let (fonts, family, work_w, work_h) = dialog_context(app);
+    let ctx = dialog_context(app);
     let (dw, dh) = crate::ui::dialog_geometry::progress_dialog_size(
-        work_w, work_h, &family, fonts.item_font_px, fonts.title_bar_height_px, app.window_geometry.border_width.get(), status,
+        ctx.work_w, ctx.work_h, &ctx.family, ctx.fonts.item_font_px, ctx.fonts.title_bar_height_px, app.window_geometry.border_width.get(), status, ctx.big_mode,
     );
     let (x, y) = centered_position(app, dw, dh);
     dialog.set_status_text(status.into());
@@ -286,7 +301,7 @@ pub(crate) fn update_progress_dialog(app: &AppState, dialog: &ProgressDialog, st
 
 pub(crate) fn open_progress_dialog(app: &Rc<AppState>, router: &Router, title: &str, status: &str) {
     close_current_dialog(app, router);
-    let (fonts, ..) = dialog_context(app);
+    let fonts = dialog_context(app).fonts;
     let Ok(dialog) = ProgressDialog::new() else { return };
     style_dialog!(dialog, app, fonts);
     dialog.set_dialog_title(title.into());
@@ -296,37 +311,70 @@ pub(crate) fn open_progress_dialog(app: &Rc<AppState>, router: &Router, title: &
     finish_dialog_open(app, router, DialogSlot::Progress(dialog));
 }
 
-pub(crate) fn open_error_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
+struct DialogChoice<F: Fn(&Rc<AppState>, &Router) + 'static> {
+    label: slint::SharedString,
+    action: F,
+}
+
+fn open_two_button_dialog(
+    app: &Rc<AppState>,
+    router: &Router,
+    title: slint::SharedString,
+    message: slint::SharedString,
+    primary: DialogChoice<impl Fn(&Rc<AppState>, &Router) + 'static>,
+    secondary: DialogChoice<impl Fn(&Rc<AppState>, &Router) + 'static>,
+    info_shortcut: bool,
+) {
     close_current_dialog(app, router);
-    let (fonts, family, work_w, work_h) = dialog_context(app);
-    let message = tr!(app).invoke_message_launch_failed(port.name.clone().into());
-    let (dw, dh) = crate::ui::dialog_geometry::error_dialog_size(
-        work_w, work_h, &family, fonts.item_font_px, fonts.title_bar_height_px, app.window_geometry.border_width.get(), &message,
+    let ctx = dialog_context(app);
+    let (dw, dh) = crate::ui::dialog_geometry::two_button_dialog_size(
+        ctx.work_w, ctx.work_h, &ctx.family, ctx.fonts.item_font_px, ctx.fonts.title_bar_height_px, app.window_geometry.border_width.get(), &message, ctx.big_mode,
     );
     let (x, y) = centered_position(app, dw, dh);
-    let Ok(dialog) = ErrorDialog::new() else { return };
-    style_dialog!(dialog, app, fonts);
-    dialog.set_dialog_title(dialog.global::<Tr>().invoke_dialog_title_error_port(port.name.clone().into()));
+    let Ok(dialog) = TwoButtonDialog::new() else { return };
+    style_dialog!(dialog, app, ctx.fonts);
+    dialog.set_dialog_title(title);
     dialog.set_message_text(message);
+    dialog.set_primary_text(primary.label);
+    dialog.set_secondary_text(secondary.label);
+    dialog.set_info_shortcut(info_shortcut);
     position_dialog!(dialog, app, dw, dh, x, y);
-    app.dialog_nav.error_nav_index.set(0);
+    app.dialog_nav.two_button_nav_index.set(0);
     dialog.set_selected_index(0);
-    wire_nav_hovered!(dialog, app, error_nav_index);
+    wire_nav_hovered!(dialog, app, two_button_nav_index);
     wire_keyboard_nav!(dialog, app, vertical);
     {
-        let (app, router, port) = (app.clone(), router.clone(), port.clone());
-        dialog.on_reinstall_requested(move || {
+        let (app, router, action) = (app.clone(), router.clone(), primary.action);
+        dialog.on_primary_requested(move || {
             close_current_dialog(&app, &router);
-            start_install(&app, &router, port.clone(), None, None);
+            action(&app, &router);
         });
     }
     {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_info_requested(move || open_info_dialog(&app, &router, &port));
+        let (app, router, action) = (app.clone(), router.clone(), secondary.action);
+        dialog.on_secondary_requested(move || {
+            close_current_dialog(&app, &router);
+            action(&app, &router);
+        });
     }
     wire_dialog_close!(dialog, app, router);
     let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Error(dialog));
+    finish_dialog_open(app, router, DialogSlot::TwoButton(dialog));
+}
+
+pub(crate) fn open_error_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
+    let window = app.window();
+    let tr = window.global::<Tr>();
+    let reinstall_port = port.clone();
+    open_two_button_dialog(
+        app,
+        router,
+        tr.invoke_dialog_title_error_port(port.name.clone().into()),
+        tr.invoke_message_launch_failed(port.name.clone().into()),
+        DialogChoice { label: tr.invoke_label_reinstall(), action: move |app, router| start_install(app, router, reinstall_port.clone(), None, None) },
+        DialogChoice { label: tr.invoke_label_open_info(), action: move |app, router| open_info_dialog(app, router, &port) },
+        true,
+    );
 }
 
 fn open_confirm_dialog(
@@ -337,32 +385,8 @@ fn open_confirm_dialog(
     confirm_label: slint::SharedString,
     on_confirmed: impl Fn(&Rc<AppState>, &Router) + 'static,
 ) {
-    close_current_dialog(app, router);
-    let (fonts, family, work_w, work_h) = dialog_context(app);
-    let (dw, dh) = crate::ui::dialog_geometry::error_dialog_size(
-        work_w, work_h, &family, fonts.item_font_px, fonts.title_bar_height_px, app.window_geometry.border_width.get(), &message,
-    );
-    let (x, y) = centered_position(app, dw, dh);
-    let Ok(dialog) = ConfirmDialog::new() else { return };
-    style_dialog!(dialog, app, fonts);
-    dialog.set_dialog_title(title);
-    dialog.set_message_text(message);
-    dialog.set_confirm_text(confirm_label);
-    position_dialog!(dialog, app, dw, dh, x, y);
-    app.dialog_nav.confirm_nav_index.set(0);
-    dialog.set_selected_index(0);
-    wire_nav_hovered!(dialog, app, confirm_nav_index);
-    wire_keyboard_nav!(dialog, app, vertical);
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_confirmed(move || {
-            close_current_dialog(&app, &router);
-            on_confirmed(&app, &router);
-        });
-    }
-    wire_dialog_close!(dialog, app, router);
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Confirm(dialog));
+    let cancel = DialogChoice { label: tr!(app).invoke_label_cancel(), action: |_: &Rc<AppState>, _: &Router| {} };
+    open_two_button_dialog(app, router, title, message, DialogChoice { label: confirm_label, action: on_confirmed }, cancel, false);
 }
 
 pub(crate) fn open_uninstall_confirm_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
@@ -409,7 +433,11 @@ fn open_reset_playtime_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
 }
 
 fn existing_save_folder(save: Option<&Value>, game_dir: &Path) -> Option<PathBuf> {
-    crate::core::platform_resolve::resolve_save_folder(save?, game_dir).filter(|p| p.is_dir())
+    let path = crate::core::platform_resolve::resolve_save_folder(save?, game_dir)?;
+    if path.is_file() {
+        return path.parent().map(Path::to_path_buf);
+    }
+    path.is_dir().then_some(path)
 }
 
 fn wire_open<T: 'static>(target: Option<T>, open: fn(&T), register: impl FnOnce(Box<dyn Fn()>)) {
@@ -421,10 +449,11 @@ fn wire_open<T: 'static>(target: Option<T>, open: fn(&T), register: impl FnOnce(
 pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port) {
     close_current_dialog(app, router);
     app.dialog_nav.info_dialog_port_key.replace(Some(port.key().to_string()));
-    let (dw, dh) = main_window_size(app);
+    let ctx = dialog_context(app);
+    let (dw, dh) = main_sized_dialog_size(app, &ctx);
     let (x, y) = centered_position(app, dw, dh);
     let Ok(dialog) = InfoDialog::new() else { return };
-    style_dialog!(dialog, app, app.window_geometry.normal_mode.borrow().fonts);
+    style_dialog!(dialog, app, ctx.fonts);
     let tr = dialog.global::<Tr>();
     dialog.set_dialog_title(tr.invoke_dialog_title_info_port(port.name.clone().into()));
 
@@ -533,15 +562,14 @@ fn set_picker_items<'a>(dialog: &ListPickerDialog, labels: impl IntoIterator<Ite
 
 fn build_picker_dialog(app: &Rc<AppState>, router: &Router, title: &str, labels: &[String]) -> Option<ListPickerDialog> {
     close_current_dialog(app, router);
-    let big_mode = app.window().get_big_mode();
-    let (fonts, family, work_w, work_h) = dialog_context(app);
-    let item_height = crate::ui::dialog_geometry::list_picker_item_height(work_h, big_mode);
+    let ctx = dialog_context(app);
+    let item_height = crate::ui::dialog_geometry::list_picker_item_height(ctx.work_h, ctx.big_mode);
     let (dw, dh) = crate::ui::dialog_geometry::list_picker_dialog_size(
-        work_w, work_h, &family, fonts.item_font_px, labels, big_mode, fonts.title_bar_height_px, app.window_geometry.border_width.get(),
+        ctx.work_w, ctx.work_h, &ctx.family, ctx.fonts.item_font_px, labels, ctx.big_mode, ctx.fonts.title_bar_height_px, app.window_geometry.border_width.get(),
     );
     let (x, y) = centered_position(app, dw, dh);
     let dialog = ListPickerDialog::new().ok()?;
-    style_dialog!(dialog, app, fonts);
+    style_dialog!(dialog, app, ctx.fonts);
     dialog.set_dialog_title(title.into());
     set_picker_items(&dialog, labels);
     dialog.set_item_height_physical(item_height as f32);
@@ -586,24 +614,28 @@ pub(crate) fn open_picker_dialog(
 enum SettingsEntry {
     Themes,
     Language,
+    Tools,
     Files,
     Library,
     BackupSaves,
     CheckUpdates,
     ForceUpdate,
     DiscordRpc,
+    CustomRpc,
     Version,
 }
 
-const SETTINGS_ENTRIES: [SettingsEntry; 9] = [
+const SETTINGS_ENTRIES: [SettingsEntry; 11] = [
     SettingsEntry::Themes,
     SettingsEntry::Language,
+    SettingsEntry::Tools,
     SettingsEntry::Files,
     SettingsEntry::Library,
     SettingsEntry::BackupSaves,
     SettingsEntry::CheckUpdates,
     SettingsEntry::ForceUpdate,
     SettingsEntry::DiscordRpc,
+    SettingsEntry::CustomRpc,
     SettingsEntry::Version,
 ];
 
@@ -616,6 +648,7 @@ fn settings_labels(app: &AppState) -> Vec<String> {
         .map(|entry| match entry {
             SettingsEntry::Themes => tr.invoke_label_themes(),
             SettingsEntry::Language => tr.invoke_label_language(),
+            SettingsEntry::Tools => tr.invoke_label_tools(),
             SettingsEntry::Files => tr.invoke_label_files(),
             SettingsEntry::Library => tr.invoke_label_library(),
             SettingsEntry::BackupSaves => tr.invoke_label_backup_saves(),
@@ -624,6 +657,8 @@ fn settings_labels(app: &AppState) -> Vec<String> {
             SettingsEntry::ForceUpdate => tr.invoke_label_force_update(),
             SettingsEntry::DiscordRpc if state.discord_rpc_enabled => tr.invoke_label_discord_rpc_on(),
             SettingsEntry::DiscordRpc => tr.invoke_label_discord_rpc_off(),
+            SettingsEntry::CustomRpc if state.custom_presence_enabled => tr.invoke_label_custom_rpc_on(),
+            SettingsEntry::CustomRpc => tr.invoke_label_custom_rpc_off(),
             SettingsEntry::Version => tr.invoke_version_tag(crate::core::version::APP_VERSION.replace('-', ".").into()),
         })
         .map(|label| label.to_string())
@@ -645,16 +680,24 @@ pub(crate) fn open_settings_dialog(app: &Rc<AppState>, router: &Router) {
                 SettingsEntry::CheckUpdates => {
                     let value = !app.state.borrow().release_sync;
                     app.state.borrow_mut().set_release_sync(value);
+                    app.window().set_self_update_available(app.state.borrow().show_launcher_update());
                 }
                 SettingsEntry::DiscordRpc => {
                     let value = !app.state.borrow().discord_rpc_enabled;
                     app.state.borrow_mut().set_discord_rpc_enabled(value);
+                    app.refresh_custom_presence();
+                }
+                SettingsEntry::CustomRpc => {
+                    let value = !app.state.borrow().custom_presence_enabled;
+                    app.state.borrow_mut().set_custom_presence_enabled(value);
+                    app.refresh_custom_presence();
                 }
                 _ => {
                     close_current_dialog(&app, &router);
                     match entry {
                         SettingsEntry::Themes => open_theme_picker(&app, &router),
                         SettingsEntry::Language => open_language_picker(&app, &router),
+                        SettingsEntry::Tools => open_tools_picker(&app, &router),
                         SettingsEntry::Files => open_files_picker(&app, &router),
                         SettingsEntry::Library => open_folder(&app.paths.library_dir),
                         SettingsEntry::BackupSaves => start_save_backup(&app, &router),
@@ -680,25 +723,45 @@ struct LivePreview {
     on_cancel: fn(&Rc<AppState>),
 }
 
+#[derive(Clone)]
+struct SearchListItem {
+    value: String,
+    label: String,
+    search_name: String,
+    keywords: Vec<String>,
+}
+
+impl SearchListItem {
+    fn new(value: String, label: String) -> SearchListItem {
+        SearchListItem::with_keywords(value, label, Vec::new())
+    }
+
+    fn with_keywords(value: String, label: String, keywords: Vec<String>) -> SearchListItem {
+        let search_name = crate::core::search::normalize(&label);
+        SearchListItem { value, label, search_name, keywords }
+    }
+}
+
 fn open_search_list_dialog(
     app: &Rc<AppState>,
     router: &Router,
     title: slint::SharedString,
-    items: Vec<(String, String)>,
+    items: Vec<SearchListItem>,
     start_value: &str,
     preview: Option<LivePreview>,
     on_select: impl Fn(&Rc<AppState>, &str) + 'static,
 ) {
     close_current_dialog(app, router);
-    let (fonts, ..) = dialog_context(app);
-    let (dw, dh) = main_window_size(app);
+    let ctx = dialog_context(app);
+    let fonts = ctx.fonts;
+    let (dw, dh) = main_sized_dialog_size(app, &ctx);
     let (x, y) = centered_position(app, dw, dh);
     let Ok(dialog) = SearchListDialog::new() else { return };
     style_dialog!(dialog, app, fonts);
     dialog.set_dialog_title(title);
     dialog.set_search_bar_height_physical(fonts.search_bar_height_px as f32);
-    let set_items = |d: &SearchListDialog, items: &[(String, String)]| {
-        let model: Vec<PickerItem> = items.iter().map(|(_, label)| PickerItem { label: label.into() }).collect();
+    let set_items = |d: &SearchListDialog, items: &[SearchListItem]| {
+        let model: Vec<PickerItem> = items.iter().map(|item| PickerItem { label: item.label.as_str().into() }).collect();
         d.set_items(slint::ModelRc::new(slint::VecModel::from(model)));
     };
     set_items(&dialog, &items);
@@ -710,7 +773,7 @@ fn open_search_list_dialog(
             dialog.set_clock_text(crate::core::clock::format_now().into());
         }
     }
-    let start_index = items.iter().position(|(value, _)| value == start_value).unwrap_or(0) as i32;
+    let start_index = items.iter().position(|item| item.value == start_value).unwrap_or(0) as i32;
     dialog.set_selected_index(start_index);
     app.dialog_nav.picker_index.set(start_index);
     position_dialog!(dialog, app, dw, dh, x, y);
@@ -723,15 +786,15 @@ fn open_search_list_dialog(
             app.dialog_nav.picker_index.set(index);
             let Some(d) = weak.upgrade() else { return };
             d.set_selected_index(index);
-            if let (Some(preview), Some((value, _))) = (preview.as_ref(), displayed.borrow().get(index as usize)) {
-                (preview.on_hover)(&app, &d, value);
+            if let (Some(preview), Some(item)) = (preview.as_ref(), displayed.borrow().get(index as usize)) {
+                (preview.on_hover)(&app, &d, &item.value);
             }
         });
     }
     {
         let (app, router, displayed) = (app.clone(), router.clone(), displayed.clone());
         dialog.on_item_selected(move |index| {
-            let value = displayed.borrow().get(index as usize).map(|(v, _)| v.clone());
+            let value = displayed.borrow().get(index as usize).map(|item| item.value.clone());
             close_current_dialog(&app, &router);
             if let Some(value) = value {
                 on_select(&app, &value);
@@ -741,12 +804,22 @@ fn open_search_list_dialog(
     {
         let (app, displayed, has_preview, weak) = (app.clone(), displayed.clone(), preview.is_some(), dialog.as_weak());
         dialog.on_search_changed(move |query| {
-            let query = query.to_lowercase();
-            let filtered: Vec<(String, String)> = items.iter().filter(|(_, label)| label.to_lowercase().contains(&query)).cloned().collect();
             let Some(d) = weak.upgrade() else { return };
+            let query = match crate::core::search::truncate_query(&query) {
+                Some(cut) => {
+                    d.invoke_set_search(cut.as_str().into());
+                    cut
+                }
+                None => query.to_string(),
+            };
+            let filtered: Vec<SearchListItem> =
+                crate::core::search::filter_and_sort(&items, &query, |item| (item.search_name.as_str(), item.keywords.as_slice()))
+                    .into_iter()
+                    .cloned()
+                    .collect();
             set_items(&d, &filtered);
-            let next = if filtered.is_empty() { -1 } else { 0 };
             let has_results = !filtered.is_empty();
+            let next = if has_results { 0 } else { -1 };
             *displayed.borrow_mut() = filtered;
             d.set_selected_index(next);
             app.dialog_nav.picker_index.set(next);
@@ -774,7 +847,7 @@ fn open_theme_picker(app: &Rc<AppState>, router: &Router) {
     if names.is_empty() {
         return;
     }
-    let items = names.into_iter().map(|n| (n.clone(), n)).collect();
+    let items = names.into_iter().map(|n| SearchListItem::new(n.clone(), n)).collect();
     let active = app.state.borrow().active_theme.clone();
     let preview = LivePreview {
         on_hover: Box::new(|app, dialog, name| {
@@ -787,6 +860,18 @@ fn open_theme_picker(app: &Rc<AppState>, router: &Router) {
     open_search_list_dialog(app, router, tr!(app).invoke_label_themes(), items, &active, Some(preview), |app, name| {
         app.state.borrow_mut().set_active_theme(name.to_string());
     });
+}
+
+fn open_tools_picker(app: &Rc<AppState>, router: &Router) {
+    let items: Vec<SearchListItem> = crate::core::config::load_tools(&app.paths.config_dir.join("ports.json"))
+        .into_iter()
+        .filter(|tool| is_web_url(&tool.source))
+        .map(|tool| SearchListItem::with_keywords(tool.source, tool.name, tool.tags_lower))
+        .collect();
+    if items.is_empty() {
+        return;
+    }
+    open_search_list_dialog(app, router, tr!(app).invoke_label_tools(), items, "", None, |_, url| open_url(url));
 }
 
 fn open_files_picker(app: &Rc<AppState>, router: &Router) {
@@ -823,8 +908,8 @@ const LANGUAGES: &[(&str, &str)] = &[
 ];
 
 fn open_language_picker(app: &Rc<AppState>, router: &Router) {
-    let items = std::iter::once((String::new(), tr!(app).invoke_language_default_system().to_string()))
-        .chain(LANGUAGES.iter().map(|(code, name)| (code.to_string(), name.to_string())))
+    let items = std::iter::once(SearchListItem::new(String::new(), tr!(app).invoke_language_default_system().to_string()))
+        .chain(LANGUAGES.iter().map(|(code, name)| SearchListItem::new(code.to_string(), name.to_string())))
         .collect();
     let current = app.state.borrow().language.clone();
     open_search_list_dialog(app, router, tr!(app).invoke_dialog_title_language(), items, &current, None, |app, code| {
