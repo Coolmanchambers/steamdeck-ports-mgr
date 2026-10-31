@@ -216,6 +216,9 @@ pub struct Page<A> {
     pub back_hint: String,
     /// B does nothing here (a short check that cannot be stopped): the hint bar leaves B out.
     pub no_back: bool,
+    /// One window: a "Show the app" button in the footer (left of the primary button), and Y does the same. Set by the
+    /// page window itself (`page_dialog`) on full-screen pages in Desktop Mode, never by a page's owner.
+    pub show_app: bool,
 }
 
 impl<A> Default for Page<A> {
@@ -244,6 +247,7 @@ impl<A> Default for Page<A> {
             initial: Focus::Button(RIGHT),
             back_hint: String::new(),
             no_back: false,
+            show_app: false,
         }
     }
 }
@@ -256,6 +260,8 @@ pub enum Focus {
     Tile(usize),
     Option(usize),
     Button(usize),
+    /// The footer's "Show the app" button ([`Page::show_app`]).
+    ShowApp,
 }
 
 impl<A> Page<A> {
@@ -356,6 +362,9 @@ pub fn hints<A>(page: &Page<A>) -> String {
     if page.input.is_some() {
         parts.push("Steam + X Keyboard".into());
     }
+    if page.show_app {
+        parts.push("Y Show the app".into());
+    }
     if parts.is_empty() {
         return "Please wait".into();
     }
@@ -395,8 +404,25 @@ pub fn focusables<A>(page: &Page<A>) -> Vec<Focus> {
     }
     out.extend(tile_indexes(page).into_iter().map(Focus::Tile));
     out.extend(enabled_options(page).into_iter().map(Focus::Option));
-    out.extend((0..SLOTS).filter(|s| page.buttons[*s].is_some()).map(Focus::Button));
+    out.extend(footer_row(page));
     out
+}
+
+/// The footer, left to right: the buttons that exist, with "Show the app" just left of the primary (right) button.
+fn footer_row<A>(page: &Page<A>) -> Vec<Focus> {
+    let mut row: Vec<Focus> = (0..RIGHT).filter(|s| page.buttons[*s].is_some()).map(Focus::Button).collect();
+    if page.show_app {
+        row.push(Focus::ShowApp);
+    }
+    if page.buttons[RIGHT].is_some() {
+        row.push(Focus::Button(RIGHT));
+    }
+    row
+}
+
+/// The focus number of the "Show the app" button, or -1 when the page has none.
+pub fn show_app_number<A>(page: &Page<A>) -> i32 {
+    focusables(page).iter().position(|f| *f == Focus::ShowApp).map_or(-1, |n| n as i32)
 }
 
 /// Position of `focus` in [`focusables`] (the number the window draws as selected).
@@ -446,8 +472,8 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
     let index_of = |f: Focus| items.iter().position(|x| *x == f);
     let tiles = tile_indexes(page);
     let enabled = enabled_options(page);
-    let present: Vec<usize> = (0..SLOTS).filter(|s| page.buttons[*s].is_some()).collect();
-    let to_buttons = || page.primary.filter(|s| present.contains(s)).or_else(|| present.last().copied()).map(Focus::Button);
+    let row = footer_row(page);
+    let to_buttons = || page.primary.map(Focus::Button).filter(|f| row.contains(f)).or_else(|| row.iter().rev().find(|f| **f != Focus::ShowApp).copied()).or_else(|| row.last().copied());
     let input = page.input.is_some().then_some(Focus::Input);
     let first_below_input = || tiles.first().map(|t| Focus::Tile(*t)).or_else(|| enabled.first().map(|o| Focus::Option(*o))).or_else(to_buttons);
     let target = match here {
@@ -466,11 +492,11 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
             Some(prev) => Some(Focus::Option(*prev)),
             None => tiles.first().map(|t| Focus::Tile(*t)).or(input),
         },
-        Focus::Button(_) if dy < 0 => enabled.last().map(|o| Focus::Option(*o)).or_else(|| tiles.first().map(|t| Focus::Tile(*t))).or(input),
-        Focus::Button(slot) if dx != 0 => {
-            let at = present.iter().position(|s| *s == slot).unwrap_or(0) as i32;
+        Focus::Button(_) | Focus::ShowApp if dy < 0 => enabled.last().map(|o| Focus::Option(*o)).or_else(|| tiles.first().map(|t| Focus::Tile(*t))).or(input),
+        Focus::Button(_) | Focus::ShowApp if dx != 0 => {
+            let at = row.iter().position(|f| *f == here).unwrap_or(0) as i32;
             let next = at + dx.signum();
-            (next >= 0).then(|| present.get(next as usize)).flatten().map(|s| Focus::Button(*s))
+            (next >= 0).then(|| row.get(next as usize)).flatten().copied()
         }
         _ => None,
     };
@@ -480,7 +506,7 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
 /// What choosing the focused item does.
 pub fn action_at<A: Clone>(page: &Page<A>, number: usize) -> Option<A> {
     match focus_at(page, number)? {
-        Focus::Input => None,
+        Focus::Input | Focus::ShowApp => None,
         Focus::Tile(i) => page.tiles.get(i).and_then(|t| t.action.clone()),
         Focus::Option(i) => page.options.get(i).map(|o| o.action.clone()),
         Focus::Button(s) => page.buttons[s].as_ref().map(|b| b.action.clone()),
@@ -704,4 +730,41 @@ mod tests {
         assert_eq!(q.step_text, "Step 4 of 5");
     }
 
+    fn footer_page(show_app: bool) -> Page<u8> {
+        let mut p = Page::<u8> { show_app, ..Page::default() };
+        p.options = vec![PageOption { title: "o".into(), detail: String::new(), choice: None, enabled: true, recommended: false, action: 1 }];
+        p.buttons[LEFT] = Some(PageButton { label: "Back".into(), action: 2 });
+        p.buttons[RIGHT] = Some(PageButton { label: "Next".into(), action: 3 });
+        p.primary = Some(RIGHT);
+        p
+    }
+
+    #[test]
+    fn show_the_app_sits_left_of_the_primary_button_and_the_hint_names_y() {
+        let p = footer_page(true);
+        assert_eq!(focusables(&p), vec![Focus::Option(0), Focus::Button(LEFT), Focus::ShowApp, Focus::Button(RIGHT)]);
+        assert_eq!(show_app_number(&p), 2);
+        assert!(hints(&p).ends_with("Y Show the app"), "{}", hints(&p));
+        assert_eq!(action_at(&p, 2), None, "the page window does it, not the page's owner");
+        let q = footer_page(false);
+        assert_eq!(show_app_number(&q), -1);
+        assert!(!hints(&q).contains("Show the app"));
+        assert_eq!(focusables(&q), vec![Focus::Option(0), Focus::Button(LEFT), Focus::Button(RIGHT)], "pages without it are as before");
+    }
+
+    #[test]
+    fn the_d_pad_reaches_show_the_app_along_the_footer_and_down_still_lands_on_the_primary() {
+        let p = footer_page(true);
+        let next = focus_number(&p, Focus::Button(RIGHT));
+        assert_eq!(move_focus(&p, 0, 0, 1), next, "down from the last option: the primary button, not Show the app");
+        let show = move_focus(&p, next, -1, 0);
+        assert_eq!(focus_at(&p, show), Some(Focus::ShowApp));
+        assert_eq!(focus_at(&p, move_focus(&p, show, -1, 0)), Some(Focus::Button(LEFT)));
+        assert_eq!(focus_at(&p, move_focus(&p, show, 0, -1)), Some(Focus::Option(0)));
+        // No primary: down goes to the last real button, never to Show the app.
+        let mut r = footer_page(true);
+        r.primary = None;
+        r.buttons[RIGHT] = None;
+        assert_eq!(focus_at(&r, move_focus(&r, 0, 0, 1)), Some(Focus::Button(LEFT)));
+    }
 }

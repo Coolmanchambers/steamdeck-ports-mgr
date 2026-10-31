@@ -1,6 +1,6 @@
 // Fork: the main window's dim layer while a page or dialog is open (src/app/dialog_layer.rs). The app behind stays
 // readable through it; one line says what is open ("Settings is open") and the button brings it back. A, Return,
-// Space, a click or a tap anywhere on the layer all do the same: `pressed`.
+// Space, Escape, a click or a tap anywhere on the layer all do the same: `pressed`.
 
 import { SemanticColors, Theme } from "../shared.slint";
 import { FocusLook, FocusRing } from "setup-wizard.slint";
@@ -18,11 +18,11 @@ export component DialogLayer inherits Rectangle {
     keys := FocusScope {
         focus-on-click: false;
         key-pressed(event) => {
-            if (event.text == Key.Return || event.text == " ") {
+            if (event.text == Key.Return || event.text == " " || event.text == Key.Escape) {
                 root.pressed();
                 accept
             } else {
-                // Escape, arrows, letters: nothing here; above all, never the search box behind.
+                // Arrows, letters: nothing here; above all, never the search box behind.
                 accept
             }
         }
@@ -81,7 +81,7 @@ export component DialogLayer inherits Rectangle {
         }
 
         hint := Text {
-            text: "A, click or tap";
+            text: "A or B, click or tap";
             color: Theme.list-text;
             font-size: root.font-px * 0.85;
             horizontal-alignment: center;

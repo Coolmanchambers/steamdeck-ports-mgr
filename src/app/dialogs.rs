@@ -269,8 +269,9 @@ pub(crate) fn finish_dialog_open(app: &Rc<AppState>, router: &Router, slot: Dial
         chrome::apply_window_icon(native);
         chrome::force_normal_window_visibility(native);
         if let Some(main_native) = chrome::native_window(app.window().window()) {
-            // Fork (one window): in Desktop Mode the dialog keeps its own taskbar entry (an owned window has none).
-            if super::dialog_layer::keep_owner() {
+            // Fork (one window): in Desktop Mode a guided page keeps its own taskbar entry (an owned window has none);
+            // every other dialog stays owned, so it stays above the main window.
+            if super::dialog_layer::keep_owner(&slot) {
                 chrome::own_window(native, main_native);
             }
             window.set_position(slint::WindowPosition::Physical(position));

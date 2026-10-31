@@ -319,6 +319,8 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     window.on_discord_requested(|| core::launch::open_url(DISCORD_URL));
     // Fork: the Deck-ready list.
     app::deck_ready_screen::wire(window, app, router);
+    // Fork: the "... is open" layer's "Go back to it".
+    app::dialog_layer::wire(window, app);
     window.on_key_intercepted(with!(app => move |text, modified, repeat| {
         app::cheats::intercept(&app, (!repeat).then(|| app::cheats::keyboard_input(&text, modified)))
     }));

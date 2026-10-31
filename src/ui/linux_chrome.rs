@@ -194,13 +194,14 @@ fn x11_active_window() -> Option<u32> {
     .flatten()
 }
 
-/// Fork (one window): whether `window` is the one in front with the keyboard. `None` when nobody can say
-/// (no window manager, gamescope).
+/// Fork (one window): whether `window` is the one in front with the keyboard: the window manager's answer on X11,
+/// else (no `_NET_ACTIVE_WINDOW`, as under gamescope, and on Wayland) the window's own focus. `None` when nobody can say.
 pub fn window_in_front(window: &slint::Window) -> Option<bool> {
     use slint::winit_030::WinitWindowAccessor;
+    let focus = || window.with_winit_window(|w| w.has_focus());
     match native_window(window)? {
-        NativeWindow::X11(win) => x11_active_window().filter(|&w| w != 0).map(|active| active == win),
-        NativeWindow::Wayland => window.with_winit_window(|w| w.has_focus()),
+        NativeWindow::X11(win) => x11_active_window().filter(|&w| w != 0).map(|active| active == win).or_else(focus),
+        NativeWindow::Wayland => focus(),
     }
 }
 

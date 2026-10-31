@@ -10,7 +10,7 @@
 #     the Steam page, B goes up to Settings, Saves > Cloud backup opens its first page and B returns to the Saves page;
 #   - the background checkup finds the seeded setup's problems and Home shows its "Fix N problems" tile; A on the tile and
 #     Settings > Fix problems open the checkup, B leaves it;
-#   - while Settings is open the main window shows its dim layer; Return and a click on it ask for the Settings window
+#   - while Settings is open the main window shows its dim layer; Return, a click and Escape on it ask for the Settings window
 #     by its id; closing Settings clears it (page and dialog windows are titled "Deck Ports Manager: <page>");
 #   - Ports > Import ports opens and closes without a crash;
 #   - Ports > Add a port opens the page and B returns to the Ports page; Updates > Check for Updates flips in place and keeps
@@ -25,6 +25,7 @@
 #     setup_done so it goes straight to the main window; the wizard's pages (Import ports included) stay in
 #     one window;
 #   - Close (Escape in the windowed view) quits it, since there is no tray to hide into.
+#   - a copy started in big mode: Y on Settings shows the app (the layer), Return brings Settings back with its cursor;
 # Saves the app's output and a screenshot. Needs xvfb, x11-utils, xdotool and imagemagick.
 #
 #   bash tools/smoke-test.sh <folder with ports_launcher and 7zzs> [output folder]
@@ -59,7 +60,7 @@ echo '{"setup_done": true}' > "$APP_DIR/fork-settings.json"
 Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
 XVFB=$!
 APP=""
-cleanup() { kill $APP ${FRESH:-} "$XVFB" 2>/dev/null; rm -rf "$APP_DIR" "$HOME_DIR" "${FRESH_DIR:-}"; }
+cleanup() { kill $APP ${FRESH:-} ${BIG:-} "$XVFB" 2>/dev/null; rm -rf "$APP_DIR" "$HOME_DIR" "${FRESH_DIR:-}" "${BIG_DIR:-}"; }
 trap cleanup EXIT
 for _ in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
 kill -0 "$XVFB" 2>/dev/null && xdpyinfo >/dev/null 2>&1 || { cat "$OUT/xvfb.log"; setup_fail "Xvfb $DISPLAY did not come up"; }
@@ -348,6 +349,8 @@ if [ "$alive" = yes ]; then
                 xdotool windowraise "$win"; sleep 0.3
                 xdotool mousemove $((X + WIDTH / 2)) $((Y + HEIGHT / 2)); sleep 0.3; xdotool mousemove_relative -- 4 4; sleep 0.3; xdotool click 1; sleep 0.8
                 check "a click on the layer brings Settings back (window $want)" '[ "$(layer_lines "$want")" -eq $((before + 2)) ]'
+                xdotool windowraise "$win"; xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key Escape; sleep 0.8
+                check "Escape (B) on the layer brings Settings back too, and closes nothing (window $want)" '[ "$(layer_lines "$want")" -eq $((before + 3)) ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null'
                 check "the layer does not act on the main window behind it (still Home, Settings still open)" '[ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null'
                 xdotool windowraise "$sw"; sleep 0.3
                 press_keys "$sw" Escape; sleep 1.5
@@ -543,6 +546,40 @@ if [ "$alive" = yes ]; then
         kill "$APP" 2>/dev/null; wait "$APP" 2>/dev/null; APP=""
     fi
 fi
+
+# One window, big mode: a full-screen page offers "Show the app" (Y). It steps aside for the main window and its layer;
+# Return on the layer brings the page back as it was, the cursor where it was (Return there opens the group it was on).
+# A fresh copy started in big mode; with no window manager here the script sizes the main window to the screen itself.
+BIG_DIR="$(mktemp -d -p "${SMOKE_HOME_BASE:-$HOME}" dpm-smoke-big.XXXXXX)" || setup_fail "mktemp big"
+mkdir -p "$BIG_DIR/home"
+cp "$BIN_DIR/ports_launcher" "$BIN_DIR/7zzs" "$BIG_DIR/"
+for f in ports.json themes.json; do [ -f "$BIN_DIR/$f" ] && cp "$BIN_DIR/$f" "$BIG_DIR/"; done
+echo '{"setup_done": true}' > "$BIG_DIR/fork-settings.json"
+echo '{"ui": {"fullscreen": true}}' > "$BIG_DIR/state.json"
+env -i HOME="$BIG_DIR/home" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$BIG_DIR" RUST_BACKTRACE=1 \
+    "$BIG_DIR/ports_launcher" >"$OUT/app-big.log" 2>&1 &
+BIG=$!
+sleep 8
+bwin=$(xdotool search --name "^Ports Launcher$" 2>/dev/null | head -1)
+if [ -n "$bwin" ]; then
+    xdotool windowsize "$bwin" 1280 800; sleep 1; xdotool windowfocus "$bwin" 2>/dev/null; sleep 0.4
+    eval "$(xdotool getwindowgeometry --shell "$bwin" 2>/dev/null)"
+    xdotool mousemove $((X + 250)) $((Y + 150)); sleep 0.3; xdotool mousemove $((X + WIDTH - 88)) $((Y + 18)); sleep 0.5; xdotool click 1
+    bs=$(find_window '^Deck Ports Manager: Settings$') || bs=""
+    check "big mode: the gear opens Settings" '[ -n "$bs" ]'
+    if [ -n "$bs" ]; then
+        sleep 1; import -window "$bs" "$OUT/page-show-app.png" 2>/dev/null
+        press_keys "$bs" Up Up Up Up Up $(downs "$(group_downs Saves)") y; sleep 1
+        check "big mode: Y on Settings shows the app (the page steps aside, the layer is up)" 'grep -q "^dialog layer: showing the app" "$OUT/app-big.log" && [ "$(grep "^dialog layer: shown" "$OUT/app-big.log" | tail -1)" = "dialog layer: shown \"Settings is open\"" ]'
+        xdotool windowraise "$bwin"; xdotool windowfocus "$bwin" 2>/dev/null; sleep 0.4; xdotool key Return; sleep 0.8
+        check "big mode: Return on the layer brings Settings back" 'grep -q "^dialog layer: back to \"Settings\" (x11 window $(printf 0x%x "$bs"))" "$OUT/app-big.log"'
+        xdotool windowraise "$bs"; press_keys "$bs" Return
+        check "big mode: the cursor was kept (Return opens the group it was on)" '[ -n "$(find_window "^Deck Ports Manager: Settings: Saves\$")" ]'
+    fi
+else
+    check "big mode: the main window opens" 'false'
+fi
+kill "$BIG" 2>/dev/null; wait "$BIG" 2>/dev/null; rm -rf "$BIG_DIR"
 
 echo "--- app output (last 20 lines) ---"; tail -20 "$OUT/app.log"
 [ "$fail" -eq 0 ] && echo "SMOKE TEST: PASS" || echo "SMOKE TEST: FAIL"

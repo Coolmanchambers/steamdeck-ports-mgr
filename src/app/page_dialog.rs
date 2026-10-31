@@ -311,6 +311,8 @@ fn fill_body<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_focus_extra(page::button_number(page, page::EXTRA));
     d.set_focus_right(page::button_number(page, page::RIGHT));
     d.set_input_focus(page::input_number(page));
+    d.set_show_app_text(if page.show_app { "Show the app" } else { "" }.into());
+    d.set_focus_show_app(page::show_app_number(page));
 }
 
 /// What a page answers to, whatever its action type: the window's callbacks reach the page on screen through
@@ -327,6 +329,8 @@ trait Binding {
     fn exit(&self);
     /// The page's key and where the cursor is on it (for "B returns to where you were").
     fn place(&self) -> (String, usize);
+    /// "Show the app" (the footer button, or Y): the page steps aside for the main window, with its layer.
+    fn show_app(&self);
 }
 
 struct Bound<A> {
@@ -378,7 +382,9 @@ impl<A: Clone + 'static> Binding for Bound<A> {
     fn activate(&self) {
         let page = page_now(&self.cur);
         // A on the text box is not a choice: it moves on to the choices.
-        if page::focus_at(&page, self.focus.get()) == Some(Focus::Input) {
+        if page::focus_at(&page, self.focus.get()) == Some(Focus::ShowApp) {
+            self.show_app();
+        } else         if page::focus_at(&page, self.focus.get()) == Some(Focus::Input) {
             let next = page::move_focus(&page, self.focus.get(), 0, 1);
             if let Some(d) = self.weak.upgrade() {
                 select(&d, &page, &self.focus, next);
@@ -393,7 +399,7 @@ impl<A: Clone + 'static> Binding for Bound<A> {
         let Some(on_input) = &self.handlers.on_input else { return };
         let Some(new_page) = on_input(&self.app, &self.router, text) else { return };
         let Some(d) = self.weak.upgrade() else { return };
-        let new_page = Rc::new(new_page);
+        let new_page = Rc::new(prepare(&self.app, new_page));
         *self.cur.borrow_mut() = new_page.clone();
         fill_body(&d, &new_page);
         load_art(&self.app, &d, &self.cur);
@@ -411,6 +417,17 @@ impl<A: Clone + 'static> Binding for Bound<A> {
 
     fn place(&self) -> (String, usize) {
         (page_key(&page_now(&self.cur)), self.focus.get())
+    }
+
+    fn show_app(&self) {
+        if !page_now(&self.cur).show_app {
+            return;
+        }
+        let Some(d) = self.weak.upgrade() else { return };
+        // Minimized rather than lowered, so it works whatever the stacking; "Go back to it" un-minimizes it as it was.
+        d.window().set_minimized(true);
+        let how = chrome::bring_back(self.app.window().window());
+        eprintln!("dialog layer: showing the app ({how})");
     }
 }
 
@@ -504,6 +521,11 @@ fn wire(dialog: &SetupWizardDialog, serial: u64) {
             b.exit();
         }
     });
+    dialog.on_show_app_requested(move || {
+        if let Some(b) = bound(serial) {
+            b.show_app();
+        }
+    });
 }
 
 /// After `finish_dialog_open` (which makes the window system's close button close the dialog): that button
@@ -552,6 +574,25 @@ pub(crate) fn park(app: &Rc<AppState>, dialog: &SetupWizardDialog) -> bool {
         }
     });
     true
+}
+
+/// One window: on a full-screen page in Desktop Mode the page offers "Show the app" (footer button and Y). Not in
+/// Game Mode (one window at a time) and not windowed (the app is beside the page there).
+fn offers_show_app(big: bool, game_mode: bool) -> bool {
+    big && !game_mode
+}
+
+/// The page as this window draws it: what its owner made, plus the window's own "Show the app".
+fn prepare<A>(app: &AppState, mut page: Page<A>) -> Page<A> {
+    page.show_app = offers_show_app(app.window().get_big_mode(), crate::fork::steam_queue::game_mode_from_env());
+    page
+}
+
+/// Y on a page: "Show the app", when the page on screen offers it.
+pub(crate) fn show_app_from_pad() {
+    if let Some(b) = HOST.with(|h| h.borrow().page.as_ref().map(|(_, b)| b.clone())) {
+        b.show_app();
+    }
 }
 
 /// True while the page window waits for its next page (see [`park`]); the main window's layer stays as it was meanwhile.
@@ -622,7 +663,7 @@ impl<A: Clone + 'static> PageHandle<A> {
             return false;
         }
         let Some(d) = self.weak.upgrade() else { return false };
-        let page = Rc::new(page);
+        let page = Rc::new(prepare(&self.app, page));
         *self.cur.borrow_mut() = page.clone();
         fill(&d, &page);
         load_art(&self.app, &d, &self.cur);
@@ -643,7 +684,7 @@ pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router,
 pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, page: Page<A>, handlers: Handlers<A>) -> Option<PageHandle<A>> {
     remember_current();
     let (dialog, serial, on_screen) = take_window(app, router)?;
-    let cur: Current<A> = Rc::new(RefCell::new(Rc::new(page)));
+    let cur: Current<A> = Rc::new(RefCell::new(Rc::new(prepare(app, page))));
     let focus = Rc::new(Cell::new(0usize));
     let first = page_now(&cur);
     fill(&dialog, &first);
@@ -700,10 +741,18 @@ mod tests {
         fn place(&self) -> (String, usize) {
             ("stub".into(), 0)
         }
+        fn show_app(&self) {}
     }
 
     fn stub() -> Rc<dyn Binding> {
         Rc::new(Stub)
+    }
+
+    #[test]
+    fn show_the_app_is_offered_only_on_full_screen_pages_outside_game_mode() {
+        assert!(offers_show_app(true, false));
+        assert!(!offers_show_app(false, false), "windowed: the app is beside the page");
+        assert!(!offers_show_app(true, true), "Game Mode shows one window at a time");
     }
 
     #[test]

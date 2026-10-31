@@ -259,12 +259,12 @@ Files added by this fork:
 | 2026-10-25 | `src/main.rs`, `src/app/sync.rs` | Branch `deck-fixes-3`: one line each, `fork::catalog_extras::apply`, after the catalog and `ports.local.json` are merged (start-up, and a catalog update): a port added from the Deck-ready list that upstream turned off (`-name`) takes its cover, icon, notes, tags and save paths from the catalog's raw entry, in memory only |
 | 2026-10-25 | `src/app/mod.rs` | Branch `deck-fixes-3`: one module line, `steam_icons_screen` (the Steam icons page) |
 | 2026-10-25 | `src/app/mod.rs`, `tools/smoke-test.sh` | Branch `checkup`: one module line, `checkup_screen`; the smoke test checks the background checkup, Home's Fix problems tile and Settings > Fix problems (the other files the branch edits are fork-owned: `home_screen`, `settings_menu_screen`, `ports_folder_screen`, `rom_screens`) |
-| 2026-10-25 | `src/app/dialogs.rs` | Branch `one-window`: `close_current_dialog` and `finish_dialog_open` each call `dialog_layer::sync` (the main window's "... is open" layer follows the dialog slot); `finish_dialog_open` marks the dialog as owned by the main window (`own_window`) only when `dialog_layer::keep_owner()` (Game Mode, Windows), so in Desktop Mode each page and dialog has its own taskbar entry; `build_setup_wizard_dialog` (fork-owned) makes the page full screen over a full-screen main window in Desktop Mode |
-| 2026-10-25 | `src/app/gamepad_target.rs` | Branch `one-window`: `DialogGamepadTarget` asks `dialog_layer::main_in_front` first; while the main window is in front of the open dialog (Desktop Mode), A brings the dialog back and other input is dropped |
-| 2026-10-25 | `src/ui/linux_chrome.rs`, `src/ui/windows_chrome.rs` | Branch `one-window`: `window_in_front` (X11 `_NET_ACTIVE_WINDOW`, Wayland focus; Windows foreground window) and `bring_back` (X11 `_NET_ACTIVE_WINDOW` source 2, Wayland `focus_window`; Windows `force_foreground_window`) |
+| 2026-10-25 | `src/app/dialogs.rs` | Branch `one-window`: `close_current_dialog` and `finish_dialog_open` each call `dialog_layer::sync` (the main window's "... is open" layer follows the dialog slot); `finish_dialog_open` marks the dialog as owned by the main window (`own_window`) unless `dialog_layer::keep_owner(slot)` says no (a guided page in Desktop Mode, which then has its own taskbar entry; every other dialog, and everything in Game Mode and on Windows, stays owned); `build_setup_wizard_dialog` (fork-owned) makes the page full screen over a full-screen main window in Desktop Mode |
+| 2026-10-25 | `src/app/gamepad_target.rs` | Branch `one-window`: `DialogGamepadTarget` asks `dialog_layer::main_in_front` first; while the main window is in front of the open dialog, A and B bring the dialog back and other input is dropped |
+| 2026-10-25 | `src/ui/linux_chrome.rs`, `src/ui/windows_chrome.rs` | Branch `one-window`: `window_in_front` (X11 `_NET_ACTIVE_WINDOW`, else window focus, as under gamescope and on Wayland; Windows foreground window) and `bring_back` (X11 `_NET_ACTIVE_WINDOW` source 2, Wayland `focus_window`; Windows `force_foreground_window`) |
 | 2026-10-25 | `ui/app-window.slint` | Branch `one-window`: `dialog-layer-shown`/`-text`/`-pressed` and the `DialogLayer` element (below the title bar); `refocus-trigger` gives the keyboard to the layer while it is shown |
 | 2026-10-25 | `ui/dialogs/simple.slint`, `ui/dialogs/picker.slint`, `ui/dialogs/info.slint` | Branch `one-window`: window titles read "Deck Ports Manager: <title>" (one line per window) |
-| 2026-10-25 | `src/app/mod.rs`, `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh`, `tools/test-app-update.sh` | Branch `one-window`: module line `dialog_layer`; the new Slint file linted; the scripts find windows by the new titles, and the smoke test checks the layer (shown with Settings, Return and a click ask for the Settings window by id, cleared on close) |
+| 2026-10-25 | `src/app/mod.rs`, `src/main.rs`, `src/ui/slint_layout_lint.rs`, `tools/smoke-test.sh`, `tools/test-app-update.sh` | Branch `one-window`: module line `dialog_layer`; `src/main.rs` one line wiring the layer's "Go back to it"; the new Slint file linted; the scripts find windows by the new titles, and the smoke test checks the layer (shown with Settings, Return, a click and Escape ask for the Settings window by id, cleared on close) |
 | 2026-10-25 | `src/core/launch.rs` | Branch `deck-fixes-3` (O9): a launcher script without its `#!` line (spawn error ENOEXEC) is run through `sh` |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
@@ -303,18 +303,23 @@ callbacks that were wired once (`HOST`, a type-erased `Binding`), so a page of a
 ## The page window never gets lost (`src/app/dialog_layer.rs`, `ui/fork/dialog-layer.slint`)
 
 Pages and dialogs stay top-level windows of their own. While one is open, the main window shows a dim layer below its
-title bar: "<title> is open" and a "Go back to it" button. A, Return, Space, a click or a tap anywhere on it brings the
-page back in front with the keyboard (`chrome::bring_back`); looking at the main window alone does not raise the page.
+title bar: "<page> is open" (the title before its first ':'; "A question is open" for a Confirm, "A message is open" for
+an error) and a "Go back to it" button. A, B, Return, Space, Escape, a click or a tap anywhere on it brings the page
+back in front with the keyboard (`chrome::bring_back`); looking at the main window alone does not raise the page.
 The layer follows the dialog slot (`dialog_layer::sync` on open, close, the page window's park and every page shown,
 plus a 250 ms re-check while it is up); during the 40 ms park between two pages it stays as it was. While the main
-window is in front of the dialog (Desktop Mode, asked of the window manager), the controller's A brings the dialog back
-and nothing else reaches the page the user cannot see.
+window is in front of the dialog, the controller's A and B only bring the dialog back and nothing else reaches the page
+the user cannot see (asked of the window manager, else of window focus; in Game Mode both windows must answer, so a
+page on screen never loses its A).
 
-- Window titles read "Deck Ports Manager: <title>", and in Desktop Mode the dialogs are no longer marked transient for the
-  main window, so each one has its own taskbar entry (KDE hides transient windows from the taskbar). Game Mode keeps
-  upstream's owner (gamescope uses it), and so does Windows.
-- In Desktop Mode a full-screen main window gets a full-screen page, so the active page is in front of everything.
-- Game Mode: the controller keeps going to the open page, as before; the layer is only drawn.
+- Window titles read "Deck Ports Manager: <title>". In Desktop Mode guided pages are no longer marked transient for the
+  main window, so each has its own taskbar entry (KDE hides transient windows from the taskbar), and a full-screen main
+  window gets a full-screen page. Every other dialog (Confirm, Progress, Picker, Info...) keeps upstream's owner so it
+  stays above the main window; Game Mode (gamescope uses the owner) and Windows keep it for everything.
+- "Show the app" (`Page::show_app`, set by `page_dialog` on full-screen pages in Desktop Mode, never in Game Mode or windowed):
+  a footer button just left of the primary button, reached with the D-pad along the footer, and Y (controller or
+  keyboard); the hint bar says "Y Show the app". The page window is minimized and the main window brought in front with
+  its layer; "Go back to it" restores the page as it was, cursor kept.
 
 ## Guided pages: focus look, hint bar, one press acts once
 

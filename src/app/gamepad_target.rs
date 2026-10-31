@@ -166,7 +166,8 @@ pub(crate) struct DialogGamepadTarget {
 }
 
 // Fork (one window): while the main window, with its "... is open" layer, is in front of the open dialog (Desktop
-// Mode), A brings the dialog back (src/app/dialog_layer.rs) and nothing else reaches a page the user cannot see.
+// Mode, or Game Mode when gamescope shows it), A and B bring the dialog back (src/app/dialog_layer.rs) and nothing else
+// reaches a page the user cannot see.
 impl GamepadTarget for DialogGamepadTarget {
     fn move_selection(&self, dx: i32, dy: i32) {
         if super::dialog_layer::main_in_front(&self.app) {
@@ -184,9 +185,19 @@ impl GamepadTarget for DialogGamepadTarget {
 
     fn reject(&self) {
         if super::dialog_layer::main_in_front(&self.app) {
-            return;
+            return super::dialog_layer::go_back(&self.app);
         }
         dialog_reject(&self.app);
+    }
+
+    // Y: on a full-screen page, "Show the app" (src/app/page_dialog.rs); on the dimmed main window, back to the page.
+    fn open_settings(&self) {
+        if super::dialog_layer::main_in_front(&self.app) {
+            return super::dialog_layer::go_back(&self.app);
+        }
+        if matches!(current_dialog(&self.app), DialogSlot::SetupWizard(_)) {
+            super::page_dialog::show_app_from_pad();
+        }
     }
 
     fn show_info_for_selection(&self) {

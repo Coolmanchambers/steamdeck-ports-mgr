@@ -576,6 +576,9 @@ export component SetupWizardDialog inherits Window {
     in property <int> focus-middle: -1;
     in property <int> focus-extra: -1;
     in property <int> focus-right: -1;
+    // One window: "Show the app" (src/app/page_dialog.rs), just left of the right button; empty text hides it.
+    in property <string> show-app-text: "";
+    in property <int> focus-show-app: -1;
     // The focus number that is selected, and the option it belongs to (-1 when a button is selected).
     in property <int> selected-index: -1;
     in property <int> selected-option: -1;
@@ -590,6 +593,7 @@ export component SetupWizardDialog inherits Window {
     callback exit-requested();
     callback move-requested(int, int);
     callback activate-requested();
+    callback show-app-requested();
     forward-focus: key-handler;
 
     in property <length> item-font-px-physical: 14px;
@@ -700,6 +704,10 @@ export component SetupWizardDialog inherits Window {
                 return accept;
             } else if (event.text == Key.RightArrow) {
                 root.move-requested(1, 0);
+                return accept;
+            } else if (event.text == "y" || event.text == "Y") {
+                // The keyboard's Y, like the controller's: "Show the app" when the page offers it (it does nothing otherwise).
+                root.show-app-requested();
                 return accept;
             } else if (event.text == Key.Return) {
                 root.activate-requested();
@@ -1038,6 +1046,20 @@ export component SetupWizardDialog inherits Window {
                 clicked => { root.button-requested(3); }
                 moved(x, y) => { root.pointer-moved(root.focus-right, x, y); }
             }
+            if root.show-app-text != "": WizardButton {
+                x: chrome.content-width - root.gutter - (root.right-text == "" ? 0px : right-m.preferred-width + root.button-padding * 2 + root.spacing) - self.width;
+                y: chrome.footer-y;
+                width: self.text-preferred-width + root.button-padding * 2;
+                height: root.row-height;
+                text: root.show-app-text;
+                primary: false;
+                selected: root.selected-index == root.focus-show-app;
+                border-px: root.border-px;
+                ring-px: root.ring;
+                font-size: root.item-font-px;
+                clicked => { root.show-app-requested(); }
+                moved(x, y) => { root.pointer-moved(root.focus-show-app, x, y); }
+            }
             // The controller hint bar: what A, B and the D-pad do on this page.
             if root.hint-text != "": Rectangle {
                 x: 0px;
@@ -1071,6 +1093,11 @@ export component SetupWizardDialog inherits Window {
             middle-m := Text {
                 visible: false;
                 text: root.middle-text;
+                font-size: root.item-font-px;
+            }
+            right-m := Text {
+                visible: false;
+                text: root.right-text;
                 font-size: root.item-font-px;
             }
         }

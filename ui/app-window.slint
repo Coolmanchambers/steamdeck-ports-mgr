@@ -89,7 +89,7 @@ export component AppWindow inherits Window {
 
     in property <bool> refocus-trigger: false;
     // Fork (one window): while a page or dialog is open the keyboard belongs to the dim layer, not the search box.
-    changed refocus-trigger => { if (root.dialog-layer-shown) { dialog-layer.grab(); } else { search-input.focus(); } }
+    changed refocus-trigger => { root.focus-keyboard(); }
     in property <bool> scroll-trigger: false;
 
     // Fork: the Deck-ready list replaces the port list or card grid while deck-ready-mode is on.
@@ -124,7 +124,8 @@ export component AppWindow inherits Window {
     in property <bool> dialog-layer-shown: false;
     in property <string> dialog-layer-text: "";
     callback dialog-layer-pressed();
-    changed dialog-layer-shown => {
+    changed dialog-layer-shown => { root.focus-keyboard(); }
+    function focus-keyboard() {
         if (root.dialog-layer-shown) {
             dialog-layer.grab();
         } else {
