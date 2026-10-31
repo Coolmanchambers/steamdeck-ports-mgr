@@ -252,6 +252,18 @@ pub fn update_shown(seen: Option<UpdateSeen>, installed_at: i64) -> bool {
     seen.is_some_and(|s| s.available && s.at >= installed_at)
 }
 
+/// What Play takes from the home screen's last answer for this port: `Some(true)` = the badge says "Update ready"
+/// (Play installs it, no second request), `Some(false)` = a check after the install found nothing within the time
+/// Play waits between its own checks (Play starts the game), `None` = no usable answer (Play follows its own rule).
+/// Keeps the badge and Play in step: a tile that says "Update ready" never starts the old version.
+pub fn play_answer(seen: Option<UpdateSeen>, installed_at: i64, now: i64) -> Option<bool> {
+    let s = seen.filter(|s| s.at >= installed_at)?;
+    if s.available {
+        return Some(true);
+    }
+    (now >= s.at && now - s.at < UPDATE_CHECK_EVERY_SECS).then_some(false)
+}
+
 /// The results kept in `fork-settings.json` (`home_update_checks`), read back.
 pub fn updates_from_json(v: Option<&serde_json::Value>) -> std::collections::HashMap<String, UpdateSeen> {
     v.and_then(serde_json::Value::as_object)
@@ -398,6 +410,19 @@ mod tests {
         let just_now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         assert!(!update_check_due(true, &SourceType::Github, Some(true), &just_now), "checked a moment ago");
         assert!(update_check_due(true, &SourceType::Github, Some(true), ""), "never checked");
+    }
+
+    #[test]
+    fn play_follows_the_home_badge_and_a_fresh_no_answer_skips_its_own_check() {
+        let (installed, now) = (1_000_000, 1_010_000);
+        let ready = UpdateSeen { available: true, at: 1_005_000 };
+        let none_fresh = UpdateSeen { available: false, at: 1_005_000 };
+        let none_old = UpdateSeen { available: false, at: now - UPDATE_CHECK_EVERY_SECS - 1 };
+        assert_eq!(play_answer(Some(ready), installed, now), Some(true), "the badge says Update ready: Play updates");
+        assert_eq!(play_answer(Some(none_fresh), installed, now), Some(false), "checked lately, nothing: Play starts the game");
+        assert_eq!(play_answer(Some(none_old), installed, now + UPDATE_CHECK_EVERY_SECS * 2), None, "an old no-answer: Play checks itself");
+        assert_eq!(play_answer(Some(UpdateSeen { available: true, at: 999_000 }), installed, now), None, "an answer from before the install does not count");
+        assert_eq!(play_answer(None, installed, now), None);
     }
 
     #[test]

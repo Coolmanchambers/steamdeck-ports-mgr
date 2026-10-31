@@ -1,4 +1,4 @@
-﻿//! Settings as pages (`crate::fork::settings_menu` says what they show; the window is `page_dialog::show_page`).
+//! Settings as pages (`crate::fork::settings_menu` says what they show; the window is `page_dialog::show_page`).
 //!
 //! The first page has a card for each group with a line of where it stands; a group's page has its actions as cards,
 //! and the two switches (Check for updates, Discord status) flip in place. B goes up one level: group page, Settings,
@@ -90,8 +90,12 @@ fn choose(app: &Rc<AppState>, router: &Router, group: Group, entry: menu::Entry)
         menu::Entry::CheckUpdates => {
             let value = !app.state.borrow().release_sync;
             app.state.borrow_mut().set_release_sync(value);
-            // Upstream (2026-10-30): the footer's Update button follows the switch.
+            // Upstream (2026-10-30): the footer's Update button follows the switch. Fork: switching it on asks again
+            // now (a saved flag may be stale), and the answer sets the button.
             app.window().set_self_update_available(app.state.borrow().show_launcher_update());
+            if value {
+                super::sync::start_self_update_check(app, true);
+            }
             show_group(app, router, group);
         }
         menu::Entry::DiscordRpc => {

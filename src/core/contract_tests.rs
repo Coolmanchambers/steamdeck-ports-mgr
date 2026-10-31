@@ -258,3 +258,41 @@ fn state_json_installed_entry_keys_are_read_and_written_as_documented() {
     assert!(written.get("release_sync").is_some());
     let _ = fs::remove_file(&path);
 }
+
+/// Source hygiene (upstream catch-up 2026-10-31): a merge resolved on Windows once re-encoded eight files (a UTF-8
+/// BOM, and every non-ASCII name in the Language list turned to "FranA\u{0303}ais"-style garbage). rustc strips a BOM
+/// and the strings still compile, so only a test catches it.
+#[test]
+fn sources_have_no_bom_and_no_double_encoded_text() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if matches!(path.extension().and_then(|e| e.to_str()), Some("rs" | "slint" | "sh" | "md")) {
+                out.push(path);
+            }
+        }
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for dir in ["src", "ui", "tools"] {
+        walk(&root.join(dir), &mut files);
+    }
+    assert!(files.len() > 100, "walked {} files", files.len());
+    // A UTF-8 file read as cp1252 and written as UTF-8 again: "A tilde" (C3 83), "a-circumflex euro" (C3 A2 E2 80),
+    // "ETH" (C3 90) and "U grave" (C3 99) lead the Latin, Cyrillic and CJK garbage.
+    let mojibake: [&[u8]; 4] = [b"\xC3\x83", b"\xC3\xA2\xE2\x80", b"\xC3\x90", b"\xC3\x99"];
+    for path in files {
+        let bytes = fs::read(&path).unwrap();
+        assert!(!bytes.starts_with(b"\xEF\xBB\xBF"), "{} starts with a UTF-8 BOM", path.display());
+        for m in mojibake {
+            assert!(!bytes.windows(m.len()).any(|w| w == m), "{} holds double-encoded text", path.display());
+        }
+    }
+    // The Language list keeps its real names (French, Japanese, Russian).
+    let dialogs = fs::read_to_string(root.join("src/app/dialogs.rs")).unwrap();
+    for name in ["Fran\u{e7}ais", "\u{65e5}\u{672c}\u{8a9e}", "\u{420}\u{443}\u{441}\u{441}\u{43a}\u{438}\u{439}"] {
+        assert!(dialogs.contains(name), "the Language list lost {name}");
+    }
+}

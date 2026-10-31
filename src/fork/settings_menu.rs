@@ -1,4 +1,4 @@
-﻿//! Settings as pages instead of one long list. The first page has a card for each group (Ports, Steam, Saves, App,
+//! Settings as pages instead of one long list. The first page has a card for each group (Ports, Steam, Saves, App,
 //! Updates), each with a one-line summary of where that stands; a group's page has its actions as cards, and a card
 //! that is a switch shows On or Off and flips in place. Pure data for `fork::page`: the groups, what each entry
 //! says, the summaries. What an entry does is `src/app/settings_menu_screen.rs::run_entry`; the screens are
@@ -612,7 +612,7 @@ mod tests {
         assert_eq!(group_page(Group::Ports, &en, &f).options[4].title, "Open the ports folder");
         assert_eq!(group_page(Group::Saves, &en, &f).options[0].title, "Back up saves now");
         assert_eq!(plain_or_translated("Library", "Library", "Open the ports folder"), "Open the ports folder");
-        assert_eq!(plain_or_translated("BibliothÃ¨que", "Library", "Open the ports folder"), "BibliothÃ¨que");
+        assert_eq!(plain_or_translated("Bibliothèque", "Library", "Open the ports folder"), "Bibliothèque");
         assert_eq!(group_page(Group::Saves, &l, &f).options[0].title, "Sauvegarde");
     }
 

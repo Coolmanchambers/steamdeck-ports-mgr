@@ -1,4 +1,4 @@
-﻿//! Fork: Settings > Ports folder..., the "ports folder is not available" message at startup, the move
+//! Fork: Settings > Ports folder..., the "ports folder is not available" message at startup, the move
 //! of installed ports to a new ports folder, and the old-copy prompts. The rules live in
 //! `crate::fork::ports_folder`, the engine in `crate::fork::port_mover` and the lists in
 //! `crate::fork::ports_folder_view` (all tested without UI); this file draws them and runs the copies

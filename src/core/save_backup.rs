@@ -75,8 +75,10 @@ fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, d
         return;
     }
     // Upstream (2026-10-30): a save that is a single file (`game.sav`) was kept as `<pending>/<name>` and goes
-    // back to its place without touching the rest of the game folder.
-    let saved_file = dst.file_name().map(|name| src.join(name)).filter(|f| f.is_file() && !dst.is_dir());
+    // back to its place without touching the rest of the game folder. Fork: only when that file is all the kept
+    // copy holds; a kept folder that happens to contain a file of the folder's name goes back whole (never a part).
+    let only_entry = fs::read_dir(&src).map(|d| d.count() == 1).unwrap_or(false);
+    let saved_file = dst.file_name().map(|name| src.join(name)).filter(|f| only_entry && f.is_file() && !dst.is_dir());
     let restored = match saved_file {
         Some(saved_file) => dst.parent().is_some_and(|parent| fs::create_dir_all(parent).is_ok()) && fs::copy(&saved_file, &dst).is_ok(),
         None => {
@@ -116,8 +118,9 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
     let sources: Vec<(PathBuf, &str)> = save_fields(port)
         .into_iter()
         .filter_map(|(save_folder, field)| {
-            // A save that is one file (upstream 2026-10-30, `copy_save`) is backed up too.
-            let src = save_folder.and_then(|v| resolve_save_folder(v, game_dir)).filter(|src| src.is_dir() || src.is_file())?;
+            // A save that is one file (upstream 2026-10-30, `copy_save`) is backed up too, but not through a link
+            // (a link to a big file elsewhere would be copied with no room check; folders have `link_problem`).
+            let src = save_folder.and_then(|v| resolve_save_folder(v, game_dir)).filter(|src| src.is_dir() || fs::symlink_metadata(src).is_ok_and(|m| m.is_file()))?;
             // "save": "." (or a folder holding the game) is not a save folder: copying it would duplicate the whole game on every update.
             (!is_within(game_dir, &src) && !is_within(saves_backup_dir, &src)).then_some((src, field))
         })
@@ -142,7 +145,11 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
         }
     }
     // Fork (save finder): a save folder outside the game folder (one the user chose) can be big; check the room first.
-    let outside: u64 = sources.iter().filter(|(src, _)| !is_within(src, game_dir)).map(|(src, _)| crate::fork::save_restore::tree_size_capped(src, u64::MAX / 2, 2_000_000).0).sum();
+    let outside: u64 = sources
+        .iter()
+        .filter(|(src, _)| !is_within(src, game_dir))
+        .map(|(src, _)| if src.is_file() { fs::metadata(src).map_or(0, |m| m.len()) } else { crate::fork::save_restore::tree_size_capped(src, u64::MAX / 2, 2_000_000).0 })
+        .sum();
     if outside > 0 {
         let place = saves_backup_dir.ancestors().find(|a| a.exists()).unwrap_or(saves_backup_dir);
         if let Some(problem) = crate::fork::save_restore::space_problem(outside.saturating_mul(2), crate::fork::save_restore::free_bytes(place), place) {

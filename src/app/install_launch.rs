@@ -283,21 +283,36 @@ pub(crate) fn play_port(app: &Rc<AppState>, router: &Router, port: &Port) {
     let Some((tag, installed_at)) = check else {
         return launch_installed(app, router, port);
     };
+    // Fork (home screen): the home screen's own round may have answered already. A tile that says "Update ready"
+    // leads to the update (never the old version); a fresh "nothing new" spares the request.
+    if let Some(available) = super::home_screen::play_answer(app, port.key()) {
+        if try_claim_op_slot(app, port).is_none() {
+            return;
+        }
+        return finish_play_update_check(app, router, port.clone(), available, true);
+    }
     if try_claim_op_slot(app, port).is_none() {
         return;
     }
-    app.state.borrow_mut().mark_update_checked(port.key());
     let (github_token, gitlab_token) = app.api_tokens();
     let port = port.clone();
     let events = app.events.clone();
     std::thread::spawn(move || {
-        let available = crate::core::jobs::run_update_check(&port, tag.as_deref(), &installed_at, github_token.as_deref(), gitlab_token.as_deref());
-        lock(&events).push(AppEvent::PlayUpdateChecked { port: Box::new(port), available });
+        // Fork: a check that got no answer (offline, rate limit) is not stamped, so the next Play asks again.
+        let answer = crate::core::jobs::run_update_check_result(&port, tag.as_deref(), &installed_at, github_token.as_deref(), gitlab_token.as_deref());
+        if let Err(e) = &answer {
+            eprintln!("play: no update answer for {}: {e}", port.key());
+        }
+        let (available, answered) = (answer.as_ref().copied().unwrap_or(false), answer.is_ok());
+        lock(&events).push(AppEvent::PlayUpdateChecked { port: Box::new(port), available, answered });
     });
 }
 
-pub(crate) fn finish_play_update_check(app: &Rc<AppState>, router: &Router, port: Port, available: bool) {
+pub(crate) fn finish_play_update_check(app: &Rc<AppState>, router: &Router, port: Port, available: bool, answered: bool) {
     app.install_runtime.installing.borrow_mut().remove(port.key());
+    if answered {
+        app.state.borrow_mut().mark_update_checked(port.key());
+    }
     if available {
         app.install_runtime.pending_launch_after_install.borrow_mut().insert(port.key().to_string());
         start_install(app, router, port, None, None);

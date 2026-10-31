@@ -208,6 +208,29 @@ fn a_windows_only_relative_save_folder_counts_on_every_system_and_restores() {
     assert_eq!(snapshot(&save), BTreeMap::from([("slot1.sav".to_string(), b"from the backup".to_vec()), ("sub/a.dat".to_string(), b"a".to_vec())]));
 }
 
+/// Upstream catch-up 2026-10-31: a save that is one file is backed up (`core::save_backup::copy_save`), but this
+/// engine rebuilds folders; it must say so instead of making a folder of the file's name.
+#[test]
+fn a_single_file_save_is_refused_plainly_whether_the_file_is_there_or_not() {
+    let fx = Fixture::new();
+    let game = port("FileGame", Some(json!("game.sav")), None);
+    let dir = fx.game_dir(&game);
+    write(&dir.join("game.sav"), b"precious");
+    write(&dir.join("game.exe"), b"exe");
+    let _ = fx.update_backup(&game, "2026-10-20_12-00-00");
+    let backup = list_backups(&fx.saves_backup, "FileGame").remove(0);
+    let before = snapshot(&dir);
+    let err = restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap_err();
+    assert!(matches!(&err, RestoreError::Failed(why) if why.contains("single save file")), "{err:?}");
+    assert_eq!(snapshot(&dir), before, "nothing in the game folder changed");
+
+    fs::remove_file(dir.join("game.sav")).unwrap();
+    let err = restore(&fx.input(&game, &dir, &backup, "s2"), &mut |_| {}).unwrap_err();
+    assert!(matches!(&err, RestoreError::Failed(why) if why.contains("single save file")), "{err:?}");
+    assert!(!dir.join("game.sav").exists(), "no folder of the file's name was made");
+    assert!(!fx.saves_backup.join(RESTORE_BACKUPS_DIR).exists(), "no safety backup was started");
+}
+
 #[test]
 fn a_windows_only_appdata_save_folder_is_not_restorable_on_linux() {
     #[cfg(not(windows))]

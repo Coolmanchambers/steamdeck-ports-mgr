@@ -1,4 +1,4 @@
-﻿use super::events::{lock, AppEvent};
+use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
 use super::install_launch::{open_favorite_exe_picker, open_version_picker, start_extra_install, start_install};
 use super::playtime::{format_last_played, format_playtime, LastPlayed};
@@ -164,7 +164,11 @@ fn main_sized_dialog_size(app: &AppState, ctx: &DialogContext) -> (i32, i32) {
     let scale = app.window_geometry.scale.get();
     let normal = app.window_geometry.normal_mode.borrow();
     let (w, h) = ((normal.logical_width * scale) as i32, (normal.logical_height * scale) as i32);
-    crate::ui::dialog_geometry::main_sized_dialog_size(w, h, ctx.work_w, ctx.work_h, true)
+    let (uw, uh) = crate::ui::dialog_geometry::main_sized_dialog_size(w, h, ctx.work_w, ctx.work_h, true);
+    // Fork: on the Deck the main window fills the screen in big mode, and Info, the pickers and the fork's folder
+    // picker used to fill it too; upstream's 1.6x of the windowed size would shrink them, so the larger wins.
+    let (mw, mh) = main_window_size(app);
+    (uw.max(mw), uh.max(mh))
 }
 
 fn revert_theme_preview(app: &Rc<AppState>) {
@@ -932,7 +936,8 @@ pub(crate) fn open_tools_picker(app: &Rc<AppState>, router: &Router) {
         .map(|tool| SearchListItem::with_keywords(tool.source, tool.name, tool.tags_lower))
         .collect();
     if items.is_empty() {
-        return;
+        // Fork: a card that does nothing looks broken; say why (an old or offline catalog has no "tools" section).
+        return open_message_dialog(app, router, &tr!(app).invoke_label_tools(), "The catalog lists no tools yet. They arrive with the next catalog update.");
     }
     open_search_list_dialog(app, router, tr!(app).invoke_label_tools(), items, "", None, |_, url| open_url(url));
 }
@@ -949,25 +954,25 @@ pub(crate) fn open_files_picker(app: &Rc<AppState>, router: &Router) {
 
 const LANGUAGES: &[(&str, &str)] = &[
     ("en", "English"),
-    ("fr", "FranÃ§ais"),
-    ("ja", "æ—¥æœ¬èªž"),
-    ("zh-CN", "ç®€ä½“ä¸­æ–‡"),
-    ("zh-TW", "ç¹é«”ä¸­æ–‡ (å°ç£)"),
-    ("es", "EspaÃ±ol"),
+    ("fr", "Français"),
+    ("ja", "日本語"),
+    ("zh-CN", "简体中文"),
+    ("zh-TW", "繁體中文 (台灣)"),
+    ("es", "Español"),
     ("de", "Deutsch"),
-    ("pt-BR", "PortuguÃªs (Brasil)"),
-    ("ru", "Ð ÑƒÑÑÐºÐ¸Ð¹"),
-    ("ko", "í•œêµ­ì–´"),
+    ("pt-BR", "Português (Brasil)"),
+    ("ru", "Русский"),
+    ("ko", "한국어"),
     ("it", "Italiano"),
-    ("ar", "Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©"),
-    ("vi", "Tiáº¿ng Viá»‡t"),
+    ("ar", "العربية"),
+    ("vi", "Tiếng Việt"),
     ("pl", "Polski"),
-    ("tr", "TÃ¼rkÃ§e"),
+    ("tr", "Türkçe"),
     ("id", "Bahasa Indonesia"),
-    ("uk", "Ð£ÐºÑ€Ð°Ñ—Ð½ÑÑŒÐºÐ°"),
-    ("fa", "ÙØ§Ø±Ø³ÛŒ"),
-    ("th", "à¹„à¸—à¸¢"),
-    ("ro", "RomÃ¢nÄƒ"),
+    ("uk", "Українська"),
+    ("fa", "فارسی"),
+    ("th", "ไทย"),
+    ("ro", "Română"),
 ];
 
 pub(crate) fn open_language_picker(app: &Rc<AppState>, router: &Router) {

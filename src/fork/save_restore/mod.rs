@@ -769,6 +769,18 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
     if expected.iter().any(BTreeMap::is_empty) {
         return Err(RestoreError::UnusableBackup("it no longer holds the save folders it listed".into()));
     }
+    // A save that is one file (upstream 2026-10-30: `game.sav` is backed up as `<field>/game.sav`) is not a folder
+    // this engine can rebuild and swap in; it would make a folder of the file's name. Said plainly, nothing changed.
+    for ((_, shown), want) in plan.replace.iter().zip(&expected) {
+        let file_name = shown.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if want.len() == 1 && want.keys().next() == Some(&file_name) && !shown.is_dir() {
+            return Err(RestoreError::Failed(format!(
+                "{} is a single save file, not a folder; this app restores folders only. Copy {file_name} out of {} by hand",
+                shown.display(),
+                input.backup.zip.display()
+            )));
+        }
+    }
 
     // Saves Backup holds a copy of the current saves, their zip and the unpacked backup at once; each save
     // folder's drive holds the rebuilt folder beside the old one.

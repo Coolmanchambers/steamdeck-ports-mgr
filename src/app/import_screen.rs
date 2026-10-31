@@ -1,4 +1,4 @@
-﻿//! "Import ports..." (Settings menu, and step c of the setup wizard): finds ports installed outside the
+//! "Import ports..." (Settings menu, and step c of the setup wizard): finds ports installed outside the
 //! ports folder and moves them in. It replaces "Adopt installed ports".
 //!
 //! The user sees cards, not lists: a page of what was found, one card per port to confirm, and one page to

@@ -475,6 +475,13 @@ fn facts_of(app: &AppState, installed: &[Port]) -> Vec<PortFacts> {
         .collect()
 }
 
+/// Fork (Play): what the home screen's last check says for this port (`home::play_answer`).
+pub(crate) fn play_answer(app: &AppState, key: &str) -> Option<bool> {
+    let installed_at = app.state.borrow().get(key).map_or(0, |i| home::app_played_at(&i.installed_at));
+    let seen = app.home.updates.lock().ok().and_then(|u| u.get(key).copied());
+    home::play_answer(seen, installed_at, unix_now())
+}
+
 /// Fork (checkup): Home would badge this installed port "Update ready" (a check found one after it was installed).
 pub(crate) fn update_ready(app: &AppState, key: &str) -> bool {
     let installed_at = app.state.borrow().get(key).map_or(0, |i| home::app_played_at(&i.installed_at));
@@ -604,13 +611,8 @@ fn start_update_check(app: &Rc<AppState>) {
     if wanted.is_empty() {
         return;
     }
-    // Stamped like Play's own check (`last_update_check`), so Play does not ask again within 12 h of this round.
-    {
-        let mut state = app.state.borrow_mut();
-        for (port, ..) in &wanted {
-            state.mark_update_checked(port.key());
-        }
-    }
+    // Not stamped in state.json: Play reads this round's answers instead (`home::play_answer`, `play_port`), so a
+    // tile that says "Update ready" leads to the update and a fresh "nothing" spares the request.
     // Stamped before it starts, so a crash or a quit half way does not make every start ask again.
     if let Err(e) = settings.set(KEY_CHECKED_AT, serde_json::json!(now)) {
         eprintln!("home: could not note the update check time ({e})");

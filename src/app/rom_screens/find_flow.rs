@@ -1,4 +1,4 @@
-﻿//! "Find this port's game files": the screens around `fork::rom_screens::find`.
+//! "Find this port's game files": the screens around `fork::rom_screens::find`.
 //!
 //! Entry points (all `pub(crate)`, re-exported from `app::rom_screens`):
 //! - [`after_install`]: called by the app when an install finishes. Once per port, only for a port

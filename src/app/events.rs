@@ -1,4 +1,4 @@
-﻿use super::dialogs::{apply_theme, close_current_dialog, dialog_is_open, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
+use super::dialogs::{apply_theme, close_current_dialog, dialog_is_open, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
 use super::install_launch::{finish_play_update_check, launch_installed, play_port, start_install};
 use super::playtime::{any_process_running, checkpoint_playtime, refresh_live_playtime_display};
 use super::state::AppState;
@@ -22,7 +22,8 @@ pub(crate) enum AppEvent {
     InstallAssetAmbiguous { key: String, assets: Vec<Value>, release_override: Option<Value> },
     InstallError { key: String, message: String },
     ExtraInstallDone { key: String, result: Result<(), String> },
-    PlayUpdateChecked { port: Box<Port>, available: bool },
+    // Fork: `answered` is false when the check got no answer (offline, rate limit); then nothing is stamped.
+    PlayUpdateChecked { port: Box<Port>, available: bool, answered: bool },
     // Fork: `Some(offer)` carries what raised the flag, so a later start can tell whether it still applies (O4);
     // `None` means the check found no update and clears the flag (upstream 2026-10-30).
     SelfUpdateChecked { offer: Option<crate::fork::self_update::Offer> },
@@ -168,7 +169,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 };
                 open_message_dialog(app, router, &tr.invoke_dialog_title_extras(), &message);
             }
-            AppEvent::PlayUpdateChecked { port, available } => finish_play_update_check(app, router, *port, available),
+            AppEvent::PlayUpdateChecked { port, available, answered } => finish_play_update_check(app, router, *port, available, answered),
             AppEvent::SelfUpdateChecked { offer } => {
                 if let Some(offer) = &offer {
                     let mut settings = crate::fork::settings::ForkSettings::load(&app.paths.config_dir.join(crate::fork::settings::FILE_NAME));

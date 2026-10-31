@@ -68,7 +68,18 @@ for _ in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
 kill -0 "$XVFB" 2>/dev/null && xdpyinfo >/dev/null 2>&1 || { cat "$OUT/xvfb.log"; setup_fail "Xvfb $DISPLAY did not come up"; }
 
 fail=0
-check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; fi; }
+check() { if eval "$2"; then echo "ok:   $1"; else echo "FAIL: $1"; fail=1; windows_now; fi; }
+# On a failure: every window on the display with its map state, so the log says what was there.
+windows_now() {
+    echo "      windows now:"
+    for id in $(xdotool search --name "." 2>/dev/null); do
+        local name state
+        name=$(xdotool getwindowname "$id" 2>/dev/null)
+        [ -z "$name" ] && continue
+        state=$(xwininfo -id "$id" 2>/dev/null | sed -n 's/^ *Map State: //p')
+        echo "        $id  [$state]  $name"
+    done
+}
 
 # ---- First start: the setup wizard ----
 # A folder with no fork-settings.json is a first start (and so is an old install that never ran the
