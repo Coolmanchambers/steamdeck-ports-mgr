@@ -115,8 +115,11 @@ fn a_local_entry_can_name_the_settings_exactly() {
     let named = serde_json::json!(["odd/settings.dat", "conf.d", "missing.ini"]);
     let found: Vec<String> = discover(&Input { game_dir: &game, save_dirs: &[], named: Some(&named), game_data: &[] }).iter().map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
     assert_eq!(found, ["settings.dat", "a.dat", "b.dat"], "only what it names: config.toml is left out, a missing file is skipped");
-    let one = serde_json::json!({"linux": "config.toml", "windows": "%APPDATA%\\x"});
+    // Each system reads its own entry, so the test names a file that exists for the system it runs on.
+    let one = serde_json::json!({"linux": "config.toml", "windows": "config.toml"});
     assert_eq!(discover(&Input { game_dir: &game, save_dirs: &[], named: Some(&one), game_data: &[] }).len(), 1, "same shape as save: one per system");
+    let other = serde_json::json!({"linux": "%APPDATA%\\x", "windows": "/nonexistent/x"});
+    assert_eq!(discover(&Input { game_dir: &game, save_dirs: &[], named: Some(&other), game_data: &[] }).len(), 0, "the other system's entry is not read");
 }
 
 #[test]
