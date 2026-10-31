@@ -50,7 +50,7 @@ impl Group {
 
     pub fn entries(self) -> &'static [Entry] {
         match self {
-            Group::Ports => &[Entry::AddPort, Entry::ImportPorts, Entry::PortsFolder, Entry::GameFiles, Entry::OpenPortsFolder],
+            Group::Ports => &[Entry::AddPort, Entry::ImportPorts, Entry::PortsFolder, Entry::GameFiles, Entry::OpenPortsFolder, Entry::KeptFiles],
             Group::Steam => &[Entry::AddToSteam, Entry::ArtSources],
             Group::Saves => &[Entry::BackupSaves, Entry::RestoreSaves, Entry::CloudBackup],
             Group::App => &[Entry::SetupWizard, Entry::Themes, Entry::Language, Entry::Files, Entry::DiscordRpc],
@@ -77,6 +77,8 @@ pub enum Entry {
     AddToSteam,
     ImportPorts,
     GameFiles,
+    /// Where uninstalls put the game files they keep (`fork::uninstall_keep`).
+    KeptFiles,
     ArtSources,
     BackupSaves,
     RestoreSaves,
@@ -88,7 +90,7 @@ pub enum Entry {
 }
 
 impl Entry {
-    pub const ALL: [Entry; 18] = [
+    pub const ALL: [Entry; 19] = [
         Entry::AddPort,
         Entry::SetupWizard,
         Entry::Themes,
@@ -99,6 +101,7 @@ impl Entry {
         Entry::AddToSteam,
         Entry::ImportPorts,
         Entry::GameFiles,
+        Entry::KeptFiles,
         Entry::ArtSources,
         Entry::BackupSaves,
         Entry::RestoreSaves,
@@ -317,6 +320,7 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::ImportPorts => plain("Ports you already have", "Import ports: find them on this Deck and move them in"),
         Entry::PortsFolder => Card { title: "Ports folder".into(), detail: f.ports_place.clone().unwrap_or_else(|| "Where your ports are kept".to_string()), switch: None },
         Entry::GameFiles => plain("Game files", "Connect your game files to the ports that need them"),
+        Entry::KeptFiles => plain("Kept files", "Game files and older versions kept when a port was uninstalled"),
         Entry::OpenPortsFolder => plain(&plain_or_translated(&l.library, "Library", "Open the ports folder"), "Show the ports folder in the file manager"),
         Entry::AddToSteam if f.steam_waiting > 0 => Card { title: "Add to Steam".into(), detail: format!("{} waiting for Steam to close", count(f.steam_waiting, "change", "changes")), switch: None },
         Entry::AddToSteam => plain("Add to Steam", "Shortcuts and art for your ports"),

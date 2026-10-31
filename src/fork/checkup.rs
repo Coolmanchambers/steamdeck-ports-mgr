@@ -338,6 +338,8 @@ pub struct Facts {
     pub saves_known: usize,
     /// Problems the user chose to skip, by check (what they were when skipped).
     pub skips: Skips,
+    /// One port's checkup (`only_port`): the lines speak of it, not of "every port".
+    pub scoped: bool,
 }
 
 impl Default for Facts {
@@ -360,6 +362,7 @@ impl Default for Facts {
             cloud_ok: false,
             saves_known: 0,
             skips: Skips::new(),
+            scoped: false,
         }
     }
 }
@@ -373,6 +376,11 @@ pub fn names(list: &[String]) -> String {
         [a, b, c] => format!("{a}, {b} and {c}"),
         [a, b, rest @ ..] => format!("{a}, {b} and {} more", rest.len()),
     }
+}
+
+/// The words for one port's checkup (`Facts::scoped`), or for all of them.
+fn one_or_all<'a>(f: &Facts, one: &'a str, all: &'a str) -> &'a str {
+    if f.scoped { one } else { all }
 }
 
 fn named_list(list: &[Named]) -> String {
@@ -440,6 +448,7 @@ impl Facts {
             cloud_ok: false,
             saves_known: 0,
             skips: self.skips.clone(),
+            scoped: true,
         }
     }
 }
@@ -637,7 +646,7 @@ fn steam_icons(f: &Facts) -> Outcome {
     let bad: Vec<&IconFinding> = all_bad.iter().copied().filter(|s| !repair_queued.contains(s.port_key.as_str())).collect();
     if bad.is_empty() {
         if all_bad.is_empty() {
-            return Outcome::Ok(if shortcuts.is_empty() { "No shortcuts yet".to_string() } else { "All fine".to_string() });
+            return Outcome::Ok(if shortcuts.is_empty() { one_or_all(f, "No shortcut yet", "No shortcuts yet") } else { one_or_all(f, "Fine", "All fine") }.to_string());
         }
         // The repair is made and waits for Steam to close: not fixed yet, and not "all fine".
         let mut ports: Vec<String> = Vec::new();
@@ -665,7 +674,7 @@ fn steam_icons(f: &Facts) -> Outcome {
         many => format!("{} show nothing for {}", count(many.len(), "icon", "icons"), names(&ports)),
     };
     let detail = bad.iter().take(4).map(|b| b.describe()).collect();
-    Outcome::Problem(Problem { mark: Mark::ToDo, summary, detail, ports: port_keys, fix: Fix::SteamIcons, fix_label: "Fix the icons".to_string(), advisory: false, desktop_only: false })
+    Outcome::Problem(Problem { mark: Mark::ToDo, summary, detail, ports: port_keys, fix: Fix::SteamIcons, fix_label: one_or_all(f, "Fix the icon", "Fix the icons").to_string(), advisory: false, desktop_only: false })
 }
 
 fn steam_shortcuts(f: &Facts) -> Outcome {
@@ -691,11 +700,11 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
     }
     // Nobody asked for Steam shortcuts yet (none in Steam): not a thing to nag about.
     if in_steam.is_empty() {
-        return Outcome::Ok("No ports in Steam yet".to_string());
+        return Outcome::Ok(one_or_all(f, "Not in Steam yet", "No ports in Steam yet").to_string());
     }
     let missing: Vec<Named> = f.installed.iter().filter(|p| !in_steam.contains(p.key.as_str()) && !queued.contains(p.key.as_str())).cloned().collect();
     if at_old.is_empty() && missing.is_empty() {
-        return Outcome::Ok("Every port is in Steam".to_string());
+        return Outcome::Ok(one_or_all(f, "In Steam", "Every port is in Steam").to_string());
     }
     let mut parts = Vec::new();
     if !at_old.is_empty() {
@@ -709,7 +718,7 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
     if !at_old.is_empty() {
         return problem(Mark::ToDo, parts.join("; "), keys(&at_old), Fix::Repoint, "Point Steam at the new copy");
     }
-    problem(Mark::ToDo, parts.join("; "), keys(&missing), Fix::AddToSteam, "Add them to Steam")
+    problem(Mark::ToDo, parts.join("; "), keys(&missing), Fix::AddToSteam, one_or_all(f, "Add it to Steam", "Add them to Steam"))
 }
 
 fn programs(f: &Facts) -> Outcome {
@@ -722,7 +731,7 @@ fn programs(f: &Facts) -> Outcome {
 
 fn game_files(f: &Facts) -> Outcome {
     if f.files.is_empty() {
-        return Outcome::Ok("All there".to_string());
+        return Outcome::Ok(one_or_all(f, "Its game files are there", "All there").to_string());
     }
     let missing: Vec<Named> = f.files.iter().filter(|(_, s)| *s == FilesState::Missing).map(|(n, _)| n.clone()).collect();
     let to_add: Vec<Named> = f.files.iter().filter(|(_, s)| *s == FilesState::Unverifiable).map(|(n, _)| n.clone()).collect();
@@ -737,7 +746,7 @@ fn game_files(f: &Facts) -> Outcome {
 
 fn saves(f: &Facts) -> Outcome {
     if f.saves.is_empty() {
-        return Outcome::Ok("All found".to_string());
+        return Outcome::Ok(one_or_all(f, "Its saves are found", "All found").to_string());
     }
     let first = &f.saves[0];
     advisory(problem(Mark::ToDo, format!("Not found for {}", named_list(&f.saves)), keys(&f.saves), Fix::FindSaves(first.key.clone()), &format!("Find saves for {}", first.name)))

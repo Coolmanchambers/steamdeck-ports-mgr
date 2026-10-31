@@ -149,8 +149,10 @@ fn port() -> PortFacts {
 fn play_and_update_lines_say_what_is_true() {
     let mut p = port();
     assert_eq!(play_summary(&p), "Never played");
-    p.last_played = Some("yesterday".into());
-    assert_eq!(play_summary(&p), "Last played yesterday");
+    p.last_played = Some("on 2026-10-01".into());
+    assert_eq!(play_summary(&p), "Last played on 2026-10-01");
+    p.last_played = Some("today".into());
+    assert_eq!(play_summary(&p), "Last played today");
     p.running = true;
     assert_eq!(play_summary(&p), "Running now");
     let mut p = port();
@@ -327,7 +329,7 @@ fn the_project_link_is_a_web_page_never_a_download() {
 #[test]
 fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
     let places = deck_places();
-    let keep = crate::fork::uninstall_keep::KeepSummary { game_files: 3, keys_and_dumps: 0, older_versions: 1, names: vec!["oot.o2r".into(), "oot-mq.o2r".into(), "zelda.z64".into()] };
+    let keep = crate::fork::uninstall_keep::KeepSummary { game_files: 3, older_versions: 1, bytes: 100_000_000, names: vec!["oot.o2r".into(), "oot-mq.o2r".into(), "zelda.z64".into()], ..Default::default() };
     let f = FilesFacts {
         dir: "/home/deck/Ports/shipwright".into(),
         size: Some(300_000_000),
@@ -340,11 +342,42 @@ fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
     assert!(page.facts.iter().any(|l| l.starts_with("3 game files and 1 older version will be moved to Kept files, saves are backed up.")), "{:?}", page.facts);
     assert!(page.facts.iter().any(|l| l.contains("Kept files") && l.contains("shipwright")), "{:?}", page.facts);
     assert!(page.paragraphs.iter().any(|l| l == "Kept: oot.o2r, oot-mq.o2r, zelda.z64."), "{:?}", page.paragraphs);
-    assert!(page.paragraphs.iter().any(|l| l.starts_with("The rest of its folder is deleted")), "{:?}", page.paragraphs);
+    assert!(page.paragraphs.iter().any(|l| l == "The rest of its folder is deleted: Internal storage > Ports > shipwright (200 MB)."), "the kept files are not counted as deleted: {:?}", page.paragraphs);
+    assert!(page.paragraphs.iter().any(|l| l.starts_with("The app will not put them back when you reinstall")), "{:?}", page.paragraphs);
     let go = page.options.iter().find(|o| o.action == Act::UninstallYes).unwrap();
     assert_eq!(go.detail, "Keep the game files, delete the rest now");
 
     let plain = uninstall_page(&port(), Some(&FilesFacts { dir: "/home/deck/Ports/dusk".into(), ..FilesFacts::default() }), Some(&saves), &places);
     assert!(plain.facts.iter().all(|l| !l.contains("Kept files")));
     assert!(plain.paragraphs.iter().any(|l| l.starts_with("Its folder is deleted")));
+}
+
+#[test]
+fn an_unreadable_game_files_record_disables_uninstall_and_says_why() {
+    let f = FilesFacts { dir: "/home/deck/Ports/dusk".into(), keep_error: Some(crate::fork::uninstall_keep::UNREADABLE_RECORD.into()), ..FilesFacts::default() };
+    let page = uninstall_page(&port(), Some(&f), Some(&SavesFacts::default()), &deck_places());
+    assert!(page.facts.iter().any(|l| l.starts_with("The game files record could not be read")), "{:?}", page.facts);
+    let go = page.options.iter().find(|o| o.action == Act::UninstallYes).unwrap();
+    assert!(!go.enabled);
+}
+
+#[test]
+fn a_card_mounted_by_its_device_name_is_sd_card() {
+    let p = deck_places();
+    assert_eq!(human_path(Path::new("/run/media/mmcblk0p1/Ports/dusk"), &p), "SD card > Ports > dusk");
+    assert_eq!(human_path(Path::new("/run/media/sda1/ROMs"), &p), "USB drive > ROMs");
+    assert_eq!(human_path(Path::new("/run/media/STICK/ROMs"), &p), "STICK > ROMs", "a real label stays");
+    let mounted = Places { drives: vec![sd("/run/media/deck/mmcblk0p1", "mmcblk0p1")], ..deck_places() };
+    assert_eq!(human_path(Path::new("/run/media/deck/mmcblk0p1/Emulation"), &mounted), "SD card > Emulation");
+}
+
+#[test]
+fn the_fix_card_says_busy_instead_of_looking_forever_while_another_job_runs() {
+    let p = port();
+    let places = deck_places();
+    assert_eq!(summary(Card::Fix, &p, None, &places), "Looking...", "the worker has not answered yet");
+    let busy = DiskFacts { checkup: None, ..DiskFacts::default() };
+    assert_eq!(summary(Card::Fix, &p, Some(&busy), &places), CHECKUP_BUSY);
+    let fine = DiskFacts { checkup: Some(("Everything looks fine".into(), 0)), ..DiskFacts::default() };
+    assert_eq!(summary(Card::Fix, &p, Some(&fine), &places), "Everything looks fine");
 }

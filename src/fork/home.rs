@@ -198,12 +198,13 @@ impl List {
         }
     }
 
-    /// The words of the hint for B on this list: "Clear search" while there is search text (the first B clears it), else
+    /// "Add a port" when the list was opened from that page (B goes back to it), else "Home"; empty on Home.
     /// "Home"; empty on Home.
-    pub fn back_hint(self, searching: bool) -> &'static str {
+    pub fn back_hint(self, searching: bool, from_add_port: bool) -> &'static str {
         match (self, searching) {
             (List::Home, _) => "",
             (_, true) => "B / Esc  Clear search",
+            (_, false) if from_add_port => "B / Esc  Add a port",
             (_, false) => "B / Esc  Home",
         }
     }
@@ -377,9 +378,11 @@ mod tests {
         assert_eq!((List::browse(true), List::browse(false)), (List::DeckReady, List::AllPorts));
         assert_eq!(List::DeckReady.back(), Some(List::Home), "B leaves Deck-ready for Home, also in big mode where next_in goes to All ports");
         assert_eq!((List::Home.back(), List::AllPorts.back()), (None, Some(List::Home)), "B goes Home from All ports too");
-        assert_eq!(List::AllPorts.back_hint(true), "B / Esc  Clear search");
-        assert_eq!(List::DeckReady.back_hint(false), "B / Esc  Home");
-        assert_eq!(List::Home.back_hint(true), "");
+        assert_eq!(List::AllPorts.back_hint(true, true), "B / Esc  Clear search", "the first B clears the search, wherever the list came from");
+        assert_eq!(List::AllPorts.back_hint(false, true), "B / Esc  Add a port", "after the search is cleared, B goes back to Add a port");
+        assert_eq!(List::DeckReady.back_hint(false, true), "B / Esc  Add a port");
+        assert_eq!(List::DeckReady.back_hint(false, false), "B / Esc  Home");
+        assert_eq!(List::Home.back_hint(true, true), "");
     }
 
     #[test]

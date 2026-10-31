@@ -1313,16 +1313,24 @@ the Home button, X on Home), `src/app/dialogs.rs` (two helpers `pub(crate)`, Web
 Upstream's uninstall backs up the saves and then deletes the whole port folder. The fork never deletes game files, so
 before the folder goes, these are moved to `<Saves Backup>/Kept files/<port folder>/<time>/` (relative paths kept) with a
 `kept.json` manifest (source, kind, size, time): `.o2r`/`.otr` archives; game files connected into the folder
-(`rom_library.json`) or named as required by the port's entry; files with a console ROM or disc image extension (not the
-generic `bin`, `zip`, `7z`, `dat`, `img`, `md`, `swf` a port ships as data); keys (`*.keys`); BIOS and boot dumps; the
+(`rom_library.json`) or named as required by the port's entry; ROM and disc images by extension, cue sheets (`.cue`,
+`.gdi`, `.toc`) and the tracks they name; keys (`*.keys`); BIOS, boot and flash dumps (`*bios*`, `*boot*`, `*flash*`,
+`scph*`); any other generic data file (`bin`, `img`, `zip`, `7z`, `dat`, `swf`, `md`) over 1 MB, as "maybe game data"; the
 `.previous/` folder of older versions. Links are never followed: removing the folder removes a link, not its target. A
-move that fails puts back what had moved and cancels the uninstall with nothing deleted. The Port page's Uninstall
-confirm page says what will be kept and where ("3 game files and 1 older version will be moved to Kept files, saves are
-backed up"), and after the uninstall a message names the Kept files folder (Info's uninstall too). Kept files are not
-offered back on reinstall yet.
+record of connected game files that cannot be read stops the uninstall before anything moves. A move that fails puts back
+what had moved (a half-made copy across drives is removed first) and cancels the uninstall with nothing deleted.
+
+Every uninstall entry (the Port page's card, the All ports row's Uninstall button through `open_uninstall_confirm_dialog`)
+opens the Port page's Uninstall page, which says what will be kept and where ("3 game files and 1 older version will be
+moved to Kept files, saves are backed up", "The app will not put them back when you reinstall") and runs the uninstall on a
+worker ("Keeping game files..."), the port held as busy meanwhile. The result page names the Kept files folder. Settings >
+Ports > Kept files lists every kept set by port and date; Desktop Mode can open the folder. Kept files are not offered back
+on reinstall yet.
 
 Upstream files touched (`// Fork:` comments): `src/core/installer.rs` (`uninstall_port_keeping`; `uninstall_port` is now
-a test-only wrapper), `src/app/install_launch.rs` (`delete_port` passes the config folder and shows the result).
+a test-only wrapper), `src/app/install_launch.rs` (`delete_port` split into `may_uninstall` and `mark_uninstalled` for the
+Port page's worker), `src/app/dialogs.rs` (`open_uninstall_confirm_dialog` opens the Port page's Uninstall page instead of
+upstream's "All of its files will be deleted." dialog), `tools/smoke-test.sh` (Kept files page check).
 
 ## Fixes to upstream behavior
 

@@ -182,9 +182,25 @@ impl Drive {
     }
 }
 
-/// A file system ID rather than a name: hex digits and dashes, 8 or more of them (UUIDs, FAT serials like 1A2B-3C4D).
+/// A file system ID rather than a name: hex digits and dashes, 8 or more of them (UUIDs, FAT serials like 1A2B-3C4D), or
+/// a device name the system used as the folder name (`mmcblk0p1`, as older SteamOS mounted the SD card; `sda1`).
 pub(crate) fn looks_like_an_id(label: &str) -> bool {
-    label.len() >= 8 && label.contains('-') && label.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    let uuid = label.len() >= 8 && label.contains('-') && label.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    uuid || device_name_kind(label).is_some()
+}
+
+/// "SD card" for `mmcblk0p1`, "USB drive" for `sda1` / `sdb`, "Drive" for `nvme0n1p3`: names the system gives a device.
+pub(crate) fn device_name_kind(label: &str) -> Option<&'static str> {
+    let digits_after = |prefix: &str| label.strip_prefix(prefix).is_some_and(|r| !r.is_empty() && r.chars().next().is_some_and(|c| c.is_ascii_digit()) && r.chars().all(|c| c.is_ascii_alphanumeric()));
+    if digits_after("mmcblk") {
+        Some("SD card")
+    } else if label.len() >= 3 && label.starts_with("sd") && label[2..3].chars().all(|c| c.is_ascii_lowercase()) && label[3..].chars().all(|c| c.is_ascii_digit()) {
+        Some("USB drive")
+    } else if digits_after("nvme") {
+        Some("Drive")
+    } else {
+        None
+    }
 }
 
 /// A folder as a place, never a card's ID: "SD card > Emulation > roms", "Home > ROMs". A folder outside the

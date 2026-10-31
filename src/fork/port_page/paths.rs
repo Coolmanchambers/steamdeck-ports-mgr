@@ -51,7 +51,12 @@ pub fn human_path(path: &Path, places: &Places) -> String {
         if places.media_roots.contains(&root.join(&name)) {
             continue;
         }
-        let base = if mounts::looks_like_an_id(&name) { "SD card".to_string() } else { name };
+        // A card's ID or a device name (`mmcblk0p1`: older SteamOS) is the kind of drive, never the name itself.
+        let base = match mounts::device_name_kind(&name) {
+            Some(kind) => kind.to_string(),
+            None if mounts::looks_like_an_id(&name) => "SD card".to_string(),
+            None => name,
+        };
         return crumbs(&base, parts.as_path());
     }
     if let Some(rest) = places.home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {

@@ -330,24 +330,30 @@ pub fn apply_plans(store_path: &Path, plans: &[ConnectPlan], approval: Approval)
     store.apply_set_and_record(plans, approval).map_err(|e| e.to_string())
 }
 
+/// What was connected, one paragraph per file (blank lines between them, so a result page keeps every line), every
+/// place the human way ("SD card > Emulation > roms").
 pub fn done_text(port_name: &str, plans: &[ConnectPlan], mappings: &[Mapping]) -> String {
-    let mut text = format!("Connected game files for {port_name}.\n");
+    done_text_with(port_name, plans, mappings, &crate::fork::port_page::paths::human_path_here)
+}
+
+pub fn done_text_with(port_name: &str, plans: &[ConnectPlan], mappings: &[Mapping], place: &dyn Fn(&Path) -> String) -> String {
+    let mut parts = vec![format!("Connected game files for {port_name}.")];
     for m in mappings {
         let name = file_name(&m.source);
         let was_there = plans.iter().any(|p| p.source == m.source && matches!(p.action, PlanAction::AlreadyConnected(_)));
         let how = match (m.method, was_there) {
             (_, true) => "was already in place".to_string(),
-            (Method::UseInPlace, _) => format!("stays where it is: {}", ellipsize(&m.source.to_string_lossy(), 70)),
+            (Method::UseInPlace, _) => format!("stays where it is, in {}", m.source.parent().map_or_else(|| place(&m.source), place)),
             (Method::Symlink, _) => "linked into the port's folder".to_string(),
             (Method::Copy, _) => "copied into the port's folder".to_string(),
         };
-        text.push_str(&format!("\n  {name}: {how}"));
+        parts.push(format!("{name}: {how}"));
     }
     if mappings.iter().any(|m| m.method == Method::UseInPlace) {
-        text.push_str("\n\nFor \"stays where it is\" files, point the port at that path if it asks for the game.");
+        parts.push("For \"stays where it is\" files, point the port at that place if it asks for the game.".to_string());
     }
-    text.push_str("\n\nYour originals were not changed.");
-    text
+    parts.push("Your originals were not changed.".to_string());
+    parts.join("\n\n")
 }
 
 #[cfg(test)]
@@ -462,6 +468,18 @@ mod tests {
         assert!(fs::read_dir(&f.port_dir).unwrap().next().is_none());
         let text = done_text("Zelda Port", &plan.plans, &mappings);
         assert!(text.contains("stays where it is") && text.contains("Zelda renamed.z64"), "{text}");
+        // Every line survives the result page (it splits on blank lines), and the place is told the human way.
+        let text = done_text_with("Zelda Port", &plan.plans, &mappings, &|_| "SD card > Emulation > roms".to_string());
+        let page = crate::fork::rom_screens::pages::result_page("Zelda Port", "Game files connected", &text);
+        assert_eq!(
+            page.paragraphs,
+            [
+                "Connected game files for Zelda Port.",
+                "Zelda renamed.z64: stays where it is, in SD card > Emulation > roms",
+                "For \"stays where it is\" files, point the port at that place if it asks for the game.",
+                "Your originals were not changed.",
+            ]
+        );
     }
 
     #[test]

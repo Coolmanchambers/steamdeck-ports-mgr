@@ -721,7 +721,7 @@ can keep a file private (the internal drive, not an exFAT SD card), or sign-in i
 | First launch | The setup wizard opens by itself ("Where should ports go?"); B on it asks "Skip setup?"; after finishing or skipping the catalog fills and typing filters it |
 | Setup wizard again | Settings > Setup wizard... opens it at the first page; A chooses and B goes back with the controller; quitting half-way brings it back at the next start |
 | Install a port | Progress, then installed, with a Linux build under `Library/` |
-| Keyboard and mouse | Arrows move, Enter installs or launches, Alt+Enter toggles fullscreen |
+| Keyboard and mouse | Arrows move, Enter installs or launches, Esc on All ports and Deck-ready clears a search, then goes Home (or back to Add a port when it opened the list), Alt+Enter toggles fullscreen |
 | Controller | D-pad moves, A activates, B closes, X opens Info (on Home: the Port page), Y opens Settings |
 | Deck-ready list | L1/R1 switch lists; the list loads, Y filters it, A on a "Catalog" port installs it like All ports |
 | Deck-ready add | A on a row with Install and no Catalog or Yours tag (Info says "In the catalog: Not yet") asks first, then installs; it appears in All ports with Open folder |
@@ -746,6 +746,7 @@ can keep a file private (the internal drive, not an exFAT SD card), or sign-in i
 | Port page | X on a Home tile (or a long press, or a right-click) opens "Port options": a card per area with a live line; each card's page reuses the existing screen; B returns to Home on the same tile |
 | Game files result | After installing a port that needs game files (or its Game files card): a card page that names the folder as "SD card > Emulation > roms" and says plainly what is missing, with Choose the file myself / Look again / Add it later |
 | Lists' Home button | "< Home" at the top left of All ports and Deck-ready (touch, mouse, or Up then A); B clears a search first, then goes Home |
+| Uninstall | Every Uninstall (Port page, All ports row) opens the Port page's Uninstall page. Game files, `.o2r` archives, keys, dumps and older versions are moved to Saves Backup > Kept files, never deleted; Settings > Ports > Kept files lists them. Reinstalling does not put them back |
 
 ## Known issues being tested
 

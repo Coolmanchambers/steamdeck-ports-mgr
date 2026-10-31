@@ -320,23 +320,18 @@ pub(crate) fn reveal_selected_folder(app: &AppState) {
     }
 }
 
-pub(crate) fn delete_port(app: &Rc<AppState>, router: &Router, port: &Port) {
+// Fork: the uninstall runs on a worker from the Port page (`port_page_screen::uninstall`; game files are moved to Kept
+// files first, which can take a while across drives). Upstream's guard and bookkeeping are split out so the page can
+// wait between them; every uninstall entry (All ports row, Info, Port page) goes through that page.
+pub(crate) fn may_uninstall(app: &AppState, port: &Port) -> bool {
     let installing = app.install_runtime.installing.borrow().contains(port.key());
-    if dialog_is_open(app) || installing || port.user_managed || is_port_running(app, port.key()) {
-        return;
-    }
-    // Fork: game files and older versions are kept (fork::uninstall_keep); the message says where they went.
-    match crate::core::installer::uninstall_port_keeping(port, &app.paths.library_dir(), &app.paths.saves_backup_dir, Some(&app.paths.config_dir)) {
-        Ok(kept) => {
-            app.state.borrow_mut().mark_removed(port.key());
-            app.refresh_current_view();
-            app.refresh_tray_recent_games();
-            if let Some(kept) = kept {
-                open_message_dialog(app, router, &format!("{} was uninstalled", port.display_name()), &kept.line());
-            }
-        }
-        Err(message) => open_message_dialog(app, router, &tr!(app).invoke_dialog_title_uninstall_error(), &message),
-    }
+    !(installing || port.user_managed || is_port_running(app, port.key()))
+}
+
+pub(crate) fn mark_uninstalled(app: &Rc<AppState>, port: &Port) {
+    app.state.borrow_mut().mark_removed(port.key());
+    app.refresh_current_view();
+    app.refresh_tray_recent_games();
 }
 
 pub(crate) fn open_port_folder(app: &AppState, port: &Port) {

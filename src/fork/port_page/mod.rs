@@ -138,7 +138,7 @@ pub struct PortFacts {
     /// Home's badge for it ("Ready", "Update ready") and its mark.
     pub badge: String,
     pub badge_mark: Mark,
-    /// "today", "yesterday", "3 days ago", "on 2026-10-01"; `None` when never played.
+    /// "today" or "on 2026-10-01" (what `format_last_played` gives); `None` when never played.
     pub last_played: Option<String>,
     pub playtime: Option<String>,
     pub running: bool,
@@ -262,12 +262,15 @@ pub struct FilesFacts {
     pub keep: crate::fork::uninstall_keep::KeepSummary,
     /// Where they go: `<Saves Backup>/Kept files/<port folder>`.
     pub kept_dir: PathBuf,
+    /// The record of connected game files could not be read: the uninstall would stop, so the page says so first.
+    pub keep_error: Option<String>,
 }
 
 /// What the worker read from the disk.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiskFacts {
-    /// The port's Fix problems line ("Everything looks fine", "2 things to fix") and how many there are.
+    /// The port's Fix problems line ("Everything looks fine", "2 things to fix") and how many there are; `None` while another
+    /// job runs ([`CHECKUP_BUSY`]).
     pub checkup: Option<(String, usize)>,
     pub program: ProgramFacts,
     pub saves: SavesFacts,
@@ -297,7 +300,7 @@ pub fn backup_words(days: Option<u64>) -> String {
     }
 }
 
-/// "Last played yesterday", "Never played", "Running now".
+/// "Last played today", "Last played on 2026-10-01", "Never played", "Running now".
 pub fn play_summary(p: &PortFacts) -> String {
     if p.running {
         return "Running now".into();
@@ -426,12 +429,16 @@ pub fn uninstall_summary(p: &PortFacts) -> String {
     }
 }
 
+/// The Fix problems line while another job (a move, an install, a restore, an import) runs: the Port page looks again later.
+pub const CHECKUP_BUSY: &str = "Busy, look again later";
+
 /// The one line under a card. `disk` is `None` while the worker is still reading.
 pub fn summary(card: Card, p: &PortFacts, disk: Option<&DiskFacts>, places: &Places) -> String {
     let looking = || "Looking...".to_string();
     match card {
         Card::Play => play_summary(p),
-        Card::Fix => disk.and_then(|d| d.checkup.as_ref()).map_or_else(looking, |(s, _)| s.clone()),
+        // No line once the facts are in: a move, install, restore or import was running (`checkup_screen::port_line`).
+        Card::Fix => disk.map_or_else(looking, |d| d.checkup.as_ref().map_or_else(|| CHECKUP_BUSY.to_string(), |(s, _)| s.clone())),
         Card::Program => disk.map_or_else(looking, |d| program_summary(&d.program)),
         Card::Saves => disk.map_or_else(looking, |d| saves_summary(&d.saves, places)),
         Card::Settings => disk.map_or_else(looking, |d| settings_summary(&d.settings, &d.files.dir)),
@@ -756,10 +763,15 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
     }
     let saves_kept = !saves.is_some_and(|s| s.unknown_on_linux);
     let keeps = files.and_then(|f| f.keep.what());
+    let blocked = files.and_then(|f| f.keep_error.clone());
     match files {
         Some(f) => {
-            let size = f.size.map(|s| format!(" ({}{})", if f.size_capped { "over " } else { "" }, size_text(s))).unwrap_or_default();
-            if let Some(what) = &keeps {
+            // The size that goes: the folder less what is kept.
+            let gone = f.size.map(|s| s.saturating_sub(f.keep.bytes));
+            let size = gone.map(|s| format!(" ({}{})", if f.size_capped { "over " } else { "" }, size_text(s))).unwrap_or_default();
+            if let Some(why) = &blocked {
+                page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything until the record can be read (Settings > Ports > Game files)."));
+            } else if let Some(what) = &keeps {
                 let mut line = format!("{what} will be moved to Kept files");
                 if saves_kept {
                     line.push_str(", saves are backed up");
@@ -769,6 +781,7 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
                 if !f.keep.names.is_empty() {
                     page.paragraphs.push(format!("Kept: {}.", f.keep.names.join(", ")));
                 }
+                page.paragraphs.push("The app will not put them back when you reinstall: Settings > Ports > Kept files shows where they are.".into());
                 page.paragraphs.push(format!("The rest of its folder is deleted: {}{size}.", human_path(&f.dir, places)));
             } else {
                 page.paragraphs.push(format!("Its folder is deleted: {}{size}.", human_path(&f.dir, places)));
@@ -786,7 +799,13 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
     keep.recommended = true;
     page.options.push(keep);
     let go = option("Uninstall", if keeps.is_some() { "Keep the game files, delete the rest now" } else { "Delete the port's folder now" }, Act::UninstallYes);
-    page.options.push(if p.running || p.busy { disabled(PageOption { detail: "Not while it runs, installs or restores".into(), ..go }) } else { go });
+    page.options.push(if p.running || p.busy {
+        disabled(PageOption { detail: "Not while it runs, installs or restores".into(), ..go })
+    } else if blocked.is_some() {
+        disabled(PageOption { detail: "Not until the game files record can be read".into(), ..go })
+    } else {
+        go
+    });
     page
 }
 

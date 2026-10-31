@@ -343,6 +343,7 @@ fn assemble(app: &AppPart, sys: SysFacts) -> Facts {
         cloud_ok: app.cloud_ok,
         saves_known: sys.saves_known,
         skips: sys.skips,
+        scoped: false,
     }
 }
 

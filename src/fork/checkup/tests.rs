@@ -799,3 +799,15 @@ fn a_port_with_nothing_wrong_reads_everything_looks_fine() {
     let gone = Facts { folder: Folder::Gone, ..fine() };
     assert!(matches!(run_for_port(&gone, "soh").outcome(Check::GameFiles), Some(Outcome::Unknown(_))), "no ports folder: could not check");
 }
+
+#[test]
+fn one_ports_checkup_speaks_of_that_port_not_every_port() {
+    let all = fine();
+    assert_eq!(check(Check::SteamShortcuts, &all), Outcome::Ok("Every port is in Steam".to_string()));
+    let one = run_for_port(&all, "soh");
+    assert_eq!(one.outcome(Check::SteamShortcuts), Some(&Outcome::Ok("In Steam".to_string())));
+    assert_eq!(one.outcome(Check::GameFiles), Some(&Outcome::Ok("Its game files are there".to_string())));
+    assert_eq!(one.outcome(Check::Saves), Some(&Outcome::Ok("Its saves are found".to_string())));
+    let none_in_steam = Facts { shortcuts: Ok(Vec::new()), ..fine() };
+    assert_eq!(run_for_port(&none_in_steam, "soh").outcome(Check::SteamShortcuts), Some(&Outcome::Ok("Not in Steam yet".to_string())));
+}

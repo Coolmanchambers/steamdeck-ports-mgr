@@ -190,13 +190,14 @@ pub(crate) fn list_home(app: &Rc<AppState>, router: &Router) {
 /// Fork (port page): the list was opened from the Add a port page.
 pub(crate) fn opened_from_add_port(app: &AppState, from_settings: bool) {
     app.home.from_add_port.set(Some(from_settings));
+    push_list_hint(app);
 }
 
 /// Fork (port page): the hint for B on the lists ("B / Esc  Home", "B / Esc  Clear search"), and the Home button's focus.
 pub(crate) fn push_list_hint(app: &AppState) {
     let window = app.window();
     let searching = !app.windowed_nav.search_query.borrow().trim().is_empty();
-    window.set_list_back_hint(current_list(app).back_hint(searching).into());
+    window.set_list_back_hint(current_list(app).back_hint(searching, app.home.from_add_port.get().is_some()).into());
     window.set_list_home_focused(app.home.list_button.get() && !app.home.is_active());
 }
 

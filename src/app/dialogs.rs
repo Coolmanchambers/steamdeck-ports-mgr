@@ -1,7 +1,7 @@
 
 use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
-use super::install_launch::{delete_port, open_favorite_exe_picker, open_version_picker, start_extra_install, start_install};
+use super::install_launch::{open_favorite_exe_picker, open_version_picker, start_extra_install, start_install};
 use super::playtime::{format_last_played, format_playtime, LastPlayed};
 use super::save_finder_screen::open_from_info as open_find_saves;
 use super::save_restore_screen::open_from_info as open_restore_saves;
@@ -392,22 +392,12 @@ pub(crate) fn open_confirm_dialog(
     finish_dialog_open(app, router, DialogSlot::Confirm(dialog));
 }
 
+// Fork: every uninstall goes through the Port page's Uninstall page, which says what is kept (game files, `.o2r`, keys,
+// older versions go to Kept files) and runs it on a worker. Upstream's "All of its files will be deleted." is no longer
+// true, so its confirm dialog is not shown any more.
 pub(crate) fn open_uninstall_confirm_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    let name: slint::SharedString = port.name.clone().into();
-    // Fork (O1): saves with no known Linux location are not kept by the uninstall; say so before it runs.
-    let game_dir = crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder).ok();
-    let unknown = game_dir.is_some_and(|dir| crate::core::save_backup::save_folder_unknown_on_linux(&port, &dir));
-    let note = if unknown { crate::fork::save_notes::UNINSTALL_NOTE } else { "" };
-    open_confirm_dialog(
-        app,
-        router,
-        tr.invoke_dialog_title_uninstall_port(name.clone()),
-        format!("{}{note}", tr.invoke_message_uninstall_confirm(name)).into(),
-        tr.invoke_confirm_uninstall(),
-        move |app, router| delete_port(app, router, &port),
-    );
+    let back: super::port_page_screen::Back = Rc::new(|app, router| close_current_dialog(app, router));
+    super::port_page_screen::open_card(app, router, port.key(), crate::fork::port_page::Card::Uninstall, back);
 }
 
 pub(crate) fn open_extra_install_confirm_dialog(app: &Rc<AppState>, router: &Router, port: Port) {

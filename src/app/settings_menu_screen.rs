@@ -117,6 +117,7 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
         // Leaving Import ports (B, the end of an import, a notice) comes back to the Ports page.
         Entry::ImportPorts => super::import_screen::open_back_to(app, router, Rc::new(|app, router| open_group(app, router, Group::Ports))),
         Entry::GameFiles => super::rom_screens::open_game_files(app, router),
+        Entry::KeptFiles => open_kept_files(app, router),
         Entry::ArtSources => super::art_screens::open_art_sources(app, router),
         Entry::BackupSaves => start_save_backup(app, router),
         Entry::RestoreSaves => super::save_restore_screen::open_from_settings(app, router),
@@ -175,4 +176,28 @@ fn facts(app: &AppState) -> Facts {
         version: version(),
         checkup: super::checkup_screen::summary(),
     }
+}
+
+/// Settings > Ports > Kept files: what uninstalls kept, per port and date (`fork::uninstall_keep`). Desktop Mode can
+/// open the folder; Game Mode lists only. B goes back to the Ports page.
+fn open_kept_files(app: &Rc<AppState>, router: &Router) {
+    use crate::fork::uninstall_keep::{kept_files_page, kept_root, list_kept, KeptAct};
+    let root = kept_root(&app.paths.saves_backup_dir);
+    let place = crate::fork::port_page::paths::human_path_here(&root);
+    let page = kept_files_page(&list_kept(&app.paths.saves_backup_dir), &place, crate::fork::steam_queue::game_mode_from_env());
+    let back = |app: &Rc<AppState>, router: &Router| show_group(app, router, Group::Ports);
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            KeptAct::Back => back(app, router),
+            KeptAct::OpenFolder => {
+                // The folder is made on the first uninstall that keeps something; open Saves Backup until then.
+                let dir = if root.is_dir() { root.clone() } else { app.paths.saves_backup_dir.clone() };
+                crate::core::launch::open_folder(&dir);
+            }
+        }),
+        on_back: Rc::new(back),
+        on_exit: Rc::new(leave),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }

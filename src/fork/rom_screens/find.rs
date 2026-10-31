@@ -114,6 +114,8 @@ pub struct Need {
     pub title_only: bool,
     /// The catalog lists this many other files that would do instead ("any one of these").
     pub other_choices: usize,
+    /// For a title-only need, the kind of file the catalog hints at ("a Wii U copy, .wua or .wud"), if it does.
+    pub kind_hint: Option<String>,
 }
 
 impl Need {
@@ -127,6 +129,7 @@ impl Need {
             kind: slot.kind,
             title_only: slot.vague,
             other_choices: slot.alternatives.len().saturating_sub(1),
+            kind_hint: first.and_then(kind_hint),
         }
     }
 
@@ -153,6 +156,25 @@ impl Need {
         };
         format!("{bios}{}{check}{others}", ellipsize(&self.name, 70))
     }
+}
+
+/// The kind of file a title-only alternative hints at: "a Wii U copy, .wua or .wud" (`Game Title .wua/.wud`), "a .iso
+/// file". `None` when the catalog gives no extension.
+pub fn kind_hint(alt: &crate::fork::rom_library::requirements::Alt) -> Option<String> {
+    let exts: &[String] = if alt.ext_hint.is_empty() { &alt.exts } else { &alt.ext_hint };
+    if exts.is_empty() {
+        return None;
+    }
+    let dotted: Vec<String> = exts.iter().map(|e| format!(".{e}")).collect();
+    let list = match dotted.len() {
+        1 => dotted[0].clone(),
+        n => format!("{} or {}", dotted[..n - 1].join(", "), dotted[n - 1]),
+    };
+    let system = exts.iter().find_map(|e| crate::fork::rom_library::system::system_from_extension(e));
+    Some(match system {
+        Some(s) => format!("a {} copy, {list}", s.label()),
+        None => format!("a {list} file"),
+    })
 }
 
 /// Where the search looked.
@@ -818,7 +840,7 @@ mod tests {
 
     #[test]
     fn need_lines_cover_bios_sha1_titles_and_alternatives() {
-        let n = |crc32: Vec<u32>, has_sha1, kind, title_only, other_choices| Need { name: "x.bin".into(), crc32, has_sha1, kind, title_only, other_choices };
+        let n = |crc32: Vec<u32>, has_sha1, kind, title_only, other_choices| Need { name: "x.bin".into(), crc32, has_sha1, kind, title_only, other_choices, kind_hint: None };
         assert_eq!(n(vec![1, 2, 3], false, SlotKind::Bios, false, 0).line(), "BIOS: x.bin (CRC32 00000001 or 00000002 or 1 more)");
         assert_eq!(n(vec![], true, SlotKind::Game, false, 0).line(), "x.bin (checksum listed)");
         assert!(n(vec![], false, SlotKind::Game, true, 2).line().ends_with("no file or checksum), or one of 2 other files it lists"));

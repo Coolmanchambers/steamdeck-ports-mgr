@@ -46,7 +46,10 @@ pub fn need_words(n: &Need, port_name: &str) -> String {
     let bios = if n.kind == SlotKind::Bios { "BIOS: " } else { "" };
     if n.title_only {
         let game = if n.name.trim().is_empty() { port_name } else { n.name.trim() };
-        return format!("{bios}Your own copy of {game}");
+        return match &n.kind_hint {
+            Some(kind) => format!("{bios}Your own copy of {game}: {kind}"),
+            None => format!("{bios}Your own copy of {game}"),
+        };
     }
     let others = match n.other_choices {
         0 => String::new(),
@@ -202,7 +205,7 @@ mod tests {
     use crate::fork::page::{action_at, initial_focus};
 
     fn need(name: &str, title_only: bool) -> Need {
-        Need { name: name.into(), crc32: vec![], has_sha1: false, kind: SlotKind::Game, title_only, other_choices: 0 }
+        Need { name: name.into(), crc32: vec![], has_sha1: false, kind: SlotKind::Game, title_only, other_choices: 0, kind_hint: None }
     }
 
     #[test]
@@ -251,5 +254,25 @@ mod tests {
         assert_eq!(r.paragraphs, ["One.", "Two."]);
         assert_eq!(action_at(&r, initial_focus(&r)), Some(GfAct::Done));
         assert_eq!(pick_page("SoH", "oot.z64", &[("a".into(), "here".into())]).options[0].action, GfAct::Pick(0));
+    }
+}
+
+#[cfg(test)]
+mod kind_hint_tests {
+    use super::*;
+    use crate::fork::rom_library::requirements::{parse_instructions, Alt};
+    use crate::fork::rom_screens::find::kind_hint;
+
+    #[test]
+    fn a_title_only_need_says_what_kind_of_file_it_wants() {
+        let alt = |exts: &[&str]| Alt { display: "Game".into(), title_only: true, ext_hint: exts.iter().map(|e| e.to_string()).collect(), ..Alt::default() };
+        assert_eq!(kind_hint(&alt(&["wua", "wud"])).as_deref(), Some("a Wii U copy, .wua or .wud"));
+        assert_eq!(kind_hint(&alt(&["iso"])).as_deref(), Some("a .iso file"));
+        assert_eq!(kind_hint(&alt(&[])), None);
+        // From the catalog's own words, as the Game files pages get it.
+        let r = parse_instructions("Required files: The Legend of Dragoon .iso");
+        let alt = &r.slots[0].alternatives[0];
+        let n = Need { name: alt.display.clone(), crc32: vec![], has_sha1: false, kind: SlotKind::Game, title_only: true, other_choices: 0, kind_hint: kind_hint(alt) };
+        assert_eq!(need_words(&n, "Severed Chains"), "Your own copy of The Legend of Dragoon: a .iso file");
     }
 }

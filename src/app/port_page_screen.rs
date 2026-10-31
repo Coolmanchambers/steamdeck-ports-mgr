@@ -7,14 +7,14 @@
 //! runs on a worker (`Background`), and the cards say "Looking..." until it answers. Every change is the existing flow
 //! behind a card, with its own guards: the save backup (`save_backup::backup_before_update`), Restore saves, the save
 //! finder, Add to Steam, the icon repair, the checkup's repoint, the Close Steam flow, the update and version picker, the
-//! uninstall (`install_launch::delete_port`).
+//! uninstall (`installer::uninstall_port_keeping` on a worker, with `install_launch::may_uninstall`'s guards).
 //!
 //! **For the install wizard** (the next branch): `open` (the whole page), `open_card` (one card's page, B going wherever
 //! the caller says), `open_link` (the project page with its QR code) and `rom_screens::find_for_port` (the game files
 //! pages) are the reusable pieces. Each takes a `Back` that runs when the user leaves.
 
 use super::dialogs::{close_current_dialog, dialog_is_open, open_extra_install_confirm_dialog, open_info_dialog, open_reset_playtime_dialog};
-use super::install_launch::{activate_port, delete_port, open_version_picker, start_install};
+use super::install_launch::{activate_port, mark_uninstalled, may_uninstall, open_version_picker, start_install};
 use super::page_dialog::{show_page, show_page_handle, Handlers, PageHandle};
 use super::playtime::{format_last_played, format_playtime, is_port_running, LastPlayed};
 use super::state::AppState;
@@ -47,6 +47,38 @@ thread_local! {
     static SESSION: RefCell<Option<Rc<Session>>> = const { RefCell::new(None) };
     static DISK_POLL: slint::Timer = slint::Timer::default();
     static WORK_POLL: slint::Timer = slint::Timer::default();
+    static WORK: RefCell<Pollers> = RefCell::new(Pollers::default());
+}
+
+/// Jobs waiting for their answer (Check now, Back up now, Uninstall), each asked on every tick until it says it is done.
+/// One timer serves them all, so one job finishing never stops another's polling.
+#[derive(Default)]
+struct Pollers(Vec<Box<dyn FnMut() -> bool>>);
+
+/// One tick: every job is asked once; the ones done are dropped. A job's answer may start another job (it is added to
+/// the same list, not lost). Returns whether any are left.
+fn tick_pollers(cell: &RefCell<Pollers>) -> bool {
+    let mut now = std::mem::take(&mut *cell.borrow_mut());
+    now.0.retain_mut(|done| !done());
+    let mut list = cell.borrow_mut();
+    let added = std::mem::take(&mut list.0);
+    now.0.extend(added);
+    *list = now;
+    !list.0.is_empty()
+}
+
+/// Polls `done` until it returns true (it has handled the job's answer).
+fn run_work(done: impl FnMut() -> bool + 'static) {
+    WORK.with(|w| w.borrow_mut().0.push(Box::new(done)));
+    WORK_POLL.with(|t| {
+        if !t.running() {
+            t.start(slint::TimerMode::Repeated, Duration::from_millis(200), || {
+                if !WORK.with(tick_pollers) {
+                    WORK_POLL.with(slint::Timer::stop);
+                }
+            });
+        }
+    });
 }
 
 /// What is on screen now.
@@ -62,6 +94,8 @@ enum Screen {
     Notice(Card),
     /// Work running under a card (a backup); B waits.
     Working(Card),
+    /// The port is gone (uninstalled): the result page's button closes the Port page.
+    Done(Card),
 }
 
 struct Session {
@@ -130,8 +164,6 @@ pub(crate) fn open_options_for(app: &Rc<AppState>, router: &Router, port: &Port)
 
 /// One card's page by itself (the install wizard's steps reuse them): B leaves through `back`. Play, Fix problems and
 /// Game files do what their cards do.
-// Not called on this branch: the install wizard (next branch) is its first user.
-#[allow(dead_code)]
 pub(crate) fn open_card(app: &Rc<AppState>, router: &Router, key: &str, card: Card, back: Back) {
     if let Some(s) = start(app, key, back, true) {
         open_card_in(app, router, &s, card);
@@ -237,12 +269,28 @@ fn read_disk(app: &Rc<AppState>, s: &Rc<Session>) {
             match done {
                 Ok((mut disk, sys)) => {
                     disk.checkup = super::checkup_screen::port_line(&app, &s.key, sys);
+                    let busy = disk.checkup.is_none();
                     *s.disk.borrow_mut() = Some(Rc::new(disk));
                     disk_arrived(&app, &s);
+                    if busy {
+                        look_again_later(&app, &s);
+                    }
                 }
                 Err(e) => eprintln!("port page: reading the port's files failed ({e})"),
             }
         });
+    });
+}
+
+/// The checkup could not look (another job runs, the card says "Busy, look again later"): read again in a while, as long
+/// as this Port page is still open on a page that shows the line.
+fn look_again_later(app: &Rc<AppState>, s: &Rc<Session>) {
+    let (app, s) = (app.clone(), s.clone());
+    slint::Timer::single_shot(Duration::from_secs(10), move || {
+        let open = s.handle.borrow().as_ref().is_some_and(PageHandle::is_open);
+        if is_current(&s) && open && matches!(s.screen.get(), Screen::First | Screen::Card(_)) && s.job.borrow().is_none() {
+            read_disk(&app, &s);
+        }
     });
 }
 
@@ -337,10 +385,12 @@ fn gather(i: DiskInput) -> (DiskFacts, super::checkup_screen::PortSys) {
         .collect();
     previous.sort();
     // What an uninstall keeps (Saves Backup/Kept files): the same plan the uninstall runs.
-    let keep_items = crate::fork::uninstall_keep::plan(port, dir, Some(&i.config_dir));
-    let keep = crate::fork::uninstall_keep::KeepSummary::of(&keep_items, dir);
+    let (keep, keep_error) = match crate::fork::uninstall_keep::plan(port, dir, Some(&i.config_dir)) {
+        Ok(items) => (crate::fork::uninstall_keep::KeepSummary::of(&items, dir), None),
+        Err(e) => (Default::default(), Some(e)),
+    };
     let kept_dir = crate::fork::uninstall_keep::kept_dir_for(&i.saves_backup_dir, &port.folder);
-    let files = model::FilesFacts { dir: dir.clone(), size: Some(size), size_capped, previous, keep, kept_dir };
+    let files = model::FilesFacts { dir: dir.clone(), size: Some(size), size_capped, previous, keep, kept_dir, keep_error };
 
     let disk = DiskFacts { checkup: None, program, saves, settings, game_files, steam, files };
     (disk, i.look.gather())
@@ -456,7 +506,7 @@ fn page_for(app: &AppState, s: &Session, screen: Screen) -> Option<Page<Act>> {
             let text = settings_files::view_text(&f.path);
             model::view_page(&p, i, &f, &text, places)
         }
-        Screen::Notice(_) | Screen::Working(_) => return None,
+        Screen::Notice(_) | Screen::Working(_) | Screen::Done(_) => return None,
     })
 }
 
@@ -551,8 +601,9 @@ fn on_act(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             Screen::Card(_) | Screen::Wait(_) => show(app, router, s, Screen::First),
             Screen::View(_) => show(app, router, s, Screen::Card(Card::Settings)),
             Screen::Notice(card) => show(app, router, s, Screen::Card(card)),
-            // A backup runs: B waits for its answer.
+            // A backup or an uninstall runs: B waits for its answer.
             Screen::Working(_) => {}
+            Screen::Done(_) => leave(app, router, s),
         },
         Act::Open(card) => open_card_in(app, router, s, card),
         Act::AskEveryTime | Act::UseProgram(_) => {
@@ -663,26 +714,23 @@ fn back_up(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, port: &Port) {
     page.buttons = [None, None, None, None];
     show_built(app, router, s, Screen::Working(Card::Saves), page);
     let (app, router, s, folder) = (app.clone(), router.clone(), s.clone(), port.folder.clone());
-    WORK_POLL.with(|t| {
-        t.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
-            let Some(result) = job.take() else { return };
-            WORK_POLL.with(slint::Timer::stop);
-            super::cloud_screen::trigger(&app, crate::fork::cloud::hooks::Why::FinderBackup);
-            let (title, text) = match &result {
-                Ok(Ok(Some(_))) => ("Backup made", format!("Backed up to Saves Backup > Update Backups > {folder}. Restore lists it as \"Before update\".")),
-                Ok(Ok(None)) => ("Nothing to back up", "The save folder holds no saves yet, so there was nothing to copy.".to_string()),
-                Ok(Err(detail)) | Err(detail) => {
-                    eprintln!("port page backup: {detail}");
-                    ("The backup did not work", format!("{detail}\n\nNothing was changed. Your saves are as they were."))
-                }
-            };
-            if !is_current(&s) {
-                return;
+    run_work(move || {
+        let Some(result) = job.take() else { return false };
+        super::cloud_screen::trigger(&app, crate::fork::cloud::hooks::Why::FinderBackup);
+        let (title, text) = match &result {
+            Ok(Ok(Some(_))) => ("Backup made", format!("Backed up to Saves Backup > Update Backups > {folder}. Restore lists it as \"Before update\".")),
+            Ok(Ok(None)) => ("Nothing to back up", "The save folder holds no saves yet, so there was nothing to copy.".to_string()),
+            Ok(Err(detail)) | Err(detail) => {
+                eprintln!("port page backup: {detail}");
+                ("The backup did not work", format!("{detail}\n\nNothing was changed. Your saves are as they were."))
             }
+        };
+        if is_current(&s) {
             read_disk(&app, &s);
             let paragraphs = text.split("\n\n").map(str::to_string).collect();
             notice(&app, &router, &s, Card::Saves, title, paragraphs);
-        });
+        }
+        true
     });
 }
 
@@ -696,28 +744,26 @@ fn check_now(app: &Rc<AppState>, s: &Rc<Session>, port: &Port) {
     *s.update_check.borrow_mut() = UpdateCheck::Checking;
     redraw(app, s, Screen::Card(Card::Updates));
     let (app, s) = (app.clone(), s.clone());
-    WORK_POLL.with(|t| {
-        t.start(slint::TimerMode::Repeated, Duration::from_millis(250), move || {
-            let Some(result) = job.take() else { return };
-            WORK_POLL.with(slint::Timer::stop);
-            let answer = match result.and_then(|r| r) {
-                Ok((true, tag)) => {
-                    super::home_screen::note_update_check(&app, &s.key, true);
-                    UpdateCheck::Ready(tag)
-                }
-                Ok((false, tag)) => {
-                    super::home_screen::note_update_check(&app, &s.key, false);
-                    UpdateCheck::UpToDate(tag)
-                }
-                Err(e) => UpdateCheck::Failed(e),
-            };
-            eprintln!("port page: update check for {}: {answer:?}", s.key);
-            *s.update_check.borrow_mut() = answer;
-            app.refresh_current_view();
-            if is_current(&s) && s.screen.get() == Screen::Card(Card::Updates) {
-                redraw(&app, &s, Screen::Card(Card::Updates));
+    run_work(move || {
+        let Some(result) = job.take() else { return false };
+        let answer = match result.and_then(|r| r) {
+            Ok((true, tag)) => {
+                super::home_screen::note_update_check(&app, &s.key, true);
+                UpdateCheck::Ready(tag)
             }
-        });
+            Ok((false, tag)) => {
+                super::home_screen::note_update_check(&app, &s.key, false);
+                UpdateCheck::UpToDate(tag)
+            }
+            Err(e) => UpdateCheck::Failed(e),
+        };
+        eprintln!("port page: update check for {}: {answer:?}", s.key);
+        *s.update_check.borrow_mut() = answer;
+        app.refresh_current_view();
+        if is_current(&s) && s.screen.get() == Screen::Card(Card::Updates) {
+            redraw(&app, &s, Screen::Card(Card::Updates));
+        }
+        true
     });
 }
 
@@ -735,20 +781,52 @@ fn latest_release(port: &Port, installed_tag: Option<&str>, installed_at: &str, 
     Ok((crate::core::jobs::update_decision(installed_tag, installed_at, &tag, date.as_deref()), tag))
 }
 
-/// "Uninstall" confirmed: the existing uninstall with its guards (`delete_port`: not while it runs or installs, never a
-/// port you added yourself; saves inside its folder copied to Saves Backup first).
+/// "Uninstall" confirmed: upstream's guards (`may_uninstall`: not while it runs or installs, never a port you added
+/// yourself), then on a worker the saves are copied to Saves Backup, game files, keys and older versions are moved to
+/// Kept files (`fork::uninstall_keep`; across drives that is a copy) and the rest of the folder is removed. The port is
+/// held as busy meanwhile, so nothing installs, starts or moves it. B waits; the result page names Kept files.
 fn uninstall(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, port: &Port) {
-    close_current_dialog(app, router);
-    delete_port(app, router, port);
-    if !app.is_installed(port) {
-        eprintln!("port page: uninstalled {}", port.display_name());
-        SESSION.with(|x| *x.borrow_mut() = None);
-        return;
+    if !may_uninstall(app, port) {
+        return notice(app, router, s, Card::Uninstall, "Nothing was removed", vec![format!("{} is running, installing or restoring right now. Try again when it has finished.", port.display_name())]);
     }
-    // Refused: `delete_port` either said why (its error message is up) or a guard held it back quietly.
-    if !dialog_is_open(app) {
-        notice(app, router, s, Card::Uninstall, "Nothing was removed", vec![format!("{} is running, installing or restoring right now. Try again when it has finished.", port.display_name())]);
-    }
+    let (library, backups, config, port2) = (app.paths.library_dir(), app.paths.saves_backup_dir.clone(), app.paths.config_dir.clone(), port.clone());
+    app.install_runtime.installing.borrow_mut().insert(port.key().to_string());
+    let job = Rc::new(Background::spawn(move |_| crate::core::installer::uninstall_port_keeping(&port2, &library, &backups, Some(&config))));
+    let mut page = model::notice_page(
+        &port_facts(app, s, port),
+        Card::Uninstall,
+        "Keeping game files...",
+        vec!["Copying the saves to Saves Backup and moving the game files to Kept files, then removing the rest of the folder. Big games on another drive take a while.".into()],
+    )
+    .with_progress(None);
+    page.no_back = true;
+    page.buttons = [None, None, None, None];
+    show_built(app, router, s, Screen::Working(Card::Uninstall), page);
+    let (app, router, s, port) = (app.clone(), router.clone(), s.clone(), port.clone());
+    run_work(move || {
+        let Some(result) = job.take() else { return false };
+        app.install_runtime.installing.borrow_mut().remove(port.key());
+        let (title, text, gone) = match result.and_then(|r| r) {
+            Ok(kept) => {
+                mark_uninstalled(&app, &port);
+                eprintln!("port page: uninstalled {}", port.display_name());
+                let mut text = vec![kept.map_or_else(|| "Its folder was removed. It held no game files to keep.".to_string(), |k| k.line())];
+                text.push("Steam shortcuts are left as they are.".to_string());
+                (format!("{} was uninstalled", port.display_name()), text, true)
+            }
+            Err(message) => {
+                eprintln!("port page: uninstall of {} stopped: {message}", port.display_name());
+                ("The uninstall did not finish".to_string(), vec![message], false)
+            }
+        };
+        if is_current(&s) {
+            let page = model::notice_page(&port_facts(&app, &s, &port), Card::Uninstall, &title, text);
+            show_built(&app, &router, &s, if gone { Screen::Done(Card::Uninstall) } else { Screen::Notice(Card::Uninstall) }, page);
+        } else if !dialog_is_open(&app) {
+            super::dialogs::open_message_dialog(&app, &router, &title, &text.join("\n\n"));
+        }
+        true
+    });
 }
 
 // -- The project page -----------------------------------------------------------------------------------------
@@ -776,4 +854,43 @@ pub(crate) fn open_link(app: &Rc<AppState>, router: &Router, name: &str, url: &s
         on_input: None,
     };
     show_page(app, router, page, handlers);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Check now and Back up now used to share one timer: the first to finish stopped the other's polling, and its answer
+    /// never arrived. Every job is now asked until it is done, and a job started from another's answer is kept.
+    #[test]
+    fn one_job_finishing_never_stops_another_and_new_jobs_join() {
+        let cell = Rc::new(RefCell::new(Pollers::default()));
+        let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+        let ticks = Rc::new(Cell::new(0));
+        let (l1, l2, l3, t2, c) = (log.clone(), log.clone(), log.clone(), ticks.clone(), cell.clone());
+        cell.borrow_mut().0.push(Box::new(move || {
+            l1.borrow_mut().push("check");
+            // Its answer starts another job (a re-read): it must not be lost.
+            let l3 = l3.clone();
+            c.borrow_mut().0.push(Box::new(move || {
+                l3.borrow_mut().push("reread");
+                true
+            }));
+            true
+        }));
+        cell.borrow_mut().0.push(Box::new(move || {
+            t2.set(t2.get() + 1);
+            if t2.get() < 3 {
+                return false;
+            }
+            l2.borrow_mut().push("backup");
+            true
+        }));
+        assert!(tick_pollers(&cell), "the backup still runs after the check is done");
+        assert_eq!(*log.borrow(), ["check"]);
+        assert!(tick_pollers(&cell));
+        assert_eq!(*log.borrow(), ["check", "reread"]);
+        assert!(!tick_pollers(&cell), "nothing left once the backup answers");
+        assert_eq!(*log.borrow(), ["check", "reread", "backup"]);
+    }
 }

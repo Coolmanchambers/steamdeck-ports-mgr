@@ -17,7 +17,7 @@
 #     button goes Home from Deck-ready opened via Add a port; B twice from a search in All ports clears it, then goes Home;
 #   - Ports > Add a port opens the page and B returns to the Ports page; Updates > Check for Updates flips in place and keeps
 #     the cursor on it;
-#   - Ports > Game files opens without a crash;
+#   - Ports > Game files opens without a crash; Ports > Kept files opens its page and B returns to the Ports page;
 #   - Ports > Ports folder opens, its "Choose another folder..." opens the folder picker, and
 #     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
 #     ports into ~/Games/Ports (New folder here, Use this folder, Move, Keep for now twice) and checks the
@@ -327,7 +327,7 @@ if [ "$alive" = yes ]; then
         entry_downs() {  # $1 = group, $2 = entry
             local n=""
             [ -f "$MENU_SRC" ] && n=$(grep -m1 "Group::$1 => &\[" "$MENU_SRC" | sed 's/.*&\[//; s/\].*//' | tr ',' '\n' | awk -v e="Entry::$2" '$1==e {print NR - 1; exit}')
-            [ -z "$n" ] && case "$1:$2" in Ports:AddPort|Updates:CheckUpdates) n=0 ;; Ports:ImportPorts) n=1 ;; Ports:PortsFolder) n=2 ;; Ports:GameFiles) n=3 ;; Steam:ArtSources) n=1 ;; Saves:CloudBackup) n=2 ;; esac
+            [ -z "$n" ] && case "$1:$2" in Ports:AddPort|Updates:CheckUpdates) n=0 ;; Ports:ImportPorts) n=1 ;; Ports:PortsFolder) n=2 ;; Ports:GameFiles) n=3 ;; Ports:KeptFiles) n=5 ;; Steam:ArtSources) n=1 ;; Saves:CloudBackup) n=2 ;; esac
             echo "$n"
         }
         open_settings_page() {
@@ -448,6 +448,16 @@ if [ "$alive" = yes ]; then
             if [ -n "$ap2" ]; then
                 press_keys "$ap2" Escape; sleep 1.5
                 check "B on Add a port returns to the Ports page of Settings" '[ -z "$(xdotool search --name "^Deck Ports Manager: Add a port$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings: Ports$" 2>/dev/null)" ]'
+            fi
+            close_settings
+            # Settings > Ports > Kept files lists what uninstalls kept; B returns to the Ports page.
+            open_settings_page && settings_entry Ports KeptFiles; sleep 1.5
+            kf=$(xdotool search --name "^Deck Ports Manager: Settings: Ports: Kept files$" 2>/dev/null | head -1)
+            import -window root "$OUT/kept-files.png" 2>/dev/null
+            check "Settings > Ports > Kept files opens its page" '[ -n "$kf" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+            if [ -n "$kf" ]; then
+                press_keys "$kf" Escape; sleep 1.5
+                check "B on Kept files returns to the Ports page of Settings" '[ -z "$(xdotool search --name "^Deck Ports Manager: Settings: Ports: Kept files$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings: Ports$" 2>/dev/null)" ]'
             fi
             close_settings
             # A switch flips in place and keeps the cursor: Settings > Updates > Check for Updates. Two presses of A flip it twice,
