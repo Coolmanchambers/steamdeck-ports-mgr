@@ -587,7 +587,17 @@ pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port)
             dialog.$register(move || $action(&app, &router, port.clone()));
         }};
     }
-    on_port_action!(on_change_version_requested, open_version_picker);
+    // Fork (same game): a version of a port that is not installed is an install, so the same game asks first.
+    {
+        let (app, router, port) = (app.clone(), router.clone(), port.clone());
+        dialog.on_change_version_requested(move || {
+            if app.is_installed(&port) {
+                return open_version_picker(&app, &router, port.clone());
+            }
+            let p = port.clone();
+            super::same_game_screen::confirm_then(&app, &router, &port, move |app, router| open_version_picker(app, router, p.clone()));
+        });
+    }
     on_port_action!(on_favorite_exe_requested, open_favorite_exe_picker);
     on_port_action!(on_update_toggle_requested, open_update_toggle_dialog);
     on_port_action!(on_reset_playtime_requested, open_reset_playtime_dialog);

@@ -142,35 +142,34 @@ pub(crate) fn on_fetched(app: &AppState, outcome: Outcome) {
     }
 }
 
-fn known_ports(app: &AppState) -> Vec<KnownPort> {
-    app.catalog
+/// The catalog's ports as the list matches them, and (fork, same game) the installed ones as games: one look at the
+/// disk per port for both.
+fn known_ports(app: &AppState) -> (Vec<KnownPort>, Vec<crate::fork::same_game::Owned>) {
+    let on_disk = super::same_game_screen::Installed::read(app);
+    let known = app
+        .catalog
         .borrow()
         .iter()
-        .map(|p| KnownPort {
-            key: p.key().to_string(),
-            folder: p.folder.clone(),
-            repo: p.repo.clone(),
-            user_managed: p.user_managed,
-            installed: app.is_installed(p),
-        })
-        .collect()
+        .map(|p| KnownPort { key: p.key().to_string(), folder: p.folder.clone(), repo: p.repo.clone(), user_managed: p.user_managed, installed: on_disk.has(p) })
+        .collect();
+    (known, on_disk.owned)
+}
+
+fn tag_of(t: &crate::fork::deck_ready::view::Tag) -> DeckReadyTag {
+    DeckReadyTag {
+        label: t.label.into(),
+        kind: match t.kind {
+            TagKind::Plain => 0,
+            TagKind::Dashed => 1,
+            TagKind::Warning => 2,
+            TagKind::Muted => 3,
+            TagKind::Info => 4,
+        },
+    }
 }
 
 fn tag_model(row: &Row) -> slint::ModelRc<DeckReadyTag> {
-    let tags: Vec<DeckReadyTag> = row
-        .tags
-        .iter()
-        .map(|t| DeckReadyTag {
-            label: t.label.into(),
-            kind: match t.kind {
-                TagKind::Plain => 0,
-                TagKind::Dashed => 1,
-                TagKind::Warning => 2,
-                TagKind::Muted => 3,
-                TagKind::Info => 4,
-            },
-        })
-        .collect();
+    let tags: Vec<DeckReadyTag> = row.tags.iter().map(tag_of).collect();
     slint::ModelRc::new(slint::VecModel::from(tags))
 }
 
@@ -209,9 +208,10 @@ pub(crate) fn rebuild(app: &AppState) {
     let previous = ui.rows.borrow().get(ui.selected.get()).map(|r| r.id.clone());
     let rows = match ui.index.borrow().as_ref() {
         Some(index) => {
-            let mut rows = view::rows(index, &known_ports(app), &ui.filters.borrow(), &app.windowed_nav.search_query.borrow());
+            let (known, owned) = known_ports(app);
+            let mut rows = view::rows(index, &known, &ui.filters.borrow(), &app.windowed_nav.search_query.borrow());
             // Same game: rows for a game installed under another project say so (src/fork/same_game.rs).
-            let log = view::mark_same_game(&mut rows, index, &super::same_game_screen::owned_games(app));
+            let log = view::mark_same_game(&mut rows, index, &owned);
             super::same_game_screen::log_matches("deck-ready", log);
             rows
         }
@@ -219,7 +219,7 @@ pub(crate) fn rebuild(app: &AppState) {
     };
     let selected = previous.and_then(|id| rows.iter().position(|r| r.id == id)).unwrap_or(0).min(rows.len().saturating_sub(1));
     let items: Vec<DeckReadyRow> =
-        rows.iter().map(|r| DeckReadyRow { name: r.name.clone().into(), sub: r.sub.clone().into(), deck: r.deck, tags: tag_model(r), button: r.button.into() }).collect();
+        rows.iter().map(|r| DeckReadyRow { name: r.name.clone().into(), sub: r.sub.clone().into(), deck: r.deck, tags: tag_model(r), badge: r.badge.as_ref().map(tag_of).unwrap_or_default(), button: r.button.into() }).collect();
     let window = app.window();
     window.set_deck_ready_rows(slint::ModelRc::new(slint::VecModel::from(items)));
     window.set_deck_ready_status(status_text(ui, rows.len()).into());
@@ -324,9 +324,10 @@ fn folder_taken(app: &AppState, folder: &str) -> bool {
 
 /// Same game: an entry that is the same game as an installed port asks first, then "Add {name}?" as before.
 fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
-    let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).map(|e| (e.clone(), view::display_name(e))) else { return };
+    let Some(entry) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).cloned() else { return };
+    let folder = entry::folder_for(&entry, |f| folder_taken(app, f)).unwrap_or_default();
     let id = id.to_string();
-    super::same_game_screen::confirm_entry_then(app, router, &name, &entry.name, entry.system.as_deref(), move |app, router| confirm_add_now(app, router, &id));
+    super::same_game_screen::confirm_entry_then(app, router, &entry.name, &folder, entry.system.as_deref(), move |app, router| confirm_add_now(app, router, &id));
 }
 
 fn confirm_add_now(app: &Rc<AppState>, router: &Router, id: &str) {

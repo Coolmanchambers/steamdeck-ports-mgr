@@ -79,6 +79,9 @@ pub struct Row {
     pub sub: String,
     pub deck: bool,
     pub tags: Vec<Tag>,
+    /// "You have this game" or "Other version installed" (`fork::same_game`): drawn left of the tags, and the first
+    /// thing dropped when the row is narrow (the sub line still says it).
+    pub badge: Option<Tag>,
     pub standing: Standing,
     pub action: Action,
     /// "Install", "Play" or "" (no button).
@@ -166,7 +169,7 @@ fn row(index: usize, entry: &Entry, known: &[KnownPort]) -> Row {
     if let Some(release) = &entry.release {
         sub.extend([Some(release.tag.clone()).filter(|t| !t.is_empty()), date_short(&release.date)].into_iter().flatten());
     }
-    Row { entry: index, id: entry.id.clone(), name: display_name(entry), sub: sub.join("  ·  "), deck: entry.rating == Rating::DeckBuild, tags, standing, action, button }
+    Row { entry: index, id: entry.id.clone(), name: display_name(entry), sub: sub.join("  ·  "), deck: entry.rating == Rating::DeckBuild, tags, badge: None, standing, action, button }
 }
 
 fn shown(entry: &Entry, filters: &Filters) -> bool {
@@ -199,10 +202,10 @@ pub fn rows(index: &Index, known: &[KnownPort], filters: &Filters, query: &str) 
     out
 }
 
-/// Same game (`fork::same_game`): a row not installed whose game is installed under another project gets a tag in
-/// front ("You have this game", or "Other version installed" for a remake on another system) and its sub line starts
-/// with the project it is installed as. Rows with Play (installed) are left as they are. Gives back one log line per
-/// match.
+/// Same game (`fork::same_game`): a row not installed whose game is installed under another project gets a badge
+/// ("You have this game", or "Other version installed" for a remake on another system) and its sub line ends with the
+/// project it is installed as (last, so the system, version and date survive when the line is cut short). Rows with
+/// Play (installed) are left as they are. Gives back one log line per match.
 pub fn mark_same_game(rows: &mut [Row], index: &Index, owned: &[crate::fork::same_game::Owned]) -> Vec<String> {
     use crate::fork::same_game::{badge, find, log_line, Game, Verdict};
     let mut log = Vec::new();
@@ -215,8 +218,8 @@ pub fn mark_same_game(rows: &mut [Row], index: &Index, owned: &[crate::fork::sam
         let Some(found) = find(owned, key, &Game::of_entry(&entry.name, entry.system.as_deref())) else { continue };
         let b = badge(&found);
         let kind = if b.verdict == Verdict::SameGame { TagKind::Info } else { TagKind::Plain };
-        row.tags.insert(0, Tag { label: b.label, kind });
-        row.sub = format!("{}  ·  {}", b.note, row.sub);
+        row.badge = Some(Tag { label: b.label, kind });
+        row.sub = format!("{}  ·  {}", row.sub, b.note);
         log.push(log_line(found.verdict, if key.is_empty() { &row.id } else { key }, &found.owned.key));
     }
     log
@@ -622,19 +625,21 @@ mod tests {
             named("sf", "Star Fox 64 (starship)", "N64", "starship"),
         ]);
         let ports = vec![known("2ship2harkinian", Some("owner/2s2h"), false, true), known("Zelda64Recomp", Some("owner/z64"), false, false)];
-        let mine = vec![Owned::new("owner/2s2h", "The Legend of Zelda: Majora's Mask (2ship2harkinian)", &["n64".to_string()])];
+        let mine = vec![Owned::new("owner/2s2h", "The Legend of Zelda: Majora's Mask (2ship2harkinian)", "2ship2harkinian", &["n64".to_string()])];
         let mut rows = rows(&index, &ports, &Filters::default(), "");
         let log = mark_same_game(&mut rows, &index, &mine);
         let by = |id: &str| rows.iter().find(|r| r.id == id).unwrap();
-        let labels = |r: &Row| r.tags.iter().map(|t| (t.label, t.kind)).collect::<Vec<_>>();
+        let badge = |r: &Row| r.badge.map(|t| (t.label, t.kind));
+        let labels = |r: &Row| r.tags.iter().map(|t| t.label).collect::<Vec<_>>();
 
-        assert_eq!(labels(by("z64")), vec![("You have this game", TagKind::Info), ("Catalog", TagKind::Plain)]);
-        assert_eq!(by("z64").sub, "You have it as 2ship2harkinian  ·  N64  ·  v1.0  ·  Oct 18");
+        assert_eq!(badge(by("z64")), Some(("You have this game", TagKind::Info)));
+        assert_eq!(labels(by("z64")), vec!["Catalog"], "the other tags are as before");
+        assert_eq!(by("z64").sub, "N64  ·  v1.0  ·  Oct 18  ·  You have it as 2ship2harkinian");
         assert_eq!(by("z64").button, "Install");
-        assert_eq!(labels(by("mm3d")), vec![("Other version installed", TagKind::Plain)]);
-        assert!(by("mm3d").sub.starts_with("Other version installed: 2ship2harkinian  ·  3DS"));
-        assert!(by("2s2h").tags.is_empty() && by("2s2h").sub.starts_with("N64"), "the installed row is unchanged");
-        assert!(by("sf").tags.is_empty() && by("sf").sub.starts_with("N64"));
+        assert_eq!(badge(by("mm3d")), Some(("Other version installed", TagKind::Plain)));
+        assert_eq!(by("mm3d").sub, "3DS  ·  v1.0  ·  Oct 18  ·  Other version: 2ship2harkinian");
+        assert!(by("2s2h").badge.is_none() && by("2s2h").sub == "N64  ·  v1.0  ·  Oct 18", "the installed row is unchanged");
+        assert!(by("sf").badge.is_none() && by("sf").sub == "N64  ·  v1.0  ·  Oct 18");
         assert_eq!(log, vec!["same game: same-game owner/z64 vs owner/2s2h", "same game: another-version mm3d vs owner/2s2h"]);
     }
 

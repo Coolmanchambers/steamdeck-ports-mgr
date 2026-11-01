@@ -16,6 +16,34 @@ use crate::fork::art::thumbs::ArtRef;
 use crate::fork::page::{Card, Focus, Page, PageOption};
 use crate::fork::rom_library::system::{system_from_folder_name, System};
 
+/// The system a game is for. `System` covers consoles only; a port of the PC, DOS, Mac, PS3, PS4 or Xbox One game is
+/// `Other` with a fixed short name, so a PC game is never taken for "unknown system" and matched with a console port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Sys {
+    Known(System),
+    Other(&'static str),
+}
+
+/// Platform tags (and Deck-ready labels) outside `System`, squashed, with the one name each is compared by. Only
+/// platforms: genre and series tags are never systems.
+const OTHER_PLATFORMS: &[(&str, &str)] = &[
+    ("pc", "pc"),
+    ("windows", "pc"),
+    ("dos", "dos"),
+    ("msdos", "dos"),
+    ("mac", "mac"),
+    ("macos", "mac"),
+    ("apple", "mac"),
+    ("ps3", "ps3"),
+    ("ps4", "ps4"),
+    ("ps5", "ps5"),
+    ("xone", "xone"),
+    ("xboxone", "xone"),
+    ("cdi", "cdi"),
+    ("flash", "flash"),
+    ("32x", "32x"),
+];
+
 /// One game as the matcher sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Game {
@@ -25,7 +53,7 @@ pub struct Game {
     pub game_key: String,
     /// [`Game::game_key`] without a trailing "3D" or "HD" edition word.
     pub family_key: String,
-    pub system: Option<System>,
+    pub system: Option<Sys>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,9 +88,28 @@ pub fn split_annotation(name: &str) -> (&str, Option<&str>) {
     (trimmed, None)
 }
 
-/// Lowercase letters and digits only (as `fork::adopt::norm`).
+/// Lowercase letters and digits only (as `fork::adopt::norm`), accents dropped first as the search does, so "Pokémon"
+/// and "Pokemon" agree.
 fn norm(s: &str) -> String {
-    crate::fork::adopt::norm(s)
+    crate::fork::adopt::norm(&crate::core::search::normalize(s))
+}
+
+fn squash(s: &str) -> String {
+    s.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect()
+}
+
+/// A console tag or label: the ROM library's folder names, plus the catalog's `360` (Xbox 360) and `smd` (Mega Drive).
+fn known_system(tag: &str) -> Option<System> {
+    match squash(tag).as_str() {
+        "360" => Some(System::Xbox360),
+        "smd" => Some(System::Genesis),
+        _ => system_from_folder_name(tag),
+    }
+}
+
+fn other_platform(tag: &str) -> Option<&'static str> {
+    let s = squash(tag);
+    OTHER_PLATFORMS.iter().find(|(k, _)| *k == s).map(|(_, name)| *name)
 }
 
 /// The title's words without the ones that name the kind of project (Recomp, Decomp, "PC port").
@@ -86,18 +133,19 @@ fn game_words(title: &str) -> Vec<&str> {
     out
 }
 
-/// A catalog tag that names a system (`n64`, `3ds`, `gc`, `wiiu`; the catalog writes Xbox 360 as `360`).
-pub fn system_from_tags(tags_lower: &[String]) -> Option<System> {
-    tags_lower.iter().find_map(|t| if t == "360" { Some(System::Xbox360) } else { system_from_folder_name(t) })
+/// The system a port's catalog tags name (`n64`, `3ds`, `gc`, `wiiu`, `360`; `pc`, `ps4`): a console tag first, then
+/// another platform.
+pub fn system_from_tags(tags_lower: &[String]) -> Option<Sys> {
+    tags_lower.iter().find_map(|t| known_system(t)).map(Sys::Known).or_else(|| tags_lower.iter().find_map(|t| other_platform(t)).map(Sys::Other))
 }
 
-/// The Deck-ready list's system label ("N64", "3DS", "Wii U", "Xbox 360") as the same [`System`].
-pub fn system_from_label(label: &str) -> Option<System> {
-    system_from_folder_name(label)
+/// The Deck-ready list's system label ("N64", "3DS", "Wii U", "Xbox 360", "PC") as the same [`Sys`].
+pub fn system_from_label(label: &str) -> Option<Sys> {
+    known_system(label).map(Sys::Known).or_else(|| other_platform(label).map(Sys::Other))
 }
 
 impl Game {
-    pub fn new(name: &str, system: Option<System>) -> Game {
+    pub fn new(name: &str, system: Option<Sys>) -> Game {
         let (title, _) = split_annotation(name);
         let words = game_words(title);
         let game_key = norm(&words.join(" "));
@@ -126,7 +174,7 @@ pub fn verdict(a: &Game, b: &Game) -> Option<Verdict> {
         return None;
     }
     if a.game_key == b.game_key {
-        return Some(match (a.system, b.system) {
+        return Some(match (&a.system, &b.system) {
             (Some(x), Some(y)) if x != y => Verdict::AnotherVersion,
             _ => Verdict::SameGame,
         });
@@ -139,7 +187,7 @@ pub fn verdict(a: &Game, b: &Game) -> Option<Verdict> {
 pub struct Owned {
     /// Its key (`Port::key`), so a port is never compared with itself.
     pub key: String,
-    /// What it is called on screen: the catalog's "(folder)" note ("2ship2harkinian", "Shipwright"), else its title.
+    /// What it is called on screen: see [`project_name`].
     pub project: String,
     pub game: Game,
     /// Its cover, for the question page.
@@ -147,11 +195,18 @@ pub struct Owned {
 }
 
 impl Owned {
-    pub fn new(key: &str, name: &str, tags_lower: &[String]) -> Owned {
+    pub fn new(key: &str, name: &str, folder: &str, tags_lower: &[String]) -> Owned {
         let game = Game::of_port(name, tags_lower);
-        let project = split_annotation(name).1.map_or_else(|| game.title.clone(), str::to_string);
-        Owned { key: key.to_string(), project, game, art: None }
+        Owned { key: key.to_string(), project: project_name(name, folder), game, art: None }
     }
+}
+
+/// The project's name as the data has it: the catalog's "(folder)" note ("2ship2harkinian", "Shipwright"), else the
+/// port's folder (entries added from Deck-ready store the bare title as their name), else the title. There is no
+/// prettier name anywhere in the catalog, so none is made up.
+pub fn project_name(name: &str, folder: &str) -> String {
+    let (title, note) = split_annotation(name);
+    note.or(Some(folder.trim()).filter(|f| !f.is_empty())).unwrap_or(title).to_string()
 }
 
 /// An installed port that a candidate is the same game as (or another version of).
@@ -189,7 +244,7 @@ pub struct Badge {
 pub fn badge(found: &Found) -> Badge {
     match found.verdict {
         Verdict::SameGame => Badge { verdict: Verdict::SameGame, label: SAME_GAME_BADGE, note: format!("You have it as {}", found.owned.project) },
-        Verdict::AnotherVersion => Badge { verdict: Verdict::AnotherVersion, label: ANOTHER_VERSION_BADGE, note: format!("{ANOTHER_VERSION_BADGE}: {}", found.owned.project) },
+        Verdict::AnotherVersion => Badge { verdict: Verdict::AnotherVersion, label: ANOTHER_VERSION_BADGE, note: format!("Other version: {}", found.owned.project) },
     }
 }
 
@@ -198,7 +253,11 @@ pub fn log_line(verdict: Verdict, candidate_key: &str, owned_key: &str) -> Strin
     format!("same game: {} {candidate_key} vs {owned_key}", verdict.word())
 }
 
-pub const WINDOW_TITLE: &str = "Deck Ports Manager: Same game";
+/// "Same game: <port>", in the "Thing: detail" style of the other pages (the one-window layer names the text before the
+/// first colon).
+pub fn window_title(candidate: &str) -> String {
+    format!("Same game: {candidate}")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SameAct {
@@ -206,17 +265,22 @@ pub enum SameAct {
     InstallAnyway,
 }
 
-/// The question before installing a port that is the same game as one installed. `candidate` is the name of the port
-/// about to be installed, as the list shows it.
-pub fn confirm_page(candidate: &str, owned: &Owned) -> Page<SameAct> {
-    let mut page = Page::<SameAct> { window_title: WINDOW_TITLE.to_string(), large: true, header: candidate.to_string(), title: "You already have this game".to_string(), initial: Focus::Option(0), ..Page::default() };
+/// The question before installing a port that is the same game as one installed. `candidate` is the full name of the
+/// port about to be installed ("The Legend of Zelda: Majora's Mask (Zelda64Recomp)"), `project` its project name
+/// ([`project_name`]).
+pub fn confirm_page(candidate: &str, project: &str, owned: &Owned) -> Page<SameAct> {
+    let mut page = Page::<SameAct> { window_title: window_title(candidate), large: true, header: candidate.to_string(), title: "You already have this game".to_string(), initial: Focus::Option(0), ..Page::default() };
     page.card = Some(Card { art: owned.art.clone(), qr: None, title: owned.game.title.clone(), lines: vec![format!("Installed as {}", owned.project)] });
-    page.paragraphs.push(format!(
-        "You already have {} from {}. This is a different project for the same game; installing it adds a second copy with its own saves and settings.",
-        owned.game.title, owned.project
-    ));
+    page.paragraphs.push(format!("{project} is a different project for the same game as {}.", owned.project));
     page.options.push(PageOption { title: "Not now".to_string(), detail: "Nothing is downloaded".to_string(), choice: None, enabled: true, recommended: true, action: SameAct::NotNow });
-    page.options.push(PageOption { title: "Install it as well".to_string(), detail: format!("{candidate} is installed beside it"), choice: None, enabled: true, recommended: false, action: SameAct::InstallAnyway });
+    page.options.push(PageOption {
+        title: "Install it as well".to_string(),
+        detail: "Downloads it as a second copy, with its own saves and settings.".to_string(),
+        choice: None,
+        enabled: true,
+        recommended: false,
+        action: SameAct::InstallAnyway,
+    });
     page.b_does(&SameAct::NotNow)
 }
 
@@ -240,7 +304,11 @@ mod tests {
 
     fn owned(all: &[Port], name: &str) -> Owned {
         let p = port(all, name);
-        Owned::new(p.key(), &p.name, &p.tags_lower)
+        Owned::new(p.key(), &p.name, &p.folder, &p.tags_lower)
+    }
+
+    fn k(s: System) -> Option<Sys> {
+        Some(Sys::Known(s))
     }
 
     fn v(all: &[Port], a: &str, b: &str) -> Option<Verdict> {
@@ -257,8 +325,8 @@ mod tests {
         assert_eq!(v(&all, MM_2SHIP, MM_RECOMP), Some(Verdict::SameGame));
         assert_eq!(v(&all, MM_RECOMP, MM_2SHIP), Some(Verdict::SameGame));
         assert_eq!(v(&all, MM_2SHIP, MM_3D), Some(Verdict::AnotherVersion));
-        assert_eq!(game(&all, MM_3D).system, Some(System::N3ds));
-        assert_eq!(game(&all, MM_2SHIP).system, Some(System::N64));
+        assert_eq!(game(&all, MM_3D).system, k(System::N3ds));
+        assert_eq!(game(&all, MM_2SHIP).system, k(System::N64));
     }
 
     #[test]
@@ -274,9 +342,9 @@ mod tests {
         // The GameCube entry is Android-only and has no folder, so it is not in the parsed catalog; its tags are copied.
         let gc = Game::of_port("The Legend of Zelda: The Wind Waker HD (WindWakerHD-Android-Plus)", &["gc".into(), "action-adventure".into(), "android_only".into()]);
         let wiiu = game(&all, "The Legend of Zelda: The Wind Waker HD (ZeldaWWHDRecomp)");
-        assert_eq!(wiiu.system, Some(System::WiiU));
+        assert_eq!(wiiu.system, k(System::WiiU));
         assert_eq!(verdict(&wiiu, &gc), Some(Verdict::AnotherVersion));
-        let plain = Game::new("The Legend of Zelda: The Wind Waker (some-port)", Some(System::GameCube));
+        let plain = Game::new("The Legend of Zelda: The Wind Waker (some-port)", k(System::GameCube));
         assert_eq!(verdict(&plain, &wiiu), Some(Verdict::AnotherVersion), "HD at the end is an edition of the same title");
     }
 
@@ -294,7 +362,7 @@ mod tests {
         let (pc, midas, xbla) = ("GoldenEye 007 (goldeneye-pc-port)", "GoldenEye 007 (Project-Midas)", "GoldenEye 007 (GoldenEye-Recomp)");
         assert_eq!(v(&all, pc, midas), Some(Verdict::SameGame));
         // The catalog tags the third one 360 (the Xbox Live Arcade remaster): the rule's "two named systems".
-        assert_eq!(game(&all, xbla).system, Some(System::Xbox360));
+        assert_eq!(game(&all, xbla).system, k(System::Xbox360));
         assert_eq!(v(&all, pc, xbla), Some(Verdict::AnotherVersion));
         assert_eq!(v(&all, midas, xbla), Some(Verdict::AnotherVersion));
     }
@@ -310,7 +378,7 @@ mod tests {
         let all = catalog();
         assert_eq!(v(&all, "Banjo-Kazooie (BanjoRecomp)", "Banjo-Kazooie (Lighthouse)"), Some(Verdict::SameGame));
         assert_eq!(v(&all, "Banjo-Kazooie (BanjoRecomp)", "Banjo-Kazooie: Nuts & Bolts (reNut)"), None);
-        assert_eq!(verdict(&Game::new("Banjo-Kazooie (a)", Some(System::N64)), &Game::new("Banjo-Tooie (b)", Some(System::N64))), None);
+        assert_eq!(verdict(&Game::new("Banjo-Kazooie (a)", k(System::N64)), &Game::new("Banjo-Tooie (b)", k(System::N64))), None);
     }
 
     #[test]
@@ -345,14 +413,174 @@ mod tests {
 
     #[test]
     fn project_words_are_not_part_of_the_game() {
-        let a = Game::new("Some Game Recomp (one)", Some(System::N64));
-        let b = Game::new("Some Game PC Port (two)", Some(System::N64));
+        let a = Game::new("Some Game Recomp (one)", k(System::N64));
+        let b = Game::new("Some Game PC Port (two)", k(System::N64));
         let c = Game::new("Some Game Decomp", None);
         assert_eq!(a.game_key, "somegame");
         assert_eq!((verdict(&a, &b), verdict(&a, &c)), (Some(Verdict::SameGame), Some(Verdict::SameGame)));
         assert_eq!(Game::new("Recomp", None).game_key, "", "nothing left: matches nothing");
         assert_eq!(verdict(&Game::new("Recomp", None), &Game::new("Decomp", None)), None);
         assert_eq!(Game::new("HD", None).family_key, "hd", "a lone edition word stays");
+    }
+
+    #[test]
+    fn an_edition_word_inside_the_title_stays_and_accents_do_not_matter() {
+        let all = catalog();
+        let hockey = game(&all, "Wayne Gretzky's 3D Hockey (wg3d-recomp)");
+        assert_eq!((hockey.game_key.as_str(), hockey.family_key.as_str()), ("waynegretzkys3dhockey", "waynegretzkys3dhockey"));
+        let accented = Game::new("Pokémon Snap (a)", k(System::N64));
+        let plain = Game::new("Pokemon Snap (b)", k(System::N64));
+        assert_eq!(accented.game_key, "pokemonsnap");
+        assert_eq!(verdict(&accented, &plain), Some(Verdict::SameGame));
+    }
+
+    #[test]
+    fn a_pc_or_ps4_game_is_not_a_console_port_of_the_same_name() {
+        let all = catalog();
+        // Quake II: the PS1 recomp and the PC source port are the same game on two platforms.
+        let psx = game(&all, "Quake II (quake-ii-recomp)");
+        let pc = game(&all, "Quake II (yquake2)");
+        assert_eq!((psx.system.clone(), pc.system.clone()), (k(System::Ps1), Some(Sys::Other("pc"))));
+        assert_eq!(verdict(&psx, &pc), Some(Verdict::AnotherVersion));
+        assert_eq!(verdict(&Game::of_entry("MDK (mdk-recomp)", Some("PS1")), &Game::of_entry("MDK (mdk-sdl)", Some("PC"))), Some(Verdict::AnotherVersion));
+        for (tag, want) in [("pc", "pc"), ("msdos", "dos"), ("dos", "dos"), ("apple", "mac"), ("macos", "mac"), ("ps3", "ps3"), ("ps4", "ps4"), ("xone", "xone"), ("cd-i", "cdi")] {
+            assert_eq!(system_from_tags(&[tag.to_string()]), Some(Sys::Other(want)), "{tag}");
+        }
+        assert_eq!(system_from_label("DOS"), Some(Sys::Other("dos")));
+        assert_eq!(system_from_label("Mac"), Some(Sys::Other("mac")));
+        assert_eq!(system_from_tags(&["platformer".into(), "quality".into()]), None, "genre tags are not systems");
+        assert_eq!(system_from_tags(&["android".into(), "gb".into()]), k(System::GameBoy), "a console tag wins");
+        assert_eq!(system_from_tags(&["smd".into()]), k(System::Genesis));
+    }
+
+    /// Every same-game pair the data gives today: catalog with catalog, and Deck-ready entries with the catalog (an
+    /// entry is not compared with the catalog port it is). A change to the rule or the data that adds or drops one shows
+    /// up here.
+    const CATALOG_SAME_GAME: &[&str] = &[
+        "Ape Escape (ApeEscapeRecomp) | Ape Escape (ApeEscapeRecomp-MacWindowsLinux)",
+        "Azure Dreams (Azure-Dreams-HD-Recompilation) | Azure Dreams (azure-dreams-recomp)",
+        "Banjo-Kazooie (BanjoRecomp) | Banjo-Kazooie (Lighthouse)",
+        "Conker's Bad Fur Day (CBFD-Recompiled) | Conker's Bad Fur Day (ConkerBFDReloaded)",
+        "Conker: Live and Reloaded (conker-live-recompiled) | Conker: Live and Reloaded (xboxrecomp-conker)",
+        "Crash Team Racing: Nitro-Fueled (CTR-NitroFueled-PC) | Crash Team Racing: Nitro-Fueled (OCTR-NitroFueled-PC)",
+        "Diddy Kong Racing (DKR-R) | Diddy Kong Racing (goldenballoon)",
+        "DriveClub (Driveclub-pc-wrapper) | DriveClub (driveclub-recomp)",
+        "GoldenEye 007 (Project-Midas) | GoldenEye 007 (goldeneye-pc-port)",
+        "Jet Set Radio Future (JSRF-PC) | Jet Set Radio Future (JetSetRadioFuture-Unleashed)",
+        "King's Field (kings-field-recomp) | King's Field (verdite2)",
+        "Mario Kart 64 (MarioKart64Recomp) | Mario Kart 64 (SpaghettiKart)",
+        "Mario Party 4 (mariopartyrd-marioparty4) | Mario Party 4 (zeranemesis-Marioparty4)",
+        "OutRun (cannonball) | OutRun (cannonball-dx)",
+        "Paper Mario (Paper-Mario-ReCut) | Paper Mario (PaperBoat)",
+        "Perfect Dark (perfect-dark-dabs-mod) | Perfect Dark (perfect_dark)",
+        "Pilotwings 64 (Pilotwings64Recomp) | Pilotwings 64 (pilotwings-64-recomp)",
+        "Resident Evil 3: Nemesis (Project-RE-Visited-RE3) | Resident Evil 3: Nemesis (resident-evil-3-recomp)",
+        "Sonic Dream Team (project-dream-release) | Sonic Dream Team (project-dream-release)",
+        "Star Fox 64 (Starfox64Recomp) | Star Fox 64 (starship)",
+        "Super Mario 64 (Ghostship) | Super Mario 64 (sm64coopdx)",
+        "Super Mario Sunshine (sms-launcher) | Super Mario Sunshine (sms-pc-port)",
+        "Super Metroid (Super-Metroid-Launcher) | Super Metroid (supermetroidplus)",
+        "Tenchu Z (TenchuZ-PC) | Tenchu Z (TenchuZRecomp)",
+        "The Legend of Zelda: Majora's Mask (2ship2harkinian) | The Legend of Zelda: Majora's Mask (Zelda64Recomp)",
+        "The Legend of Zelda: Majora's Mask 3D (DekUI-Fork) | The Legend of Zelda: Majora's Mask 3D (MM3D-PC)",
+        "The Legend of Zelda: Ocarina of Time 3D (Ocarina-ReTuned) | The Legend of Zelda: Ocarina of Time 3D (TriAevum)",
+        "The Legend of Zelda: Oracle (oracles-decomp) | The Legend of Zelda: Oracle (thibautbus-top)",
+        "Uncharted: The Nathan Drake Collection (Uncharted_Collection_PC) | Uncharted: The Nathan Drake Collection (uncharted_pc)",
+        "Valkyrie Profile (ValkyrieRecomp) | Valkyrie Profile (valkyrie-profile-recomp)",
+        "Wave Race 64 (RaceWave46) | Wave Race 64 (wave-race-64-recomp)",
+        "WipEout (wipeout-recomp) | WipeOut (wipeout-phantom-edition)",
+    ];
+
+    const DECK_READY_SAME_GAME: &[&str] = &[
+        "Ape Escape (ApeEscapeRecomp) > Ape Escape (ApeEscapeRecomp-MacWindowsLinux)",
+        "Ape Escape (ApeEscapeRecomp-MacWindowsLinux) > Ape Escape (ApeEscapeRecomp)",
+        "Azure Dreams (azure-dreams-recomp) > Azure Dreams (Azure-Dreams-HD-Recompilation)",
+        "Banjo-Kazooie (BanjoRecomp) > Banjo-Kazooie (Lighthouse)",
+        "Banjo-Kazooie (Lighthouse) > Banjo-Kazooie (BanjoRecomp)",
+        "Conker's Bad Fur Day (CBFD-Recompiled) > Conker's Bad Fur Day (ConkerBFDReloaded)",
+        "Def Jam: Fight for NY > Def Jam: Fight for NY (DefJam-xbox-RE)",
+        "Diddy Kong Racing (DKR-R) > Diddy Kong Racing (goldenballoon)",
+        "Diddy Kong Racing (goldenballoon) > Diddy Kong Racing (DKR-R)",
+        "Digimon World 2 > Digimon World 2 (digimon-world-2-recomp)",
+        "F-Zero > F-Zero (FZeroSNESRecomp)",
+        "Final Fantasy Tactics Advance > Final Fantasy Tactics Advance (FFTARecomp)",
+        "Geometry Wars: Retro Evolved 2 > Geometry Wars: Retro Evolved 2 (geometry-wars-2-pc-plus)",
+        "Goemon's Great Adventure (Goemon64Recomp) > Goemon's Great Adventure (GGA64Recomp)",
+        "GoldenEye 007 (Project-Midas) > GoldenEye 007 (goldeneye-pc-port)",
+        "GoldenEye 007 (goldeneye-pc-port) > GoldenEye 007 (Project-Midas)",
+        "Jet Set Radio Future (JetSetRadioFuture-Unleashed) > Jet Set Radio Future (JSRF-PC)",
+        "King's Field (kings-field-recomp) > King's Field (verdite2)",
+        "King's Field (verdite2) > King's Field (kings-field-recomp)",
+        "Mario Kart 64 (MarioKart64Recomp) > Mario Kart 64 (SpaghettiKart)",
+        "Mario Kart 64 (SpaghettiKart) > Mario Kart 64 (MarioKart64Recomp)",
+        "MediEvil (medievil-recomp) > MediEvil (medievil-recomp)",
+        "Monster Hunter Generations Ultimate > Monster Hunter Generations Ultimate (MHGURecomp)",
+        "Paper Mario (PaperBoat) > Paper Mario (Paper-Mario-ReCut)",
+        "Parasite Eve (parasite-eve-recomp) > Parasite Eve (parasite-eve-pc)",
+        "Perfect Dark (perfect-dark-dabs-mod) > Perfect Dark (perfect_dark)",
+        "Perfect Dark (perfect_dark) > Perfect Dark (perfect-dark-dabs-mod)",
+        "Pilotwings 64 (pilotwings-64-recomp) > Pilotwings 64 (Pilotwings64Recomp)",
+        "Pilotwings 64 > Pilotwings 64 (Pilotwings64Recomp)",
+        "Pilotwings 64 > Pilotwings 64 (pilotwings-64-recomp)",
+        "Resident Evil 3: Nemesis (resident-evil-3-recomp) > Resident Evil 3: Nemesis (Project-RE-Visited-RE3)",
+        "Star Fox 64 (Starfox64Recomp) > Star Fox 64 (starship)",
+        "Star Fox 64 (starship) > Star Fox 64 (Starfox64Recomp)",
+        "Super Mario 64 (Ghostship) > Super Mario 64 (sm64coopdx)",
+        "Super Mario 64 (sm64coopdx) > Super Mario 64 (Ghostship)",
+        "Super Mario Sunshine (sms-pc-port) > Super Mario Sunshine (sms-launcher)",
+        "The Legend of Zelda: Majora's Mask (2ship2harkinian) > The Legend of Zelda: Majora's Mask (Zelda64Recomp)",
+        "The Legend of Zelda: Majora's Mask (Zelda64Recomp) > The Legend of Zelda: Majora's Mask (2ship2harkinian)",
+        "The Legend of Zelda: Majora's Mask 3D (MM3D-PC) > The Legend of Zelda: Majora's Mask 3D (DekUI-Fork)",
+        "The Legend of Zelda: Ocarina of Time 3D (TriAevum) > The Legend of Zelda: Ocarina of Time 3D (Ocarina-ReTuned)",
+        "The Legend of Zelda: Oracle (oracles-decomp) > The Legend of Zelda: Oracle (thibautbus-top)",
+        "Tony Hawk's Project 8 (Project8Recomp) > Tony Hawk's Project 8 (project-8-plus)",
+        "Valkyrie Profile (ValkyrieRecomp) > Valkyrie Profile (valkyrie-profile-recomp)",
+        "Valkyrie Profile (valkyrie-profile-recomp) > Valkyrie Profile (ValkyrieRecomp)",
+        "WipEout (wipeout-recomp) > WipeOut (wipeout-phantom-edition)",
+    ];
+
+    fn same_set(want: &[&str], got: std::collections::BTreeSet<String>) {
+        let want: std::collections::BTreeSet<String> = want.iter().map(|s| s.to_string()).collect();
+        let missing: Vec<&String> = want.difference(&got).collect();
+        let extra: Vec<&String> = got.difference(&want).collect();
+        assert!(missing.is_empty() && extra.is_empty(), "missing {missing:#?}\nextra {extra:#?}");
+    }
+
+    #[test]
+    fn every_same_game_pair_in_the_catalog_is_the_expected_one() {
+        let all = catalog();
+        let games: Vec<Game> = all.iter().map(|p| Game::of_port(&p.name, &p.tags_lower)).collect();
+        let mut got = std::collections::BTreeSet::new();
+        for i in 0..all.len() {
+            for j in i + 1..all.len() {
+                if verdict(&games[i], &games[j]) == Some(Verdict::SameGame) {
+                    let mut pair = [all[i].name.as_str(), all[j].name.as_str()];
+                    pair.sort();
+                    got.insert(pair.join(" | "));
+                }
+            }
+        }
+        same_set(CATALOG_SAME_GAME, got);
+    }
+
+    #[test]
+    fn every_same_game_pair_between_the_deck_ready_list_and_the_catalog_is_the_expected_one() {
+        use crate::fork::deck_ready::index::Host;
+        let all = catalog();
+        let games: Vec<Game> = all.iter().map(|p| Game::of_port(&p.name, &p.tags_lower)).collect();
+        let index = crate::fork::deck_ready::index::parse(include_str!("../../index/deck-ready.json")).unwrap();
+        let mut got = std::collections::BTreeSet::new();
+        for e in &index.entries {
+            let entry = Game::of_entry(&e.name, e.system.as_deref());
+            for (p, g) in all.iter().zip(&games) {
+                let itself = e.catalog_folder.as_deref() == Some(p.folder.as_str())
+                    || (e.host != Host::Other && e.repo.as_deref().is_some_and(|r| p.repo.as_deref().is_some_and(|pr| pr.eq_ignore_ascii_case(r))));
+                if !itself && verdict(g, &entry) == Some(Verdict::SameGame) {
+                    got.insert(format!("{} > {}", e.name, p.name));
+                }
+            }
+        }
+        same_set(DECK_READY_SAME_GAME, got);
     }
 
     #[test]

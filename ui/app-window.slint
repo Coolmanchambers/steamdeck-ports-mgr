@@ -21,6 +21,8 @@ export struct PortItem {
     saves-warning: bool,
     // Fork: not installed, and its game is installed under another project (src/fork/same_game.rs); empty for none.
     same-game-badge: string,
+    // Fork: "Other version installed": drawn outlined, not filled.
+    same-game-soft: bool,
     same-game-note: string,
 }
 
@@ -599,10 +601,12 @@ export component AppWindow inherits Window {
                                         y: row-spacing;
                                         width: row.same-fits ? row.same-w : 0px;
                                         height: action-button-height;
-                                        background: SemanticColors.info;
+                                        background: item.same-game-soft ? transparent : SemanticColors.info;
+                                        border-width: item.same-game-soft ? 1px : 0px;
+                                        border-color: index == root.selected-index ? Theme.selected-text : Theme.list-text;
                                         same-label := Text {
                                             text: item.same-game-badge;
-                                            color: SemanticColors.text-on-accent;
+                                            color: !item.same-game-soft ? SemanticColors.text-on-accent : (index == root.selected-index ? Theme.selected-text : Theme.list-text);
                                             font-size: item-font-px * 0.85;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;

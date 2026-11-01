@@ -199,14 +199,18 @@ impl AppState {
     fn rebuild_ports_model(&self) {
         let items: Vec<PortItem> = {
             let state = self.state.borrow();
-            let displayed = self.windowed_nav.displayed_windowed.borrow();
-            // Fork (same game): a row whose game is installed under another project gets a badge.
-            let badges = super::same_game_screen::list_badges(self, &displayed);
-            displayed
+            // Fork (same game): what is installed is read once for every row, and a row whose game is installed under
+            // another project gets a badge.
+            let on_disk = super::same_game_screen::Installed::read(self);
+            let mut log = Vec::new();
+            let items = self
+                .windowed_nav
+                .displayed_windowed
+                .borrow()
                 .iter()
-                .zip(badges)
-                .map(|(p, badge)| {
-                    let installed = self.is_installed(p);
+                .map(|p| {
+                    let installed = on_disk.has(p);
+                    let badge = on_disk.badge(p, &mut log);
                     PortItem {
                         name: p.name.clone().into(),
                         auto_update_off: state.get(p.key()).is_some_and(|i| !i.update),
@@ -214,10 +218,13 @@ impl AppState {
                         is_local: p.user_managed,
                         saves_warning: installed && super::save_finder_screen::saves_warning(self, p),
                         same_game_badge: badge.as_ref().map_or("", |b| b.label).into(),
+                        same_game_soft: badge.as_ref().is_some_and(|b| b.verdict == crate::fork::same_game::Verdict::AnotherVersion),
                         same_game_note: badge.map(|b| b.note).unwrap_or_default().into(),
                     }
                 })
-                .collect()
+                .collect();
+            super::same_game_screen::log_matches("all ports", log);
+            items
         };
         self.window().set_ports(slint::ModelRc::new(slint::VecModel::from(items)));
         self.push_selected_index();
