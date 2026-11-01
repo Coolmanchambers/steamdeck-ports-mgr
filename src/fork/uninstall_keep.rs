@@ -17,7 +17,8 @@
 //! A link is never followed and never kept: removing the folder removes the link only, its target stays where it is.
 //! A record of connected game files that cannot be read stops the uninstall before anything moves. A move that fails
 //! puts back what was already moved (a half-made copy is removed first) and cancels the uninstall: nothing is deleted.
-//! The app does not put kept files back on reinstall (follow-up); Settings > Ports > Kept files lists them.
+//! Reinstalling or updating the port offers to put the files back (the install wizard: [`newest_kept`], [`restore_plan`],
+//! [`restore_kept`]); Settings > Ports > Kept files lists them.
 
 use crate::core::models::Port;
 use crate::core::path_safety::is_within;
@@ -309,7 +310,7 @@ impl Kept {
     pub fn line_at(&self, place: &str) -> String {
         let s = &self.summary;
         let verb = if s.count() == 1 { "was" } else { "were" };
-        format!("{} {verb} moved to Kept files: {place}. The app will not put them back when you reinstall; Settings > Ports > Kept files lists them.", s.what().unwrap_or_default())
+        format!("{} {verb} moved to Kept files: {place}. Reinstalling it offers to put them back; Settings > Ports > Kept files lists them.", s.what().unwrap_or_default())
     }
 }
 
@@ -505,6 +506,173 @@ fn stamp_words(stamp: &str) -> String {
     }
 }
 
+// -- Putting kept files back (the install wizard, on a reinstall or update) ---------------------------------------
+
+/// Where a file that a restore would replace is copied first: `<Saves Backup>/Replaced by restore/<port folder>/<time>/`.
+pub const REPLACED_DIR: &str = "Replaced by restore";
+
+pub fn replaced_dir_for(saves_backup_dir: &Path, folder: &str) -> PathBuf {
+    saves_backup_dir.join(REPLACED_DIR).join(folder)
+}
+
+/// One kept file that can go back: its path inside the port folder, what it is (`KeepKind::id`), its size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptFile {
+    pub rel: PathBuf,
+    pub kind: String,
+    pub size: u64,
+}
+
+/// One uninstall's kept files (the newest of a port).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptSet {
+    pub dir: PathBuf,
+    /// "2026-10-31 10:00".
+    pub when: String,
+    pub files: Vec<KeptFile>,
+}
+
+/// "game file", "key"... for the page.
+pub fn kind_words(id: &str) -> &'static str {
+    match id {
+        "archive" | "game_file" | "rom" => "game file",
+        "key" => "key",
+        "dump" => "BIOS or dump",
+        "maybe game data" => "data file",
+        _ => "file",
+    }
+}
+
+/// Only plain names below the folder: a damaged or edited manifest can never point outside it.
+fn plain_relative(rel: &Path) -> bool {
+    !rel.as_os_str().is_empty() && rel.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+fn files_below(root: &Path, rel: &Path, out: &mut Vec<KeptFile>) {
+    for e in fs::read_dir(root.join(rel)).into_iter().flatten().flatten() {
+        let Ok(t) = e.file_type() else { continue };
+        let r = rel.join(e.file_name());
+        if t.is_dir() && !(rel.as_os_str().is_empty() && e.file_name() == PREVIOUS) {
+            files_below(root, &r, out);
+        } else if t.is_file() && !(rel.as_os_str().is_empty() && e.file_name() == MANIFEST) {
+            out.push(KeptFile { rel: r, kind: String::new(), size: e.metadata().map_or(0, |m| m.len()) });
+        }
+    }
+}
+
+/// The newest kept files of the port folder `folder` that are files (older versions in `.previous` stay kept: the
+/// update keeps its own). `None` when nothing is kept for it.
+pub fn newest_kept(saves_backup_dir: &Path, folder: &str) -> Option<KeptSet> {
+    let mut stamps: Vec<_> = fs::read_dir(kept_dir_for(saves_backup_dir, folder)).ok()?.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).collect();
+    stamps.sort_by_key(|e| std::cmp::Reverse(e.file_name()));
+    stamps.into_iter().find_map(|stamp| {
+        let dir = stamp.path();
+        let manifest: Option<Value> = fs::read_to_string(dir.join(MANIFEST)).ok().and_then(|t| serde_json::from_str(&t).ok());
+        let mut files: Vec<KeptFile> = match manifest.as_ref().and_then(|m| m["files"].as_array()) {
+            Some(list) => list
+                .iter()
+                .filter(|f| f["kind"].as_str() != Some(KeepKind::Previous.id()))
+                .filter_map(|f| Some(KeptFile { rel: PathBuf::from(f["kept_as"].as_str()?), kind: f["kind"].as_str().unwrap_or_default().to_string(), size: f["size"].as_u64().unwrap_or(0) }))
+                .collect(),
+            None => {
+                let mut out = Vec::new();
+                files_below(&dir, Path::new(""), &mut out);
+                out
+            }
+        };
+        files.retain(|f| plain_relative(&f.rel) && fs::symlink_metadata(dir.join(&f.rel)).is_ok_and(|m| m.is_file()));
+        (!files.is_empty()).then(|| KeptSet { when: stamp_words(&stamp.file_name().to_string_lossy()), dir, files })
+    })
+}
+
+/// One file to copy back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreStep {
+    pub rel: PathBuf,
+    pub kind: String,
+    /// Another file is at its place now: it is copied aside first.
+    pub replaces: bool,
+}
+
+/// A link (or a folder that is one) on the way to `rel` inside `dir`: never written through, it leads to the user's own
+/// files.
+fn through_a_link(dir: &Path, rel: &Path) -> bool {
+    let mut at = dir.to_path_buf();
+    rel.components().any(|c| {
+        at.push(c);
+        fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink())
+    })
+}
+
+/// What putting `set` back into `port_dir` would do: each file missing there is copied, one there with another size is
+/// copied aside first and then replaced. A file there with the same size is taken to be it and left; a place that is a
+/// link (or under one) is left alone.
+pub fn restore_plan(set: &KeptSet, port_dir: &Path) -> Vec<RestoreStep> {
+    set.files
+        .iter()
+        .filter(|f| !through_a_link(port_dir, &f.rel))
+        .filter_map(|f| match fs::metadata(port_dir.join(&f.rel)) {
+            Err(_) => Some(RestoreStep { rel: f.rel.clone(), kind: f.kind.clone(), replaces: false }),
+            Ok(m) if m.is_file() && m.len() == fs::metadata(set.dir.join(&f.rel)).map_or(f.size, |k| k.len()) => None,
+            Ok(m) if m.is_file() => Some(RestoreStep { rel: f.rel.clone(), kind: f.kind.clone(), replaces: true }),
+            Ok(_) => None,
+        })
+        .collect()
+}
+
+/// What a restore did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Restored {
+    pub copied: usize,
+    pub backed_up: usize,
+    /// Where the replaced files went (`None` when none were).
+    pub backup_dir: Option<PathBuf>,
+}
+
+fn copy_checked(from: &Path, to: &Path) -> io::Result<()> {
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let want = fs::metadata(from)?.len();
+    if fs::copy(from, to)? != want {
+        let _ = fs::remove_file(to);
+        return Err(io::Error::other("the copy does not match the original"));
+    }
+    Ok(())
+}
+
+/// Copies the planned files from `set` back into `port_dir`. The Kept files copy stays. A file that would be replaced is
+/// first copied to `<backup_base>/<stamp>/<its path>` and checked; the new one is written beside it and renamed over it,
+/// so a failure part way leaves the old file in place. Stops at the first failure with what was done so far named.
+pub fn restore_kept(set: &KeptSet, steps: &[RestoreStep], port_dir: &Path, backup_base: &Path, stamp: &str) -> Result<Restored, String> {
+    let mut done = Restored::default();
+    let backup_dir = backup_base.join(stamp);
+    for step in steps {
+        if !plain_relative(&step.rel) || through_a_link(port_dir, &step.rel) {
+            continue;
+        }
+        let (from, to) = (set.dir.join(&step.rel), port_dir.join(&step.rel));
+        let failed = |what: &str, e: io::Error| format!("{what} {}: {e}. {} put back before this; nothing was overwritten.", step.rel.display(), done.copied);
+        if step.replaces {
+            copy_checked(&to, &backup_dir.join(&step.rel)).map_err(|e| failed("Could not copy aside", e))?;
+            done.backed_up += 1;
+            done.backup_dir = Some(backup_dir.clone());
+            let staged = to.with_file_name(format!("{}.dpm-restore", to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+            copy_checked(&from, &staged).and_then(|()| fs::rename(&staged, &to)).map_err(|e| {
+                let _ = fs::remove_file(&staged);
+                failed("Could not put back", e)
+            })?;
+        } else {
+            if fs::symlink_metadata(&to).is_ok() {
+                continue;
+            }
+            copy_checked(&from, &to).map_err(|e| failed("Could not put back", e))?;
+        }
+        done.copied += 1;
+    }
+    Ok(done)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeptAct {
     Back,
@@ -523,7 +691,7 @@ pub fn kept_files_page(records: &[KeptRecord], place: &str, game_mode: bool) -> 
         ..Page::default()
     };
     page.paragraphs.push(format!("When a port is uninstalled, its game files, keys and older versions are moved here, never deleted: {place}."));
-    page.paragraphs.push("The app does not put them back when you reinstall. Copy what you need into the port's folder yourself.".to_string());
+    page.paragraphs.push("Reinstalling a port offers to put its files back; you can also copy what you need into its folder yourself.".to_string());
     if records.is_empty() {
         page.paragraphs.push("Nothing is kept yet.".to_string());
     }
@@ -739,7 +907,7 @@ mod tests {
             assert_eq!(manifest["files"][0]["size"], 4);
             assert!(manifest["files"][0]["source"].as_str().unwrap().ends_with("game.iso"));
             assert!(kept.line_at("Internal storage > Saves Backup > Kept files > game").starts_with("1 game file was moved to Kept files: Internal storage > "), "{}", kept.line());
-            assert!(kept.line().contains("will not put them back"));
+            assert!(kept.line().contains("Reinstalling it offers to put them back"));
         }
         assert!(base.join("2026-10-31_10-00-00-2").join(MANIFEST).exists());
         let records = list_kept(tmp.path());
@@ -763,7 +931,7 @@ mod tests {
         let desk = kept_files_page(&records, "Internal storage > Saves Backup > Kept files", false);
         assert_eq!(desk.facts, ["shipwright: 2026-10-31 10:00, 3 files (120 MB)"]);
         assert_eq!(desk.options[0].action, KeptAct::OpenFolder);
-        assert!(desk.paragraphs.iter().any(|p| p.contains("does not put them back")));
+        assert!(desk.paragraphs.iter().any(|p| p.contains("offers to put its files back")));
         let game = kept_files_page(&records, "x", true);
         assert!(game.options.is_empty());
         assert_eq!(game.facts.len(), 1);
@@ -891,5 +1059,112 @@ mod tests {
 
         assert_eq!(err, UNREADABLE_RECORD);
         assert!(dir.join("game.x86_64").exists() && dir.join("my game.v64x").exists());
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+
+    fn write(path: &Path, data: &[u8]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, data).unwrap();
+    }
+
+    /// An uninstall's kept files as `keep_items` writes them: two game files, a key and the older versions.
+    fn kept(saves: &Path, stamp: &str) -> PathBuf {
+        let dir = kept_dir_for(saves, "soh").join(stamp);
+        write(&dir.join("oot.o2r"), b"ARCHIVE");
+        write(&dir.join("roms/zelda.z64"), b"ROMROM");
+        write(&dir.join("prod.keys"), b"K");
+        write(&dir.join(".previous/v1/soh.AppImage"), b"OLD");
+        let files = json!([
+            {"kept_as": "oot.o2r", "kind": "archive", "size": 7},
+            {"kept_as": "roms/zelda.z64", "kind": "rom", "size": 6},
+            {"kept_as": "prod.keys", "kind": "key", "size": 1},
+            {"kept_as": ".previous", "kind": "previous", "size": 3},
+            {"kept_as": "../escape.bin", "kind": "rom", "size": 1},
+        ]);
+        fs::write(dir.join(MANIFEST), serde_json::to_string(&json!({"files": files})).unwrap()).unwrap();
+        dir
+    }
+
+    fn rels(set: &KeptSet) -> Vec<String> {
+        set.files.iter().map(|f| f.rel.to_string_lossy().replace('\\', "/")).collect()
+    }
+
+    #[test]
+    fn the_newest_kept_files_are_offered_without_the_older_versions_or_a_path_outside() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(newest_kept(tmp.path(), "soh"), None, "nothing kept");
+        kept(tmp.path(), "2026-10-01_09-00-00");
+        let newest = kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        assert_eq!((set.dir.clone(), set.when.as_str()), (newest, "2026-10-31 10:00"));
+        assert_eq!(rels(&set), ["oot.o2r", "roms/zelda.z64", "prod.keys"]);
+        assert_eq!(set.files[0].kind, "archive");
+        assert_eq!((kind_words("archive"), kind_words("rom"), kind_words("key"), kind_words("dump"), kind_words("")), ("game file", "game file", "key", "BIOS or dump", "file"));
+    }
+
+    #[test]
+    fn a_kept_folder_without_its_manifest_is_read_by_its_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = kept_dir_for(tmp.path(), "soh").join("2026-10-31_10-00-00");
+        write(&dir.join("oot.o2r"), b"A");
+        write(&dir.join(".previous/v1/x"), b"B");
+        assert_eq!(rels(&newest_kept(tmp.path(), "soh").unwrap()), ["oot.o2r"]);
+    }
+
+    #[test]
+    fn the_plan_copies_what_is_missing_backs_up_what_differs_and_leaves_what_is_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        let port = tmp.path().join("Ports/soh");
+        write(&port.join("oot.o2r"), b"ARCHIVE"); // the same size: taken to be it
+        write(&port.join("prod.keys"), b"NEWER KEYS"); // another version
+        let plan = restore_plan(&set, &port);
+        let got: Vec<(String, bool)> = plan.iter().map(|s| (s.rel.to_string_lossy().replace('\\', "/"), s.replaces)).collect();
+        assert_eq!(got, [("roms/zelda.z64".to_string(), false), ("prod.keys".to_string(), true)]);
+    }
+
+    #[test]
+    fn putting_back_copies_keeps_the_kept_copy_and_never_overwrites_without_a_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kept_dir = kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        let port = tmp.path().join("Ports/soh");
+        write(&port.join("prod.keys"), b"NEWER KEYS");
+        let plan = restore_plan(&set, &port);
+        let backups = replaced_dir_for(tmp.path(), "soh");
+        let done = restore_kept(&set, &plan, &port, &backups, "2026-11-01_12-00-00").unwrap();
+        assert_eq!((done.copied, done.backed_up), (3, 1));
+        assert_eq!(done.backup_dir.as_deref(), Some(backups.join("2026-11-01_12-00-00").as_path()));
+        assert_eq!(fs::read(port.join("oot.o2r")).unwrap(), b"ARCHIVE");
+        assert_eq!(fs::read(port.join("roms/zelda.z64")).unwrap(), b"ROMROM");
+        assert_eq!(fs::read(port.join("prod.keys")).unwrap(), b"K");
+        assert_eq!(fs::read(backups.join("2026-11-01_12-00-00/prod.keys")).unwrap(), b"NEWER KEYS", "the file that was there is kept aside");
+        assert!(kept_dir.join("oot.o2r").exists() && kept_dir.join("prod.keys").exists(), "Kept files keeps its copy");
+        assert!(!port.join("prod.keys.dpm-restore").exists());
+        assert!(restore_plan(&set, &port).is_empty(), "a second reinstall has nothing left to offer");
+        assert!(!tmp.path().join("Ports/escape.bin").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_port_folder_is_never_written_through() {
+        let tmp = tempfile::tempdir().unwrap();
+        kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        let port = tmp.path().join("Ports/soh");
+        let mine = tmp.path().join("my roms");
+        write(&mine.join("zelda.z64"), b"THE USER'S OWN ROM");
+        fs::create_dir_all(&port).unwrap();
+        std::os::unix::fs::symlink(&mine, port.join("roms")).unwrap();
+        std::os::unix::fs::symlink(mine.join("zelda.z64"), port.join("prod.keys")).unwrap();
+        let plan = restore_plan(&set, &port);
+        assert_eq!(plan.iter().map(|s| s.rel.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["oot.o2r"]);
+        restore_kept(&set, &plan, &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
+        assert_eq!(fs::read(mine.join("zelda.z64")).unwrap(), b"THE USER'S OWN ROM");
     }
 }

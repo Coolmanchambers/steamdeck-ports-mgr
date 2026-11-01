@@ -23,6 +23,7 @@ pub mod deck_ready;
 pub mod folder_picker;
 pub mod custom_repo;
 pub mod import;
+pub mod install_wizard;
 pub mod page;
 pub mod port_page;
 pub mod rom_library;

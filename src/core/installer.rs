@@ -9,9 +9,54 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub const MAX_UNCOMPRESSED_SIZE: u64 = 20 * 1024 * 1024 * 1024;
+
+// Fork (install wizard): the download reports its bytes (`on_bytes(downloaded, total)`, the total when the server gives
+// one) and stops when `cancel` is set; a stopped install fails with exactly `CANCELLED`, its temporary folder removed.
+pub const CANCELLED: &str = "The download was stopped and removed; nothing was kept.";
+
+#[derive(Default, Clone)]
+pub struct DownloadCtl {
+    pub on_bytes: Option<Arc<dyn Fn(u64, Option<u64>) + Send + Sync>>,
+    pub cancel: Option<Arc<AtomicBool>>,
+}
+
+impl DownloadCtl {
+    fn cancelled(&self) -> bool {
+        self.cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+}
+
+// Fork (install wizard): `io::copy` with a byte count and a cancel check after each block.
+fn copy_counted(reader: &mut dyn io::Read, writer: &mut dyn io::Write, total: Option<u64>, ctl: &DownloadCtl) -> io::Result<u64> {
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut done = 0u64;
+    if let Some(f) = &ctl.on_bytes {
+        f(0, total);
+    }
+    loop {
+        if ctl.cancelled() {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, CANCELLED));
+        }
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        writer.write_all(&buf[..n])?;
+        done += n as u64;
+        if let Some(f) = &ctl.on_bytes {
+            f(done, total);
+        }
+    }
+    writer.flush()?;
+    Ok(done)
+}
 
 #[derive(Debug)]
 pub enum InstallError {
@@ -39,7 +84,8 @@ impl<T, E: std::fmt::Display> InstallErrorExt<T> for Result<T, E> {
 }
 
 fn with_path<T>(result: io::Result<T>, path: &Path) -> io::Result<T> {
-    result.map_err(|e| io::Error::new(e.kind(), format!("{e} -- {}", path.display())))
+    // Fork (install wizard): the place the human way ("SD card > Ports > ..."), never a card's ID.
+    result.map_err(|e| io::Error::new(e.kind(), format!("{e} -- {}", crate::fork::port_page::paths::human_path_here(path))))
 }
 
 fn retry_transient<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
@@ -103,7 +149,7 @@ fn content_disposition_filename(header: &str) -> Option<String> {
     }
 }
 
-fn download(url: &str, dest: &Path, on_progress: &mut dyn FnMut(&str)) -> Result<PathBuf, InstallError> {
+fn download(url: &str, dest: &Path, on_progress: &mut dyn FnMut(&str), ctl: &DownloadCtl) -> Result<PathBuf, InstallError> {
     let mut url = url.to_string();
     let mut dest = dest.to_path_buf();
     if let Some(id) = pixeldrain_file_id(&url) {
@@ -136,8 +182,13 @@ fn download(url: &str, dest: &Path, on_progress: &mut dyn FnMut(&str)) -> Result
     if let Some(final_name) = final_name.filter(|n| has_known_archive_extension(n) && *n != name) {
         dest = rename_dest(&dest, &final_name);
     }
+    // Fork (install wizard): the size the server gives, for the progress bar.
+    let total = resp.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).filter(|n| *n > 0);
     let mut file = with_path(fs::File::create(&dest), &dest).install_err()?;
-    with_path(io::copy(&mut resp.body_mut().as_reader(), &mut file), &dest).install_err()?;
+    match copy_counted(&mut resp.body_mut().as_reader(), &mut file, total, ctl) {
+        Err(e) if e.kind() == io::ErrorKind::Interrupted && ctl.cancelled() => return Err(InstallError::Message(CANCELLED.to_string())),
+        other => with_path(other, &dest).install_err()?,
+    };
     Ok(dest)
 }
 
@@ -377,7 +428,7 @@ pub fn install_extra(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMu
     on_progress("Downloading extra files...");
     let tmp = temp_dir_in(library_dir, "_extra_download_")?;
     let dest = tmp.path().join(safe_download_name(url.rsplit('/').next().unwrap_or("extra")));
-    let archive_path = download(url, &dest, on_progress)?;
+    let archive_path = download(url, &dest, on_progress, &DownloadCtl::default())?;
     let staging = temp_dir_in(library_dir, "_extra_staging_")?;
     let merge_root = extract_to_staging(&archive_path, staging.path(), None)?;
     merge_into(&merge_root, &dest_dir).install_err()
@@ -403,6 +454,7 @@ fn download_release_asset(
     overrides: InstallOverrides,
     tmp_path: &Path,
     on_progress: &mut dyn FnMut(&str),
+    ctl: &DownloadCtl,
 ) -> Result<(PathBuf, Option<String>), InstallError> {
     let (release, asset) = match (overrides.release, overrides.asset) {
         (Some(r), Some(a)) => (r.clone(), a.clone()),
@@ -416,7 +468,7 @@ fn download_release_asset(
         .get(forge.url_field())
         .and_then(Value::as_str)
         .ok_or_else(|| InstallError::Message(format!("Asset without a \"{}\" field -- please report this port.", forge.url_field())))?;
-    let archive_path = download(url, &tmp_path.join(safe_download_name(name)), on_progress)?;
+    let archive_path = download(url, &tmp_path.join(safe_download_name(name)), on_progress, ctl)?;
     Ok((archive_path, installed_tag))
 }
 
@@ -427,6 +479,7 @@ pub fn install_port(
     gitlab_token: Option<&str>,
     overrides: InstallOverrides,
     on_progress: &mut dyn FnMut(&str),
+    ctl: &DownloadCtl,
 ) -> Result<Option<String>, InstallError> {
     let library_dir = paths.library_dir;
     let dest_dir = safe_join(library_dir, &port.folder).map_err(InstallError::Message)?;
@@ -437,7 +490,7 @@ pub fn install_port(
 
     let (archive_path, installed_tag) = if let Some(forge) = Forge::of(port.source_type) {
         let token = forge.token(github_token, gitlab_token);
-        download_release_asset(forge, repo, token, preferred_asset.as_deref(), overrides, tmp.path(), on_progress)?
+        download_release_asset(forge, repo, token, preferred_asset.as_deref(), overrides, tmp.path(), on_progress, ctl)?
     } else if port.source_type == SourceType::DirectUrl {
         let resolved = resolve_per_platform(&port.source);
         let url = resolved
@@ -445,10 +498,14 @@ pub fn install_port(
             .and_then(Value::as_str)
             .ok_or_else(|| InstallError::Message("\"source\" is not a usable link for this port".to_string()))?;
         let dest = tmp.path().join(safe_download_name(url.rsplit('/').next().unwrap_or("download")));
-        (download(url, &dest, on_progress)?, None)
+        (download(url, &dest, on_progress, ctl)?, None)
     } else {
         return Err(InstallError::Message("This port has nothing to download.".to_string()));
     };
+    // Fork (install wizard): stopped just as the download ended: nothing is installed (`tmp` goes with this return).
+    if ctl.cancelled() {
+        return Err(InstallError::Message(CANCELLED.to_string()));
+    }
 
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     apply_archive(port, paths, &archive_path, &dest_dir, &stamp, on_progress)?;
@@ -548,13 +605,42 @@ mod tests {
             InstallError::Message(m) => m,
             other => format!("{other:?}"),
         };
-        let err = install_port(&port, paths, None, None, InstallOverrides::default(), &mut no_progress).unwrap_err();
+        let err = install_port(&port, paths, None, None, InstallOverrides::default(), &mut no_progress, &DownloadCtl::default()).unwrap_err();
         assert!(text(err).contains("adopted"));
         let err = install_extra(&port, &library_dir, &mut no_progress).unwrap_err();
         assert!(text(err).contains("adopted"));
         assert_eq!(fs::read_to_string(theirs.join("keep.sav")).unwrap(), "mine");
         assert_eq!(fs::read_dir(&theirs).unwrap().count(), 1);
         assert_eq!(fs::read_dir(&library_dir).unwrap().count(), 1, "no download folder was created");
+    }
+
+    // Fork (install wizard).
+    #[test]
+    fn the_download_copy_reports_its_bytes_and_the_total() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let ctl = DownloadCtl { on_bytes: Some(Arc::new(move |d, t| s.lock().unwrap().push((d, t)))), cancel: None };
+        let data = vec![7u8; 150 * 1024];
+        let mut out = Vec::new();
+        assert_eq!(copy_counted(&mut data.as_slice(), &mut out, Some(data.len() as u64), &ctl).unwrap(), data.len() as u64);
+        assert_eq!(out, data);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.first(), Some(&(0, Some(153_600))), "the bar starts at nothing with the size known");
+        assert_eq!(seen.last(), Some(&(153_600, Some(153_600))));
+        assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0), "the count only grows");
+    }
+
+    #[test]
+    fn a_stopped_download_ends_with_the_cancelled_error_and_writes_no_more() {
+        let flag = Arc::new(AtomicBool::new(true));
+        let ctl = DownloadCtl { on_bytes: None, cancel: Some(flag.clone()) };
+        let data = vec![1u8; 4096];
+        let mut out = Vec::new();
+        let err = copy_counted(&mut data.as_slice(), &mut out, None, &ctl).unwrap_err();
+        assert_eq!((err.kind(), err.to_string()), (io::ErrorKind::Interrupted, CANCELLED.to_string()));
+        assert!(out.is_empty());
+        flag.store(false, Ordering::Relaxed);
+        assert!(copy_counted(&mut data.as_slice(), &mut out, None, &DownloadCtl::default()).is_ok(), "no control: a plain copy");
     }
 
     #[test]

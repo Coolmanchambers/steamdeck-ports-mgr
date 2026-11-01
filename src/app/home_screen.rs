@@ -306,7 +306,12 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
         return false;
     }
     let installed: Vec<Port> = app.catalog.borrow().iter().filter(|p| !p.is_android_only() && app.is_installed(p)).cloned().collect();
-    let facts = facts_of(app, &installed);
+    let mut facts = facts_of(app, &installed);
+    // Install wizard: a port installing for the first time has a tile already, its line saying how far it is.
+    let busy = super::install_wizard_screen::installing_keys();
+    let installing: Vec<Port> = app.catalog.borrow().iter().filter(|p| busy.iter().any(|k| k == p.key()) && !installed.iter().any(|i| i.key() == p.key())).cloned().collect();
+    facts.extend(installing.iter().map(|p| PortFacts { key: p.key().to_string(), name: p.display_name().to_string(), ..PortFacts::default() }));
+    let installed: Vec<Port> = installed.into_iter().chain(installing).collect();
     let setup_done = crate::fork::setup_wizard::setup_state(&app.paths.config_dir.join(crate::fork::settings::FILE_NAME)) == crate::fork::setup_wizard::SetupState::Done;
     let window = app.window();
     // Fork (checkup): the "Fix N problems" tile reads the last answer; looking again happens in the background.
@@ -326,16 +331,19 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
                 .iter()
                 .map(|t| {
                     let image = by_key.get(t.key.as_str()).map(|p| super::cards::load_cached_card_image(&app.grid_nav.card_image_cache, &app.paths.cache_dir, &p.folder)).unwrap_or_default();
+                    // Install wizard: "Downloading 42%" while the port installs.
+                    let installing = matches!(t.kind, TileKind::Port | TileKind::Continue).then(|| super::install_wizard_screen::tile_note(&t.key)).flatten();
                     let badge = match (&t.checkup, t.kind) {
                         (Some(c), _) => c.note.clone(),
                         (None, TileKind::Setup | TileKind::Add) => String::new(),
-                        (None, _) => t.badge.label().to_string(),
+                        (None, _) => installing.clone().unwrap_or_else(|| t.badge.label().to_string()),
                     };
+                    let mark = if installing.is_some() { crate::fork::page::Mark::Waiting } else { t.checkup.as_ref().map_or_else(|| t.badge.mark(), |c| c.mark) };
                     HomeTile {
                         title: t.title.clone().into(),
                         image,
                         badge: badge.into(),
-                        mark: t.checkup.as_ref().map_or_else(|| t.badge.mark(), |c| c.mark).code(),
+                        mark: mark.code(),
                         kind: match t.kind {
                             TileKind::Port => 0,
                             TileKind::Continue => 1,

@@ -881,9 +881,10 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
             }
         }
         Fix::OldCopies => super::ports_folder_screen::open_old_copies(app, router),
+        // Fork (install wizard): "Update <name>?" and its pages; Not now comes back here.
         Fix::Update(key) => {
             if let Some(port) = port_by_key(app, &key) {
-                super::install_launch::start_install(app, router, port, None, None);
+                super::install_wizard_screen::open(app, router, port, back_here);
             }
         }
         Fix::BackUpNow => super::dialogs::start_save_backup(app, router),

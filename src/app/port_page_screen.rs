@@ -14,7 +14,7 @@
 //! pages) are the reusable pieces. Each takes a `Back` that runs when the user leaves.
 
 use super::dialogs::{close_current_dialog, dialog_is_open, open_extra_install_confirm_dialog, open_info_dialog, open_reset_playtime_dialog};
-use super::install_launch::{activate_port, mark_uninstalled, may_uninstall, open_version_picker, start_install};
+use super::install_launch::{activate_port, mark_uninstalled, may_uninstall, open_version_picker};
 use super::page_dialog::{show_page, show_page_handle, Handlers, PageHandle};
 use super::playtime::{format_last_played, format_playtime, is_port_running, LastPlayed};
 use super::state::AppState;
@@ -574,15 +574,11 @@ fn leave(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 fn open_card_in(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, card: Card) {
     let Some(port) = port_of(app, &s.key) else { return };
     match card.route() {
-        // Same game: a port that is not installed (its folder went away while this page was open) asks first when its
-        // game is installed under another project. "Not now" goes through `back_to`, which closes this page for a port
+        // A port that is not installed (its folder went away while this page was open) goes through the install wizard
+        // (its first page has the same-game note). "Not now" goes through `back_to`, which closes this page for a port
         // that is not installed, so it returns to the list.
         model::Route::Start if !app.is_installed(&port) && !app.install_runtime.installing.borrow().contains(port.key()) => {
-            let p = port.clone();
-            super::same_game_screen::confirm_then_or(app, router, &port, back_to(s, Screen::First), move |app, router| {
-                close_current_dialog(app, router);
-                start_install(app, router, p.clone(), None, None);
-            });
+            super::install_wizard_screen::open(app, router, port, back_to(s, Screen::First));
         }
         model::Route::Start => {
             close_current_dialog(app, router);
@@ -681,10 +677,8 @@ fn on_act(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             }
         }
         Act::CheckNow => check_now(app, s, &port),
-        Act::UpdateNow => {
-            close_current_dialog(app, router);
-            start_install(app, router, port, None, None);
-        }
+        // The install wizard: "Update <name>?", then its pages; Not now comes back to the Updates card.
+        Act::UpdateNow => super::install_wizard_screen::open(app, router, port, back_to(s, Screen::Card(Card::Updates))),
         Act::ToggleUpdates => {
             let on = app.state.borrow().get(&s.key).is_none_or(|i| i.update);
             app.state.borrow_mut().set_port_update(&s.key, !on);

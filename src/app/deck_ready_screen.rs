@@ -7,11 +7,11 @@
 //! first added to `ports.local.json` as the user's own entry. The text is English only.
 
 use super::dialogs::{
-    build_deck_ready_info_dialog, build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog,
+    build_deck_ready_info_dialog, build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_message_dialog, open_picker_dialog,
     set_picker_items, DialogSlot,
 };
 use super::events::{lock, AppEvent};
-use super::install_launch::{activate_port, start_install};
+use super::install_launch::activate_port;
 use super::state::AppState;
 use crate::core::launch::open_url;
 use crate::fork::deck_ready::index::{Host, Index};
@@ -322,42 +322,40 @@ fn folder_taken(app: &AppState, folder: &str) -> bool {
     entry::folder_taken(&app.paths.library_dir(), catalog.iter().map(|p| p.folder.as_str()), folder)
 }
 
-/// Same game: an entry that is the same game as an installed port asks first, then "Add {name}?" as before.
+/// The install wizard for a project the app does not have yet: its first page ("Install <name>?", with the same-game
+/// note) shows the entry it would add; Install writes it to `ports.local.json` and installs.
 fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
-    let Some(entry) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).cloned() else { return };
-    let folder = entry::folder_for(&entry, |f| folder_taken(app, f)).unwrap_or_default();
-    let id = id.to_string();
-    super::same_game_screen::confirm_entry_then(app, router, &entry.name, &folder, entry.system.as_deref(), move |app, router| confirm_add_now(app, router, &id));
-}
-
-fn confirm_add_now(app: &Rc<AppState>, router: &Router, id: &str) {
     let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).map(|e| (e.clone(), view::display_name(e))) else { return };
     let Some(folder) = entry::folder_for(&entry, |f| folder_taken(app, f)) else {
         return open_message_dialog(app, router, &name, "There is no free folder name for this port in Library, so nothing was added.\n");
     };
-    let text = format!("{}\n", view::confirm_text(&entry, &folder));
-    open_confirm_dialog(app, router, format!("Add {name}?").into(), text.into(), "Add and install".into(), move |app, router| {
-        // Built and checked before anything is written, so a failure leaves ports.local.json alone.
-        // Fork: the cover, icon and notes of the catalog's entry for this folder, even when upstream turned it off.
-        let raw = crate::fork::catalog_extras::RawCatalog::load(&app.paths.config_dir.join("ports.json"));
-        let Some((value, mut port)) = entry::local_entry_with(&entry, &name, &folder, &raw).and_then(|v| crate::core::models::port_from_value(&v).ok().map(|p| (v, p))) else {
-            return open_message_dialog(app, router, &name, "Nothing was added: the entry could not be built from the list.\n");
-        };
+    // Built and checked before anything is written, so a failure leaves ports.local.json alone.
+    // Fork: the cover, icon and notes of the catalog's entry for this folder, even when upstream turned it off.
+    let raw = crate::fork::catalog_extras::RawCatalog::load(&app.paths.config_dir.join("ports.json"));
+    let Some((value, mut port)) = entry::local_entry_with(&entry, &name, &folder, &raw).and_then(|v| crate::core::models::port_from_value(&v).ok().map(|p| (v, p))) else {
+        return open_message_dialog(app, router, &name, "Nothing was added: the entry could not be built from the list.\n");
+    };
+    port.user_managed = true;
+    let to_add = port.clone();
+    let prepare: super::install_wizard_screen::Prepare = Rc::new(move |app, router| {
         let local_json = app.paths.config_dir.join("ports.local.json");
-        if let Err(e) = entry::add_to_local_file(&local_json, value, &crate::fork::store::backup_stamp()) {
-            return open_message_dialog(app, router, &name, &format!("Nothing was added: {e}.\n"));
+        if let Err(e) = entry::add_to_local_file(&local_json, value.clone(), &crate::fork::store::backup_stamp()) {
+            open_message_dialog(app, router, &name, &format!("Nothing was added: {e}.\n"));
+            return None;
         }
-        port.user_managed = true;
         {
             let mut catalog = app.catalog.borrow_mut();
             let old = std::mem::take(&mut *catalog);
-            *catalog = crate::core::config::merge_local_catalog(old, vec![port.clone()]);
+            *catalog = crate::core::config::merge_local_catalog(old, vec![to_add.clone()]);
         }
         // Fork (save finder): an answer given earlier for this folder applies to the entry just added.
         super::save_finder_screen::reapply(app);
         app.refresh_current_view();
-        start_install(app, router, port, None, None);
+        Some(to_add.clone())
     });
+    let version = entry.release.as_ref().map(|r| r.tag.clone());
+    let back: super::install_wizard_screen::Back = Rc::new(|app, router| close_current_dialog(app, router));
+    super::install_wizard_screen::open_entry(app, router, port, entry.system.clone(), version, prepare, back);
 }
 
 fn releases_url(entry: &crate::fork::deck_ready::index::Entry) -> Option<String> {

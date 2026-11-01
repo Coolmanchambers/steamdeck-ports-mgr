@@ -50,7 +50,10 @@ fn json_field_labels(items: &[Value], field: &str) -> Vec<String> {
 
 fn finish_operation(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>, key: &str) {
     app.install_runtime.installing.borrow_mut().remove(key);
-    close_current_dialog(app, router);
+    // Fork (install wizard): an install sent to the background leaves whatever is on screen now alone.
+    if !super::install_wizard_screen::end_run(key) {
+        close_current_dialog(app, router);
+    }
 }
 
 fn show_progress(app: &AppState, message: impl FnOnce(&Tr<'_>) -> slint::SharedString) {
@@ -96,6 +99,8 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                     if let Some(port) = port {
                         play_port(app, router, &port);
                     }
+                } else if super::install_wizard_screen::after_install(app, router, &key, versioned.clone()) {
+                    // Fork (install wizard): its next pages (kept files, game files, Steam, done) or its note.
                 } else if let (Some(text), Some(port)) = (versioned, &port) {
                     open_message_dialog(app, router, port.display_name(), &text);
                 } else {
@@ -147,6 +152,8 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             }
             AppEvent::InstallError { key, message } => {
                 finish_operation(app, router, &key);
+                // Fork (install wizard): "Stop and remove the download" ends here with nothing to report.
+                let stopped = super::install_wizard_screen::install_failed(app, router, &key, &message);
                 super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::UpdateBackup); // Fork: a backup may have been made before it failed
                 // A failed update must not lock the player out of the game that is already installed.
                 if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
@@ -155,7 +162,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                     }
                 }
                 // launch_installed may have opened its own dialog (executable picker); the launch matters more than this message.
-                if !dialog_is_open(app) {
+                if !stopped && !dialog_is_open(app) {
                     open_message_dialog(app, router, &tr!(app).invoke_dialog_title_installation_error(), &message);
                 }
             }

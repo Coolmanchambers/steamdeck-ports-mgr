@@ -56,21 +56,25 @@ pub(crate) fn start_install(app: &Rc<AppState>, router: &Router, port: Port, ass
     }
     let Some(key) = try_claim_op_slot(app, &port) else { return };
 
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    open_progress_dialog(app, router, &tr.invoke_dialog_title_installing(), &tr.invoke_progress_installing(port.name.clone().into()));
+    // Fork (install wizard): the install's own page (progress bar, MB of MB, speed, keep going or stop) instead of
+    // upstream's progress dialog; the meter carries the byte count and the Stop flag.
+    let (ctl, meter) = super::install_wizard_screen::downloading(app, router, &port);
 
     let pin_version = release_override.is_some();
     let (github_token, gitlab_token) = app.api_tokens();
     let library_dir = app.paths.library_dir();
     let saves_backup_dir = app.paths.saves_backup_dir.clone();
     let events = app.events.clone();
-    let mut on_progress = progress_sender(&events);
+    let mut send = progress_sender(&events);
+    let mut on_progress = move |message: &str| {
+        meter.note(message);
+        send(message);
+    };
 
     std::thread::spawn(move || {
         let overrides = InstallOverrides { asset: asset_override.as_ref(), release: release_override.as_ref() };
         let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir };
-        let outcome = crate::core::jobs::run_install(&port, paths, github_token.as_deref(), gitlab_token.as_deref(), overrides, &mut on_progress);
+        let outcome = crate::core::jobs::run_install(&port, paths, github_token.as_deref(), gitlab_token.as_deref(), overrides, &mut on_progress, &ctl);
         let event = match outcome {
             InstallOutcome::Done { tag } => AppEvent::InstallDone { key, tag, pin_version },
             InstallOutcome::AssetAmbiguous { assets } => AppEvent::InstallAssetAmbiguous { key, assets, release_override },
@@ -246,8 +250,8 @@ pub(crate) fn with_indexed_port(app: &AppState, index: i32, action: impl FnOnce(
 
 pub(crate) fn install_row(app: &Rc<AppState>, router: &Router, index: i32) {
     if !dialog_is_open(app) {
-        // Fork (same game): the same game installed under another project asks first.
-        with_indexed_port(app, index, |port| super::same_game_screen::confirm_then(app, router, &port.clone(), move |app, router| start_install(app, router, port.clone(), None, None)));
+        // Fork (install wizard): "Install <name>?" first (with the same-game note), then its pages.
+        with_indexed_port(app, index, |port| super::install_wizard_screen::open_from_list(app, router, port));
     }
 }
 
@@ -258,15 +262,15 @@ pub(crate) fn open_update_toggle_dialog_row(app: &Rc<AppState>, router: &Router,
 }
 
 pub(crate) fn activate_port(app: &Rc<AppState>, router: &Router, port: &Port) {
-    if dialog_is_open(app) || app.install_runtime.installing.borrow().contains(port.key()) {
+    // Fork (install wizard): A on a port that is installing brings its downloading page back.
+    if dialog_is_open(app) || super::install_wizard_screen::reopen(app, router, port.key()) || app.install_runtime.installing.borrow().contains(port.key()) {
         return;
     }
     if app.is_installed(port) {
         play_port(app, router, port);
     } else {
-        // Fork (same game): the same game installed under another project asks first.
-        let port = port.clone();
-        super::same_game_screen::confirm_then(app, router, &port.clone(), move |app, router| start_install(app, router, port.clone(), None, None));
+        // Fork (install wizard): "Install <name>?" first (with the same-game note), then its pages.
+        super::install_wizard_screen::open_from_list(app, router, port.clone());
     }
 }
 

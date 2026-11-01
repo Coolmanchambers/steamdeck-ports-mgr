@@ -790,12 +790,12 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
                 }
                 line.push_str(&format!(". Kept files: {}.", human_path(&f.kept_dir, places)));
                 // One sequence of paragraphs (the page draws paragraphs above its facts box): what moves, which files, that
-                // they are not put back, then what is deleted.
+                // what a reinstall does with them, then what is deleted.
                 page.paragraphs.push(line);
                 if !f.keep.names.is_empty() {
                     page.paragraphs.push(format!("Kept: {}.", f.keep.names.join(", ")));
                 }
-                page.paragraphs.push("The app will not put them back when you reinstall: Settings > Ports > Kept files shows where they are.".into());
+                page.paragraphs.push("Reinstalling it offers to put them back; Settings > Ports > Kept files shows where they are.".into());
                 page.paragraphs.push(format!("The rest of its folder is deleted: {}{size}.", human_path(&f.dir, places)));
             } else {
                 page.paragraphs.push(format!("Its folder is deleted: {}{size}.", human_path(&f.dir, places)));

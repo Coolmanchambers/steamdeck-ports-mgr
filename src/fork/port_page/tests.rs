@@ -342,11 +342,11 @@ fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
     };
     let saves = SavesFacts::default();
     let page = uninstall_page(&port(), Some(&f), Some(&saves), &places);
-    // One sequence, top to bottom: what moves and where, which files, not put back, then what is deleted.
+    // One sequence, top to bottom: what moves and where, which files, what a reinstall does, then what is deleted.
     let p = &page.paragraphs;
     assert_eq!(p[0], "3 game files and 1 older version will be moved to Kept files, saves are backed up. Kept files: Internal storage > Saves Backup > Kept files > shipwright.", "{p:?}");
     assert_eq!(p[1], "Kept: oot.o2r, oot-mq.o2r, zelda.z64.");
-    assert!(p[2].starts_with("The app will not put them back when you reinstall"), "{p:?}");
+    assert!(p[2].starts_with("Reinstalling it offers to put them back"), "{p:?}");
     assert_eq!(p[3], "The rest of its folder is deleted: Internal storage > Ports > shipwright (200 MB).", "the kept files are not counted as deleted");
     assert!(page.facts.is_empty(), "nothing about keeping sits below in the facts box: {:?}", page.facts);
     let go = page.options.iter().find(|o| o.action == Act::UninstallYes).unwrap();

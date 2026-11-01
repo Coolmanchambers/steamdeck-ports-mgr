@@ -1,5 +1,6 @@
 //! Fork (same game): the installed games the lists compare with, the badges of All ports, and the "You already have
-//! this game" question before an install. The rules are in `crate::fork::same_game`.
+//! this game" question before Info's Select version (installs ask on the install wizard's first page). The rules are in
+//! `crate::fork::same_game`.
 
 use super::dialogs::close_current_dialog;
 use super::page_dialog::{show_page, Handlers};
@@ -71,29 +72,17 @@ pub(crate) fn log_matches(list: &'static str, lines: Vec<String>) {
     });
 }
 
-/// Before installing `port`: when it is the same game as an installed port, the question page first ("Not now" or
-/// "Install it as well"); otherwise `then` at once. Updates and reinstalls never come here.
+/// Before Info's Select version on a port that is not installed: when it is the same game as an installed port, the
+/// question page first ("Not now" or "Install it as well"); otherwise `then` at once. Every other install asks on the
+/// install wizard's first page instead (`install_wizard_screen`, the note folded into it).
 pub(crate) fn confirm_then(app: &Rc<AppState>, router: &Router, port: &Port, then: impl Fn(&Rc<AppState>, &Router) + 'static) {
-    let not_now: Back = Rc::new(|app, router| close_current_dialog(app, router));
-    confirm_then_or(app, router, port, not_now, then);
-}
-
-/// [`confirm_then`], with what "Not now" (and B) does: the Port page goes back to itself.
-pub(crate) fn confirm_then_or(app: &Rc<AppState>, router: &Router, port: &Port, not_now: Back, then: impl Fn(&Rc<AppState>, &Router) + 'static) {
     // Safety net: callers only come here for a port that is not installed, and an installed one never asks.
     if app.is_installed(port) {
         return then(app, router);
     }
+    let not_now: Back = Rc::new(|app, router| close_current_dialog(app, router));
     let project = same_game::project_name(&port.name, &port.folder);
     ask_or_go(app, router, port.key(), &port.name, &project, &Game::of_port(&port.name, &port.tags_lower), not_now, then);
-}
-
-/// [`confirm_then`] for a Deck-ready entry the app does not have yet (it is added as the user's own entry after).
-/// `folder` is the folder it would get, used as its project name when its name has no "(folder)" note.
-pub(crate) fn confirm_entry_then(app: &Rc<AppState>, router: &Router, entry_name: &str, folder: &str, system: Option<&str>, then: impl Fn(&Rc<AppState>, &Router) + 'static) {
-    let project = same_game::project_name(entry_name, folder);
-    let not_now: Back = Rc::new(|app, router| close_current_dialog(app, router));
-    ask_or_go(app, router, "", entry_name, &project, &Game::of_entry(entry_name, system), not_now, then);
 }
 
 #[allow(clippy::too_many_arguments)]

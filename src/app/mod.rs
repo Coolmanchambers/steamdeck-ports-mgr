@@ -13,6 +13,7 @@ pub mod gamepad_target;
 pub mod import_cards_screen;
 pub mod import_screen;
 pub mod install_launch;
+pub mod install_wizard_screen; // Fork: installing a port as one guided flow
 pub mod page_dialog;
 pub mod port_page_screen;
 pub mod cheats;

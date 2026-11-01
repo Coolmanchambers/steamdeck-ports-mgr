@@ -19,8 +19,9 @@ pub fn run_install(
     gitlab_token: Option<&str>,
     overrides: InstallOverrides,
     on_progress: &mut dyn FnMut(&str),
+    ctl: &installer::DownloadCtl, // Fork (install wizard): byte progress and Stop
 ) -> InstallOutcome {
-    match installer::install_port(port, paths, github_token, gitlab_token, overrides, on_progress) {
+    match installer::install_port(port, paths, github_token, gitlab_token, overrides, on_progress, ctl) {
         Ok(tag) => InstallOutcome::Done { tag },
         Err(InstallError::Ambiguous(assets)) => InstallOutcome::AssetAmbiguous { assets },
         Err(InstallError::Message(message)) => InstallOutcome::Error(message),
