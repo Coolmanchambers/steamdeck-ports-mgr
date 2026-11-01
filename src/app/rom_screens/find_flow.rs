@@ -595,7 +595,9 @@ fn pick_next(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectScre
 fn connect_by_hand(app: &Rc<AppState>, router: &Router, req: FindRequest, back: Back, cancel: Back) {
     let start = RomLibraryStore::load(&store_path(app)).ok().and_then(|s| s.rom_dir().map(Path::to_path_buf)).filter(|d| d.is_dir());
     let start = start.or_else(super::home_dir).unwrap_or_else(|| PathBuf::from("/"));
-    show_file_browser(app, router, Rc::new(RefCell::new(FileBrowser::open(&start))), Rc::new(req), back, cancel);
+    // Fork (install wizard): Up one level stops at Internal storage or the drive, never a raw "/home" or "/run/media".
+    let browser = FileBrowser::open(&start).with_tops(Places::system().tops());
+    show_file_browser(app, router, Rc::new(RefCell::new(browser)), Rc::new(req), back, cancel);
 }
 
 /// Fork (install wizard): "Choose the file myself" as card pages (one folder a page, the place the human way), not a

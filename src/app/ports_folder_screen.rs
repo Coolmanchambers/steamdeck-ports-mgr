@@ -222,6 +222,17 @@ pub(crate) fn startup_check(app: &Rc<AppState>, router: &Router, startup: Startu
         roots.join(", ")
     );
     if startup.available() {
+        // An install cut short by closing the app leaves its download or unpacking folder behind. Nothing installs yet;
+        // the time limit keeps an install started while the sweep runs out of it.
+        if app.install_runtime.installing.borrow().is_empty() {
+            let (dir, before) = (app.paths.library_dir(), std::time::SystemTime::now());
+            std::thread::spawn(move || {
+                let n = crate::fork::install_wizard::sweep_leftover_downloads(&dir, before);
+                if n > 0 {
+                    eprintln!("ports folder: removed {n} unfinished download folder(s) left by an earlier run");
+                }
+            });
+        }
         return;
     }
     // First of the startup dialogs: the Steam queue offer skips while a dialog is open, other startup dialogs

@@ -46,6 +46,13 @@ fn a_card_that_is_not_mounted_now_is_still_not_shown_by_its_id() {
 }
 
 #[test]
+fn the_top_places_are_internal_storage_and_each_drive() {
+    let p = deck_places();
+    assert_eq!(p.tops(), [PathBuf::from("/home/deck"), PathBuf::from("/run/media/deck/c14f9023-6854-443f-9348-735551234567")]);
+    assert!(Places::default().tops().is_empty());
+}
+
+#[test]
 fn the_home_folder_is_internal_storage_and_other_paths_stay_as_they_are() {
     let p = deck_places();
     assert_eq!(human_path(Path::new("/home/deck/Emulation/roms"), &p), "Internal storage > Emulation > roms");

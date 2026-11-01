@@ -98,7 +98,7 @@ impl World {
         let download = self.root.join("downloads").join(release_name);
         put(&download, content);
         let saves = self.root.join("Saves Backup");
-        apply_archive(port, InstallPaths { library_dir: &self.library, saves_backup_dir: &saves }, &download, &self.game, "2026-10-24_12-00-00", &mut |_| {})
+        apply_archive(port, InstallPaths { library_dir: &self.library, saves_backup_dir: &saves }, &download, &self.game, "2026-10-24_12-00-00", &mut |_| {}, &Default::default())
     }
 
     fn finish(&self, port: &Port, favorite: Option<&str>, steam: &dyn crate::fork::store::SteamProcessCheck, game_mode: bool) -> Outcome {
@@ -419,7 +419,7 @@ fn a_program_without_extension_and_no_favorite_is_found_again_by_the_app() {
     let status = std::process::Command::new(tool).arg("a").arg("-tzip").arg(&download).arg(".").current_dir(w.root.join("pack")).output().unwrap();
     assert!(status.status.success());
     let saves = w.root.join("Saves Backup");
-    apply_archive(&p, InstallPaths { library_dir: &w.library, saves_backup_dir: &saves }, &download, &w.game, "2026-10-24_12-00-00", &mut |_| {}).unwrap();
+    apply_archive(&p, InstallPaths { library_dir: &w.library, saves_backup_dir: &saves }, &download, &w.game, "2026-10-24_12-00-00", &mut |_| {}, &Default::default()).unwrap();
 
     let out = w.finish(&p, None, &no_steam, false);
 
@@ -823,7 +823,7 @@ fn a_launcher_in_a_subfolder_that_names_the_old_files_keeps_them_in_place() {
     let tool = crate::core::installer::sevenzip_exe_path().expect("7-Zip next to the test binary");
     assert!(std::process::Command::new(tool).arg("a").arg("-tzip").arg(&archive).arg(".").current_dir(&download).output().unwrap().status.success());
     let saves = w.root.join("Saves Backup");
-    apply_archive(&p, InstallPaths { library_dir: &w.library, saves_backup_dir: &saves }, &archive, &w.game, "2026-10-24_12-00-00", &mut |_| {}).unwrap();
+    apply_archive(&p, InstallPaths { library_dir: &w.library, saves_backup_dir: &saves }, &archive, &w.game, "2026-10-24_12-00-00", &mut |_| {}, &Default::default()).unwrap();
 
     let out = w.finish(&p, Some("bin/run.sh"), &no_steam, false);
 

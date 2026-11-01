@@ -1,5 +1,5 @@
-use super::dialogs::{apply_theme, close_current_dialog, dialog_is_open, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
-use super::install_launch::{finish_play_update_check, launch_installed, play_port, start_install};
+use super::dialogs::{apply_theme, close_current_dialog, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
+use super::install_launch::{finish_play_update_check, play_port, start_install};
 use super::playtime::{any_process_running, checkpoint_playtime, refresh_live_playtime_display};
 use super::state::AppState;
 use crate::core::models::Port;
@@ -48,12 +48,14 @@ fn json_field_labels(items: &[Value], field: &str) -> Vec<String> {
     items.iter().map(|v| v.get(field).and_then(Value::as_str).unwrap_or("?").to_string()).collect()
 }
 
-fn finish_operation(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>, key: &str) {
+// Fork (install wizard): true when the install had been sent to the background (whatever is on screen now is left alone).
+fn finish_operation(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRouter>>, key: &str) -> bool {
     app.install_runtime.installing.borrow_mut().remove(key);
-    // Fork (install wizard): an install sent to the background leaves whatever is on screen now alone.
-    if !super::install_wizard_screen::end_run(key) {
+    let background = super::install_wizard_screen::end_run(key);
+    if !background {
         close_current_dialog(app, router);
     }
+    background
 }
 
 fn show_progress(app: &AppState, message: impl FnOnce(&Tr<'_>) -> slint::SharedString) {
@@ -77,7 +79,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             AppEvent::InstallProgress { message } => show_progress(app, |_| message.into()),
             AppEvent::SaveBackupProgress { name } => show_progress(app, |tr| tr.invoke_progress_backing_up_named(name.into())),
             AppEvent::InstallDone { key, tag, pin_version } => {
-                finish_operation(app, router, &key);
+                let background = finish_operation(app, router, &key);
                 super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::UpdateBackup); // Fork: the update's save backup
                 let port = app.find_port(&key);
                 if let Some(port) = &port {
@@ -96,7 +98,11 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 let versioned = super::versioned_update::after_install(app, &key, tag.as_deref(), launching);
                 app.refresh_current_view();
                 if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
-                    if let Some(port) = port {
+                    // Fork (install wizard): Play's update sent to the background never starts the game wherever the
+                    // user is now; it gets the finished note instead.
+                    if background {
+                        super::install_wizard_screen::finished_in_background(app, router, &key, versioned);
+                    } else if let Some(port) = port {
                         play_port(app, router, &port);
                     }
                 } else if super::install_wizard_screen::after_install(app, router, &key, versioned.clone()) {
@@ -111,29 +117,9 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
             AppEvent::InstallAssetAmbiguous { key, assets, release_override } => {
                 finish_operation(app, router, &key);
                 let was_play = app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key);
-                if let Some(port) = app.find_port(&key) {
-                    let labels = json_field_labels(&assets, "name");
-                    let installed = port.clone();
-                    open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_file(), labels, move |app, router, idx| {
-                        if let Some(chosen) = assets.get(idx) {
-                            if was_play {
-                                app.install_runtime.pending_launch_after_install.borrow_mut().insert(port.key().to_string());
-                            }
-                            start_install(app, router, port.clone(), Some(chosen.clone()), release_override.clone());
-                        }
-                    });
-                    // Fork: Play found an update whose file must be picked (O2); closing the picker without a
-                    // choice launches the installed game, like a failed update does.
-                    if was_play {
-                        if let DialogSlot::Picker(d) = &*app.dialog_nav.dialogs.borrow() {
-                            let (app, router) = (app.clone(), router.clone());
-                            d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
-                                close_current_dialog(&app, &router);
-                                launch_installed(&app, &router, &installed);
-                            });
-                        }
-                    }
-                }
+                // Fork (install wizard): the choice is a card page in the wizard's style (was upstream's "Choose file"
+                // picker); Not now drops the flow, and for Play (O2) starts the installed game, like a failed update.
+                super::install_wizard_screen::choose_asset(app, router, &key, assets, release_override, was_play);
             }
             AppEvent::VersionsFetched { key, releases } => {
                 finish_operation(app, router, &key);
@@ -151,20 +137,14 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 open_message_dialog(app, router, &tr!(app).invoke_dialog_title_error(), &message);
             }
             AppEvent::InstallError { key, message } => {
-                finish_operation(app, router, &key);
-                // Fork (install wizard): "Stop and remove the download" ends here with nothing to report.
-                let stopped = super::install_wizard_screen::install_failed(app, router, &key, &message);
+                let background = finish_operation(app, router, &key);
                 super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::UpdateBackup); // Fork: a backup may have been made before it failed
-                // A failed update must not lock the player out of the game that is already installed.
-                if app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key) {
-                    if let Some(port) = app.find_port(&key) {
-                        launch_installed(app, router, &port);
-                    }
-                }
-                // launch_installed may have opened its own dialog (executable picker); the launch matters more than this message.
-                if !stopped && !dialog_is_open(app) {
-                    open_message_dialog(app, router, &tr!(app).invoke_dialog_title_installation_error(), &message);
-                }
+                let launch = app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key);
+                // Fork (install wizard): a stop has nothing to report; any other failure is the wizard's "Could not
+                // install" page (was upstream's "Installation error" message), whose Back returns where the install
+                // started. A failed Play update still starts the installed game (upstream), unless it was in the
+                // background.
+                super::install_wizard_screen::install_failed(app, router, &key, &message, background, launch);
             }
             AppEvent::ExtraInstallDone { key, result } => {
                 finish_operation(app, router, &key);

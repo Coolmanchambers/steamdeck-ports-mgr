@@ -294,14 +294,20 @@ Files added by this fork:
 | 2026-11-01 | `src/fork/deck_ready/view.rs`, `src/app/deck_ready_screen.rs`, `ui/fork/deck-ready.slint`, `src/fork/mod.rs` | Same game in the Deck-ready list: `Row.badge` and `mark_same_game` (the badge as its own chip left of the tags with its own fit check, so only it drops on a narrow row; the note at the end of the sub line; installed rows unchanged), `TagKind::Info` (chip kind 4, info color), one look at the disk per rebuild for both the list's matching and the installed games, "Add {name}?" preceded by the question for an entry that is the same game; one module line |
 | 2026-11-01 | `src/app/port_page_screen.rs` | Same game: the Port page's Start on a port that is not installed (only when its folder went away while the page was open) asks first; "Not now" returns to the list, since the page closes for a port that is not installed |
 | 2026-11-01 | `testdata/same-game/ports.json`, `testdata/same-game/deck-ready.json` | Pinned copies (2026-11-01) of the catalog and the Deck-ready list for the same-game tests: the named titles and the exact pair lists run on these, so a catalog sync or a list refresh never turns them red; the live files only have to keep a short list of pairs matched and apart |
-| 2026-11-01 | `src/core/installer.rs` | Install wizard: `DownloadCtl` (`on_bytes(downloaded, total)` and a cancel flag) passed to `install_port` and `download`; the download copies through `copy_counted` (64 KB blocks, the count after each, the flag checked before each) instead of `io::copy`, its total from `Content-Length`; a stop fails with exactly `CANCELLED` (also checked once the download ends), the `_download_` folder going with the return; `with_path` names the place the human way; 2 tests |
+| 2026-11-01 | `src/core/installer.rs` | Install wizard: `DownloadCtl` (`on_bytes(downloaded, total)` and a cancel flag) passed to `install_port` and `download`; the download copies through `copy_counted` (64 KB blocks, the count after each, the flag checked before each) instead of `io::copy`, its total from `Content-Length`; a stop fails with exactly `CANCELLED` (also checked once the download ends), the `_download_` folder going with the return; `with_path` names the place the human way; 2 tests. Review fixes: `download` uses `http::download_agent` and turns any failure after a stop into `CANCELLED`; `install_port` sends "Installing..." the moment the download ends (the page's phase flips and Stop goes); `apply_archive` takes the `DownloadCtl` and checks the stop once more after the save backup, just before `extract` (nothing irreversible before it); 1 test |
+| 2026-11-01 | `src/core/http.rs` | Install wizard: `download_agent` (upstream's 30 minute limit kept, plus a 30 s connect timeout and a 30 s per-read timeout, so a stalled download ends and a Stop is seen); 1 test |
+| 2026-11-01 | `src/fork/versioned/tests.rs` | Install wizard: the three `apply_archive` calls pass a default `DownloadCtl` |
 | 2026-11-01 | `src/core/jobs.rs` | Install wizard: `run_install` takes the `DownloadCtl` and passes it on (one parameter) |
-| 2026-11-01 | `src/app/install_launch.rs` | Install wizard: `start_install` shows `install_wizard_screen::downloading` (its page and byte meter) instead of the progress dialog, and the progress text also sets the meter's phase; `activate_port` and `install_row` open the wizard's first page (was `same_game_screen::confirm_then`), and A on a port that is installing brings its page back |
-| 2026-11-01 | `src/app/events.rs` | Install wizard: `finish_operation` leaves the screen alone for an install sent to the background (`end_run`); after an install the wizard's next pages come before the versioned note and the game files search (`after_install`); a stopped download gets no error message (`install_failed`) |
-| 2026-11-01 | `src/core/save_backup.rs` | Install wizard: the update backup's error texts name the save folder and the zip the human way (`human_path_here`) |
-| 2026-11-01 | `src/fork/install_wizard.rs`, `src/app/install_wizard_screen.rs`, `src/app/mod.rs`, `src/fork/mod.rs` | The install wizard (see "Install wizard"): its pages and words, the byte meter, speed and tile line (tested), and the flow on screen |
-| 2026-11-01 | `src/fork/uninstall_keep.rs` | Install wizard: `newest_kept`, `restore_plan`, `restore_kept` (put kept files back on a reinstall: copies, a file in the way copied to Saves Backup > Replaced by restore first, never through a link); the texts that said kept files are never put back; 5 tests |
-| 2026-11-01 | `src/fork/rom_screens/pages.rs`, `src/fork/rom_screens/file_pick.rs`, `src/app/rom_screens/find_flow.rs` | Install wizard: "Choose the file myself" (`browse_page`, one folder a page, the place the human way) and a hand-picked file that does not match (`no_match_page`, no checksums) are card pages, not picker lists; 2 tests |
+| 2026-11-01 | `src/app/install_launch.rs` | Install wizard: `start_install` shows `install_wizard_screen::downloading` (its page and byte meter) instead of the progress dialog, and the progress text also sets the meter's phase; `activate_port` and `install_row` open the wizard's first page (was `same_game_screen::confirm_then`), and A on a port that is installing brings its page back. Ruling: Play's auto-update stays download-only by design (no first page and no pages after it; the game starts when it is done), except that sent to the background it gets the finished note instead of starting the game (`events.rs`) |
+| 2026-11-01 | `src/app/events.rs` | Install wizard: `finish_operation` leaves the screen alone for an install sent to the background (`end_run`); after an install the wizard's next pages come before the versioned note and the game files search (`after_install`); a stopped download gets no error message (`install_failed`). Review fixes: `finish_operation` returns whether the install was in the background; Play's update that ended in the background gets the finished note (`finished_in_background`) instead of `play_port`; a release with several files is a wizard card page (`choose_asset`, was upstream's "Choose file" picker; Not now drops the flow, and for Play starts the installed game as before); any other failure is the wizard's "Could not install" page with Back (`install_failed`, was the "Installation error" message dialog), a failed Play update still starting the installed game unless it was in the background |
+| 2026-11-01 | `src/app/dialogs.rs` | Install wizard: the launch-failed dialog's Reinstall opens the wizard (`install_wizard_screen::open_from_list`, like Update) instead of `start_install`, so the pages after the download follow; the `start_install` import goes |
+| 2026-11-01 | `src/core/save_backup.rs` | Install wizard: the update backup's error texts name the save folder and the zip the human way (`human_path_here`); each changed line has its `// Fork:` marker |
+| 2026-11-01 | `src/fork/install_wizard.rs`, `src/app/install_wizard_screen.rs`, `src/app/mod.rs`, `src/fork/mod.rs` | The install wizard (see "Install wizard"): its pages and words, the byte meter, speed and tile line (tested), and the flow on screen. Review fixes: short page titles that always fit (fit test with long real names), the asset choice and "Could not install" pages, the Steam account and artwork notes, Add its game files now on Done, the busy note, the leftover download sweep (`sweep_leftover_downloads`); tests for each |
+| 2026-11-01 | `src/app/ports_folder_screen.rs` | Install wizard: at startup, with the ports folder there and nothing installing, a thread removes the installer's `_download_*` / `_staging_*` folders left by an app closed mid-install (only `tempfile` names, only folders older than the start) |
+| 2026-11-01 | `src/fork/steam_queue.rs` | Install wizard: `port_art_missing` (one port's cover or icon not in the cache), split out of `missing_art` for the Done page's Steam line; 1 test |
+| 2026-11-01 | `src/fork/port_page/paths.rs` | Install wizard: `Places::tops` (internal storage and each drive), where "Choose the file myself" stops going up; 1 test |
+| 2026-11-01 | `src/fork/uninstall_keep.rs` | Install wizard: `newest_kept`, `restore_plan`, `restore_kept` (put kept files back on a reinstall: copies, a file in the way copied to Saves Backup > Replaced by restore first, never through a link); the texts that said kept files are never put back; 5 tests. Review fix: a file of the same size is compared byte for byte (ROM dumps share fixed sizes): other bytes count as a replace (copied aside first), the same bytes are skipped and counted (`RestorePlan::already`); 1 test |
+| 2026-11-01 | `src/fork/rom_screens/pages.rs`, `src/fork/rom_screens/file_pick.rs`, `src/app/rom_screens/find_flow.rs` | Install wizard: "Choose the file myself" (`browse_page`, one folder a page, the place the human way) and a hand-picked file that does not match (`no_match_page`, no checksums) are card pages, not picker lists; 2 tests. Review fixes: "Add it later" and "Choose the folder" details shortened to one line, the pick page's names and places cut to fit, a fit test over every page; Up one level stops at internal storage or the drive (`FileBrowser::with_tops`); 2 tests |
 | 2026-11-01 | `src/app/same_game_screen.rs`, `src/app/port_page_screen.rs`, `src/app/deck_ready_screen.rs`, `src/app/checkup_screen.rs`, `src/app/home_screen.rs` | Install wizard: the same-game question folds into the first page (`confirm_then_or` and `confirm_entry_then` removed; `confirm_then` stays for Info's Select version); the Port page's Start and Update now, Fix problems' Update and a Deck-ready project open the wizard (the "Add {name}?" dialog is gone: its first page shows the entry, Install writes it); Home has a tile for a port that is installing, its line "Downloading 42%" |
 | 2026-11-01 | `src/fork/ports_folder.rs`, `src/fork/port_page/mod.rs` | Install wizard: the missing ports folder is named the human way; the Uninstall page says a reinstall offers to put kept files back |
 
@@ -1437,37 +1443,58 @@ chip and the note), `src/app/mod.rs` (module line).
 Installing a port is one guided flow on pages, one question each, the same from every place that installs: A on a port
 in All ports or Deck-ready (and a Deck-ready project the app does not have yet), the Port page's Start and Update now,
 and Fix problems' Update. Pages, in order:
-1. **"Install <name>?"** ("Update <name>?" when installed): the cover; what it is ("Wii U · v1.4.1", from the catalog's
-   tags or the Deck-ready label, the release or the installed version); where it goes ("Goes to: SD card > Ports"); what
+Page titles are one line on the full-screen page (about 40 characters, then cut), so they are short ("Install this
+port?", "Downloading", "Installed, game files still needed"; "<name> is ready" only when it fits, else "Ready to
+play"); the card under the title names the port in full. A test checks every page's title and options with long real
+names.
+
+1. **"Install this port?"** ("Update this port?" when installed): the cover and the name; what it is ("Wii U · v1.4.1",
+   from the catalog's tags or the Deck-ready label, the release or the installed version; the size only once known, and
+   the first page does not look the release up, so `InstallInfo.size` is `None` there); where it goes ("Goes to: SD card > Ports"); what
    game files it needs in plain words (`rom_screens::pages::need_words`), "No game files needed" when the entry names
    none (a Deck-ready project's page says its project page tells instead, since nothing is known). Install
    (recommended) / Not now; a "Project page" button. The same-game note is on this page: for the same game and for
-   another version the options become "Not now" (recommended, the cursor on it) and "Install it as well".
+   another version the options become "Not now" (recommended, the cursor on it) and "Install it as well". Install
+   pressed while the port is busy (installing, checking for an update, running) shows "<name> is busy right now, try
+   again in a moment" on the page instead of doing nothing.
 2. **Downloading**: a real progress bar, "12 MB of 120 MB" and the speed over the last four seconds ("4.2 MB/s"); a
    moving bar and "Downloading..." when the server gives no size. "Keep going in the background" (closes the page;
    Home's tile says "Downloading 42%", then the usual badge) and "Stop and remove the download" (nothing is kept). B is
-   Keep going. Unpacking shows "Installing..." with a moving bar and no Stop. Every install shows this page, including
-   Play's update and Reinstall; upstream's progress dialog is no longer used for installs (it still is for Install
-   extras and the version list).
+   Keep going. Unpacking shows "Installing" with a moving bar and no Stop: the installer says "Installing..." the moment
+   the download ends, so Stop goes at once, and a Stop that raced it is still honoured just before unpacking. "Stopping
+   the download" keeps "Keep going in the background": the download agent's 30 s read timeout ends a stalled connection,
+   and the stop finishes on its own. Every install shows this page, including Play's update and Reinstall; upstream's
+   progress dialog is no longer used for installs (it still is for Install extras and the version list). A release with
+   several files asks which one on a card page (Not now: nothing is downloaded); a failure is "Could not install" with
+   the message and Back (to where the install started).
 3. **Put your kept files back?** (only when an uninstall kept files for this folder and some are not back): what they
    are and when they were kept; files already in the port folder in another version are copied to Saves Backup >
-   Replaced by restore first. Before the game files page, since kept files are mostly game files.
+   Replaced by restore > <port> > <time> first. A file of the same size is compared byte for byte (ROM dumps share fixed
+   sizes); identical ones are left and counted ("2 already there, left as they are"). "Put them back" is recommended
+   only when nothing would be replaced; otherwise the cursor waits on Not now. Before the game files page, since kept
+   files are mostly game files.
 4. **Game files** (only when the port names files it does not have): the Game files card pages. "Choose the file
-   myself" is now card pages too (one folder a page, game files first, the place the human way), and so is the answer
-   for a file that does not match.
-5. **"Add it to Steam with its artwork?"** (skipped when it is in Steam already, or there is no Steam account): the
-   cover and icon are fetched first, then the setup wizard's one-port add (`setup_wizard::steam::add_all` on a screen of
-   this port only): written with Steam closed (`shortcuts.vdf` backed up), else queued, and outside Game Mode the Close
-   Steam flow asks to close Steam.
-6. **Done**: "<name> is ready" or "<name> is installed; it needs its game files before it starts", with what happened
-   (kept files, Steam, a versioned file's note). Play now / Back to Home.
+   myself" is now card pages too (one folder a page, game files first, the place the human way; Up one level stops at
+   Internal storage or the drive), and so is the answer for a file that does not match.
+5. **"Add it to Steam with its artwork?"** (skipped when it is in Steam already, or there is no account to add to: the
+   Done page then says "Steam: start Steam once, then its Port page can add it", or with several accounts and none
+   chosen "Steam: choose your account in Settings > Add to Steam first"): the cover and icon are fetched first, then the
+   setup wizard's one-port add (`setup_wizard::steam::add_all` on a screen of this port only): written with Steam closed
+   (`shortcuts.vdf` backed up), else queued, and outside Game Mode the Close Steam flow asks to close Steam. "with its
+   artwork" is said only when the cover and icon are in the cache afterwards, else "its artwork could not be fetched".
+6. **Done**: "<name> is ready" (Play now), or "Installed, game files still needed" with the reason in a paragraph and
+   "Add its game files now" (the game files pages, then this page again) instead of Play, with what happened (kept
+   files, Steam, a versioned file's note). Back to Home.
 
 An install sent to the background shows "<name> finished installing" when it ends (at once when nothing else is open,
-else as soon as nothing is), with "Finish setting it up" for pages 3 to 6. Stop: the installer's cancel flag
-(`DownloadCtl`) stops the copy at its next 64 KB block, the install fails with `installer::CANCELLED` (its temporary
-folder removed with it), no error is shown and the first page's caller gets the screen back. Rulings: Select version
-keeps the version list and Info's same-game question (`same_game_screen::confirm_then`); Play's update and Reinstall show
-the downloading page but no pages after it.
+else as soon as nothing is), with "Finish setting it up" for pages 3 to 6; a failure in the background waits the same
+way. Stop: the installer's cancel flag (`DownloadCtl`) stops the copy at its next 64 KB block, the install fails with
+`installer::CANCELLED` (its temporary folder removed with it), no error is shown and the first page's caller gets the
+screen back. A flow that ends before Done (stopped, failed, Not now on the file choice) is dropped. At startup the
+installer's leftover `_download_` / `_staging_` folders (an app closed mid-install) are removed from the ports folder.
+Rulings: Select version keeps the version list and Info's same-game question (`same_game_screen::confirm_then`); Reinstall
+(after a failed launch) opens the wizard like Update; Play's update shows the downloading page but no pages after it
+(download-only by design), and sent to the background it gets the finished note instead of starting the game.
 
 ## Fixes to upstream behavior
 

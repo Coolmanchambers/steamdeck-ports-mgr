@@ -1,15 +1,16 @@
 //! The install wizard on screen: the pages of `crate::fork::install_wizard`, one question each, from every place that
 //! installs (A on a port in All ports or Deck-ready, a Deck-ready project, Update on the Port page or in Fix problems).
 //!
-//! - [`open`] / [`open_entry`]: "Install <name>?" (the same-game note is on it). Install starts `start_install`, which
+//! - [`open`] / [`open_entry`]: "Install this port?" (the same-game note is on it). Install starts `start_install`, which
 //!   calls [`downloading`] for its page and its byte meter. Every install shows that page, even one with no question
 //!   first (Play's update, a reinstall): upstream's bare progress dialog is never used for an install.
 //! - The download goes on in a plain thread (`core::jobs::run_install`); a 250 ms timer reads its meter and redraws the
 //!   page, and Home's tile while it is in the background. "Stop and remove the download" sets the installer's cancel
 //!   flag (`DownloadCtl`); the install then fails with `installer::CANCELLED` and its temporary folder is gone.
 //! - When the install ends (`events.rs`): [`end_run`], then [`after_install`] goes on with the pages that follow (kept
-//!   files, game files, Steam, done), or [`install_failed`]. An install sent to the background shows a short "finished"
-//!   page when it ends and nothing else is open (or as soon as nothing is).
+//!   files, game files, Steam, done), [`choose_asset`] when the release has several files, or [`install_failed`] ("Could
+//!   not install" with one way back). An install sent to the background shows a short "finished" page (or its failure)
+//!   when it ends and nothing else is open (or as soon as nothing is). A flow that ends before Done is dropped.
 //!
 //! Every change goes through its existing flow and its guards: the game files pages (`rom_screens::find_for_port`), the
 //! setup wizard's one-button Steam add (`setup_wizard::steam::add_all`, which queues while Steam runs) and the Close
@@ -32,6 +33,7 @@ use crate::fork::setup_wizard::flow::SteamOutcome;
 use crate::fork::store::SystemSteamCheck;
 use crate::fork::uninstall_keep;
 use crate::ui::gamepad_router::GamepadRouter;
+use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -81,8 +83,8 @@ thread_local! {
     static RUNS: RefCell<HashMap<String, Rc<Run>>> = RefCell::new(HashMap::new());
     static FLOWS: RefCell<HashMap<String, Rc<Flow>>> = RefCell::new(HashMap::new());
     static TIMER: slint::Timer = slint::Timer::default();
-    /// Background installs that finished while something else was on screen: their note waits for a free screen.
-    static WAITING: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Background installs that ended while something else was on screen: their note waits for a free screen.
+    static WAITING: RefCell<Vec<Waiting>> = const { RefCell::new(Vec::new()) };
     static ROUTER: RefCell<Option<Router>> = const { RefCell::new(None) };
     static WORK_TIMER: slint::Timer = slint::Timer::default();
     static WORK: RefCell<Vec<Box<dyn FnMut() -> bool>>> = RefCell::new(Vec::new());
@@ -90,6 +92,14 @@ thread_local! {
 }
 
 const HOME_EVERY: Duration = Duration::from_secs(1);
+
+/// A background install's note that waits for a free screen.
+enum Waiting {
+    /// "<name> finished installing" (its flow has the rest).
+    Finished(String),
+    /// "Could not install": the port's key and what went wrong.
+    Failed(String, String),
+}
 
 fn run_of(key: &str) -> Option<Rc<Run>> {
     RUNS.with(|r| r.borrow().get(key).cloned())
@@ -169,8 +179,14 @@ fn info_for(app: &AppState, port: &Port, game: &Game, system: Option<String>, ve
         update,
         own_entry,
         has_project_page: crate::fork::port_page::project_url(port).is_some(),
+        busy: false,
         name,
     }
+}
+
+/// The port is installing, checking for an update, or running: Install has to wait.
+fn busy(app: &AppState, key: &str) -> bool {
+    app.install_runtime.installing.borrow().contains(key) || super::playtime::is_port_running(app, key)
 }
 
 /// "Install <name>?" (or "Update <name>?") for a catalog port. `back`: where Not now and B go.
@@ -201,6 +217,10 @@ fn show_install(app: &Rc<AppState>, router: &Router, port: Port, info: InstallIn
     let (name, update) = (info.name.clone(), info.update);
     let on_action = move |app: &Rc<AppState>, router: &Router, act: WizAct| match act {
         WizAct::Install => {
+            if busy(app, port.key()) {
+                let info = InstallInfo { busy: true, ..info.clone() };
+                return show_install(app, router, port.clone(), info, prepare.clone(), back.clone());
+            }
             let port = match &prepare {
                 Some(prepare) => match prepare(app, router) {
                     Some(port) => port,
@@ -281,11 +301,9 @@ fn show_downloading(app: &Rc<AppState>, router: &Router, run: &Rc<Run>) {
     *run.handle.borrow_mut() = show_page_handle(app, router, page, handlers(on_action, WizAct::Background));
 }
 
-/// "Keep going in the background" (B and the X too): the page closes, the install goes on, Home's tile shows it.
+/// "Keep going in the background" (B and the X too): the page closes, the install goes on, Home's tile shows it. Also
+/// while stopping: the stop finishes on its own (a stalled connection takes up to the read timeout to notice it).
 fn to_background(app: &Rc<AppState>, router: &Router, run: &Rc<Run>) {
-    if run.meter.stopping() {
-        return;
-    }
     run.background.set(true);
     eprintln!("install wizard: {} goes on in the background", run.name);
     close_current_dialog(app, router);
@@ -339,15 +357,20 @@ fn tick(app: &Rc<AppState>) {
             *run.tile.borrow_mut() = wiz::tile_note(run.meter.phase(), done, total);
         }
     }
-    // A finished background install's note, once nothing else is on screen.
+    // A background install's note, once nothing else is on screen.
     if !dialog_is_open(app) {
         let next = WAITING.with(|w| {
             let mut w = w.borrow_mut();
             (!w.is_empty()).then(|| w.remove(0))
         });
-        if let Some(key) = next {
-            if let (Some(flow), Some(router)) = (flow_of(&key), ROUTER.with(|r| r.borrow().clone())) {
-                show_finished(app, &router, &flow);
+        if let (Some(next), Some(router)) = (next, ROUTER.with(|r| r.borrow().clone())) {
+            match next {
+                Waiting::Finished(key) => {
+                    if let Some(flow) = flow_of(&key) {
+                        show_finished(app, &router, &flow);
+                    }
+                }
+                Waiting::Failed(key, message) => show_failed(app, &router, &key, None, &message),
             }
         }
     }
@@ -390,18 +413,100 @@ pub(crate) fn end_run(key: &str) -> bool {
     background
 }
 
-/// The install failed. True when it was "Stop and remove the download" (nothing to report: the user asked for it; the
-/// first page's caller gets the screen back).
-pub(crate) fn install_failed(app: &Rc<AppState>, router: &Router, key: &str, message: &str) -> bool {
+/// The install failed (its run has ended: `background` is [`end_run`]'s answer). "Stop and remove the download" has
+/// nothing to report (the user asked for it; the first page's caller gets the screen back); anything else shows "Could
+/// not install" with one way back, at once or, for an install in the background, once nothing else is open. `launch`:
+/// Play started it as an update, and a failed update must not lock the player out of the game that is installed (not
+/// from the background: the game never starts on its own while the user is elsewhere).
+pub(crate) fn install_failed(app: &Rc<AppState>, router: &Router, key: &str, message: &str, background: bool, launch: bool) {
     let flow = FLOWS.with(|f| f.borrow_mut().remove(key));
     let stopped = message == CANCELLED;
     if stopped {
         eprintln!("install wizard: the download of {key} was stopped and removed");
-        if let Some(flow) = flow.filter(|f| !f.was_background.get()) {
-            (flow.back)(app, router);
+    } else {
+        eprintln!("install wizard: the install of {key} failed: {message}");
+    }
+    if launch && !background {
+        if let Some(port) = app.find_port(key) {
+            super::install_launch::launch_installed(app, router, &port);
+        }
+        // launch_installed may have opened its own dialog (the program picker); the launch matters more than this page.
+        if stopped || dialog_is_open(app) {
+            return;
         }
     }
-    stopped
+    match (stopped, background) {
+        (true, true) => {}
+        (true, false) => {
+            if let Some(flow) = flow {
+                (flow.back)(app, router);
+            }
+        }
+        (false, true) if dialog_is_open(app) => {
+            WAITING.with(|w| w.borrow_mut().push(Waiting::Failed(key.to_string(), message.to_string())));
+            start_timer(app);
+        }
+        (false, true) => show_failed(app, router, key, None, message),
+        (false, false) => show_failed(app, router, key, flow, message),
+    }
+}
+
+/// "Could not install": the message and Back, which goes where the first page's Not now would (`flow`), or closes.
+fn show_failed(app: &Rc<AppState>, router: &Router, key: &str, flow: Option<Rc<Flow>>, message: &str) {
+    let port = app.find_port(key);
+    let name = flow.as_ref().map(|f| f.name.clone()).or_else(|| port.as_ref().map(|p| p.display_name().to_string())).unwrap_or_else(|| key.to_string());
+    let art = flow.as_ref().and_then(|f| f.art.clone()).or_else(|| port.as_ref().map(ArtRef::of_port));
+    let update = flow.as_ref().map_or_else(|| port.as_ref().is_some_and(|p| app.is_installed(p)), |f| f.update);
+    let back: Back = flow.map_or_else(close_back, |f| f.back.clone());
+    let page = wiz::failed_page(&name, &art, update, message);
+    show_page(app, router, page, handlers(move |app, router, _| back(app, router), WizAct::Back));
+}
+
+/// The release has several files that could be the one (`InstallAssetAmbiguous`): a card each. One starts the install
+/// again with that file (the flow goes on); Not now drops the flow and goes back (`was_play`: Play started it, so the
+/// installed game starts instead, as when its update fails).
+pub(crate) fn choose_asset(app: &Rc<AppState>, router: &Router, key: &str, assets: Vec<Value>, release: Option<Value>, was_play: bool) {
+    let Some(port) = app.find_port(key) else { return drop_flow(key) };
+    let flow = flow_of(key);
+    let list: Vec<(String, Option<u64>)> = assets.iter().map(|a| (a.get("name").and_then(Value::as_str).unwrap_or("?").to_string(), a.get("size").and_then(Value::as_u64))).collect();
+    let name = flow.as_ref().map_or_else(|| port.display_name().to_string(), |f| f.name.clone());
+    let page = wiz::asset_page(&name, &Some(ArtRef::of_port(&port)), &list);
+    let on_action = move |app: &Rc<AppState>, router: &Router, act: WizAct| {
+        let key = port.key().to_string();
+        if let WizAct::Asset(i) = act {
+            let Some(chosen) = assets.get(i).cloned() else { return };
+            if was_play {
+                app.install_runtime.pending_launch_after_install.borrow_mut().insert(key.clone());
+            }
+            super::install_launch::start_install(app, router, port.clone(), Some(chosen), release.clone());
+            if run_of(&key).is_none() {
+                drop_flow(&key);
+                app.install_runtime.pending_launch_after_install.borrow_mut().remove(&key);
+            }
+            return;
+        }
+        drop_flow(&key);
+        if was_play {
+            close_current_dialog(app, router);
+            super::install_launch::launch_installed(app, router, &port);
+        } else if let Some(flow) = &flow {
+            (flow.back)(app, router);
+        } else {
+            close_current_dialog(app, router);
+        }
+    };
+    show_page(app, router, page, handlers(on_action, WizAct::NotNow));
+}
+
+/// Play's update (no first page, so no flow) ended in the background: instead of starting the game wherever the user
+/// is now, it gets the finished note like any background install, and its pages lead to Play now.
+pub(crate) fn finished_in_background(app: &Rc<AppState>, router: &Router, key: &str, note: Option<String>) {
+    if flow_of(key).is_none() {
+        let Some(port) = app.find_port(key) else { return };
+        let flow = Flow { key: key.to_string(), name: port.display_name().to_string(), art: Some(ArtRef::of_port(&port)), update: true, back: close_back(), notes: RefCell::new(Vec::new()), was_background: Cell::new(true) };
+        FLOWS.with(|f| f.borrow_mut().insert(key.to_string(), Rc::new(flow)));
+    }
+    after_install(app, router, key, note);
 }
 
 /// The install finished. True when it was started from the first page (its next pages follow, or its note waits).
@@ -413,7 +518,7 @@ pub(crate) fn after_install(app: &Rc<AppState>, router: &Router, key: &str, note
     }
     if flow.was_background.get() {
         if dialog_is_open(app) {
-            WAITING.with(|w| w.borrow_mut().push(key.to_string()));
+            WAITING.with(|w| w.borrow_mut().push(Waiting::Finished(key.to_string())));
             start_timer(app);
         } else {
             show_finished(app, router, &flow);
@@ -449,33 +554,35 @@ fn kept_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
     let backups = app.paths.saves_backup_dir.clone();
     let Some(set) = uninstall_keep::newest_kept(&backups, &port.folder) else { return game_files_step(app, router, flow) };
     let plan = uninstall_keep::restore_plan(&set, &port_dir);
-    if plan.is_empty() {
+    if plan.steps.is_empty() {
         return game_files_step(app, router, flow);
     }
     let places = Places::system();
+    // The time is fixed now, so the page names the very folder a replaced file goes to.
+    let stamp = crate::fork::store::backup_stamp();
+    let replaced = uninstall_keep::replaced_dir_for(&backups, &port.folder);
     let offer = KeptOffer {
         when: set.when.clone(),
-        files: plan.iter().map(|s| (s.rel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), uninstall_keep::kind_words(&s.kind).to_string())).collect(),
-        replaces: plan.iter().filter(|s| s.replaces).count(),
+        files: plan.steps.iter().map(|s| (s.rel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), uninstall_keep::kind_words(&s.kind).to_string())).collect(),
+        replaces: plan.steps.iter().filter(|s| s.replaces).count(),
+        already: plan.already,
         kept_place: human_path(&uninstall_keep::kept_root(&backups), &places),
-        replaced_place: human_path(&backups.join(uninstall_keep::REPLACED_DIR), &places),
+        replaced_place: human_path(&replaced.join(&stamp), &places),
     };
     let page = wiz::kept_page(&flow.name, &flow.art, &offer);
-    let (f, set, plan) = (flow.clone(), Rc::new(set), Rc::new(plan));
+    let (f, set, steps) = (flow.clone(), Rc::new(set), Rc::new(plan.steps));
     let on_action = move |app: &Rc<AppState>, router: &Router, act: WizAct| match act {
-        WizAct::PutBack => put_back(app, router, &f, set.clone(), plan.clone(), port_dir.clone(), backups.clone(), port.folder.clone()),
+        WizAct::PutBack => put_back(app, router, &f, set.clone(), steps.clone(), port_dir.clone(), replaced.clone(), stamp.clone()),
         _ => game_files_step(app, router, &f),
     };
     show_page(app, router, page, handlers(on_action, WizAct::KeepLater));
 }
 
 #[allow(clippy::too_many_arguments)]
-fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninstall_keep::KeptSet>, plan: Rc<Vec<uninstall_keep::RestoreStep>>, port_dir: PathBuf, backups: PathBuf, folder: String) {
+fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninstall_keep::KeptSet>, plan: Rc<Vec<uninstall_keep::RestoreStep>>, port_dir: PathBuf, replaced: PathBuf, stamp: String) {
     let page = wiz::working_page(&flow.name, &flow.art, "Putting your files back", "Copying them from Kept files. Big files take a while.");
     show_page(app, router, page, handlers(|_, _, _| {}, WizAct::KeepLater));
-    let stamp = crate::fork::store::backup_stamp();
     let (s, p) = ((*set).clone(), (*plan).clone());
-    let replaced = uninstall_keep::replaced_dir_for(&backups, &folder);
     let job = Background::spawn(move |_| uninstall_keep::restore_kept(&s, &p, &port_dir, &replaced, &stamp));
     let (app, router, flow) = (app.clone(), router.clone(), flow.clone());
     when_done(move || {
@@ -533,10 +640,13 @@ fn steam_ask(app: &AppState, port: &Port) -> SteamAsk {
         return SteamAsk::Skip(None);
     }
     let Some(screen) = steam_screen(app, port) else { return SteamAsk::Skip(None) };
+    // No account to add it to (Steam never ran here, or several and none chosen): the Done page says what to do.
+    if let Some(note) = wiz::steam_account_note(screen.accounts.len(), screen.account.is_some()) {
+        return SteamAsk::Skip(Some(note));
+    }
     let info = crate::fork::setup_wizard::steam::info(&screen, &SystemSteamCheck::new());
-    if info.problem.is_some() {
-        // No Steam account here: nothing to ask.
-        return SteamAsk::Skip(None);
+    if let Some(problem) = info.problem {
+        return SteamAsk::Skip(Some((Mark::Problem, format!("Not added to Steam: {problem}"))));
     }
     if info.queued > 0 {
         return SteamAsk::Skip(Some((Mark::Waiting, "Steam: it is added when Steam next closes".to_string())));
@@ -601,15 +711,17 @@ fn add_to_steam(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, port: &Por
             }
         };
         eprintln!("install wizard: Steam for {}: {outcome:?}", port.display_name());
+        // The fetch says nothing when it fails: what is in the cache now decides the words.
+        let added = wiz::steam_added_note(port.image.is_some() || port.icon.is_some(), crate::fork::steam_queue::port_art_missing(&port, &app.paths.cache_dir));
         let note = |m: Mark, t: &str| flow.notes.borrow_mut().push((m, t.to_string()));
         match outcome {
-            SteamOutcome::Added(_) | SteamOutcome::Applied(_) => note(Mark::Done, "Added to Steam with its artwork"),
+            SteamOutcome::Added(_) | SteamOutcome::Applied(_) => note(Mark::Done, added),
             SteamOutcome::Nothing => note(Mark::Done, "Already in Steam"),
-            SteamOutcome::Queued { game_mode: true, .. } => note(Mark::Waiting, "Steam: it is added the next time you are in Desktop Mode"),
+            SteamOutcome::Queued { game_mode: true, .. } => note(Mark::Waiting, "Steam: you are asked to add it the next time Steam is closed"),
             SteamOutcome::Queued { game_mode: false, .. } => {
                 let f = flow.clone();
                 let then: super::steam_close_screen::Then = Rc::new(move |app, router, done| {
-                    let line = if done.waiting == 0 && done.applied > 0 { (Mark::Done, "Added to Steam with its artwork") } else { (Mark::Waiting, "Steam: it is added when Steam next closes") };
+                    let line = if done.waiting == 0 && done.applied > 0 { (Mark::Done, added) } else { (Mark::Waiting, "Steam: it is added when Steam next closes") };
                     f.notes.borrow_mut().push((line.0, line.1.to_string()));
                     done_step(app, router, &f);
                 });
@@ -632,6 +744,11 @@ fn done_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
     let page = wiz::done_page(&flow.name, &flow.art, ready, &flow.notes.borrow());
     let f = flow.clone();
     let on_action = move |app: &Rc<AppState>, router: &Router, act: WizAct| {
+        if act == WizAct::AddGameFiles {
+            // The game files pages, then this page again (ready now, or still not).
+            let again = f.clone();
+            return super::rom_screens::find_for_port(app, router, &f.key, Rc::new(move |app, router| done_step(app, router, &again)));
+        }
         drop_flow(&f.key);
         close_current_dialog(app, router);
         match act {

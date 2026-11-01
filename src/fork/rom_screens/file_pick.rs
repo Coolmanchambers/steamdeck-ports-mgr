@@ -28,6 +28,9 @@ pub struct FileBrowser {
     files: Vec<(PathBuf, u64)>,
     pub hidden_count: usize,
     pub error: Option<String>,
+    /// Folders "Up one level" never climbs above (internal storage, each drive): above them are only system folders
+    /// that have no human name.
+    tops: Vec<PathBuf>,
 }
 
 fn is_hidden(path: &Path) -> bool {
@@ -44,9 +47,16 @@ fn is_game_file(path: &Path) -> bool {
 
 impl FileBrowser {
     pub fn open(dir: &Path) -> FileBrowser {
-        let mut b = FileBrowser { current: dir.to_path_buf(), folders: Vec::new(), files: Vec::new(), hidden_count: 0, error: None };
+        let mut b = FileBrowser { current: dir.to_path_buf(), folders: Vec::new(), files: Vec::new(), hidden_count: 0, error: None, tops: Vec::new() };
         b.reload();
         b
+    }
+
+    /// The top places (internal storage, the drives): a folder inside one stops going up at it. A start outside all of
+    /// them goes up as before.
+    pub fn with_tops(mut self, tops: Vec<PathBuf>) -> FileBrowser {
+        self.tops = tops;
+        self
     }
 
     fn reload(&mut self) {
@@ -83,7 +93,7 @@ impl FileBrowser {
 
     pub fn lines(&self) -> Vec<Line> {
         let mut lines = vec![Line::Where];
-        if self.current.parent().is_some() {
+        if self.can_go_up() {
             lines.push(Line::Up);
         }
         lines.extend((0..self.folders.len()).map(Line::Folder));
@@ -117,6 +127,9 @@ impl FileBrowser {
     }
 
     pub fn up(&mut self) {
+        if !self.can_go_up() {
+            return;
+        }
         if let Some(parent) = self.current.parent() {
             self.current = parent.to_path_buf();
             self.reload();
@@ -145,7 +158,7 @@ impl FileBrowser {
     }
 
     pub fn can_go_up(&self) -> bool {
-        self.current.parent().is_some()
+        self.current.parent().is_some() && !self.tops.iter().any(|t| *t == self.current)
     }
 }
 
@@ -182,6 +195,25 @@ mod tests {
         assert_eq!(b.file(0).unwrap(), tmp.path().join("n64/game.z64"));
         b.up();
         assert_eq!(b.current, tmp.path());
+    }
+
+    #[test]
+    fn up_one_level_stops_at_the_top_place() {
+        let tmp = temp_dir();
+        let home = tmp.path().join("home/deck");
+        std::fs::create_dir_all(home.join("Emulation/roms")).unwrap();
+        let mut b = FileBrowser::open(&home.join("Emulation/roms")).with_tops(vec![home.clone(), tmp.path().join("run/media/deck/SD512")]);
+        assert!(b.can_go_up());
+        b.up();
+        b.up();
+        assert_eq!(b.current, home);
+        assert!(!b.can_go_up() && !b.lines().contains(&Line::Up), "Internal storage is as high as it goes");
+        b.up();
+        assert_eq!(b.current, home, "up at the top does nothing");
+        let mut outside = FileBrowser::open(tmp.path()).with_tops(vec![home]);
+        assert!(outside.can_go_up(), "a start outside every top place goes up as before");
+        outside.up();
+        assert_ne!(outside.current, tmp.path());
     }
 
     #[test]

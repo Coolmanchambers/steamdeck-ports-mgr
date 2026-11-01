@@ -10,6 +10,20 @@ pub fn api_agent() -> ureq::Agent {
     agent(Duration::from_secs(30))
 }
 
+/// Fork (install wizard): the port download's agent. Upstream's 30 minute limit for the whole download stays; a
+/// connection that goes silent for 30 seconds ends it, so a stalled download fails (or a Stop is seen) instead of
+/// waiting out the half hour.
+pub fn download_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(30 * 60)))
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_per_read(Some(Duration::from_secs(30)))
+        .user_agent(USER_AGENT)
+        .https_only(true)
+        .build()
+        .into()
+}
+
 /// Fork (cloud backup): the agent the cloud services use. Redirects are not followed (a resumable upload answers
 /// 308 on purpose), an error status comes back as a reply for the caller to read, and the timeouts allow a long
 /// body but not a long silence. `https_only` is false only for tests and debug builds that talk to a mock
@@ -78,6 +92,16 @@ mod tests {
     #[test]
     fn ne_reencode_pas_une_url_deja_encodee() {
         assert_eq!(encode_url("https://x/a%20b.zip"), "https://x/a%20b.zip");
+    }
+
+    // Fork (install wizard).
+    #[test]
+    fn the_download_agent_ends_a_silent_connection_but_keeps_the_half_hour_limit() {
+        let a = download_agent();
+        assert_eq!(a.config().timeout_per_read(), Some(Duration::from_secs(30)));
+        let t = a.config().timeouts();
+        assert_eq!((t.connect, t.global), (Some(Duration::from_secs(30)), Some(Duration::from_secs(30 * 60))));
+        assert!(a.config().https_only());
     }
 
     #[test]

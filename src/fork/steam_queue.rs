@@ -491,14 +491,18 @@ pub fn missing_art(queue: &SteamQueue, catalog: &[Port], cache_dir: &Path) -> Ve
     let mut names: Vec<String> = Vec::new();
     for entry in queue.entries.iter().filter(|e| e.art == ArtChoice::Catalog) {
         let Some(port) = catalog.iter().find(|p| p.key() == entry.port_key) else { continue };
-        let portrait_missing = port.image.is_some() && super::art::catalog::cached_portrait_path(cache_dir, &port.folder).is_none();
-        let icon_missing = port.icon.is_some()
-            && !crate::core::image_cache::cached_image_path(cache_dir, &format!("{}_icon", port.folder)).is_ok_and(|p| p.is_file());
-        if (portrait_missing || icon_missing) && !names.contains(&entry.name) {
+        if port_art_missing(port, cache_dir) && !names.contains(&entry.name) {
             names.push(entry.name.clone());
         }
     }
     names
+}
+
+/// The catalog names a cover or icon for `port` that is not in the cache (the shortcut's artwork is placed only from there).
+pub fn port_art_missing(port: &Port, cache_dir: &Path) -> bool {
+    let portrait_missing = port.image.is_some() && super::art::catalog::cached_portrait_path(cache_dir, &port.folder).is_none();
+    let icon_missing = port.icon.is_some() && !crate::core::image_cache::cached_image_path(cache_dir, &format!("{}_icon", port.folder)).is_ok_and(|p| p.is_file());
+    portrait_missing || icon_missing
 }
 
 /// The question asked at startup, after Steam closes, or from the screen's first row.
@@ -1684,6 +1688,21 @@ mod tests {
         // Queued from Desktop Mode while Steam ran: no Game Mode wording.
         q.entries[0].from_game_mode = false;
         assert!(offer_text(&q, false, &[]).starts_with("1 Steam change queued while Steam was running: apply now?"));
+    }
+
+    #[test]
+    fn a_ports_artwork_is_missing_until_its_cover_and_icon_are_cached() {
+        let f = Fixture::new("port_art_missing");
+        let cache = f.home.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let port = |v: serde_json::Value| port_from_value(&v).unwrap();
+        let both = port(json!({"name": "Dusklight", "folder": "dusklight", "source": "https://github.com/a/dusk", "image": "https://example.com/d.png", "icon": "https://example.com/i.png"}));
+        assert!(port_art_missing(&both, &cache), "nothing fetched yet");
+        image::RgbaImage::from_pixel(60, 90, image::Rgba([1, 2, 3, 255])).save(cache.join("dusklight.png")).unwrap();
+        assert!(port_art_missing(&both, &cache), "the icon is still missing");
+        image::RgbaImage::from_pixel(32, 32, image::Rgba([1, 2, 3, 255])).save(cache.join("dusklight_icon.png")).unwrap();
+        assert!(!port_art_missing(&both, &cache));
+        assert!(!port_art_missing(&port(json!({"name": "Bare", "folder": "bare", "source": "https://github.com/a/bare"})), &cache), "no artwork named, none missing");
     }
 
     #[test]

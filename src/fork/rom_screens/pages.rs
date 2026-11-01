@@ -76,7 +76,7 @@ fn needs_facts(page: &mut Page<GfAct>, needs: &[Need], port_name: &str, mark: Ma
     }
 }
 
-const LATER_DETAIL: &str = "The game will not start until you do; this page is on the port's Game files card";
+const LATER_DETAIL: &str = "It will not start until you do; its Port page can do it later";
 
 fn later() -> PageOption<GfAct> {
     option("Add it later", LATER_DETAIL, GfAct::Later)
@@ -151,7 +151,7 @@ pub fn no_folder_page(name: &str, needs: &[Need]) -> Page<GfAct> {
     let mut p = base(name, "Where are your game files?");
     p.paragraphs.push(format!("{name} needs a file from your own copy of the game, and no game files folder is chosen yet."));
     needs_facts(&mut p, needs, name, Mark::ToDo);
-    let mut choose = option("Choose the folder", "Where you keep your game files (on EmuDeck: SD card > Emulation > roms)", GfAct::ChooseFolder);
+    let mut choose = option("Choose the folder", "Where you keep them (on EmuDeck: SD card > Emulation > roms)", GfAct::ChooseFolder);
     choose.recommended = true;
     p.options = vec![choose, option("Choose the file myself", "Pick the file from a list", GfAct::ChooseFile), later()];
     p
@@ -176,7 +176,7 @@ pub fn unreadable_page(name: &str, needs: &[Need], folder: &str, why: &str) -> P
 pub fn pick_page(name: &str, what: &str, files: &[(String, String)]) -> Page<GfAct> {
     let mut p = base(name, "Which one is your copy?");
     p.paragraphs.push(format!("More than one file could be {what}. Choose the one to use."));
-    p.options = files.iter().take(12).enumerate().map(|(i, (file, place))| option(file, place, GfAct::Pick(i))).collect();
+    p.options = files.iter().take(12).enumerate().map(|(i, (file, place))| option(&ellipsize(file, 40), &ellipsize(place, 66), GfAct::Pick(i))).collect();
     p.options.push(later());
     p
 }
@@ -359,6 +359,39 @@ mod tests {
         let two = no_match_page("SoH", "x.z64", true, &[], &["Ocarina of Time".into(), "Master Quest".into()]);
         assert_eq!(two.options[1].title, "Use it for: Master Quest");
         assert!(two.paragraphs[0].contains("another version"));
+    }
+
+    /// The same one-line limits as the install wizard's pages (`install_wizard::tests`), which show these pages too: an
+    /// option's title 40 characters and its detail 66, the page title 40, with long real names and places.
+    #[test]
+    fn every_page_fits_one_line_per_option_and_title() {
+        let name = "The Legend of Zelda: The Wind Waker HD (ZeldaWWHDRecomp)";
+        let needs = [need("The Legend of Zelda: The Wind Waker HD", true), need("oot.z64", false)];
+        let place = "SD card (SD512) > Emulation > roms > wiiu > The Legend of Zelda The Wind Waker HD [USA]";
+        let file = "The Legend of Zelda - The Wind Waker HD (USA) (En,Fr,Es) (Rev 1).wua";
+        let files = [(file.to_string(), place.to_string()), ("b.z64".to_string(), "SD card".to_string())];
+        let folder = Folder { place: place.into(), can_go_up: true, folders: vec!["wiiu".into()], files: vec![(file.into(), "6.2 GB".into())], hidden: 3, error: None };
+        let pages = [
+            found_page(name, &files[..1], true),
+            found_page(name, &files, false),
+            connected_page(name, &files),
+            not_found_page(name, &needs, place, &["A note".into()], 2),
+            no_folder_page(name, &needs),
+            unreadable_page(name, &needs, place, "No such file or directory"),
+            pick_page(name, "oot.z64", &files),
+            copy_page(name, "Copy 6.2 GB to SD card > Ports?"),
+            result_page(name, "Game files connected", "One."),
+            browse_page(name, &folder),
+            no_match_page(name, file, true, &needs, &["Ocarina of Time Master Quest (Europe)".into(), "Ocarina of Time".into()]),
+            none_needed_page(name),
+        ];
+        for p in &pages {
+            assert!(p.title.chars().count() <= 40, "title too long: {}", p.title);
+            for o in &p.options {
+                assert!(o.title.chars().count() <= 40, "{:?}: option title too long: {}", p.title, o.title);
+                assert!(o.detail.chars().count() <= 66, "{:?}: detail too long ({}): {}", p.title, o.detail.chars().count(), o.detail);
+            }
+        }
     }
 
     #[test]

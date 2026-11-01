@@ -21,6 +21,12 @@ impl Places {
         let media_roots = mounts::default_media_roots();
         Places { drives: mounts::removable_drives(&mounts::system_mounts(), &media_roots), home, media_roots }
     }
+
+    /// The top places a person knows: internal storage (the home folder) and each drive. A folder browser stops going
+    /// up at these; above them is only `/home`, `/run/media` and the like.
+    pub fn tops(&self) -> Vec<PathBuf> {
+        self.home.iter().cloned().chain(self.drives.iter().map(|d| d.mount_point.clone())).collect()
+    }
 }
 
 /// The crumbs below a base: "SD card", "Emulation", "roms" joined with " > ".

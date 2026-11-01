@@ -604,20 +604,66 @@ fn through_a_link(dir: &Path, rel: &Path) -> bool {
     })
 }
 
-/// What putting `set` back into `port_dir` would do: each file missing there is copied, one there with another size is
-/// copied aside first and then replaced. A file there with the same size is taken to be it and left; a place that is a
-/// link (or under one) is left alone.
-pub fn restore_plan(set: &KeptSet, port_dir: &Path) -> Vec<RestoreStep> {
-    set.files
-        .iter()
-        .filter(|f| !through_a_link(port_dir, &f.rel))
-        .filter_map(|f| match fs::metadata(port_dir.join(&f.rel)) {
-            Err(_) => Some(RestoreStep { rel: f.rel.clone(), kind: f.kind.clone(), replaces: false }),
-            Ok(m) if m.is_file() && m.len() == fs::metadata(set.dir.join(&f.rel)).map_or(f.size, |k| k.len()) => None,
-            Ok(m) if m.is_file() => Some(RestoreStep { rel: f.rel.clone(), kind: f.kind.clone(), replaces: true }),
-            Ok(_) => None,
-        })
-        .collect()
+/// What putting a kept set back would do.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RestorePlan {
+    pub steps: Vec<RestoreStep>,
+    /// Kept files whose place in the port folder holds the same bytes already: left as they are.
+    pub already: usize,
+}
+
+/// True when both files hold the same bytes, read in blocks (game files are big). A file that cannot be read counts as
+/// different, so it is copied aside before anything replaces it.
+fn same_bytes(a: &Path, b: &Path) -> bool {
+    let (Ok(mut fa), Ok(mut fb)) = (fs::File::open(a), fs::File::open(b)) else { return false };
+    let (mut ba, mut bb) = (vec![0u8; 256 * 1024], vec![0u8; 256 * 1024]);
+    loop {
+        let Ok(na) = read_full(&mut fa, &mut ba) else { return false };
+        let Ok(nb) = read_full(&mut fb, &mut bb) else { return false };
+        if na != nb || ba[..na] != bb[..nb] {
+            return false;
+        }
+        if na == 0 {
+            return true;
+        }
+    }
+}
+
+/// Fills `buf` as far as the file goes (a short read is not the end).
+fn read_full(f: &mut fs::File, buf: &mut [u8]) -> io::Result<usize> {
+    use std::io::Read;
+    let mut n = 0;
+    while n < buf.len() {
+        match f.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
+}
+
+/// What putting `set` back into `port_dir` would do: each file missing there is copied, one there with other bytes is
+/// copied aside first and then replaced. Size alone never decides: ROM dumps of one system share a few fixed sizes, so a
+/// file of the same size is compared byte for byte and left only when it is the same. A place that is a link (or under
+/// one) is left alone.
+pub fn restore_plan(set: &KeptSet, port_dir: &Path) -> RestorePlan {
+    let mut plan = RestorePlan::default();
+    for f in set.files.iter().filter(|f| !through_a_link(port_dir, &f.rel)) {
+        let (kept, there) = (set.dir.join(&f.rel), port_dir.join(&f.rel));
+        let replaces = match fs::metadata(&there) {
+            Err(_) => false,
+            Ok(m) if !m.is_file() => continue,
+            Ok(m) if m.len() == fs::metadata(&kept).map_or(f.size, |k| k.len()) && same_bytes(&kept, &there) => {
+                plan.already += 1;
+                continue;
+            }
+            Ok(_) => true,
+        };
+        plan.steps.push(RestoreStep { rel: f.rel.clone(), kind: f.kind.clone(), replaces });
+    }
+    plan
 }
 
 /// What a restore did.
@@ -1121,11 +1167,32 @@ mod restore_tests {
         kept(tmp.path(), "2026-10-31_10-00-00");
         let set = newest_kept(tmp.path(), "soh").unwrap();
         let port = tmp.path().join("Ports/soh");
-        write(&port.join("oot.o2r"), b"ARCHIVE"); // the same size: taken to be it
+        write(&port.join("oot.o2r"), b"ARCHIVE"); // the same bytes: it is already back
         write(&port.join("prod.keys"), b"NEWER KEYS"); // another version
         let plan = restore_plan(&set, &port);
-        let got: Vec<(String, bool)> = plan.iter().map(|s| (s.rel.to_string_lossy().replace('\\', "/"), s.replaces)).collect();
+        let got: Vec<(String, bool)> = plan.steps.iter().map(|s| (s.rel.to_string_lossy().replace('\\', "/"), s.replaces)).collect();
         assert_eq!(got, [("roms/zelda.z64".to_string(), false), ("prod.keys".to_string(), true)]);
+        assert_eq!(plan.already, 1);
+    }
+
+    #[test]
+    fn a_file_of_the_same_size_with_other_bytes_is_copied_aside_and_replaced_never_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        let port = tmp.path().join("Ports/soh");
+        write(&port.join("roms/zelda.z64"), b"OTHERR"); // another dump of the same size (6 bytes), as N64 dumps are
+        write(&port.join("oot.o2r"), b"ARCHIVE");
+        let plan = restore_plan(&set, &port);
+        let rom = plan.steps.iter().find(|s| s.rel == Path::new("roms/zelda.z64")).expect("the other dump is not taken to be the kept one");
+        assert!(rom.replaces);
+        assert_eq!(plan.already, 1, "only the identical archive is left");
+        let backups = replaced_dir_for(tmp.path(), "soh");
+        restore_kept(&set, &plan.steps, &port, &backups, "s").unwrap();
+        assert_eq!(fs::read(port.join("roms/zelda.z64")).unwrap(), b"ROMROM");
+        assert_eq!(fs::read(backups.join("s/roms/zelda.z64")).unwrap(), b"OTHERR", "the dump that was there is kept aside");
+        assert!(same_bytes(&port.join("oot.o2r"), &set.dir.join("oot.o2r")));
+        assert!(!same_bytes(&port.join("oot.o2r"), &port.join("missing")));
     }
 
     #[test]
@@ -1137,7 +1204,7 @@ mod restore_tests {
         write(&port.join("prod.keys"), b"NEWER KEYS");
         let plan = restore_plan(&set, &port);
         let backups = replaced_dir_for(tmp.path(), "soh");
-        let done = restore_kept(&set, &plan, &port, &backups, "2026-11-01_12-00-00").unwrap();
+        let done = restore_kept(&set, &plan.steps, &port, &backups, "2026-11-01_12-00-00").unwrap();
         assert_eq!((done.copied, done.backed_up), (3, 1));
         assert_eq!(done.backup_dir.as_deref(), Some(backups.join("2026-11-01_12-00-00").as_path()));
         assert_eq!(fs::read(port.join("oot.o2r")).unwrap(), b"ARCHIVE");
@@ -1146,7 +1213,9 @@ mod restore_tests {
         assert_eq!(fs::read(backups.join("2026-11-01_12-00-00/prod.keys")).unwrap(), b"NEWER KEYS", "the file that was there is kept aside");
         assert!(kept_dir.join("oot.o2r").exists() && kept_dir.join("prod.keys").exists(), "Kept files keeps its copy");
         assert!(!port.join("prod.keys.dpm-restore").exists());
-        assert!(restore_plan(&set, &port).is_empty(), "a second reinstall has nothing left to offer");
+        let again = restore_plan(&set, &port);
+        assert!(again.steps.is_empty(), "a second reinstall has nothing left to offer");
+        assert_eq!(again.already, 3);
         assert!(!tmp.path().join("Ports/escape.bin").exists());
     }
 
@@ -1163,8 +1232,8 @@ mod restore_tests {
         std::os::unix::fs::symlink(&mine, port.join("roms")).unwrap();
         std::os::unix::fs::symlink(mine.join("zelda.z64"), port.join("prod.keys")).unwrap();
         let plan = restore_plan(&set, &port);
-        assert_eq!(plan.iter().map(|s| s.rel.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["oot.o2r"]);
-        restore_kept(&set, &plan, &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
+        assert_eq!(plan.steps.iter().map(|s| s.rel.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["oot.o2r"]);
+        restore_kept(&set, &plan.steps, &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
         assert_eq!(fs::read(mine.join("zelda.z64")).unwrap(), b"THE USER'S OWN ROM");
     }
 }

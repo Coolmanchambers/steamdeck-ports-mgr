@@ -166,8 +166,11 @@ fn download(url: &str, dest: &Path, on_progress: &mut dyn FnMut(&str), ctl: &Dow
     }
     on_progress(&format!("Downloading {name}..."));
 
-    let agent = super::http::agent(Duration::from_secs(30 * 60));
-    let mut resp = agent.get(&super::http::encode_url(&url)).call().install_err()?;
+    // Fork (install wizard): an agent with a per-read timeout, so a stalled connection ends and a Stop is seen; any
+    // failure after a Stop is the stop.
+    let agent = super::http::download_agent();
+    let stopped = |e: InstallError| if ctl.cancelled() { InstallError::Message(CANCELLED.to_string()) } else { e };
+    let mut resp = agent.get(&super::http::encode_url(&url)).call().install_err().map_err(stopped)?;
     if !has_known_archive_extension(&dest.to_string_lossy()) {
         let disposition_name = resp
             .headers()
@@ -186,10 +189,7 @@ fn download(url: &str, dest: &Path, on_progress: &mut dyn FnMut(&str), ctl: &Dow
     // Fork (install wizard): the size the server gives, for the progress bar.
     let total = resp.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).filter(|n| *n > 0);
     let mut file = with_path(fs::File::create(&dest), &dest).install_err()?;
-    match copy_counted(&mut resp.body_mut().as_reader(), &mut file, total, ctl) {
-        Err(e) if e.kind() == io::ErrorKind::Interrupted && ctl.cancelled() => return Err(InstallError::Message(CANCELLED.to_string())),
-        other => with_path(other, &dest).install_err()?,
-    };
+    with_path(copy_counted(&mut resp.body_mut().as_reader(), &mut file, total, ctl), &dest).install_err().map_err(stopped)?;
     Ok(dest)
 }
 
@@ -503,13 +503,15 @@ pub fn install_port(
     } else {
         return Err(InstallError::Message("This port has nothing to download.".to_string()));
     };
-    // Fork (install wizard): stopped just as the download ended: nothing is installed (`tmp` goes with this return).
+    // Fork (install wizard): the download has ended: the page's phase turns to installing at once (its Stop goes), and a
+    // stop pressed just before is caught here; nothing is installed (`tmp` goes with this return).
+    on_progress("Installing...");
     if ctl.cancelled() {
         return Err(InstallError::Message(CANCELLED.to_string()));
     }
 
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    apply_archive(port, paths, &archive_path, &dest_dir, &stamp, on_progress)?;
+    apply_archive(port, paths, &archive_path, &dest_dir, &stamp, on_progress, ctl)?;
     on_progress("Done.");
     Ok(installed_tag)
 }
@@ -521,11 +523,16 @@ pub(crate) fn apply_archive(
     dest_dir: &Path,
     stamp: &str,
     on_progress: &mut dyn FnMut(&str),
+    ctl: &DownloadCtl, // Fork (install wizard): a stop that raced the end of the download
 ) -> Result<(), InstallError> {
     let InstallPaths { library_dir, saves_backup_dir } = paths;
     save_backup::backup_before_update(port, saves_backup_dir, dest_dir, stamp, on_progress)
         .map_err(|e| InstallError::Message(format!("Couldn't back up the saves before installing ({e}) -- nothing was changed.")))?;
     let before = crate::fork::versioned::before_update(port, dest_dir);
+    // Fork (install wizard): the last moment a stop can still leave the port as it was (the save backup only adds a zip).
+    if ctl.cancelled() {
+        return Err(InstallError::Message(CANCELLED.to_string()));
+    }
     let release = extract(archive_path, dest_dir, library_dir, port.exe_is_archive.as_deref(), on_progress)?;
     save_backup::restore_all_after_install(port, saves_backup_dir, dest_dir);
     crate::fork::versioned::record_installed(dest_dir, before, release);
@@ -1021,7 +1028,7 @@ mod tests {
         fs::write(&archive_path, b"ELF new").unwrap();
         let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &dir.join("Saves Backup") };
 
-        apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress).unwrap();
+        apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
 
         assert!(dest_dir.join("Game-v1.0-linux-x86_64.AppImage").is_file(), "nothing moves inside the installer");
         let pending = crate::fork::versioned::take_installed(&dest_dir).expect("the update is waiting to be finished");
@@ -1043,7 +1050,7 @@ mod tests {
         fs::write(&archive_path, b"not a real zip").unwrap();
         let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &dir.join("Saves Backup") };
 
-        assert!(apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress).is_err());
+        assert!(apply_archive(&port, paths, &archive_path, &dest_dir, "2026-10-24_12-00-00", &mut no_progress, &DownloadCtl::default()).is_err());
 
         assert!(crate::fork::versioned::take_installed(&dest_dir).is_none());
         assert_eq!(fs::read(dest_dir.join("Game-v1.0-linux-x86_64.AppImage")).unwrap(), b"ELF old");
@@ -1118,13 +1125,30 @@ mod tests {
         build_archive("zip", &[("game.exe", b"new-version".as_slice()), ("data/new.bin", b"new data".as_slice())], &archive_path);
         let saves_before = f.saves();
 
-        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
 
         assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"new-version");
         assert_eq!(f.saves(), saves_before, "saves must be byte-identical after the update");
         let unzipped = unzip(&f.backup_zip("2026-10-20_12-00-00"));
         assert_eq!(snapshot(&unzipped.join("save_folder")), saves_before.0);
         assert_eq!(snapshot(&unzipped.join("save_folder2")), saves_before.1);
+    }
+
+    // Fork (install wizard): a Stop that raced the end of the download is honoured before anything is unpacked.
+    #[test]
+    fn a_stop_that_raced_the_end_of_the_download_installs_nothing() {
+        let f = update_fixture("update_stopped_late");
+        let archive_path = f.dir.join("update.zip");
+        build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
+        let saves_before = f.saves();
+        let ctl = DownloadCtl { on_bytes: None, cancel: Some(Arc::new(AtomicBool::new(true))) };
+
+        let err = apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress, &ctl).unwrap_err();
+
+        assert!(matches!(&err, InstallError::Message(m) if m == CANCELLED), "{err:?}");
+        assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"old-version", "nothing was unpacked");
+        assert_eq!(f.saves(), saves_before);
+        assert!(f.staging_leftovers().is_empty(), "{:?}", f.staging_leftovers());
     }
 
     #[test]
@@ -1134,7 +1158,7 @@ mod tests {
         fs::write(&archive_path, b"not a real zip").unwrap();
         let saves_before = f.saves();
 
-        assert!(apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).is_err());
+        assert!(apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).is_err());
 
         assert!(f.backup_zip("2026-10-20_12-00-00").is_file(), "the backup is made before the install touches anything");
         assert_eq!(fs::read(f.dest_dir.join("game.exe")).unwrap(), b"old-version");
@@ -1150,7 +1174,7 @@ mod tests {
         build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
         let saves_before = f.saves();
 
-        let error = apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap_err();
+        let error = apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap_err();
 
         assert!(matches!(&error, InstallError::Message(m) if m.contains("nothing was changed")), "{error:?}");
         assert!(f.staging_leftovers().is_empty(), "{:?}", f.staging_leftovers());
@@ -1171,7 +1195,7 @@ mod tests {
             let archive_path = dir.join("update.zip");
             build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
 
-            apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+            apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
 
             assert_eq!(fs::read(dest_dir.join("game.exe")).unwrap(), b"new-version");
             assert_eq!(fs::read(dest_dir.join("assets").join("big.bin")).unwrap(), b"a whole game dump");
@@ -1185,8 +1209,8 @@ mod tests {
         let archive_path = f.dir.join("update.zip");
         build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
 
-        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
-        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
+        apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
 
         assert!(f.backup_zip("2026-10-20_12-00-00").is_file());
         assert!(f.backup_zip("2026-10-20_12-00-00-2").is_file());
@@ -1203,7 +1227,7 @@ mod tests {
         let archive_path = dir.join("update.zip");
         build_archive("zip", &[("game.exe", b"new-version".as_slice())], &archive_path);
 
-        apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+        apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
 
         assert_eq!(fs::read(dest_dir.join("game.exe")).unwrap(), b"new-version");
         assert!(!saves_backup_dir.exists());
@@ -1224,7 +1248,7 @@ mod tests {
         fs::write(&archive_path, b"new").unwrap();
         let save_before = snapshot(&external_save);
 
-        apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress).unwrap();
+        apply_archive(&port, InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir }, &archive_path, &dest_dir, "2026-10-20_12-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
 
         // Fork: the old file is moved to .previous/ by the app once the update is verified (fork::versioned).
         assert_eq!(fs::read(dest_dir.join("Dusklight-v2.0.2-linux-x86_64.AppImage")).unwrap(), b"old");

@@ -168,6 +168,7 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
         return Ok(None);
     }
     let zip_path = unused_zip_path(&backups_dir, stamp)?;
+    // Fork (install wizard): the missing zip is named the human way (`human_path_here`).
     let zipped = zip_staging_dir(staging.path(), &zip_path)
         .and_then(|()| if fs::metadata(&zip_path).map_or(true, |m| m.len() == 0) { Err(format!("the backup file is missing -- {}", crate::fork::port_page::paths::human_path_here(&zip_path))) } else { Ok(()) });
     if let Err(e) = zipped {

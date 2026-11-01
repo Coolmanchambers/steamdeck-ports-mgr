@@ -1,6 +1,6 @@
 use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
-use super::install_launch::{open_favorite_exe_picker, open_version_picker, start_extra_install, start_install};
+use super::install_launch::{open_favorite_exe_picker, open_version_picker, start_extra_install};
 use super::playtime::{format_last_played, format_playtime, LastPlayed};
 use super::save_finder_screen::open_from_info as open_find_saves;
 use super::save_restore_screen::open_from_info as open_restore_saves;
@@ -402,7 +402,8 @@ pub(crate) fn open_error_dialog(app: &Rc<AppState>, router: &Router, port: Port)
         router,
         tr.invoke_dialog_title_error_port(port.name.clone().into()),
         tr.invoke_message_launch_failed(port.name.clone().into()),
-        DialogChoice { label: tr.invoke_label_reinstall(), action: move |app, router| start_install(app, router, reinstall_port.clone(), None, None) },
+        // Fork (install wizard): Reinstall goes through the wizard ("Update this port?" and the pages after the download).
+        DialogChoice { label: tr.invoke_label_reinstall(), action: move |app, router| super::install_wizard_screen::open_from_list(app, router, reinstall_port.clone()) },
         DialogChoice { label: tr.invoke_label_open_info(), action: move |app, router| open_info_dialog(app, router, &port) },
         true,
     );
