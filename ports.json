@@ -10,8 +10,16 @@
       "image": "https://cdn2.steamgriddb.com/grid/2b6263d0b58234374d4133627291dde3.png",
       "icon": "https://cdn2.steamgriddb.com/icon/dfab173bb4e49a200b37e660e2677709.png"
     },{
+      "name": "007: Everything or Nothing (007eon-recomp)",
+      "tags": ["xbox", "fps", "multiplayer", "multilingual"],
+      "source": "https://github.com/hk21x/007eon-recomp",
+      "folder": "007eon-recomp",
+      "instructions": "Required files: 007: Everything or Nothing for Xbox (USA or EU)",
+      "image": "https://cdn2.steamgriddb.com/grid/f11220c36522b0ef428977cf57db089f.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/f42c61b0473deca6a719dfce6c235d8f.png"
+    },{
       "name": "007: Nightfire (nightfire-recomp)",
-      "tags": ["xbox", "fps", "multiplayer"],
+      "tags": ["xbox", "fps", "multiplayer", "multilingual"],
       "source": "https://github.com/hk21x/nightfire-recomp",
       "folder": "nightfire-recomp",
       "instructions": "Required files: 007: Nightfire for Xbox (USA or EU)",
@@ -133,6 +141,14 @@
       "image": "https://cdn2.steamgriddb.com/grid/62369392c675ab68a37e5f5e5a819506.png",
       "icon": "https://cdn2.steamgriddb.com/icon/68fc266c3090819707d3c4c6cdcc1ed5.png",
       "save": "saves"
+    },{
+      "name": "Angry Birds Trilogy + Star Wars (angry-birds-re-hatched-collection)",
+      "tags": ["360", "puzzle"],
+      "source": "https://github.com/TekRantGaming/angry-birds-re-hatched-collection",
+      "folder": "angry-birds-re-hatched-collection",
+      "instructions": "Required files: Angry Birds Trilogy 0.0.0.2 + Angry Birds Star Wars 0.0.0.2",
+      "image": "https://cdn2.steamgriddb.com/grid/f28f9ee41ab19badef1ebf0e3ca129fe.jpg",
+      "icon": "https://cdn2.steamgriddb.com/icon/d576556711ce6a6cf8bb14f698ef66d4.png"
     },{
       "name": "Animal Crossing (ACGC-PC-Port)",
       "tags": ["gc", "simulation"],
@@ -341,11 +357,11 @@
       "image": "https://cdn2.steamgriddb.com/grid/db76ba9f1aadf1434c1d08a590f41fde.png",
       "icon": "https://cdn2.steamgriddb.com/icon/403ea2e851b9ab04a996beab4a480a30.png"
     },{
-      "-name": "Bayonetta 3 (??)",
+      "name": "Bayonetta 3 (Witch-Time)",
       "tags": ["switch", "beat them all"],
-      "source": "??",
-      "folder": "??",
-      "instructions": "Required files: ",
+      "source": "https://github.com/Zexyen/Witch-Time",
+      "folder": "Witch-Time",
+      "instructions": "Required files: Untested",
       "image": "https://cdn2.steamgriddb.com/grid/886995438c8f55ae8934ba6b86d8ca5d.jpg",
       "icon": "https://cdn2.steamgriddb.com/icon/749cf0d496c3e96f583f603825652f8a.png"
     },{
@@ -364,6 +380,14 @@
       "instructions": "Required files: Place your extracted game data files in the assets folder. default.xbe from the USA release must be there, with the rest of the game's files beside it.",
       "image": "https://cdn2.steamgriddb.com/grid/e83bab0eff11d84c5e7d4199d9fa45a4.png",
       "icon": "https://cdn2.steamgriddb.com/icon/b978d21b8b4f49da5953ab488c9b0b11.png"
+    },{
+      "-name": "Bleach: Soul Resurrección (VS-NativePort)",
+      "tags": ["ps3", "action-adventure"],
+      "source": "",
+      "folder": "",
+      "instructions": "Required files: ",
+      "image": "https://cdn2.steamgriddb.com/grid/b5decfd74e41eadc29c98b8791cf5e50.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/6366ab8e865d3049131dc2dee43dd9bb/32/512x512.png"
     },{
       "name": "Blood Omen: Legacy of Kain (blood-omen-legacy-of-kain-recomp)",
       "tags": ["ps1", "alexbeav"],
@@ -522,6 +546,13 @@
       "instructions": "Required files: Call of Duty: Finest Hour for the original Xbox, PAL (Europe) release, title ID 4156002A, version 3 (default.xbe SHA-1 938a7b1e17928de49cb3c5834d61abcd3d9081c8)",
       "image": "https://cdn2.steamgriddb.com/grid/60399569e70e178941e511e7a36475c3.png",
       "icon": "https://cdn2.steamgriddb.com/icon/1e99a6b6581b3eb34ab022845efc27b5.png"
+    },{
+      "name": "Cartoon Network Racing (cartoon-network-racing-recompiled)",
+      "tags": ["ps2", "racing"],
+      "source": "https://github.com/TekRantGaming/cartoon-network-racing-recompiled",
+      "folder": "cartoon-network-racing-recompiled",
+      "instructions": "Required files: Cartoon Network Racing for PlayStation 2 (USA or EU)",
+      "image": "https://cdn2.steamgriddb.com/grid/8fb512dd4fc5c4a606d8ebcffd81923d.png"
     },{
       "name": "Castlevania 64 (CV64Recomp)",
       "tags": ["n64", "action-adventure"],
@@ -687,6 +718,27 @@
       "image": "https://cdn2.steamgriddb.com/grid/29badebfcb56e531b4e38f81fff9dd20.png",
       "icon": "https://cdn2.steamgriddb.com/icon/7cfe973cfd3353ecacc3ec1e53a1c5ea.png"
     },{
+      "name": "Conker: Live and Reloaded (conker-live-recompiled)",
+      "tags": ["xbox", "platformer"],
+      "source": "https://github.com/cdetv/conker-live-recompiled",
+      "folder": "conker-live-recompiled",
+      "instructions": "Required files: Conker: Live and Reloaded for Xbox (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/92ffe39c405eb26368e5376f396d6ade.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/f50d8aa7aa4204ac97b2ef3ed37476f6.png",
+      "save": "%LOCALAPPDATA%\\conker-lr-recomp"
+    },{
+      "name": "Conker: Live and Reloaded (xboxrecomp-conker)",
+      "tags": ["xbox", "platformer"],
+      "source": "https://github.com/Txukie/xboxrecomp-conker",
+      "folder": "xboxrecomp-conker",
+      "instructions": "Required files: Conker: Live and Reloaded for Xbox (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/92ffe39c405eb26368e5376f396d6ade.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/f50d8aa7aa4204ac97b2ef3ed37476f6.png",
+      "save": {
+        "windows": "",
+        "linux": "~/.config/conker-recomp"
+      }
+    },{
       "name": "Contre Jour (contrejour-dx)",
       "tags": ["pc", "puzzle"],
       "source": "https://github.com/yell0wsuit/contrejour-dx",
@@ -730,6 +782,15 @@
       "image": "https://cdn2.steamgriddb.com/grid/04514b9893dd1719269aea025015ebe9.png",
       "icon": "https://cdn2.steamgriddb.com/icon/533fd1de4dd281c9d10ab362a0d4f0f6.png",
       "save": "saves"
+    },{
+      "name": "Crash of the Titans (CrashoftheTitans-Wiicomp)",
+      "tags": ["wii", "platformer"],
+      "source": "https://github.com/jaylikesbunda/CrashoftheTitans-Wiicomp",
+      "folder": "CrashoftheTitans-Wiicomp",
+      "instructions": "Required files: Crash of the Titans for Wii (USA or EU)",
+      "image": "https://cdn2.steamgriddb.com/grid/bc6dec9604a8492c23cbd2a647918586.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/370bfb31abd222b582245b977ea5f25a.png",
+      "save": "%APPDATA%\\net.ghostesp.crash-launcher"
     },{
       "name": "Crash of the Titans (crashott-pc)",
       "tags": ["ps2", "platformer"],
@@ -810,6 +871,15 @@
       "instructions": "Required files: Dead or Alive 3 (USA)",
       "image": "https://cdn2.steamgriddb.com/grid/9295e4991969340d47e3c2efa6c52184.png",
       "icon": "https://cdn2.steamgriddb.com/icon/49b6ab5ccf0ef11a5f4502f0f70a8bab/32/256x256.png"
+    },{
+      "name": "Dead or Alive Xtreme 2 (Dead-or-Alive-Xtreme-2-Recompilation)",
+      "tags": ["360", "sport"],
+      "source": "https://github.com/hibikifukui22/Dead-or-Alive-Xtreme-2-Recompilation",
+      "folder": "Dead-or-Alive-Xtreme-2-Recompilation",
+      "instructions": "Required files: Dead or Alive Xtreme 2 for Xbox 360 (USA)\n\nManual Installation: Use extract-xiso.exe to extract the assets and place the files in the assets folder at the root of the port folder.",
+      "image": "https://cdn2.steamgriddb.com/grid/c1625916d047b11efde983e3e5500563.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/deb91d78cfe64ef36d96460e01234147.png",
+      "save": "userdata"
     },{
       "name": "Dead or Alive Xtreme Beach Volleyball (doaxbv-re)",
       "tags": ["xbox", "sport"],
@@ -1822,8 +1892,16 @@
       "icon": "https://cdn2.steamgriddb.com/icon/22ced79030992233449d6c1e0cea47df.png",
       "save": "user_data"
     },{
+      "name": "Harvest Moon (HarvestMoonSnesDecomp)",
+      "tags": ["quality", "snes", "hm", "simulation"],
+      "source": "https://github.com/RodoLy/HarvestMoonSnesDecomp",
+      "folder": "HarvestMoonSnesDecomp",
+      "instructions": "Required files: Harvest Moon (USA).sfc (CRC32: F829129E)",
+      "image": "https://cdn2.steamgriddb.com/grid/f63ffa0719413f7f5507f67c72992df8.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/18070bd62a9c81bad4c476c5b93a0cb4.png"
+    },{
       "name": "Harvest Moon 64 (HarvestMoon64Recomp)",
-      "tags": ["hm", "n64", "simulation"],
+      "tags": ["n64", "hm", "simulation"],
       "source": "https://github.com/HarvestMoon64Recomp/HarvestMoon64Recomp",
       "android_source": "https://github.com/igawa6/HarvestMoon64Recomp",
       "android_package": "io.github.hm64recomp",
@@ -2111,6 +2189,15 @@
       "icon": "https://cdn2.steamgriddb.com/icon/60315f2e8a5b4904cf2972fa3d2a3c19.png",
       "save": "saves"
     },{
+      "name": "Kirby Air Ride (Kirby-Air-Ride-Recompiled)",
+      "tags": ["gc", "racing", "multiplayer"],
+      "source": "https://github.com/sonsegajp/Kirby-Air-Ride-Recompiled",
+      "folder": "Kirby-Air-Ride-Recompiled",
+      "instructions": "Required files: Kirby Air Ride (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/b83a52c035258ed43d787106b1765e35.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/30e7f2d7506d80e732dffa2e7dcfa9f3.png",
+      "save": "saves"
+    },{
       "name": "Kirby's Dream Land (Kirby-Dream-Land-Recomp)",
       "tags": ["gba", "racing"],
       "source": "https://github.com/omegakatana92/Kirby-Dream-Land-Recomp",
@@ -2283,11 +2370,11 @@
         "android": "Android/data/com.izzy.kart/files"
       }
     },{
-      "name": "Mario Kart DS",
-      "tags": ["nds", "racing"],
-      "source": "",
-      "folder": "",
-      "instructions": "Languages: English.",
+      "name": "Mario Kart DS (DS-Kart-Recompiled)",
+      "tags": ["nds", "racing", "online"],
+      "source": "https://github.com/AlonsoTlol/DS-Kart-Recompiled",
+      "folder": "DS-Kart-Recompiled",
+      "instructions": "Required files: Mario Kart DS (Europe) (En,Fr,De,Es,It).nds (CRC32: 94E8127E)",
       "image": "https://cdn2.steamgriddb.com/grid/7935ca94dd2471ca7c4041496390bdc9.png",
       "icon": "https://cdn2.steamgriddb.com/icon/b212d59e08787ad647bc5bab8761b3c8.png"
     },{
@@ -2314,6 +2401,30 @@
       "instructions": "Required files: Mario Kart - Super Circuit (USA).gba + GBA BIOS (CRC32: ED316E37/81977335)",
       "image": "https://cdn2.steamgriddb.com/grid/83d788e65786046542c9354d17b92450.png",
       "icon": "https://cdn2.steamgriddb.com/icon/43d0193b623ae62359f03ad342298498.png"
+    },{
+      "name": "Mario Party (mario-party-recomp)",
+      "tags": ["n64", "multiplayer"],
+      "source": "https://github.com/n64hub/mario-party-recomp",
+      "folder": "mario-party-recomp",
+      "instructions": "Required files: Mario Party (USA).z64 (CRC32: 4D60ABE5)",
+      "image": "https://cdn2.steamgriddb.com/grid/bdcc17507424c2f76d14f6c38eacd773.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/e5f3045e4478665d73a7f8a89ef4782e/32/256x256.png"
+    },{
+      "name": "Mario Party 2 (mario-party-2-recomp)",
+      "tags": ["n64", "multiplayer"],
+      "source": "https://github.com/n64hub/mario-party-2-recomp",
+      "folder": "mario-party-2-recomp",
+      "instructions": "Required files: Mario Party 2 (USA).z64 (CRC32: E58A1955)",
+      "image": "https://cdn2.steamgriddb.com/grid/c7a45163eda01f63ab1ddb70d0f086fe.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/b54610023aec2ff8ce90f49fd969249b/32/256x256.png"
+    },{
+      "name": "Mario Party 3 (mario-party-3-recomp)",
+      "tags": ["n64", "multiplayer"],
+      "source": "https://github.com/n64hub/mario-party-3-recomp",
+      "folder": "mario-party-3-recomp",
+      "instructions": "Required files: Mario Party 3 (USA).z64 (CRC32: B7445DDC)",
+      "image": "https://cdn2.steamgriddb.com/grid/5529e315db37fe1e54be2e67a06a07f5.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/1900e9bb348985c31e898d3e285e1840/32/256x256.png"
     },{
       "name": "Mario Party 4 (mariopartyrd-marioparty4)",
       "tags": ["gc", "multiplayer"],
@@ -2361,15 +2472,14 @@
       "icon": "https://cdn2.steamgriddb.com/icon/5cc28164edf9a64c2939ab5d8effa7c0.png",
       "save": "saves"
     },{
-      "name": "MDK (mdk-recomp)",
-      "tags": ["ps1", "alexbeav"],
-      "source": "https://github.com/Alexbeav/mdk-recomp",
-      "website": "https://alexbeav.github.io/psxrecomp-ports/",
-      "folder": "mdk-recomp",
-      "instructions": "Required files: SLES-00599. BIOS: SCPH-5552",
+      "name": "MDK (mdk-sdl)",
+      "tags": ["pc", "action-adventure"],
+      "source": "https://github.com/nautilusbits/mdk-sdl",
+      "android_package": "io.github.nemo22.mdk",
+      "folder": "mdk-sdl",
+      "instructions": "Required files: MDK (GOG version)",
       "image": "https://cdn2.steamgriddb.com/grid/3aca62adf17c838f9c55c3e61d1cb88c.png",
-      "icon": "https://cdn2.steamgriddb.com/icon/35296a4054db6816185054cbdc02e041/32/256x256.png",
-      "save": "saves"
+      "icon": "https://cdn2.steamgriddb.com/icon/35296a4054db6816185054cbdc02e041/32/256x256.png"
     },{
       "-name": "MediEvil (medievil-recomp)",
       "tags": ["ps1", "alexbeav", "action-adventure"],
@@ -2941,6 +3051,15 @@
       "icon": "https://cdn2.steamgriddb.com/icon/ef90aa6701fdb448885aef70d22b8476.png",
       "save": "saves"
     },{
+      "name": "Odin Sphere Leifthrasir (odin-sphere-leifthrasir-pc)",
+      "tags": ["ps4", "action-adventure"],
+      "source": "https://github.com/saulob/odin-sphere-leifthrasir-pc",
+      "folder": "odin-sphere-leifthrasir-pc",
+      "instructions": "Required files: Odin Sphere Leifthrasir for PlayStation 4 (USA 1.00, JP 1.02 or EU 1.01)",
+      "image": "https://cdn2.steamgriddb.com/grid/30106ce09df2e1cfdc97ddd96efeeaa4.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/33f2481179ad598a2b87005cec4b6830.png",
+      "save": "user"
+    },{
       "name": "osu!",
       "tags": ["quality", "free", "pc", "rhythm", "multiplayer", "online"],
       "source": "https://github.com/ppy/osu",
@@ -3202,7 +3321,16 @@
       "icon": "https://cdn2.steamgriddb.com/icon/4c0be76313fda10284f62fd13ce43f40/8/64x64.png",
       "save": "saves"
     },{
-      "-name": "Project Gotham Racing 4 (PGR4-Recomp)",
+      "name": "Project Gotham Racing (pgr1-recomp)",
+      "tags": ["xbox", "racing", "multiplayer"],
+      "source": "https://github.com/hk21x/pgr1-recomp",
+      "folder": "pgr1-recomp",
+      "instructions": "Required files: Project Gotham Racing for Xbox (EU, v5)\n\nLanguages: Multilingual",
+      "image": "https://cdn2.steamgriddb.com/grid/a0a2f38ec6ea641613e386afc6c93910.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/1b23472f67289de0c4b159c73c4ad194.png",
+      "save": "hdd"
+    },{
+      "name": "Project Gotham Racing 4 (PGR4-Recomp)",
       "tags": ["360", "racing", "multiplayer"],
       "source": "https://github.com/beatrixzy/PGR4-Recomp",
       "folder": "PGR4-Recomp",
@@ -3481,6 +3609,14 @@
       "instructions": "Required files: ",
       "image": "https://cdn2.steamgriddb.com/grid/a5043803fb976050f4c31b55a2962b8e.png",
       "icon": "https://cdn2.steamgriddb.com/icon/3e12cb3a587356af6fbccb765c0d1fac.png"
+    },{
+      "name": "Rogue Galaxy (rogue-galaxy-recomp)",
+      "tags": ["ps2", "rpg"],
+      "source": "https://github.com/victor-takai/rogue-galaxy-recomp",
+      "folder": "rogue-galaxy-recomp",
+      "instructions": "Required files: Rogue Galaxy for PlayStation 2 (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/641a19b5e880fd8d83373ba90907a120.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/46e6d0f07b047818edf84360acd315c7.png"
     },{
       "name": "Rollcage Stage II (rollcage-stage-ii-recomp)",
       "tags": ["ps1", "alexbeav"],
@@ -4898,14 +5034,17 @@
       "image": "https://cdn2.steamgriddb.com/grid/e4efc746696d9f37472de81cbad04179.png",
       "icon": "https://cdn2.steamgriddb.com/icon/c73e7f943839a71a151742af7104a8a2.png"
     },{
-      "-name": "Tony Hawk's Pro Skater (thps64)",
+      "name": "Tony Hawk's Pro Skater (THPS1-64Recomp)",
       "tags": ["n64", "sport"],
-      "source": "https://github.com/andrewnakas/thps64",
-      "folder": "thps64",
-      "instructions": "Required files: ",
+      "source": "https://github.com/THPS64Recomp/THPS1-64Recomp",
+      "folder": "THPS1-64Recomp",
+      "instructions": "Required files: Tony Hawk's Pro Skater (USA) (Rev 1).z64 (CRC32: 6182A092)\nPortable saves : portable.txt in root folder.",
       "image": "https://cdn2.steamgriddb.com/grid/a320fda9e385f0ee9a4fa2f695600446.png",
       "icon": "https://cdn2.steamgriddb.com/icon/28dd2c7955ce926456240b2ff0100bde.png",
-      "save": "saves"
+      "save": {
+        "windows": "%LOCALAPPDATA%\\THPS1-64Recomp",
+        "linux": ""
+      }
     },{
       "name": "Tony Hawk's Pro Skater (tony-hawk-s-pro-skater-recomp)",
       "tags": ["ps1", "alexbeav", "multiplayer"],
@@ -4917,14 +5056,13 @@
       "icon": "https://cdn2.steamgriddb.com/icon/28dd2c7955ce926456240b2ff0100bde.png",
       "save": "saves"
     },{
-      "name": "Tony Hawk's Pro Skater 2 (tony-hawk-s-pro-skater-2-recomp)",
-      "tags": ["ps1", "alexbeav", "multiplayer"],
-      "source": "https://github.com/Alexbeav/tony-hawk-s-pro-skater-2-recomp",
-      "website": "https://alexbeav.github.io/psxrecomp-ports/",
-      "folder": "tony-hawk-s-pro-skater-2-recomp",
-      "instructions": "Required files: SLUS-01066. BIOS: SCPH-1001. Known issues: Music sometimes failed to start in one Tony Hawk title during operator testing. The exact title is not known. Skipping one track starts the next.",
-      "image": "https://cdn2.steamgriddb.com/grid/e2ffe5d0169206eb0995e28446bc0cdd.jpg",
-      "icon": "https://cdn2.steamgriddb.com/icon/258e130476290221f597c56d351224b6.png",
+      "name": "Tony Hawk's Pro Skater 2x (THPS2X-Recompiled)",
+      "tags": ["xbox", "sport"],
+      "source": "https://github.com/almost-drowned-rat/THPS2X-Recompiled",
+      "folder": "THPS2X-Recompiled",
+      "instructions": "Required files: Tony Hawk's Pro Skater 2x for Xbox (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/55ef5eec3d54e782afbaf059e35ffb01.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/fbd7939d674997cdb4692d34de8633c4.png",
       "save": "saves"
     },{
       "name": "Tony Hawk's Pro Skater 3 (tony-hawk-s-pro-skater-3-recomp)",
@@ -4974,6 +5112,22 @@
       "icon": "https://cdn2.steamgriddb.com/icon/3e3e6f02b06d73c121422793ab3b91f1.png",
       "save": "%LOCALAPPDATA%\\SpaceRanger"
     },{
+      "name": "Trials HD, Evolution and Fusion (Trials-ReVolution-Collection)",
+      "tags": ["360", "platformer"],
+      "source": "https://github.com/TekRantGaming/Trials-ReVolution-Collection",
+      "folder": "Trials-ReVolution-Collection",
+      "instructions": "Required files: Trials HD 0.0.1.2, Trials Evolution 0.0.0.3, Trials Fusion 0.0.0.3",
+      "image": "https://cdn2.steamgriddb.com/grid/67c68199f158340828fc50c3f66c99c5.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/e862673adaa72ee58fed09f257ccd3b3.png"
+    },{
+      "name": "Turok Evolution (EvolutionRecomp)",
+      "tags": ["xbox", "fps"],
+      "source": "https://github.com/MarkPremier/EvolutionRecomp",
+      "folder": "EvolutionRecomp",
+      "instructions": "Required files: Turok Evolution for Xbox (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/7d1d8bfc2e16c69a17ac833597e2a9b0.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/a89b9b817d1c710e6ef5000032e1c514.png"
+    },{
       "-name": "Ultra Street Fighter IV (UltraStreetFighterIVRecomp)",
       "tags": ["360", "fighting"],
       "source": "https://github.com/BelmanteGu/UltraStreetFighterIVRecomp",
@@ -4986,6 +5140,14 @@
         "windows": "",
         "android": ""
       }
+    },{
+      "name": "Uncharted: The Nathan Drake Collection (uncharted-android)",
+      "tags": ["ps4", "action-adventure", "multilingual", "android_only"],
+      "android_source": "https://github.com/revvv991/uncharted-android",
+      "android_package": "dev.unchartedandroid",
+      "instructions": "Required files: (PS4, CUSA02343, CUSA02320)",
+      "image": "https://cdn2.steamgriddb.com/grid/6374abaaafb1a4c0832a34ffa29b15b0.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/6798acf8da0458e3299ad2a1f4e7c2bf.png"
     },{
       "name": "Uncharted: The Nathan Drake Collection (Uncharted_Collection_PC)",
       "tags": ["ps4", "action-adventure", "multilingual"],
@@ -5002,6 +5164,14 @@
       "instructions": "Required files: (PS4, CUSA02343, CUSA02320)",
       "image": "https://cdn2.steamgriddb.com/grid/6374abaaafb1a4c0832a34ffa29b15b0.png",
       "icon": "https://cdn2.steamgriddb.com/icon/6798acf8da0458e3299ad2a1f4e7c2bf.png"
+    },{
+      "name": "Vagrant Story (VS-NativePort)",
+      "tags": ["ps1", "rpg"],
+      "source": "https://github.com/JEschete/VS-NativePort",
+      "folder": "VS-NativePort",
+      "instructions": "Required files: Vagrant Story (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/57f2edba8123b3b5b6facbea47af22b7.jpg",
+      "icon": "https://cdn2.steamgriddb.com/icon/69a5c31f6b77782006e29e4eec3535d2/32/256x256.png"
     },{
       "name": "Valkyrie Profile (valkyrie-profile-recomp)",
       "tags": ["ps1", "alexbeav"],
@@ -5297,6 +5467,14 @@
       "image": "https://cdn2.steamgriddb.com/grid/f04fadf15f1bc7fac1043656f4d06394.png",
       "icon": "https://cdn2.steamgriddb.com/icon/3d3621cee6f49e93a34f3f0f654ab41a.png"
     },{
+      "name": "Zone of the Enders (ZOE-Recompiled)",
+      "tags": ["ps2", "tps"],
+      "source": "https://github.com/Yaz-Myst/ZOE-Recompiled",
+      "folder": "ZOE-Recompiled",
+      "instructions": "Required files: Zone of the Enders for PlayStation 2 (USA)",
+      "image": "https://cdn2.steamgriddb.com/grid/6bc44bf736056fecfd958fec6893cc83.png",
+      "icon": "https://cdn2.steamgriddb.com/icon/a706b4d72de0eae9e9682f3ba03adfd7.png"
+    },{
       "-name": "ZZemplate",
       "tags": ["platform-tag (pc/n64/ps1/ps2/gc/360/etc)", "genre-tag"],
       "source": "https://github.com/owner/repo -- or https://gitlab.com/owner/repo, or a direct download URL (DirectUrl, no update tracking), or {\"windows\": \"...\", \"linux\": \"...\"} for per-platform, or omit \"source\" entirely for a Local/manually-managed port",
@@ -5439,6 +5617,10 @@
       "name": "xdelta UI (xdelta patcher)",
       "tags": ["patcher"],
       "source": "https://github.com/dan0v/xdelta3-cross-gui"
+    },{
+      "name": "Xenia Manager (Xbox 360)",
+      "tags": ["360", "manager"],
+      "source": "https://github.com/xenia-manager/xenia-manager"
     }
   ]
 }
