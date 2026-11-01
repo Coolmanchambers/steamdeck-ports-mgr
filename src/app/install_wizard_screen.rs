@@ -86,7 +86,10 @@ thread_local! {
     static ROUTER: RefCell<Option<Router>> = const { RefCell::new(None) };
     static WORK_TIMER: slint::Timer = slint::Timer::default();
     static WORK: RefCell<Vec<Box<dyn FnMut() -> bool>>> = RefCell::new(Vec::new());
+    static HOME_DRAWN: Cell<Option<Instant>> = const { Cell::new(None) };
 }
+
+const HOME_EVERY: Duration = Duration::from_secs(1);
 
 fn run_of(key: &str) -> Option<Rc<Run>> {
     RUNS.with(|r| r.borrow().get(key).cloned())
@@ -323,18 +326,26 @@ fn tick(app: &Rc<AppState>) {
             // Something else took the screen: the install goes on, as if sent to the background.
             run.background.set(true);
         }
-        let note = wiz::tile_note(run.meter.phase(), done, total);
-        if *run.tile.borrow() != note {
-            *run.tile.borrow_mut() = note;
-            tiles_changed |= run.background.get();
-        }
+        tiles_changed |= run.background.get() && *run.tile.borrow() != wiz::tile_note(run.meter.phase(), done, total);
     }
-    if tiles_changed && app.home.is_active() && !dialog_is_open(app) {
+    // Home is redrawn at most once a second for its tiles (a redraw reads a few things from disk, cached). A tile's line
+    // counts as shown only once Home was redrawn with it.
+    let due = HOME_DRAWN.with(|d| d.get().is_none_or(|at| at.elapsed() >= HOME_EVERY));
+    if tiles_changed && due && app.home.is_active() && !dialog_is_open(app) {
+        HOME_DRAWN.with(|d| d.set(Some(Instant::now())));
         app.refresh_current_view();
+        for run in &runs {
+            let (done, total) = run.meter.bytes();
+            *run.tile.borrow_mut() = wiz::tile_note(run.meter.phase(), done, total);
+        }
     }
     // A finished background install's note, once nothing else is on screen.
     if !dialog_is_open(app) {
-        if let Some(key) = WAITING.with(|w| (!w.borrow().is_empty()).then(|| w.borrow_mut().remove(0))) {
+        let next = WAITING.with(|w| {
+            let mut w = w.borrow_mut();
+            (!w.is_empty()).then(|| w.remove(0))
+        });
+        if let Some(key) = next {
             if let (Some(flow), Some(router)) = (flow_of(&key), ROUTER.with(|r| r.borrow().clone())) {
                 show_finished(app, &router, &flow);
             }

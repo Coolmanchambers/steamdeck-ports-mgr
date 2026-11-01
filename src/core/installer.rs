@@ -149,6 +149,7 @@ fn content_disposition_filename(header: &str) -> Option<String> {
     }
 }
 
+// Fork (install wizard): `ctl` reports the bytes and can stop it.
 fn download(url: &str, dest: &Path, on_progress: &mut dyn FnMut(&str), ctl: &DownloadCtl) -> Result<PathBuf, InstallError> {
     let mut url = url.to_string();
     let mut dest = dest.to_path_buf();
@@ -428,7 +429,7 @@ pub fn install_extra(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMu
     on_progress("Downloading extra files...");
     let tmp = temp_dir_in(library_dir, "_extra_download_")?;
     let dest = tmp.path().join(safe_download_name(url.rsplit('/').next().unwrap_or("extra")));
-    let archive_path = download(url, &dest, on_progress, &DownloadCtl::default())?;
+    let archive_path = download(url, &dest, on_progress, &DownloadCtl::default())?; // Fork (install wizard)
     let staging = temp_dir_in(library_dir, "_extra_staging_")?;
     let merge_root = extract_to_staging(&archive_path, staging.path(), None)?;
     merge_into(&merge_root, &dest_dir).install_err()
@@ -454,7 +455,7 @@ fn download_release_asset(
     overrides: InstallOverrides,
     tmp_path: &Path,
     on_progress: &mut dyn FnMut(&str),
-    ctl: &DownloadCtl,
+    ctl: &DownloadCtl, // Fork (install wizard): byte progress and Stop
 ) -> Result<(PathBuf, Option<String>), InstallError> {
     let (release, asset) = match (overrides.release, overrides.asset) {
         (Some(r), Some(a)) => (r.clone(), a.clone()),
@@ -479,7 +480,7 @@ pub fn install_port(
     gitlab_token: Option<&str>,
     overrides: InstallOverrides,
     on_progress: &mut dyn FnMut(&str),
-    ctl: &DownloadCtl,
+    ctl: &DownloadCtl, // Fork (install wizard): byte progress and Stop
 ) -> Result<Option<String>, InstallError> {
     let library_dir = paths.library_dir;
     let dest_dir = safe_join(library_dir, &port.folder).map_err(InstallError::Message)?;

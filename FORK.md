@@ -294,6 +294,16 @@ Files added by this fork:
 | 2026-11-01 | `src/fork/deck_ready/view.rs`, `src/app/deck_ready_screen.rs`, `ui/fork/deck-ready.slint`, `src/fork/mod.rs` | Same game in the Deck-ready list: `Row.badge` and `mark_same_game` (the badge as its own chip left of the tags with its own fit check, so only it drops on a narrow row; the note at the end of the sub line; installed rows unchanged), `TagKind::Info` (chip kind 4, info color), one look at the disk per rebuild for both the list's matching and the installed games, "Add {name}?" preceded by the question for an entry that is the same game; one module line |
 | 2026-11-01 | `src/app/port_page_screen.rs` | Same game: the Port page's Start on a port that is not installed (only when its folder went away while the page was open) asks first; "Not now" returns to the list, since the page closes for a port that is not installed |
 | 2026-11-01 | `testdata/same-game/ports.json`, `testdata/same-game/deck-ready.json` | Pinned copies (2026-11-01) of the catalog and the Deck-ready list for the same-game tests: the named titles and the exact pair lists run on these, so a catalog sync or a list refresh never turns them red; the live files only have to keep a short list of pairs matched and apart |
+| 2026-11-01 | `src/core/installer.rs` | Install wizard: `DownloadCtl` (`on_bytes(downloaded, total)` and a cancel flag) passed to `install_port` and `download`; the download copies through `copy_counted` (64 KB blocks, the count after each, the flag checked before each) instead of `io::copy`, its total from `Content-Length`; a stop fails with exactly `CANCELLED` (also checked once the download ends), the `_download_` folder going with the return; `with_path` names the place the human way; 2 tests |
+| 2026-11-01 | `src/core/jobs.rs` | Install wizard: `run_install` takes the `DownloadCtl` and passes it on (one parameter) |
+| 2026-11-01 | `src/app/install_launch.rs` | Install wizard: `start_install` shows `install_wizard_screen::downloading` (its page and byte meter) instead of the progress dialog, and the progress text also sets the meter's phase; `activate_port` and `install_row` open the wizard's first page (was `same_game_screen::confirm_then`), and A on a port that is installing brings its page back |
+| 2026-11-01 | `src/app/events.rs` | Install wizard: `finish_operation` leaves the screen alone for an install sent to the background (`end_run`); after an install the wizard's next pages come before the versioned note and the game files search (`after_install`); a stopped download gets no error message (`install_failed`) |
+| 2026-11-01 | `src/core/save_backup.rs` | Install wizard: the update backup's error texts name the save folder and the zip the human way (`human_path_here`) |
+| 2026-11-01 | `src/fork/install_wizard.rs`, `src/app/install_wizard_screen.rs`, `src/app/mod.rs`, `src/fork/mod.rs` | The install wizard (see "Install wizard"): its pages and words, the byte meter, speed and tile line (tested), and the flow on screen |
+| 2026-11-01 | `src/fork/uninstall_keep.rs` | Install wizard: `newest_kept`, `restore_plan`, `restore_kept` (put kept files back on a reinstall: copies, a file in the way copied to Saves Backup > Replaced by restore first, never through a link); the texts that said kept files are never put back; 5 tests |
+| 2026-11-01 | `src/fork/rom_screens/pages.rs`, `src/fork/rom_screens/file_pick.rs`, `src/app/rom_screens/find_flow.rs` | Install wizard: "Choose the file myself" (`browse_page`, one folder a page, the place the human way) and a hand-picked file that does not match (`no_match_page`, no checksums) are card pages, not picker lists; 2 tests |
+| 2026-11-01 | `src/app/same_game_screen.rs`, `src/app/port_page_screen.rs`, `src/app/deck_ready_screen.rs`, `src/app/checkup_screen.rs`, `src/app/home_screen.rs` | Install wizard: the same-game question folds into the first page (`confirm_then_or` and `confirm_entry_then` removed; `confirm_then` stays for Info's Select version); the Port page's Start and Update now, Fix problems' Update and a Deck-ready project open the wizard (the "Add {name}?" dialog is gone: its first page shows the entry, Install writes it); Home has a tile for a port that is installing, its line "Downloading 42%" |
+| 2026-11-01 | `src/fork/ports_folder.rs`, `src/fork/port_page/mod.rs` | Install wizard: the missing ports folder is named the human way; the Uninstall page says a reinstall offers to put kept files back |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -1400,6 +1410,8 @@ What you see:
   "Other version: ..."), after the system, version and date. All ports shows the chip left of Install (filled for the
   same game, outlined for another version) and the same words, muted, after the name when there is room. Installed rows,
   the big-mode card grid, Home's Add a port and the Deck-ready card counts are unchanged.
+- Since the install wizard (2026-11-01) the note is on the install's first page ("Install <name>?", see "Install
+  wizard"), for the same game and for another version alike; the page below remains only for Info's Select version.
 - Installing a port that is the **same game** first shows a page titled "Same game: <full name>". The header is the full
   name with its project ("The Legend of Zelda: Majora's Mask (Zelda64Recomp)"), the card the installed port's cover with
   "Installed as 2ship2harkinian", and the text "Zelda64Recomp is a different project for the same game as
@@ -1419,6 +1431,43 @@ Upstream files touched (`// Fork:` comments): `src/app/install_launch.rs` (`acti
 `install_row` go through `confirm_then`), `src/app/dialogs.rs` (Info's Select version on a port that is not installed),
 `src/app/state.rs` (one read of what is installed, the row badges), `ui/app-window.slint` (three `PortItem` fields, the
 chip and the note), `src/app/mod.rs` (module line).
+
+## Install wizard (`src/fork/install_wizard.rs`, `src/app/install_wizard_screen.rs`)
+
+Installing a port is one guided flow on pages, one question each, the same from every place that installs: A on a port
+in All ports or Deck-ready (and a Deck-ready project the app does not have yet), the Port page's Start and Update now,
+and Fix problems' Update. Pages, in order:
+1. **"Install <name>?"** ("Update <name>?" when installed): the cover; what it is ("Wii U · v1.4.1", from the catalog's
+   tags or the Deck-ready label, the release or the installed version); where it goes ("Goes to: SD card > Ports"); what
+   game files it needs in plain words (`rom_screens::pages::need_words`), "No game files needed" when the entry names
+   none (a Deck-ready project's page says its project page tells instead, since nothing is known). Install
+   (recommended) / Not now; a "Project page" button. The same-game note is on this page: for the same game and for
+   another version the options become "Not now" (recommended, the cursor on it) and "Install it as well".
+2. **Downloading**: a real progress bar, "12 MB of 120 MB" and the speed over the last four seconds ("4.2 MB/s"); a
+   moving bar and "Downloading..." when the server gives no size. "Keep going in the background" (closes the page;
+   Home's tile says "Downloading 42%", then the usual badge) and "Stop and remove the download" (nothing is kept). B is
+   Keep going. Unpacking shows "Installing..." with a moving bar and no Stop. Every install shows this page, including
+   Play's update and Reinstall; upstream's progress dialog is no longer used for installs (it still is for Install
+   extras and the version list).
+3. **Put your kept files back?** (only when an uninstall kept files for this folder and some are not back): what they
+   are and when they were kept; files already in the port folder in another version are copied to Saves Backup >
+   Replaced by restore first. Before the game files page, since kept files are mostly game files.
+4. **Game files** (only when the port names files it does not have): the Game files card pages. "Choose the file
+   myself" is now card pages too (one folder a page, game files first, the place the human way), and so is the answer
+   for a file that does not match.
+5. **"Add it to Steam with its artwork?"** (skipped when it is in Steam already, or there is no Steam account): the
+   cover and icon are fetched first, then the setup wizard's one-port add (`setup_wizard::steam::add_all` on a screen of
+   this port only): written with Steam closed (`shortcuts.vdf` backed up), else queued, and outside Game Mode the Close
+   Steam flow asks to close Steam.
+6. **Done**: "<name> is ready" or "<name> is installed; it needs its game files before it starts", with what happened
+   (kept files, Steam, a versioned file's note). Play now / Back to Home.
+
+An install sent to the background shows "<name> finished installing" when it ends (at once when nothing else is open,
+else as soon as nothing is), with "Finish setting it up" for pages 3 to 6. Stop: the installer's cancel flag
+(`DownloadCtl`) stops the copy at its next 64 KB block, the install fails with `installer::CANCELLED` (its temporary
+folder removed with it), no error is shown and the first page's caller gets the screen back. Rulings: Select version
+keeps the version list and Info's same-game question (`same_game_screen::confirm_then`); Play's update and Reinstall show
+the downloading page but no pages after it.
 
 ## Fixes to upstream behavior
 
