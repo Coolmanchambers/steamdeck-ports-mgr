@@ -138,7 +138,7 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
     let home = std::env::var_os("HOME").map(PathBuf::from);
     for (src, _) in sources.iter().filter(|(src, _)| src.is_dir()) {
         let problem = crate::fork::save_restore::folder_problem(src, game_dir, game_dir.parent(), saves_backup_dir, home.as_deref())
-            .map(|why| format!("{} {why}; nothing was backed up", src.display()))
+            .map(|why| format!("{} {why}; nothing was backed up", crate::fork::port_page::paths::human_path_here(src))) // Fork (install wizard): the place the human way
             .or_else(|| crate::fork::save_restore::link_problem(src, game_dir, saves_backup_dir, home.as_deref()).map(|why| why.replace("nothing was changed", "nothing was backed up")));
         if let Some(problem) = problem {
             return Err(format!("The save folder of {} cannot be backed up: {problem}. Open Info > Find saves... and choose the game's own save folder, then update again.", port.name));
@@ -162,14 +162,14 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
     let staging = tempfile::Builder::new().prefix("_update_backup_").tempdir_in(saves_backup_dir).map_err(|e| e.to_string())?;
     let mut copied_any = false;
     for (src, field) in &sources {
-        copied_any |= copy_save(src, &staging.path().join(field)).map_err(|e| format!("{e} -- {}", src.display()))?;
+        copied_any |= copy_save(src, &staging.path().join(field)).map_err(|e| format!("{e} -- {}", crate::fork::port_page::paths::human_path_here(src)))?; // Fork (install wizard): the place the human way
     }
     if !copied_any {
         return Ok(None);
     }
     let zip_path = unused_zip_path(&backups_dir, stamp)?;
     let zipped = zip_staging_dir(staging.path(), &zip_path)
-        .and_then(|()| if fs::metadata(&zip_path).map_or(true, |m| m.len() == 0) { Err(format!("the backup file is missing -- {}", zip_path.display())) } else { Ok(()) });
+        .and_then(|()| if fs::metadata(&zip_path).map_or(true, |m| m.len() == 0) { Err(format!("the backup file is missing -- {}", crate::fork::port_page::paths::human_path_here(&zip_path))) } else { Ok(()) });
     if let Err(e) = zipped {
         let _ = fs::remove_file(&zip_path);
         return Err(e);

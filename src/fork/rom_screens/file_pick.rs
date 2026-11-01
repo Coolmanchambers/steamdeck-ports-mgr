@@ -133,6 +133,20 @@ impl FileBrowser {
     pub fn file(&self, i: usize) -> Option<&Path> {
         self.files.get(i).map(|(p, _)| p.as_path())
     }
+
+    /// The folder's subfolders' names, in list order.
+    pub fn folder_names(&self) -> Vec<String> {
+        self.folders.iter().map(|p| name_of(p)).collect()
+    }
+
+    /// The folder's files: (name, size in words), game files first.
+    pub fn file_entries(&self) -> Vec<(String, String)> {
+        self.files.iter().map(|(p, size)| (name_of(p), human_bytes(*size))).collect()
+    }
+
+    pub fn can_go_up(&self) -> bool {
+        self.current.parent().is_some()
+    }
 }
 
 #[cfg(test)]

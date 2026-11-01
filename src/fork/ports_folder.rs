@@ -108,7 +108,8 @@ pub fn availability(dir: &Path, mounts: &[MountEntry], media_roots: &[PathBuf]) 
 }
 
 pub fn missing_text(dir: &Path, why: &Missing) -> String {
-    let path = dir.display();
+    // The place the human way ("SD card > Ports"), never the card's ID.
+    let path = crate::fork::port_page::paths::human_path_here(dir);
     match why {
         Missing::DriveNotMounted(_) => format!("Your ports folder {path} is not available. Is the SD card in?"),
         Missing::FolderGone => format!("Your ports folder {path} is not there any more. Was it moved, renamed or deleted?"),

@@ -30,10 +30,10 @@ use crate::core::path_safety::safe_join;
 use crate::fork::rom_library::{load_local_entries, Mapping, RomLibraryStore};
 use crate::fork::setup_wizard::files_state::FilesState;
 use crate::fork::rom_screens::connect_screen::{ConnectScreen, Pick};
-use crate::fork::rom_screens::file_pick::{FileBrowser, Line as FileLine};
+use crate::fork::rom_screens::file_pick::FileBrowser;
 use crate::fork::rom_screens::find::{
-    find_game_files_for_port, find_game_files_for_ports, match_hand_picked, no_match_lines, use_anyway,
-    FindOutcome, FindRequest, HandPick, LATER_HINT,
+    find_game_files_for_port, find_game_files_for_ports, match_hand_picked, use_anyway, FindOutcome, FindRequest, HandPick, Need,
+    LATER_HINT,
 };
 use crate::fork::rom_screens::offer::{self, AutoSearch};
 use crate::fork::rom_screens::report::PortRow;
@@ -52,10 +52,6 @@ const ROW_WIDTH: usize = 110;
 
 fn close_back() -> Back {
     Rc::new(|app, router| close_current_dialog(app, router))
-}
-
-fn title_for(name: &str) -> String {
-    format!("Game files for {}", ellipsize(name, 50))
 }
 
 type LocalEntries = HashMap<String, Value>;
@@ -370,7 +366,7 @@ fn gf_page(app: &Rc<AppState>, router: &Router, page: Page<GfAct>, ctx: Rc<Ctx>,
                     };
                     connect_by_hand(app, router, c_act.req.clone(), c_act.back.clone(), again);
                 }
-                GfAct::Later | GfAct::Done | GfAct::Copy | GfAct::Pick(_) => (c_act.back)(app, router),
+                GfAct::Later | GfAct::Done | GfAct::Copy | GfAct::Pick(_) | GfAct::Up | GfAct::Folder(_) | GfAct::File(_) | GfAct::UseAnyway(_) | GfAct::OtherFile => (c_act.back)(app, router),
             }
         }),
         on_back: Rc::new(move |app, router| (c_back.back)(app, router)),
@@ -602,29 +598,33 @@ fn connect_by_hand(app: &Rc<AppState>, router: &Router, req: FindRequest, back: 
     show_file_browser(app, router, Rc::new(RefCell::new(FileBrowser::open(&start))), Rc::new(req), back, cancel);
 }
 
+/// Fork (install wizard): "Choose the file myself" as card pages (one folder a page, the place the human way), not a
+/// picker list showing the raw path.
 fn show_file_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrowser>>, req: Rc<FindRequest>, back: Back, cancel: Back) {
-    let labels = browser.borrow().labels();
-    let title = format!("Pick a file: {}", ellipsize(&browser.borrow().current.to_string_lossy(), 30));
-    let Some(dialog) = build_picker_dialog(app, router, &title, &labels) else { return };
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| {
-            let line = browser.borrow().lines().get(index as usize).copied();
-            match line {
-                Some(FileLine::Up) => browser.borrow_mut().up(),
-                Some(FileLine::Folder(i)) => browser.borrow_mut().enter(i),
-                Some(FileLine::File(i)) => {
+    let folder = {
+        let b = browser.borrow();
+        pages::Folder { place: human_path(&b.current, &Places::system()), can_go_up: b.can_go_up(), folders: b.folder_names(), files: b.file_entries(), hidden: b.hidden_count, error: b.error.clone() }
+    };
+    let page = pages::browse_page(req.port.display_name(), &folder);
+    let (c1, c2) = (cancel.clone(), cancel.clone());
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| {
+            match act {
+                GfAct::Up => browser.borrow_mut().up(),
+                GfAct::Folder(i) => browser.borrow_mut().enter(i),
+                GfAct::File(i) => {
                     let Some(path) = browser.borrow().file(i).map(Path::to_path_buf) else { return };
-                    return hand_picked(&app, &router, browser.clone(), req.clone(), path, back.clone(), cancel.clone());
+                    return hand_picked(app, router, browser.clone(), req.clone(), path, back.clone(), cancel.clone());
                 }
-                Some(FileLine::Cancel) => return cancel(&app, &router),
-                Some(FileLine::Where | FileLine::More) | None => return,
+                _ => return cancel(app, router),
             }
-            show_file_browser(&app, &router, browser.clone(), req.clone(), back.clone(), cancel.clone());
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+            show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone());
+        }),
+        on_back: Rc::new(move |app, router| c1(app, router)),
+        on_exit: Rc::new(move |app, router| c2(app, router)),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }
 
 fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrowser>>, req: Rc<FindRequest>, path: PathBuf, back: Back, cancel: Back) {
@@ -645,29 +645,28 @@ fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrow
             // Cancelled: back to the same folder to pick again.
             Ok(None) => show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone()),
             Ok(Some(HandPick::Matches { row })) => open_row(app, router, &row, back),
+            // Fork (install wizard): the answer as a card page (plain words, no checksums), not a picker list.
             Ok(Some(HandPick::NoMatch { row, file, slots, wrong_version })) => {
                 let name = req.port.display_name().to_string();
-                let mut labels: Vec<String> = no_match_lines(&name, &row, &file, wrong_version).iter().map(|l| ellipsize(l, ROW_WIDTH)).collect();
-                let first = labels.len();
-                labels.extend(slots.iter().map(|i| {
-                    if slots.len() == 1 {
-                        "Use it anyway".to_string()
-                    } else {
-                        format!("Use it anyway for: {}", ellipsize(&row.matched.slots[*i].label, 60))
-                    }
-                }));
-                let other = labels.len();
-                labels.push("Choose another file".into());
-                labels.push("Cancel".into());
-                open_list_at(app, router, &title_for(&name), labels, first, move |app, router, index| {
-                    if let Some(&slot) = index.checked_sub(first).and_then(|n| slots.get(n)) {
-                        open_row(app, router, &use_anyway(&row, slot, &file), back.clone());
-                    } else if index == other {
-                        show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone());
-                    } else if index == other + 1 {
-                        cancel(app, router);
-                    }
-                });
+                let needs: Vec<Need> = row.matched.slots.iter().filter(|s| !s.optional).map(Need::from_slot).collect();
+                let uses: Vec<String> = slots.iter().map(|i| row.matched.slots[*i].label.clone()).collect();
+                let page = pages::no_match_page(&name, &file_name(&file.path), wrong_version, &needs, &uses);
+                let (c1, c2) = (cancel.clone(), cancel.clone());
+                let handlers = Handlers {
+                    on_action: Rc::new(move |app, router, act| match act {
+                        GfAct::UseAnyway(n) => {
+                            if let Some(&slot) = slots.get(n) {
+                                open_row(app, router, &use_anyway(&row, slot, &file), back.clone());
+                            }
+                        }
+                        GfAct::OtherFile => show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone()),
+                        _ => cancel(app, router),
+                    }),
+                    on_back: Rc::new(move |app, router| c1(app, router)),
+                    on_exit: Rc::new(move |app, router| c2(app, router)),
+                    on_input: None,
+                };
+                show_page(app, router, page, handlers);
             }
         },
     );

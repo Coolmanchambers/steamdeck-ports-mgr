@@ -4,6 +4,7 @@
 //! The flow that shows them is `src/app/rom_screens/find_flow.rs`; what was found is `find::FindOutcome`.
 
 use super::find::Need;
+use super::util::ellipsize;
 use crate::fork::page::{Focus, Mark, Page, PageButton, PageOption, LEFT};
 use crate::fork::rom_library::requirements::SlotKind;
 
@@ -25,6 +26,13 @@ pub enum GfAct {
     Copy,
     /// Done with a result page.
     Done,
+    /// Choose the file myself: up one folder, into folder `n`, file `n`.
+    Up,
+    Folder(usize),
+    File(usize),
+    /// A hand-picked file that does not match: use it for the `n`th thing it could be, or choose another.
+    UseAnyway(usize),
+    OtherFile,
 }
 
 /// The window title of every page of the flow.
@@ -194,6 +202,71 @@ pub fn result_page(name: &str, title: &str, text: &str) -> Page<GfAct> {
     p
 }
 
+/// What one folder of "Choose the file myself" holds, as the page shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Folder {
+    /// The folder the human way ("SD card > Emulation > roms").
+    pub place: String,
+    pub can_go_up: bool,
+    pub folders: Vec<String>,
+    /// (file name, its size in words).
+    pub files: Vec<(String, String)>,
+    /// Entries left out (a folder of thousands).
+    pub hidden: usize,
+    pub error: Option<String>,
+}
+
+/// "Choose the file myself" as cards: the folders and files of one folder (game files first), Up one level, Cancel. A
+/// file is only read once chosen; nothing is moved.
+pub fn browse_page(name: &str, f: &Folder) -> Page<GfAct> {
+    let mut p = base(name, "Choose your game file");
+    // The folder's own name at the top right: each folder is its own page, so the cursor memory never carries a place
+    // from one folder into another.
+    p.step_text = f.place.rsplit(" > ").next().unwrap_or_default().to_string();
+    p.paragraphs.push(match &f.error {
+        Some(e) => format!("{}: {e}", f.place),
+        None if f.folders.is_empty() && f.files.is_empty() => format!("{} is empty.", f.place),
+        None => format!("In {}. Your game files are only read, never moved.", f.place),
+    });
+    if f.can_go_up {
+        p.options.push(option("Up one level", "The folder this one is in", GfAct::Up));
+    }
+    p.options.extend(f.folders.iter().enumerate().map(|(i, d)| option(&ellipsize(d, 40), "Folder", GfAct::Folder(i))));
+    p.options.extend(f.files.iter().enumerate().map(|(i, (file, size))| option(&ellipsize(file, 40), size, GfAct::File(i))));
+    if f.hidden > 0 {
+        p.fact(Mark::None, format!("{} more are not shown; open a folder further down", f.hidden));
+    }
+    let first_file = f.can_go_up as usize + f.folders.len();
+    p.initial = if f.files.is_empty() { Focus::Option(0) } else { Focus::Option(first_file) };
+    p.buttons[LEFT] = Some(PageButton { label: "Cancel".into(), action: GfAct::Later });
+    if p.options.is_empty() {
+        p.initial = Focus::Button(LEFT);
+    }
+    p.b_does(&GfAct::Later)
+}
+
+/// A hand-picked file that is not one the port lists: what it is, what the port wants, and "Use it anyway" for each
+/// thing it could be. `uses` are those things' names (one: just "Use it anyway").
+pub fn no_match_page(name: &str, file: &str, wrong_version: bool, needs: &[Need], uses: &[String]) -> Page<GfAct> {
+    let mut p = base(name, "This file does not match");
+    let what = if wrong_version { "has the right name, but it is another version than the one" } else { "is not a file" };
+    p.paragraphs.push(format!("{file} {what} {name} lists. It needs:"));
+    needs_facts(&mut p, needs, name, Mark::ToDo);
+    p.paragraphs.push("Using it anyway may not work. Your file is only read either way.".into());
+    p.options = uses
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let title = if uses.len() == 1 { "Use it anyway".to_string() } else { format!("Use it for: {}", ellipsize(label, 28)) };
+            option(&title, "If you are sure it is your copy", GfAct::UseAnyway(i))
+        })
+        .collect();
+    p.options.push(option("Choose another file", "Back to the list of files", GfAct::OtherFile));
+    p.buttons[LEFT] = Some(PageButton { label: "Cancel".into(), action: GfAct::Later });
+    p.initial = Focus::Option(p.options.len() - 1);
+    p.b_does(&GfAct::Later)
+}
+
 /// The port names no game files.
 pub fn none_needed_page(name: &str) -> Page<GfAct> {
     result_page(name, "No game files needed", &format!("{name} does not name any game files it needs, so there is nothing to connect."))
@@ -243,6 +316,49 @@ mod tests {
         n.kind = SlotKind::Bios;
         assert!(need_words(&n, "SoH").starts_with("BIOS: "));
         assert_eq!(need_words(&need("", true), "Dusklight"), "Your own copy of Dusklight");
+    }
+
+    #[test]
+    fn choose_the_file_myself_is_cards_with_the_place_the_human_way() {
+        let f = Folder {
+            place: "SD card > Emulation > roms".into(),
+            can_go_up: true,
+            folders: vec!["wiiu".into()],
+            files: vec![("The Legend of Zelda - The Wind Waker HD (USA) (En,Fr,Es).wua".into(), "6.2 GB".into())],
+            hidden: 3,
+            error: None,
+        };
+        let p = browse_page("The Wind Waker HD", &f);
+        assert_eq!(p.title, "Choose your game file");
+        assert_eq!(p.paragraphs[0], "In SD card > Emulation > roms. Your game files are only read, never moved.");
+        let acts: Vec<GfAct> = p.options.iter().map(|o| o.action).collect();
+        assert_eq!(acts, [GfAct::Up, GfAct::Folder(0), GfAct::File(0)]);
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(GfAct::File(0)), "the cursor starts on the first file");
+        assert!(p.options.iter().all(|o| o.title.chars().count() <= 40), "one line each on the 800 px page");
+        assert_eq!(p.options[2].detail, "6.2 GB");
+        assert_eq!(p.facts, ["3 more are not shown; open a folder further down"]);
+        assert_eq!(p.back_hint, "Cancel");
+        assert!(p.paragraphs.iter().chain(p.options.iter().map(|o| &o.title)).all(|t| !t.contains("/run/media")));
+        let empty = browse_page("X", &Folder { place: "Internal storage > Home".into(), ..Folder::default() });
+        assert_eq!(empty.paragraphs[0], "Internal storage > Home is empty.");
+        assert_eq!(action_at(&empty, initial_focus(&empty)), Some(GfAct::Later));
+        let broken = browse_page("X", &Folder { place: "SD card".into(), error: Some("Could not open this folder".into()), ..Folder::default() });
+        assert_eq!(broken.paragraphs[0], "SD card: Could not open this folder");
+    }
+
+    #[test]
+    fn a_file_that_does_not_match_says_so_plainly_and_offers_use_anyway() {
+        let p = no_match_page("SoH", "mario.z64", false, &[need("oot.z64", false)], &["Ocarina of Time".into()]);
+        assert_eq!(p.paragraphs[0], "mario.z64 is not a file SoH lists. It needs:");
+        assert_eq!(p.facts, ["oot.z64"]);
+        let acts: Vec<GfAct> = p.options.iter().map(|o| o.action).collect();
+        assert_eq!(acts, [GfAct::UseAnyway(0), GfAct::OtherFile]);
+        assert_eq!(p.options[0].title, "Use it anyway");
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(GfAct::OtherFile), "the safe choice first");
+        assert!(p.paragraphs.iter().chain(p.facts.iter()).all(|t| !t.contains("CRC")));
+        let two = no_match_page("SoH", "x.z64", true, &[], &["Ocarina of Time".into(), "Master Quest".into()]);
+        assert_eq!(two.options[1].title, "Use it for: Master Quest");
+        assert!(two.paragraphs[0].contains("another version"));
     }
 
     #[test]
