@@ -167,6 +167,7 @@ fn tag_model(row: &Row) -> slint::ModelRc<DeckReadyTag> {
                 TagKind::Dashed => 1,
                 TagKind::Warning => 2,
                 TagKind::Muted => 3,
+                TagKind::Info => 4,
             },
         })
         .collect();
@@ -207,7 +208,13 @@ pub(crate) fn rebuild(app: &AppState) {
     let ui = &app.deck_ready;
     let previous = ui.rows.borrow().get(ui.selected.get()).map(|r| r.id.clone());
     let rows = match ui.index.borrow().as_ref() {
-        Some(index) => view::rows(index, &known_ports(app), &ui.filters.borrow(), &app.windowed_nav.search_query.borrow()),
+        Some(index) => {
+            let mut rows = view::rows(index, &known_ports(app), &ui.filters.borrow(), &app.windowed_nav.search_query.borrow());
+            // Same game: rows for a game installed under another project say so (src/fork/same_game.rs).
+            let log = view::mark_same_game(&mut rows, index, &super::same_game_screen::owned_games(app));
+            super::same_game_screen::log_matches("deck-ready", log);
+            rows
+        }
         None => Vec::new(),
     };
     let selected = previous.and_then(|id| rows.iter().position(|r| r.id == id)).unwrap_or(0).min(rows.len().saturating_sub(1));
@@ -315,7 +322,14 @@ fn folder_taken(app: &AppState, folder: &str) -> bool {
     entry::folder_taken(&app.paths.library_dir(), catalog.iter().map(|p| p.folder.as_str()), folder)
 }
 
+/// Same game: an entry that is the same game as an installed port asks first, then "Add {name}?" as before.
 fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
+    let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).map(|e| (e.clone(), view::display_name(e))) else { return };
+    let id = id.to_string();
+    super::same_game_screen::confirm_entry_then(app, router, &name, &entry.name, entry.system.as_deref(), move |app, router| confirm_add_now(app, router, &id));
+}
+
+fn confirm_add_now(app: &Rc<AppState>, router: &Router, id: &str) {
     let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).map(|e| (e.clone(), view::display_name(e))) else { return };
     let Some(folder) = entry::folder_for(&entry, |f| folder_taken(app, f)) else {
         return open_message_dialog(app, router, &name, "There is no free folder name for this port in Library, so nothing was added.\n");

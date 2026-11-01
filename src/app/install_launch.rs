@@ -246,7 +246,8 @@ pub(crate) fn with_indexed_port(app: &AppState, index: i32, action: impl FnOnce(
 
 pub(crate) fn install_row(app: &Rc<AppState>, router: &Router, index: i32) {
     if !dialog_is_open(app) {
-        with_indexed_port(app, index, |port| start_install(app, router, port, None, None));
+        // Fork (same game): the same game installed under another project asks first.
+        with_indexed_port(app, index, |port| super::same_game_screen::confirm_then(app, router, &port.clone(), move |app, router| start_install(app, router, port.clone(), None, None)));
     }
 }
 
@@ -263,7 +264,9 @@ pub(crate) fn activate_port(app: &Rc<AppState>, router: &Router, port: &Port) {
     if app.is_installed(port) {
         play_port(app, router, port);
     } else {
-        start_install(app, router, port.clone(), None, None);
+        // Fork (same game): the same game installed under another project asks first.
+        let port = port.clone();
+        super::same_game_screen::confirm_then(app, router, &port.clone(), move |app, router| start_install(app, router, port.clone(), None, None));
     }
 }
 

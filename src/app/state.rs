@@ -199,11 +199,13 @@ impl AppState {
     fn rebuild_ports_model(&self) {
         let items: Vec<PortItem> = {
             let state = self.state.borrow();
-            self.windowed_nav
-                .displayed_windowed
-                .borrow()
+            let displayed = self.windowed_nav.displayed_windowed.borrow();
+            // Fork (same game): a row whose game is installed under another project gets a badge.
+            let badges = super::same_game_screen::list_badges(self, &displayed);
+            displayed
                 .iter()
-                .map(|p| {
+                .zip(badges)
+                .map(|(p, badge)| {
                     let installed = self.is_installed(p);
                     PortItem {
                         name: p.name.clone().into(),
@@ -211,6 +213,8 @@ impl AppState {
                         installed,
                         is_local: p.user_managed,
                         saves_warning: installed && super::save_finder_screen::saves_warning(self, p),
+                        same_game_badge: badge.as_ref().map_or("", |b| b.label).into(),
+                        same_game_note: badge.map(|b| b.note).unwrap_or_default().into(),
                     }
                 })
                 .collect()

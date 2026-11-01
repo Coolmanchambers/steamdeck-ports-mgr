@@ -5,7 +5,7 @@ import { ListView } from "std-widgets.slint";
 import { SemanticColors, Theme, ThemedScrollbar } from "../shared.slint";
 import { DialogButton, DialogChrome } from "../dialogs/chrome.slint";
 
-// kind: 0 plain, 1 dashed (community find), 2 warning, 3 muted (off in catalog)
+// kind: 0 plain, 1 dashed (community find), 2 warning, 3 muted (off in catalog), 4 info (you have this game)
 export struct DeckReadyTag {
     label: string,
     kind: int,
@@ -278,8 +278,8 @@ export component DeckReadyList inherits Rectangle {
                         spacing: root.spacing;
                         for tag in item.tags: Chip {
                             text: tag.label;
-                            fill: tag.kind == 3 ? Theme.border-color : (tag.kind == 2 ? SemanticColors.warning : transparent);
-                            ink: tag.kind == 2 || tag.kind == 3 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-text : Theme.list-text);
+                            fill: tag.kind == 4 ? SemanticColors.info : (tag.kind == 3 ? Theme.border-color : (tag.kind == 2 ? SemanticColors.warning : transparent));
+                            ink: tag.kind >= 2 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-text : Theme.list-text);
                             line: tag.kind == 1 ? Theme.search-text : (tag.kind == 0 ? (row.selected ? Theme.selected-text : Theme.list-text) : self.fill);
                             font-size: root.small-font;
                             chip-height: root.chip-height;

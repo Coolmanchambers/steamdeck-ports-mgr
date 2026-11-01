@@ -27,6 +27,7 @@ pub mod page;
 pub mod port_page;
 pub mod rom_library;
 pub mod rom_screens;
+pub mod same_game;
 pub mod port_mover;
 pub mod ports_folder;
 pub mod program_detect;

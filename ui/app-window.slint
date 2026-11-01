@@ -19,6 +19,9 @@ export struct PortItem {
     is-local: bool,
     // Fork: installed, and its saves are not found (src/app/save_finder_screen.rs).
     saves-warning: bool,
+    // Fork: not installed, and its game is installed under another project (src/fork/same_game.rs); empty for none.
+    same-game-badge: string,
+    same-game-note: string,
 }
 
 export { CardItem, CardRow, SemanticColors, Theme, MessageDialog, TwoButtonDialog, InfoDialog, ProgressDialog, ListPickerDialog, SearchListDialog, PickerItem, Tr }
@@ -521,7 +524,11 @@ export component AppWindow inherits Window {
                                     property <length> mini-w: 26px / Theme.scale-factor;
                                     property <length> mini-x: self.leftmost-x - row-spacing - self.mini-w;
                                     property <bool> saves-mini: item.saves-warning && !self.saves-fits && self.mini-x > text-margin + 40px;
-                                    property <length> name-right-x: self.saves-fits ? self.saves-x : (self.saves-mini ? self.mini-x : self.leftmost-x);
+                                    // Fork (same game): "You have this game" left of Install on a row that is not installed, when it fits.
+                                    property <length> same-w: same-label.preferred-width + button-padding * 2;
+                                    property <length> same-x: self.leftmost-x - row-spacing - self.same-w;
+                                    property <bool> same-fits: item.same-game-badge != "" && !item.installed && self.same-x > text-margin + 80px;
+                                    property <length> name-right-x: self.saves-fits ? self.saves-x : (self.saves-mini ? self.mini-x : (self.same-fits ? self.same-x : self.leftmost-x));
 
                                     TouchArea {
                                         property <length> drag-start-cursor-y;
@@ -560,7 +567,8 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    Text {
+                                    // Fork (same game): an id, so "You have it as X" can follow the name.
+                                    name-text := Text {
                                         text: item.name;
                                         overflow: elide;
                                         color: index == root.selected-index ? Theme.selected-text : Theme.list-text;
@@ -568,6 +576,39 @@ export component AppWindow inherits Window {
                                         vertical-alignment: center;
                                         x: text-margin;
                                         width: row.name-right-x - text-margin - row-spacing;
+                                    }
+
+                                    // Fork (same game): muted "You have it as X" after the name, only where it has room.
+                                    Text {
+                                        property <length> room: row.name-right-x - row-spacing - self.x;
+                                        visible: item.same-game-note != "" && self.room > 80px;
+                                        text: item.same-game-note;
+                                        overflow: elide;
+                                        color: index == root.selected-index ? Theme.selected-text : Theme.list-text;
+                                        opacity: 0.6;
+                                        font-size: item-font-px * 0.85;
+                                        vertical-alignment: center;
+                                        x: text-margin + min(name-text.preferred-width, name-text.width) + row-spacing * 2;
+                                        width: max(0px, self.room);
+                                    }
+
+                                    // Fork (same game): the badge, drawn like the "! Saves" badge but not a button.
+                                    same-chip := Rectangle {
+                                        visible: row.same-fits;
+                                        x: row.same-x;
+                                        y: row-spacing;
+                                        width: row.same-fits ? row.same-w : 0px;
+                                        height: action-button-height;
+                                        background: SemanticColors.info;
+                                        same-label := Text {
+                                            text: item.same-game-badge;
+                                            color: SemanticColors.text-on-accent;
+                                            font-size: item-font-px * 0.85;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: 100%;
+                                            height: 100%;
+                                        }
                                     }
 
                                     saves-mini-btn := ActionButton {
