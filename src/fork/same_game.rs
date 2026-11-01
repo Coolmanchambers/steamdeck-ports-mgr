@@ -594,9 +594,10 @@ mod tests {
     fn deck_ready_system_labels_match_the_catalog_tags() {
         let all = catalog();
         for (label, want) in [("N64", System::N64), ("3DS", System::N3ds), ("Wii U", System::WiiU), ("GameCube", System::GameCube), ("Xbox 360", System::Xbox360), ("NDS", System::Nds), ("PS1", System::Ps1)] {
-            assert_eq!(system_from_label(label), Some(want), "{label}");
+            assert_eq!(system_from_label(label), k(want), "{label}");
         }
-        assert_eq!(system_from_label("PC"), None);
+        assert_eq!(system_from_label("PC"), Some(Sys::Other("pc")));
+        assert_eq!(system_from_label("Not a system"), None);
         let entry = Game::of_entry(MM_RECOMP, Some("N64"));
         assert_eq!(entry.system, game(&all, MM_2SHIP).system);
         assert_eq!(verdict(&game(&all, MM_2SHIP), &entry), Some(Verdict::SameGame));
@@ -616,9 +617,11 @@ mod tests {
     }
 
     #[test]
-    fn the_installed_project_is_the_catalog_note_or_the_title() {
-        assert_eq!(Owned::new("k", "Star Fox 64 (starship)", &[]).project, "starship");
-        assert_eq!(Owned::new("k", "Some Game", &[]).project, "Some Game");
+    fn the_installed_project_is_the_catalog_note_then_the_folder_then_the_title() {
+        assert_eq!(Owned::new("k", "Star Fox 64 (starship)", "other-folder", &[]).project, "starship");
+        // An entry added from Deck-ready stores the bare title as its name: its folder names the project.
+        assert_eq!(Owned::new("k", "Star Fox 64", "Starfox64Recomp", &[]).project, "Starfox64Recomp");
+        assert_eq!(Owned::new("k", "Some Game", "", &[]).project, "Some Game");
         assert_eq!(split_annotation("Ace Combat 3 (Japan) (ace-combat-3)"), ("Ace Combat 3 (Japan)", Some("ace-combat-3")));
         assert_eq!(split_annotation("Game (a (b))"), ("Game (a (b))", None));
     }
@@ -630,7 +633,7 @@ mod tests {
         let same = badge(&find(&mine, "x", &game(&all, MM_RECOMP)).unwrap());
         assert_eq!((same.label, same.note.as_str()), ("You have this game", "You have it as 2ship2harkinian"));
         let other = badge(&find(&mine, "x", &game(&all, MM_3D)).unwrap());
-        assert_eq!((other.label, other.note.as_str()), ("Other version installed", "Other version installed: 2ship2harkinian"));
+        assert_eq!((other.label, other.note.as_str()), ("Other version installed", "Other version: 2ship2harkinian"));
         assert_eq!(log_line(Verdict::SameGame, "Zelda64Recomp/Zelda64Recomp", "2ship2harkinian/2ship2harkinian"), "same game: same-game Zelda64Recomp/Zelda64Recomp vs 2ship2harkinian/2ship2harkinian");
     }
 
@@ -639,21 +642,22 @@ mod tests {
         let all = catalog();
         let mut mine = owned(&all, MM_2SHIP);
         mine.art = Some(ArtRef { folder: "2ship2harkinian".into(), url: None });
-        let page = confirm_page("The Legend of Zelda: Majora's Mask", &mine);
-        assert_eq!(page.window_title, "Deck Ports Manager: Same game");
+        let candidate = port(&all, MM_RECOMP);
+        let page = confirm_page(&candidate.name, &project_name(&candidate.name, &candidate.folder), &mine);
+        assert_eq!(page.window_title, "Same game: The Legend of Zelda: Majora's Mask (Zelda64Recomp)");
         assert_eq!(page.title, "You already have this game");
-        assert_eq!(page.header, "The Legend of Zelda: Majora's Mask");
+        assert_eq!(page.header, MM_RECOMP, "the full name, so the project being added is named");
         let titles: Vec<&str> = page.options.iter().map(|o| o.title.as_str()).collect();
         assert_eq!(titles, ["Not now", "Install it as well"]);
         assert!(page.options[0].recommended && !page.options[1].recommended);
         assert_eq!(page.options.iter().map(|o| o.action).collect::<Vec<_>>(), [SameAct::NotNow, SameAct::InstallAnyway]);
         assert_eq!(crate::fork::page::action_at(&page, crate::fork::page::initial_focus(&page)), Some(SameAct::NotNow));
         assert_eq!(page.back_hint, "Not now");
-        assert_eq!(
-            page.paragraphs[0],
-            "You already have The Legend of Zelda: Majora's Mask from 2ship2harkinian. This is a different project for the same game; installing it adds a second copy with its own saves and settings."
-        );
+        assert_eq!(page.paragraphs, ["Zelda64Recomp is a different project for the same game as 2ship2harkinian."]);
+        assert_eq!(page.options[1].detail, "Downloads it as a second copy, with its own saves and settings.");
+        assert_eq!(page.options[0].detail, "Nothing is downloaded");
         let card = page.card.as_ref().unwrap();
         assert_eq!((card.title.as_str(), card.art.as_ref().map(|a| a.folder.as_str())), ("The Legend of Zelda: Majora's Mask", Some("2ship2harkinian")));
+        assert_eq!(card.lines, ["Installed as 2ship2harkinian"]);
     }
 }
