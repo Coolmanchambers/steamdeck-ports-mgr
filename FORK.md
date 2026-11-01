@@ -136,8 +136,9 @@ to a file that came from upstream is listed here with its date.
 | 2026-10-24 | `ui/fork/setup-wizard.slint` | `WizardCard.square`: a card's picture can be square (the cloud sign-in QR code) instead of a portrait cover |
 | 2026-10-24 | `tools/smoke-test.sh` | Opens Settings > Cloud backup... (by keyboard) and closes it again |
 | 2026-11-01 | `src/app/install_launch.rs` | Same game: `activate_port` (install branch) and `install_row` go through `same_game_screen::confirm_then`, which asks first when the port is the same game as an installed one and otherwise installs as before; updates, reinstalls and the asset/version pickers are untouched |
-| 2026-11-01 | `src/app/state.rs` | Same game: `rebuild_ports_model` fills the row's badge and note from `same_game_screen::list_badges` (installed games built once per rebuild) |
-| 2026-11-01 | `ui/app-window.slint` | Same game: `PortItem.same-game-badge` and `same-game-note`; on a row that is not installed, a "You have this game" chip left of Install (styled like "! Saves", not a button, dropped when it would squeeze the name) and a muted "You have it as X" after the name where there is room; the name Text gets an id (`name-text`), its width unchanged |
+| 2026-11-01 | `src/app/state.rs` | Same game: `rebuild_ports_model` reads what is installed once per rebuild (`same_game_screen::Installed`, one look at the disk per catalog port) and takes each row's `installed`, the "! Saves" check's `installed` and the same-game badge and note from it |
+| 2026-11-01 | `ui/app-window.slint` | Same game: `PortItem.same-game-badge`, `same-game-soft` and `same-game-note`; on a row that is not installed, a chip left of Install (filled info-blue for "You have this game", outlined for "Other version installed"; not a button; dropped when it would squeeze the name) and a muted note after the name where there is room; the name Text gets an id (`name-text`), its width unchanged |
+| 2026-11-01 | `src/app/dialogs.rs` | Same game: Info's Select version on a port that is not installed goes through `same_game_screen::confirm_then` (choosing a version there is an install); on an installed port it opens the version list as before |
 | 2026-11-01 | `src/app/mod.rs` | One module line, `same_game_screen` |
 
 Files added by this fork:
@@ -289,8 +290,9 @@ Files added by this fork:
 | 2026-10-31 | `src/core/save_backup.rs` | Catch-up review: the update backup takes a file save only when it is a real file (no link) and counts its size for the room check; the single-file restore applies only when the kept copy holds that one file |
 | 2026-10-31 | `src/core/contract_tests.rs` | Catch-up review: `sources_have_no_bom_and_no_double_encoded_text` (the resolution had been saved as UTF-8 with BOM and the Language list double-encoded; restored byte for byte from main) |
 | 2026-11-01 | `src/fork/same_game.rs` | Same game, another project: the matcher (game and family keys, systems from catalog tags and Deck-ready labels, the verdict), the badge and note text, the question page; tested from real `ports.json` and `index/deck-ready.json` titles (see "Same game") |
-| 2026-11-01 | `src/app/same_game_screen.rs` | The installed games once per list rebuild, All ports' badges, the match log lines, and `confirm_then` / `confirm_entry_then`: the question page before an install, or the install at once |
-| 2026-11-01 | `src/fork/deck_ready/view.rs`, `src/app/deck_ready_screen.rs`, `ui/fork/deck-ready.slint`, `src/fork/mod.rs` | Same game in the Deck-ready list: `mark_same_game` (tag in front, note at the start of the sub line, installed rows unchanged), `TagKind::Info` (chip kind 4, info color), "Add {name}?" preceded by the question for an entry that is the same game; one module line |
+| 2026-11-01 | `src/app/same_game_screen.rs` | `Installed` (what is installed, read once per list rebuild), All ports' badges, the match log lines, and `confirm_then` / `confirm_then_or` / `confirm_entry_then`: the question page before an install, or the install at once |
+| 2026-11-01 | `src/fork/deck_ready/view.rs`, `src/app/deck_ready_screen.rs`, `ui/fork/deck-ready.slint`, `src/fork/mod.rs` | Same game in the Deck-ready list: `Row.badge` and `mark_same_game` (the badge as its own chip left of the tags with its own fit check, so only it drops on a narrow row; the note at the end of the sub line; installed rows unchanged), `TagKind::Info` (chip kind 4, info color), one look at the disk per rebuild for both the list's matching and the installed games, "Add {name}?" preceded by the question for an entry that is the same game; one module line |
+| 2026-11-01 | `src/app/port_page_screen.rs` | Same game: the Port page's Start on a port that is not installed asks first, and "Not now" comes back to the Port page |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -1366,34 +1368,52 @@ is rarely what someone wants, so the lists say when you already have the game an
 
 How a match is decided (conservative on purpose; no fuzzy or one-word matching):
 - A port's game is its title with the project part removed: the trailing "(folder)" note the catalog adds, and the words
-  Recomp, Decomp and "PC port" when the title has them. What is left is compared as letters and digits only.
-- Its system comes from the catalog's tags (`n64`, `3ds`, `gc`, `wiiu`, `360` for Xbox 360) or the Deck-ready list's
-  system label ("N64", "3DS", "Wii U").
-- Same game and same system is the **same game**. A system one side does not name still counts as the same game: the exact
-  title match is the careful part.
+  Recomp, Decomp and "PC port" when the title has them. What is left is compared as letters and digits only, accents
+  dropped first ("Pokémon" and "Pokemon" agree).
+- Its system comes from the catalog's tags (`n64`, `3ds`, `gc`, `wiiu`, `360` for Xbox 360, `smd` for Mega Drive) or the
+  Deck-ready list's system label ("N64", "3DS", "Wii U"). A console tag wins over any other. Platforms that are not
+  consoles in the ROM library's list are systems too, from a fixed list (`OTHER_PLATFORMS`): PC (`pc`, `windows`), DOS
+  (`dos`, `msdos`), Mac (`mac`, `macos`, `apple`), PS3, PS4, PS5, Xbox One (`xone`), CD-i, Flash and 32X. So the PC
+  source port and the PS1 recomp of Quake II are another version of each other, not the same game. Genre and series
+  tags are never systems.
+- Same game and same system is the **same game**. A system one side does not name at all still counts as the same game:
+  the exact title match is the careful part.
 - Same game on two different named systems (GoldenEye 007 on N64 and the Xbox 360 one), or the same title apart from a
   trailing "3D" or "HD" (Majora's Mask 3D, Ocarina of Time 3D, The Wind Waker HD), is **another version**. "64" is never
   dropped: Star Fox and Star Fox 64 are different games.
 - A port is never compared with itself, and the same game wins over another version when both are installed.
+- A test runs the rule over every pair in `ports.json`, and every Deck-ready entry against the catalog, and checks the
+  same-game pairs against a written list, so a change to the rule or the data that adds or drops a pair is seen.
+
+The project name shown is the data's own text, because the catalog has no prettier name: the catalog's "(folder)" note
+("2ship2harkinian", "Zelda64Recomp"), else the port's folder (entries added from Deck-ready store the bare title as their
+name), else the title.
 
 What you see:
 - Deck-ready rows and All ports rows (and search, which is the same list) for a port that is **not installed** get a badge:
-  "You have this game", or "Other version installed" for another version. Deck-ready's sub line starts with "You have it
-  as 2ship2harkinian" (or "Other version installed: ..."); All ports shows the chip left of Install and the same words,
-  muted, after the name when there is room. The name shown is the installed port's catalog note (its folder name as the
-  catalog writes it), or its title when it has none. Installed rows, the big-mode card grid, Home's Add a port and the
-  Deck-ready card counts are unchanged.
-- Installing a port that is the **same game** first shows a page: "You already have <game> from <project>. This is a
-  different project for the same game; installing it adds a second copy with its own saves and settings." The cursor
-  starts on "Not now" (recommended; B does the same, nothing is downloaded); "Install it as well" starts the normal
-  install. For a Deck-ready entry the app does not have yet, the usual "Add {name}?" dialog follows. Another version is
-  never asked about. Updates, reinstalls and the version and file pickers never ask.
+  "You have this game", or "Other version installed" for another version. Deck-ready draws it as its own chip left of the
+  other tags, dropped alone when the row is narrow, and its sub line ends with "You have it as 2ship2harkinian" (or
+  "Other version: ..."), after the system, version and date. All ports shows the chip left of Install (filled for the
+  same game, outlined for another version) and the same words, muted, after the name when there is room. Installed rows,
+  the big-mode card grid, Home's Add a port and the Deck-ready card counts are unchanged.
+- Installing a port that is the **same game** first shows a page titled "Same game: <full name>". The header is the full
+  name with its project ("The Legend of Zelda: Majora's Mask (Zelda64Recomp)"), the card the installed port's cover with
+  "Installed as 2ship2harkinian", and the text "Zelda64Recomp is a different project for the same game as
+  2ship2harkinian." The cursor starts on "Not now" (recommended, "Nothing is downloaded"; B does the same); "Install it as
+  well" ("Downloads it as a second copy, with its own saves and settings.") starts the normal install. For a Deck-ready
+  entry the app does not have yet, the usual "Add {name}?" dialog follows. Another version is never asked about.
+- Where it asks: A or Install on a row (All ports, Deck-ready, Home), Info's Select version on a port that is not
+  installed, the Port page's Start. Updates, reinstalls, Select version on an installed port and the file pickers never
+  ask.
+- Cost: what is installed is read once per list rebuild (one look at the disk per catalog port), shared by the rows' own
+  "installed" and the badges.
 - The log gets `same game: <same-game|another-version> <port key> vs <installed key>` (up to three lines per list, only
   when they change) and `same game: asking before installing ...` when the page opens.
 
 Upstream files touched (`// Fork:` comments): `src/app/install_launch.rs` (`activate_port`'s install branch and
-`install_row` go through `confirm_then`), `src/app/state.rs` (the row badges), `ui/app-window.slint` (two `PortItem`
-fields, the chip and the note), `src/app/mod.rs` (module line).
+`install_row` go through `confirm_then`), `src/app/dialogs.rs` (Info's Select version on a port that is not installed),
+`src/app/state.rs` (one read of what is installed, the row badges), `ui/app-window.slint` (three `PortItem` fields, the
+chip and the note), `src/app/mod.rs` (module line).
 
 ## Fixes to upstream behavior
 
