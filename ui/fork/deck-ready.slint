@@ -224,8 +224,9 @@ export component DeckReadyList inherits Rectangle {
                     property <length> name-x: build-chip.x + build-chip.width + self.gap;
                     property <bool> tags-fit: self.info-x - self.gap - tags.preferred-width - self.gap - self.name-x >= root.min-name-width;
                     property <length> tags-left: self.tags-fit && item.tags.length > 0 ? tags.x : self.info-x;
-                    // Same game: the badge has its own check, so it drops alone and the other tags stay.
-                    property <bool> badge-fit: item.badge.label != "" && self.tags-left - self.gap - badge-chip.width - self.gap - self.name-x >= root.min-name-width;
+                    // Same game: the badge has its own check, so it drops alone and the other tags stay; once the
+                    // tags have dropped it stays hidden too (it never comes back into the room they leave).
+                    property <bool> badge-fit: item.badge.label != "" && (item.tags.length == 0 || self.tags-fit) && self.tags-left - self.gap - badge-chip.width - self.gap - self.name-x >= root.min-name-width;
                     property <length> name-right: (self.badge-fit ? badge-chip.x : self.tags-left) - self.gap;
                     background: self.selected ? Theme.selected-background : Theme.list-background;
 

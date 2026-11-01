@@ -292,7 +292,8 @@ Files added by this fork:
 | 2026-11-01 | `src/fork/same_game.rs` | Same game, another project: the matcher (game and family keys, systems from catalog tags and Deck-ready labels, the verdict), the badge and note text, the question page; tested from real `ports.json` and `index/deck-ready.json` titles (see "Same game") |
 | 2026-11-01 | `src/app/same_game_screen.rs` | `Installed` (what is installed, read once per list rebuild), All ports' badges, the match log lines, and `confirm_then` / `confirm_then_or` / `confirm_entry_then`: the question page before an install, or the install at once |
 | 2026-11-01 | `src/fork/deck_ready/view.rs`, `src/app/deck_ready_screen.rs`, `ui/fork/deck-ready.slint`, `src/fork/mod.rs` | Same game in the Deck-ready list: `Row.badge` and `mark_same_game` (the badge as its own chip left of the tags with its own fit check, so only it drops on a narrow row; the note at the end of the sub line; installed rows unchanged), `TagKind::Info` (chip kind 4, info color), one look at the disk per rebuild for both the list's matching and the installed games, "Add {name}?" preceded by the question for an entry that is the same game; one module line |
-| 2026-11-01 | `src/app/port_page_screen.rs` | Same game: the Port page's Start on a port that is not installed asks first, and "Not now" comes back to the Port page |
+| 2026-11-01 | `src/app/port_page_screen.rs` | Same game: the Port page's Start on a port that is not installed (only when its folder went away while the page was open) asks first; "Not now" returns to the list, since the page closes for a port that is not installed |
+| 2026-11-01 | `testdata/same-game/ports.json`, `testdata/same-game/deck-ready.json` | Pinned copies (2026-11-01) of the catalog and the Deck-ready list for the same-game tests: the named titles and the exact pair lists run on these, so a catalog sync or a list refresh never turns them red; the live files only have to keep a short list of pairs matched and apart |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -1382,8 +1383,11 @@ How a match is decided (conservative on purpose; no fuzzy or one-word matching):
   trailing "3D" or "HD" (Majora's Mask 3D, Ocarina of Time 3D, The Wind Waker HD), is **another version**. "64" is never
   dropped: Star Fox and Star Fox 64 are different games.
 - A port is never compared with itself, and the same game wins over another version when both are installed.
-- A test runs the rule over every pair in `ports.json`, and every Deck-ready entry against the catalog, and checks the
-  same-game pairs against a written list, so a change to the rule or the data that adds or drops a pair is seen.
+- A test runs the rule over every pair in pinned copies of `ports.json` and the Deck-ready list
+  (`testdata/same-game/`), and every Deck-ready entry against the catalog, and checks the same-game pairs against a
+  written list, so a change to the rule that adds or drops a pair is seen. The live files only have to keep a short list
+  of same games matched and different games apart (a pair is checked while both titles exist); new live pairs are
+  printed, never failed, so a catalog sync or a weekly list refresh cannot turn the tests red.
 
 The project name shown is the data's own text, because the catalog has no prettier name: the catalog's "(folder)" note
 ("2ship2harkinian", "Zelda64Recomp"), else the port's folder (entries added from Deck-ready store the bare title as their
@@ -1392,7 +1396,7 @@ name), else the title.
 What you see:
 - Deck-ready rows and All ports rows (and search, which is the same list) for a port that is **not installed** get a badge:
   "You have this game", or "Other version installed" for another version. Deck-ready draws it as its own chip left of the
-  other tags, dropped alone when the row is narrow, and its sub line ends with "You have it as 2ship2harkinian" (or
+  other tags; a narrowing row drops it first, alone, and it stays hidden once the other tags have dropped too. Its sub line ends with "You have it as 2ship2harkinian" (or
   "Other version: ..."), after the system, version and date. All ports shows the chip left of Install (filled for the
   same game, outlined for another version) and the same words, muted, after the name when there is room. Installed rows,
   the big-mode card grid, Home's Add a port and the Deck-ready card counts are unchanged.
@@ -1403,7 +1407,8 @@ What you see:
   well" ("Downloads it as a second copy, with its own saves and settings.") starts the normal install. For a Deck-ready
   entry the app does not have yet, the usual "Add {name}?" dialog follows. Another version is never asked about.
 - Where it asks: A or Install on a row (All ports, Deck-ready, Home), Info's Select version on a port that is not
-  installed, the Port page's Start. Updates, reinstalls, Select version on an installed port and the file pickers never
+  installed, and the Port page's Start in the rare case its port is no longer installed (there "Not now" returns to the
+  list). Updates, reinstalls, Select version on an installed port and the file pickers never
   ask.
 - Cost: what is installed is read once per list rebuild (one look at the disk per catalog port), shared by the rows' own
   "installed" and the badges.

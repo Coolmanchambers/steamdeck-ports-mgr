@@ -289,8 +289,18 @@ mod tests {
     use super::*;
     use crate::core::models::Port;
 
+    // Named titles and the exact pair lists are checked against pinned copies of `ports.json` and the Deck-ready list
+    // (taken 2026-11-01), so a catalog sync or a weekly list refresh never turns these red. The live files get the
+    // tolerant check at the end.
+    const SNAPSHOT_CATALOG: &str = include_str!("../../testdata/same-game/ports.json");
+    const SNAPSHOT_INDEX: &str = include_str!("../../testdata/same-game/deck-ready.json");
+
     fn catalog() -> Vec<Port> {
-        crate::core::config::parse_catalog(include_str!("../../ports.json")).unwrap()
+        crate::core::config::parse_catalog(SNAPSHOT_CATALOG).unwrap()
+    }
+
+    fn snapshot_index() -> crate::fork::deck_ready::index::Index {
+        crate::fork::deck_ready::index::parse(SNAPSHOT_INDEX).unwrap()
     }
 
     fn port<'a>(all: &'a [Port], name: &str) -> &'a Port {
@@ -453,9 +463,8 @@ mod tests {
         assert_eq!(system_from_tags(&["smd".into()]), k(System::Genesis));
     }
 
-    /// Every same-game pair the data gives today: catalog with catalog, and Deck-ready entries with the catalog (an
-    /// entry is not compared with the catalog port it is). A change to the rule or the data that adds or drops one shows
-    /// up here.
+    /// Every same-game pair in the pinned copies: catalog with catalog, and Deck-ready entries with the catalog (an entry
+    /// is not compared with the catalog port it is). A change to the rule that adds or drops one shows up here.
     const CATALOG_SAME_GAME: &[&str] = &[
         "Ape Escape (ApeEscapeRecomp) | Ape Escape (ApeEscapeRecomp-MacWindowsLinux)",
         "Azure Dreams (Azure-Dreams-HD-Recompilation) | Azure Dreams (azure-dreams-recomp)",
@@ -475,7 +484,6 @@ mod tests {
         "Perfect Dark (perfect-dark-dabs-mod) | Perfect Dark (perfect_dark)",
         "Pilotwings 64 (Pilotwings64Recomp) | Pilotwings 64 (pilotwings-64-recomp)",
         "Resident Evil 3: Nemesis (Project-RE-Visited-RE3) | Resident Evil 3: Nemesis (resident-evil-3-recomp)",
-        "Sonic Dream Team (project-dream-release) | Sonic Dream Team (project-dream-release)",
         "Star Fox 64 (Starfox64Recomp) | Star Fox 64 (starship)",
         "Super Mario 64 (Ghostship) | Super Mario 64 (sm64coopdx)",
         "Super Mario Sunshine (sms-launcher) | Super Mario Sunshine (sms-pc-port)",
@@ -546,29 +554,27 @@ mod tests {
         assert!(missing.is_empty() && extra.is_empty(), "missing {missing:#?}\nextra {extra:#?}");
     }
 
-    #[test]
-    fn every_same_game_pair_in_the_catalog_is_the_expected_one() {
-        let all = catalog();
+    /// Same-game pairs among catalog ports ("A | B", sorted). Two entries with one key (a duplicate in the catalog) are
+    /// one port to `find`, so they are left out.
+    fn catalog_pairs(all: &[Port]) -> std::collections::BTreeSet<String> {
         let games: Vec<Game> = all.iter().map(|p| Game::of_port(&p.name, &p.tags_lower)).collect();
         let mut got = std::collections::BTreeSet::new();
         for i in 0..all.len() {
             for j in i + 1..all.len() {
-                if verdict(&games[i], &games[j]) == Some(Verdict::SameGame) {
+                if all[i].key() != all[j].key() && verdict(&games[i], &games[j]) == Some(Verdict::SameGame) {
                     let mut pair = [all[i].name.as_str(), all[j].name.as_str()];
                     pair.sort();
                     got.insert(pair.join(" | "));
                 }
             }
         }
-        same_set(CATALOG_SAME_GAME, got);
+        got
     }
 
-    #[test]
-    fn every_same_game_pair_between_the_deck_ready_list_and_the_catalog_is_the_expected_one() {
+    /// Same-game pairs of a Deck-ready entry with a catalog port other than the one it is ("entry > port").
+    fn deck_ready_pairs(all: &[Port], index: &crate::fork::deck_ready::index::Index) -> std::collections::BTreeSet<String> {
         use crate::fork::deck_ready::index::Host;
-        let all = catalog();
         let games: Vec<Game> = all.iter().map(|p| Game::of_port(&p.name, &p.tags_lower)).collect();
-        let index = crate::fork::deck_ready::index::parse(include_str!("../../index/deck-ready.json")).unwrap();
         let mut got = std::collections::BTreeSet::new();
         for e in &index.entries {
             let entry = Game::of_entry(&e.name, e.system.as_deref());
@@ -580,7 +586,63 @@ mod tests {
                 }
             }
         }
-        same_set(DECK_READY_SAME_GAME, got);
+        got
+    }
+
+    #[test]
+    fn every_same_game_pair_in_the_catalog_is_the_expected_one() {
+        same_set(CATALOG_SAME_GAME, catalog_pairs(&catalog()));
+    }
+
+    #[test]
+    fn every_same_game_pair_between_the_deck_ready_list_and_the_catalog_is_the_expected_one() {
+        same_set(DECK_READY_SAME_GAME, deck_ready_pairs(&catalog(), &snapshot_index()));
+    }
+
+    /// The live files change with every catalog sync and weekly list refresh, so they only have to keep the pairs that
+    /// define the rule: these same games stay matched and these different games stay apart (each checked only while
+    /// both titles are still there). New pairs are printed, never failed.
+    #[test]
+    fn the_live_catalog_and_deck_ready_list_keep_the_known_pairs() {
+        const SAME: &[(&str, &str)] = &[
+            ("The Legend of Zelda: Majora's Mask (2ship2harkinian)", "The Legend of Zelda: Majora's Mask (Zelda64Recomp)"),
+            ("GoldenEye 007 (Project-Midas)", "GoldenEye 007 (goldeneye-pc-port)"),
+            ("Star Fox 64 (Starfox64Recomp)", "Star Fox 64 (starship)"),
+            ("Perfect Dark (perfect-dark-dabs-mod)", "Perfect Dark (perfect_dark)"),
+            ("Pilotwings 64 (Pilotwings64Recomp)", "Pilotwings 64 (pilotwings-64-recomp)"),
+            ("Banjo-Kazooie (BanjoRecomp)", "Banjo-Kazooie (Lighthouse)"),
+        ];
+        const APART: &[(&str, &str)] = &[
+            ("Star Fox (starfox-enhanced)", "Star Fox 64 (starship)"),
+            ("Banjo-Kazooie (BanjoRecomp)", "Banjo-Kazooie: Nuts & Bolts (reNut)"),
+            ("Quake II (quake-ii-recomp)", "Quake II (yquake2)"),
+            ("MDK (mdk-recomp)", "MDK (mdk-sdl)"),
+            ("MediEvil (medievil-recomp)", "MediEvil II (medievil-ii-recomp)"),
+            ("Tony Hawk's Pro Skater (tony-hawk-s-pro-skater-recomp)", "Tony Hawk's Pro Skater 2 (tony-hawk-s-pro-skater-2-recomp)"),
+            ("F-Zero (FZeroSNESRecomp)", "F-Zero X (G-Diffuser)"),
+            ("Digimon World 2 (digimon-world-2-recomp)", "Digimon World 2003 (digimon-world-2003-recomp)"),
+        ];
+        let live = crate::core::config::parse_catalog(include_str!("../../ports.json")).unwrap();
+        let index = crate::fork::deck_ready::index::parse(include_str!("../../index/deck-ready.json")).unwrap();
+        // A title is looked up in the catalog first (its tags), then in the Deck-ready list (its system label).
+        let mut games: std::collections::HashMap<&str, Game> = index.entries.iter().map(|e| (e.name.as_str(), Game::of_entry(&e.name, e.system.as_deref()))).collect();
+        games.extend(live.iter().map(|p| (p.name.as_str(), Game::of_port(&p.name, &p.tags_lower))));
+        let mut checked = 0;
+        for (want_same, pairs) in [(true, SAME), (false, APART)] {
+            for (a, b) in pairs {
+                let (Some(ga), Some(gb)) = (games.get(a), games.get(b)) else {
+                    eprintln!("same game (live): {a:?} or {b:?} is gone, not checked");
+                    continue;
+                };
+                checked += 1;
+                assert_eq!(verdict(ga, gb) == Some(Verdict::SameGame), want_same, "{a} vs {b}");
+            }
+        }
+        assert!(checked > 0, "none of the known titles is in the live files");
+        let known: std::collections::BTreeSet<String> = CATALOG_SAME_GAME.iter().chain(DECK_READY_SAME_GAME).map(|s| s.to_string()).collect();
+        for pair in catalog_pairs(&live).into_iter().chain(deck_ready_pairs(&live, &index)).filter(|p| !known.contains(p)) {
+            eprintln!("same game (live): new pair {pair}");
+        }
     }
 
     #[test]
@@ -605,9 +667,9 @@ mod tests {
     }
 
     #[test]
-    fn the_published_deck_ready_list_agrees_with_the_catalog_on_majoras_mask() {
+    fn the_deck_ready_list_agrees_with_the_catalog_on_majoras_mask() {
         let all = catalog();
-        let index = crate::fork::deck_ready::index::parse(include_str!("../../index/deck-ready.json")).unwrap();
+        let index = snapshot_index();
         let mine = vec![owned(&all, MM_2SHIP)];
         let by_name = |n: &str| index.entries.iter().find(|e| e.name == n).unwrap_or_else(|| panic!("{n} is not in deck-ready.json"));
         let recomp = by_name(MM_RECOMP);

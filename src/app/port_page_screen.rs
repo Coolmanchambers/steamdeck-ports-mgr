@@ -574,7 +574,9 @@ fn leave(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 fn open_card_in(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, card: Card) {
     let Some(port) = port_of(app, &s.key) else { return };
     match card.route() {
-        // Same game: a port that is not installed asks first when its game is, and "Not now" comes back to this page.
+        // Same game: a port that is not installed (its folder went away while this page was open) asks first when its
+        // game is installed under another project. "Not now" goes through `back_to`, which closes this page for a port
+        // that is not installed, so it returns to the list.
         model::Route::Start if !app.is_installed(&port) && !app.install_runtime.installing.borrow().contains(port.key()) => {
             let p = port.clone();
             super::same_game_screen::confirm_then_or(app, router, &port, back_to(s, Screen::First), move |app, router| {
