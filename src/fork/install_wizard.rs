@@ -165,7 +165,7 @@ pub fn install_page(info: &InstallInfo) -> Page<WizAct> {
     let lines = what_line(info.system.as_deref(), info.version.as_deref(), info.size, info.update).into_iter().collect();
     p.card = card(&info.name, &info.art, lines);
     if info.busy {
-        p.fact(Mark::Waiting, format!("{} is busy right now, try again in a moment", info.name));
+        p.fact(Mark::Waiting, format!("{} is busy right now; try again in a moment", info.name));
     }
     p.fact(Mark::None, format!("Goes to: {}", info.place));
     match info.needs.as_slice() {
@@ -462,7 +462,7 @@ pub fn steam_page(name: &str, art: &Option<ArtRef>, game_mode: bool, steam_runni
     p.card = card(name, art, Vec::new());
     p.paragraphs.push("Then it starts from your Steam library, with its cover, in Game Mode too.".to_string());
     if game_mode {
-        p.paragraphs.push("Steam cannot be changed while it runs: you are asked to add it the next time Steam is closed.".to_string());
+        p.paragraphs.push("Steam cannot be changed while it runs: you are asked to add it in Desktop Mode.".to_string());
     } else if steam_running {
         p.paragraphs.push("Steam has to close for a moment to add it; you are asked first.".to_string());
     }
@@ -711,7 +711,7 @@ mod tests {
         let mut busy = info();
         busy.busy = true;
         let p = install_page(&busy);
-        assert_eq!((p.facts[0].as_str(), p.mark_of(0)), ("The Wind Waker HD is busy right now, try again in a moment", Mark::Waiting));
+        assert_eq!((p.facts[0].as_str(), p.mark_of(0)), ("The Wind Waker HD is busy right now; try again in a moment", Mark::Waiting));
         assert!(install_page(&info()).facts.iter().all(|f| !f.contains("busy")));
     }
 
@@ -899,7 +899,7 @@ mod tests {
         assert_eq!(action_at(&s, initial_focus(&s)), Some(WizAct::SteamYes));
         assert_eq!(s.paragraphs.len(), 1);
         assert!(steam_page("X", &None, false, true).paragraphs[1].contains("close"));
-        assert!(steam_page("X", &None, true, true).paragraphs[1].contains("you are asked to add it the next time Steam is closed"));
+        assert!(steam_page("X", &None, true, true).paragraphs[1].contains("you are asked to add it in Desktop Mode"));
         let ready = done_page("Dusklight", &None, true, &[(Mark::Done, "Added to Steam".into())]);
         assert_eq!(ready.title, "Dusklight is ready");
         assert_eq!(action_at(&ready, initial_focus(&ready)), Some(WizAct::PlayNow));

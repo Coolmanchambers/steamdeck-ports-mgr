@@ -426,6 +426,10 @@ pub(crate) fn install_failed(app: &Rc<AppState>, router: &Router, key: &str, mes
     } else {
         eprintln!("install wizard: the install of {key} failed: {message}");
     }
+    if background {
+        // Home's tile still says "Downloading N%"; the tick that redraws it stops with the run.
+        app.refresh_current_view();
+    }
     if launch && !background {
         if let Some(port) = app.find_port(key) {
             super::install_launch::launch_installed(app, router, &port);
@@ -717,7 +721,7 @@ fn add_to_steam(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, port: &Por
         match outcome {
             SteamOutcome::Added(_) | SteamOutcome::Applied(_) => note(Mark::Done, added),
             SteamOutcome::Nothing => note(Mark::Done, "Already in Steam"),
-            SteamOutcome::Queued { game_mode: true, .. } => note(Mark::Waiting, "Steam: you are asked to add it the next time Steam is closed"),
+            SteamOutcome::Queued { game_mode: true, .. } => note(Mark::Waiting, "Steam: you are asked to add it in Desktop Mode"),
             SteamOutcome::Queued { game_mode: false, .. } => {
                 let f = flow.clone();
                 let then: super::steam_close_screen::Then = Rc::new(move |app, router, done| {
