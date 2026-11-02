@@ -397,7 +397,9 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
                     }
                 })
                 .collect();
-            app.home.selected.set(app.home.selected.get().min(items.len().saturating_sub(1)));
+            // Fork (home view): the focus stays on the same port or tile when others come or go (the checkup tile, say).
+            let before = app.home.tiles.borrow().get(app.home.selected.get()).map(home::focus_id);
+            app.home.selected.set(home::resolve_focus(before.as_ref(), app.home.selected.get(), &tiles));
             *app.home.tiles.borrow_mut() = tiles;
             window.set_home_empty(false);
             window.set_home_tiles(slint::ModelRc::new(slint::VecModel::from(items)));

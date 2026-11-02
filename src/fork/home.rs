@@ -370,6 +370,35 @@ pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -
     TileLayout { columns, tile_w: w, tile_h: per_row.max(font * 9.0).min(height), visible_rows: visible }
 }
 
+/// Which tile has the focus, by what it is and not by where it sits: the checkup tile can appear in front of it (the
+/// background look finishes) or go away (the problems are fixed), and a port can be installed or removed, so a position
+/// would move the focus to another port and the next A would act on the wrong one. The Continue tile and the port's own
+/// tile are the same port (Continue moves to another port when one is played).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusId {
+    Port(String),
+    Setup,
+    Add,
+    Checkup,
+}
+
+pub fn focus_id(t: &Tile) -> FocusId {
+    match t.kind {
+        TileKind::Port | TileKind::Continue => FocusId::Port(t.key.clone()),
+        TileKind::Setup => FocusId::Setup,
+        TileKind::Add => FocusId::Add,
+        TileKind::Checkup => FocusId::Checkup,
+    }
+}
+
+/// The focus after the tiles were rebuilt: the tile that had it, wherever it is now; when it is gone (uninstalled, the
+/// checkup fixed) or nothing was shown before, the old position kept inside the new list.
+pub fn resolve_focus(before: Option<&FocusId>, old_index: usize, tiles: &[Tile]) -> usize {
+    before
+        .and_then(|id| tiles.iter().position(|t| &focus_id(t) == id))
+        .unwrap_or_else(|| old_index.min(tiles.len().saturating_sub(1)))
+}
+
 /// The D-pad in the List view: one row up (`dy` < 0) or down (`dy` > 0), staying on the first and the last row.
 pub fn list_step(at: usize, dy: i32, len: usize) -> usize {
     if len == 0 {
@@ -835,6 +864,61 @@ mod tests {
         }
     }
 
+
+    fn tiles_of(ports: &[PortFacts], checkup: bool) -> Vec<Tile> {
+        let fix = crate::fork::checkup::HomeTile { title: "Fix 1 problem".into(), note: "Game files".into(), mark: crate::fork::page::Mark::Problem };
+        match build(ports, true, checkup.then_some(&fix)) {
+            Home::Tiles(t) => t,
+            Home::Empty => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_focus_follows_the_tile_not_the_position() {
+        let ports = [port("a", 30), port("b", 0), port("c", 0)];
+        // Before the checkup answers: Continue(a), b, c, Add. Focus on c.
+        let before = tiles_of(&ports, false);
+        let c = before.iter().position(|t| t.key == "c").unwrap();
+        let id = focus_id(&before[c]);
+        // The checkup tile arrives in front of it: c moves one place down, and keeps the focus.
+        let with_fix = tiles_of(&ports, true);
+        let now = resolve_focus(Some(&id), c, &with_fix);
+        assert_eq!(with_fix[now].key, "c", "the focus stays on port c");
+        assert_ne!(now, c, "and c really did move");
+        // The checkup tile goes away again (fixed): back where it was.
+        assert_eq!(resolve_focus(Some(&id), now, &before), c);
+        // The utility tiles keep it too.
+        let fix_id = focus_id(&with_fix.iter().find(|t| t.kind == TileKind::Checkup).cloned().unwrap());
+        let moved = tiles_of(&[port("a", 30), port("b", 0), port("c", 0), port("d", 0)], true);
+        assert_eq!(moved[resolve_focus(Some(&fix_id), 1, &moved)].kind, TileKind::Checkup);
+        let add_id = FocusId::Add;
+        assert_eq!(moved[resolve_focus(Some(&add_id), 2, &moved)].kind, TileKind::Add);
+    }
+
+    #[test]
+    fn the_focus_stays_on_a_port_that_becomes_or_stops_being_the_continue_tile() {
+        let before = tiles_of(&[port("a", 10), port("b", 0)], false);
+        let b_id = focus_id(before.iter().find(|t| t.key == "b").unwrap());
+        // b was played: it is now the Continue tile in front.
+        let after = tiles_of(&[port("a", 10), port("b", 50)], false);
+        assert_eq!(after[resolve_focus(Some(&b_id), 1, &after)].key, "b");
+    }
+
+    #[test]
+    fn when_the_focused_tile_is_gone_the_old_position_is_kept_inside_the_list() {
+        let before = tiles_of(&[port("a", 0), port("b", 0), port("c", 0)], true);
+        let c = before.iter().position(|t| t.key == "c").unwrap();
+        let id = focus_id(&before[c]);
+        // c was uninstalled: Fix, a, b, Add are left; the old place (3) is still there, so it is used.
+        let after = tiles_of(&[port("a", 0), port("b", 0)], true);
+        let now = resolve_focus(Some(&id), c, &after);
+        assert_eq!(now, c.min(after.len() - 1));
+        // A position past the end comes back inside; nothing known before keeps the position clamped too.
+        assert_eq!(resolve_focus(Some(&id), 99, &after), after.len() - 1);
+        assert_eq!(resolve_focus(None, 99, &after), after.len() - 1);
+        assert_eq!(resolve_focus(None, 0, &after), 0);
+        assert_eq!(resolve_focus(Some(&id), 3, &[]), 0, "no tiles: zero, never a panic");
+    }
 
     #[test]
     fn the_d_pad_walks_the_list_one_row_and_stops_at_both_ends() {
