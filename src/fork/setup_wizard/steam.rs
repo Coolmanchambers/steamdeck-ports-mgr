@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(add_selected(&s, &closed, &settings(&home), &home.join("steam-queue.json"), SystemTime::now(), "20261023-100000", true), SteamOutcome::Added(1));
         assert_eq!(backups::list_backups(&path).unwrap().len(), 1, "backed up first");
         let list = crate::fork::shortcuts::list(&crate::fork::store::ShortcutsFile::load(&path).unwrap().doc);
-        assert!(list.iter().find(|e| e.app_name == "Dusklight").unwrap().exe_path().ends_with("dusklight/dusk"));
+        assert_eq!(list.iter().find(|e| e.app_name == "Dusklight").unwrap().exe_path(), library.join("dusklight").join("dusk").to_str().unwrap());
         assert!(!list.iter().any(|e| e.app_name == "Blocks"), "only the one selected");
         let _ = fs::remove_dir_all(home);
     }
