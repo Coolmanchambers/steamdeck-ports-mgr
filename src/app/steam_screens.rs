@@ -60,8 +60,10 @@ pub(crate) fn open_steam_screen(app: &Rc<AppState>, router: &Router) {
     open_steam_screen_for(app, router, None);
 }
 
-/// Add to Steam with only one port selected (`Some(key)`: the Port page's Steam card, one port's checkup); every other
-/// row stays on the screen, switched off. `None` is the usual screen.
+/// Add to Steam with only one port selected (`Some(key)`: the Port page's "Update the shortcut" and "Use that shortcut
+/// for this port", whose review shows the change first); every other row stays on the screen, switched off. `None` is
+/// the usual screen. Fork (steam add page): adding a port that is not in Steam (the Port page, Fix problems) asks on
+/// `steam_add_screen`'s page instead.
 pub(crate) fn open_steam_screen_for(app: &Rc<AppState>, router: &Router, only: Option<&str>) {
     if dialog_is_open(app) {
         return;

@@ -645,7 +645,22 @@ fn on_act(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
                 crate::core::launch::open_folder(parent);
             }
         }
+        // Fork (steam add page): "Add to Steam with artwork?" for this port (not the full list); the result is a note under
+        // the Steam card, Not now goes back to the card.
         Act::SteamAdd => {
+            let (s2, back) = (s.clone(), back_to(s, Screen::Card(Card::Steam)));
+            let then: super::steam_add_screen::Then = Rc::new(move |app, router, notes| {
+                let installed = app.catalog.borrow().iter().any(|p| p.key() == s2.key && app.is_installed(p));
+                if notes.is_empty() || !installed {
+                    return back(app, router);
+                }
+                read_disk(app, &s2);
+                let title = crate::fork::steam_add::result_title(&notes);
+                notice(app, router, &s2, Card::Steam, title, notes.into_iter().map(|(_, text)| text).collect());
+            });
+            super::steam_add_screen::open(app, router, vec![port], then, back_to(s, Screen::Card(Card::Steam)));
+        }
+        Act::SteamChange => {
             close_current_dialog(app, router);
             super::steam_screens::open_steam_screen_for(app, router, Some(&s.key));
         }

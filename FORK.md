@@ -140,6 +140,7 @@ to a file that came from upstream is listed here with its date.
 | 2026-11-01 | `ui/app-window.slint` | Same game: `PortItem.same-game-badge`, `same-game-soft` and `same-game-note`; on a row that is not installed, a chip left of Install (filled info-blue for "You have this game", outlined for "Other version installed"; not a button; dropped when it would squeeze the name) and a muted note after the name where there is room; the name Text gets an id (`name-text`), its width unchanged |
 | 2026-11-01 | `src/app/dialogs.rs` | Same game: Info's Select version on a port that is not installed goes through `same_game_screen::confirm_then` (choosing a version there is an install); on an installed port it opens the version list as before |
 | 2026-11-01 | `src/app/mod.rs` | One module line, `same_game_screen` |
+| 2026-11-02 | `src/app/mod.rs` | One module line, `steam_add_screen` |
 
 Files added by this fork:
 
@@ -310,6 +311,8 @@ Files added by this fork:
 | 2026-11-01 | `src/fork/rom_screens/pages.rs`, `src/fork/rom_screens/file_pick.rs`, `src/app/rom_screens/find_flow.rs` | Install wizard: "Choose the file myself" (`browse_page`, one folder a page, the place the human way) and a hand-picked file that does not match (`no_match_page`, no checksums) are card pages, not picker lists; 2 tests. Review fixes: "Add it later" and "Choose the folder" details shortened to one line, the pick page's names and places cut to fit, a fit test over every page; Up one level stops at internal storage or the drive (`FileBrowser::with_tops`); 2 tests |
 | 2026-11-01 | `src/app/same_game_screen.rs`, `src/app/port_page_screen.rs`, `src/app/deck_ready_screen.rs`, `src/app/checkup_screen.rs`, `src/app/home_screen.rs` | Install wizard: the same-game question folds into the first page (`confirm_then_or` and `confirm_entry_then` removed; `confirm_then` stays for Info's Select version); the Port page's Start and Update now, Fix problems' Update and a Deck-ready project open the wizard (the "Add {name}?" dialog is gone: its first page shows the entry, Install writes it); Home has a tile for a port that is installing, its line "Downloading 42%" |
 | 2026-11-01 | `src/fork/ports_folder.rs`, `src/fork/port_page/mod.rs` | Install wizard: the missing ports folder is named the human way; the Uninstall page says a reinstall offers to put kept files back |
+| 2026-11-02 | `src/fork/steam_add.rs`, `src/app/steam_add_screen.rs`, `src/fork/mod.rs` | "Add to Steam with artwork?" for a few named ports (see that section): the page, its working page, whether to ask and the notes (moved from the install wizard: `steam_account_note`, `steam_added_note`, with their tests), the result title; the screen's `open` / `ask` / `add`. Tests: one port, several, Desktop Mode with Steam running, Game Mode, each skip note, and a fit test with long real names and one or three ports |
+| 2026-11-02 | `src/app/checkup_screen.rs`, `src/app/port_page_screen.rs`, `src/app/install_wizard_screen.rs`, `src/app/steam_screens.rs`, `src/fork/install_wizard.rs`, `src/fork/port_page/mod.rs` | Steam add page: `Fix::AddToSteam` and the Port page's Add to Steam ask on the new page (were the full Add to Steam list with one port selected); the install wizard's Steam step calls the shared `ask` and `add`; `Act::SteamChange` keeps the list for an out-of-date shortcut or one with its name; 1 test |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -548,6 +551,9 @@ these in the future." Spec: `docs/design/checkup-wizard.md` in the project folde
   start after it counts; queued = `repoint_queued`, the queue's apply stamps the time), and a shortcut left alone (no stored app ID)
   is said on the page after ("Steam has not finished setting up X; open and quit Steam once, then try again"). Add to Steam stays
   for "Not in Steam" only.
+- **Add to Steam** (`Fix::AddToSteam`, since 2026-11-02) asks on one short page for exactly the ports the problem names
+  (`steam_add_screen`, see "Add to Steam with artwork?"), not the full Add to Steam list; what happened shows on the page after,
+  and Not now goes back to the step page.
 - Upstream edits: `src/app/mod.rs` (one module line) and `tools/smoke-test.sh`.
 
 
@@ -1329,7 +1335,8 @@ now = the save finder's `backup_before_update`; Restore; Find saves; open the fo
 settings extensions, under 1 MB, two levels of the port and save folders, minus logs, catalog game files and the app's own
 files; a local entry's optional `settings` field, same shape as `save`, names them exactly; a read-only View page with the
 place on top, 48 KB / 400 lines), Game files (the search for this port, its result as card pages), Steam (this port only:
-Add to Steam pre-selected, the checkup's repoint, icon repair for one port, Close Steam), Updates (check now, Update now,
+Add to Steam with artwork? for a port not in Steam, the Add to Steam list with this port pre-selected for an out-of-date
+shortcut or one with its name, the checkup's repoint, icon repair for one port, Close Steam), Updates (check now, Update now,
 the update switch, Select version, Install extras), Files (place, size on a worker, version, `.previous` versions),
 Uninstall (a plain confirm page over the guarded `delete_port`), More (project page, All details = upstream Info, Reset game
 time). Everything that reads the disk runs on a worker; looking writes nothing.
@@ -1495,6 +1502,23 @@ installer's leftover `_download_` / `_staging_` folders (an app closed mid-insta
 Rulings: Select version keeps the version list and Info's same-game question (`same_game_screen::confirm_then`); Reinstall
 (after a failed launch) opens the wizard like Update; Play's update shows the downloading page but no pages after it
 (download-only by design), and sent to the background it gets the finished note instead of starting the game.
+
+## Add to Steam with artwork? (`src/fork/steam_add.rs`, `src/app/steam_add_screen.rs`)
+
+Fix problems' Steam fix ("Not in Steam: ...", "Add them to Steam") and the Port page's Add to Steam used to open the full
+Add to Steam list (every installed port, the account row, the Steam-running line, Fix Steam icons, Queue). Since
+2026-11-02 they ask on one short page for exactly the ports concerned (the problem's own list; the Port page's one port):
+"Add to Steam with artwork?", the port's card (several: a cover tile each), "<name> is not in Steam yet." or "These ports
+are not in Steam yet.", a line when Steam runs ("Steam closes for a moment to add them; you can start it again after.",
+in Game Mode "You are asked to add them in Desktop Mode."), "Add it" / "Add them" (recommended) and "Not now". Nothing is
+asked when there is nothing to do (no account, several and none chosen, Steam's files unreadable, already waiting for
+Steam, already in Steam): the note shows instead. Add fetches the covers and icons first, then `setup_wizard::steam::add_all`
+on a screen of just those ports (written with Steam closed after the `shortcuts.vdf` backup, else queued) and, outside Game
+Mode, the Close Steam flow (it asks first). No new Steam code. Fix problems shows the result on its page after the fix;
+the Port page shows it as a note under its Steam card. The install wizard's Steam step shares the decision, the artwork
+fetch, the add and the notes (its own page and words unchanged). Settings > Add to Steam keeps the full list, and so do the
+Port page's "Update the shortcut" and "Use that shortcut for this port" (`Act::SteamChange`), whose review shows the
+change first. Page titles, option titles and details are checked to fit with long real names and one or three ports.
 
 ## Fixes to upstream behavior
 

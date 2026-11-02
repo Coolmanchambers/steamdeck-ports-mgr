@@ -438,24 +438,8 @@ pub fn kept_page(name: &str, art: &Option<ArtRef>, offer: &KeptOffer) -> Page<Wi
 
 // -- 5. Steam -----------------------------------------------------------------------------------------------------
 
-/// Why the Steam page is skipped for want of an account: `accounts` found, and whether one is chosen.
-pub fn steam_account_note(accounts: usize, chosen: bool) -> Option<(Mark, String)> {
-    match (accounts, chosen) {
-        (0, _) => Some((Mark::ToDo, "Steam: start Steam once, then its Port page can add it".to_string())),
-        (_, false) => Some((Mark::ToDo, "Steam: choose your account in Settings > Add to Steam first".to_string())),
-        _ => None,
-    }
-}
-
-/// The Done page's line once the shortcut is written: it says "with its artwork" only when the artwork is in the cache.
-/// `names_art`: the catalog names a cover or icon; `art_missing`: one of them could not be fetched.
-pub fn steam_added_note(names_art: bool, art_missing: bool) -> &'static str {
-    match (names_art, art_missing) {
-        (false, _) => "Added to Steam",
-        (true, false) => "Added to Steam with its artwork",
-        (true, true) => "Added to Steam; its artwork could not be fetched",
-    }
-}
+// Whether to ask and the notes when it is skipped or done (no account, already in Steam, "with its artwork") are shared
+// with Fix problems and the Port page: `crate::fork::steam_add`.
 
 pub fn steam_page(name: &str, art: &Option<ArtRef>, game_mode: bool, steam_running: bool) -> Page<WizAct> {
     let mut p = base(name, "Add it to Steam with its artwork?");
@@ -914,21 +898,6 @@ mod tests {
         assert_eq!(missing.back_hint, "Back to Home");
         let f = finished_page("Dusklight", &None, true);
         assert_eq!(f.title, "Dusklight finished updating");
-    }
-
-    #[test]
-    fn steam_is_skipped_with_a_note_when_there_is_no_account_to_add_to() {
-        assert_eq!(steam_account_note(0, false), Some((Mark::ToDo, "Steam: start Steam once, then its Port page can add it".to_string())));
-        assert_eq!(steam_account_note(2, false), Some((Mark::ToDo, "Steam: choose your account in Settings > Add to Steam first".to_string())));
-        assert_eq!(steam_account_note(1, true), None);
-        assert_eq!(steam_account_note(3, true), None);
-    }
-
-    #[test]
-    fn added_to_steam_says_with_its_artwork_only_when_it_is_there() {
-        assert_eq!(steam_added_note(true, false), "Added to Steam with its artwork");
-        assert_eq!(steam_added_note(true, true), "Added to Steam; its artwork could not be fetched");
-        assert_eq!(steam_added_note(false, false), "Added to Steam");
     }
 
     #[test]

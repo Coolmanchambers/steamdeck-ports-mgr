@@ -28,9 +28,7 @@ use crate::fork::page::{Mark, Page};
 use crate::fork::port_page::paths::{human_path, Places};
 use crate::fork::rom_screens::job::Background;
 use crate::fork::same_game::{self, Game};
-use crate::fork::settings::ForkSettings;
-use crate::fork::setup_wizard::flow::SteamOutcome;
-use crate::fork::store::SystemSteamCheck;
+use crate::fork::steam_add::Ask;
 use crate::fork::uninstall_keep;
 use crate::ui::gamepad_router::GamepadRouter;
 use serde_json::Value;
@@ -39,7 +37,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 type Router = Rc<RefCell<GamepadRouter>>;
 /// Where "Not now" (and B) on the first page goes, and where a stopped download returns.
@@ -111,10 +109,6 @@ fn flow_of(key: &str) -> Option<Rc<Flow>> {
 
 fn drop_flow(key: &str) {
     FLOWS.with(|f| f.borrow_mut().remove(key));
-}
-
-fn home_dir() -> Option<PathBuf> {
-    ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v)).map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
 fn close_back() -> Back {
@@ -624,56 +618,19 @@ fn game_files_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
 
 // -- 5. Steam -----------------------------------------------------------------------------------------------------
 
-enum SteamAsk {
-    Skip(Option<(Mark, String)>),
-    Ask { running: bool, game_mode: bool },
-}
-
-fn steam_screen(app: &AppState, port: &Port) -> Option<crate::fork::screens::SteamScreen> {
-    let home = home_dir()?;
-    let settings = ForkSettings::load(&super::steam_screens::settings_path(app));
-    let state = app.state.borrow();
-    let favorite = |key: &str| state.get(key).and_then(|i| i.favorite_exe.clone());
-    let queue = crate::fork::steam_queue::queue_path(&app.paths.config_dir);
-    let game_mode = crate::fork::steam_queue::game_mode_from_env();
-    Some(crate::fork::setup_wizard::steam::load_screen(&home, &app.paths.library_dir(), std::slice::from_ref(port), &settings, &favorite, &app.paths.cache_dir, &queue, game_mode))
-}
-
-fn steam_ask(app: &AppState, port: &Port) -> SteamAsk {
-    if port.is_android_only() {
-        return SteamAsk::Skip(None);
-    }
-    let Some(screen) = steam_screen(app, port) else { return SteamAsk::Skip(None) };
-    // No account to add it to (Steam never ran here, or several and none chosen): the Done page says what to do.
-    if let Some(note) = wiz::steam_account_note(screen.accounts.len(), screen.account.is_some()) {
-        return SteamAsk::Skip(Some(note));
-    }
-    let info = crate::fork::setup_wizard::steam::info(&screen, &SystemSteamCheck::new());
-    if let Some(problem) = info.problem {
-        return SteamAsk::Skip(Some((Mark::Problem, format!("Not added to Steam: {problem}"))));
-    }
-    if info.queued > 0 {
-        return SteamAsk::Skip(Some((Mark::Waiting, "Steam: it is added when Steam next closes".to_string())));
-    }
-    if info.to_add == 0 {
-        let other = screen.rows.iter().any(|r| r.can_change() && r.by_name());
-        return SteamAsk::Skip(Some(if other {
-            (Mark::ToDo, "Steam: a shortcut with its name starts another program; its Port page can fix it".to_string())
-        } else {
-            (Mark::Done, "Already in Steam".to_string())
-        }));
-    }
-    SteamAsk::Ask { running: !info.immediate && !info.game_mode, game_mode: info.game_mode }
-}
+// Whether to ask, the artwork fetch and the add are shared with Fix problems and the Port page
+// (`steam_add_screen`); this page and its words stay the wizard's own.
 
 fn steam_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
     let Some(port) = port_of(app, flow) else { return finish_quietly(app, router, flow) };
-    let (running, game_mode) = match steam_ask(app, &port) {
-        SteamAsk::Skip(note) => {
+    // No account to add it to (Steam never ran here, or several and none chosen), already in Steam, waiting: the Done
+    // page says so.
+    let (running, game_mode) = match super::steam_add_screen::ask(app, std::slice::from_ref(&port)) {
+        Ask::Skip(note) => {
             flow.notes.borrow_mut().extend(note);
             return done_step(app, router, flow);
         }
-        SteamAsk::Ask { running, game_mode } => (running, game_mode),
+        Ask::Ask { running, game_mode } => (running, game_mode),
     };
     let page = wiz::steam_page(&flow.name, &flow.art, game_mode, running);
     let f = flow.clone();
@@ -687,57 +644,17 @@ fn steam_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
     show_page(app, router, page, handlers(on_action, WizAct::SteamNo));
 }
 
-/// Yes: the cover and icon are fetched into the cache first (the shortcut's artwork is placed only from there), then the
-/// one-port add: written now with Steam closed (`shortcuts.vdf` backed up first), else queued and, outside Game Mode,
-/// the Close Steam flow (it asks first).
+/// Yes: the shared one-port add (`steam_add_screen::add`): the cover and icon are fetched into the cache first, then
+/// written now with Steam closed (`shortcuts.vdf` backed up first), else queued and, outside Game Mode, the Close Steam
+/// flow (it asks first). Its notes go on the Done page.
 fn add_to_steam(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, port: &Port) {
-    show_page(app, router, wiz::working_page(&flow.name, &flow.art, "Getting the artwork", "Fetching its cover and icon for Steam."), handlers(|_, _, _| {}, WizAct::SteamNo));
-    let (cache, folder, image, icon) = (app.paths.cache_dir.clone(), port.folder.clone(), port.image.clone(), port.icon.clone());
-    let job = Background::spawn(move |_| {
-        if let Some(url) = image {
-            crate::core::image_cache::cache_image(&url, &cache, &folder);
-        }
-        if let Some(url) = icon {
-            crate::core::image_cache::cache_image(&url, &cache, &format!("{folder}_icon"));
-        }
+    let working = wiz::working_page(&flow.name, &flow.art, "Getting the artwork", "Fetching its cover and icon for Steam.");
+    let f = flow.clone();
+    let then: super::steam_add_screen::Then = Rc::new(move |app, router, notes| {
+        f.notes.borrow_mut().extend(notes);
+        done_step(app, router, &f);
     });
-    let (app, router, flow, port) = (app.clone(), router.clone(), flow.clone(), port.clone());
-    when_done(move || {
-        if job.take().is_none() {
-            return false;
-        }
-        let outcome = match steam_screen(&app, &port) {
-            None => SteamOutcome::Problem("could not find your home folder".to_string()),
-            Some(mut screen) => {
-                let settings = ForkSettings::load(&super::steam_screens::settings_path(&app));
-                let queue = crate::fork::steam_queue::queue_path(&app.paths.config_dir);
-                crate::fork::setup_wizard::steam::add_all(&mut screen, &SystemSteamCheck::new(), &settings, &queue, SystemTime::now(), &crate::fork::store::backup_stamp())
-            }
-        };
-        eprintln!("install wizard: Steam for {}: {outcome:?}", port.display_name());
-        // The fetch says nothing when it fails: what is in the cache now decides the words.
-        let added = wiz::steam_added_note(port.image.is_some() || port.icon.is_some(), crate::fork::steam_queue::port_art_missing(&port, &app.paths.cache_dir));
-        let note = |m: Mark, t: &str| flow.notes.borrow_mut().push((m, t.to_string()));
-        match outcome {
-            SteamOutcome::Added(_) | SteamOutcome::Applied(_) => note(Mark::Done, added),
-            SteamOutcome::Nothing => note(Mark::Done, "Already in Steam"),
-            SteamOutcome::Queued { game_mode: true, .. } => note(Mark::Waiting, "Steam: you are asked to add it in Desktop Mode"),
-            SteamOutcome::Queued { game_mode: false, .. } => {
-                let f = flow.clone();
-                let then: super::steam_close_screen::Then = Rc::new(move |app, router, done| {
-                    let line = if done.waiting == 0 && done.applied > 0 { (Mark::Done, added) } else { (Mark::Waiting, "Steam: it is added when Steam next closes") };
-                    f.notes.borrow_mut().push((line.0, line.1.to_string()));
-                    done_step(app, router, &f);
-                });
-                let lead = Some(format!("{} is ready to go into Steam.", flow.name));
-                super::steam_close_screen::open(&app, &router, super::steam_close_screen::Opts { ask_first: true, lead, ..Default::default() }, then);
-                return true;
-            }
-            SteamOutcome::Problem(text) => note(Mark::Problem, &format!("Not added to Steam: {text}")),
-        }
-        done_step(&app, &router, &flow);
-        true
-    });
+    super::steam_add_screen::add(app, router, vec![port.clone()], working, then);
 }
 
 // -- 6. Done ------------------------------------------------------------------------------------------------------

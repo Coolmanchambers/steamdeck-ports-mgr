@@ -483,7 +483,11 @@ pub enum Act {
     View(usize),
     OpenFileFolder(usize),
     OpenInEditor(usize),
+    /// Not in Steam: "Add to Steam with artwork?" for this port.
     SteamAdd,
+    /// A shortcut is out of date, or one with its name starts another program: the Add to Steam list with this port
+    /// selected, whose review shows the change first.
+    SteamChange,
     SteamRepoint,
     SteamFixIcon,
     SteamFinish,
@@ -694,8 +698,8 @@ pub fn steam_page(p: &PortFacts, f: &SteamFacts) -> Page<Act> {
     }
     match &f.state {
         Ok(SteamState::NotInSteam) => page.options.push(PageOption { recommended: !f.queued && !f.at_old_copy, ..option("Add to Steam", "With its artwork, so it starts from Game Mode", Act::SteamAdd) }),
-        Ok(SteamState::NeedsUpdate(_)) => page.options.push(option("Update the shortcut", "Points it at this copy; play time stays", Act::SteamAdd)),
-        Ok(SteamState::OtherProgram(_)) => page.options.push(option("Use that shortcut for this port", "Repoints it at this port; you see the change first", Act::SteamAdd)),
+        Ok(SteamState::NeedsUpdate(_)) => page.options.push(option("Update the shortcut", "Points it at this copy; play time stays", Act::SteamChange)),
+        Ok(SteamState::OtherProgram(_)) => page.options.push(option("Use that shortcut for this port", "Repoints it at this port; you see the change first", Act::SteamChange)),
         _ => {}
     }
     if f.icon_problem.is_some() {

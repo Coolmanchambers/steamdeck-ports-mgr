@@ -777,8 +777,26 @@ fn open_fix(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
             let page = pages::confirm_page(check, "Back up every port's saves now?", vec!["The saves are copied into a zip. Nothing is deleted or replaced.".to_string()], "Back up now", n, total);
             show(app, router, s, Stage::Confirm, page);
         }
+        Fix::AddToSteam => add_to_steam(app, router, &problem.ports),
         fix => hand_off(app, router, s, fix.clone()),
     }
+}
+
+/// Fork (steam add page): "Add to Steam with artwork?" for exactly the ports the problem names
+/// (`steam_add_screen::open`, not the full Add to Steam list). What happened shows on the after page, as a repoint's
+/// notes do; Not now goes back to the step page it came from.
+fn add_to_steam(app: &Rc<AppState>, router: &Router, keys: &[String]) {
+    let ports: Vec<Port> = keys.iter().filter_map(|k| port_by_key(app, k)).collect();
+    let then: super::steam_add_screen::Then = Rc::new(|app, router, notes| {
+        let Some(s) = session() else { return close_current_dialog(app, router) };
+        *s.notes.borrow_mut() = notes.into_iter().map(|(_, text)| text).collect();
+        look(app, router, &s, Rc::new(show_after));
+    });
+    let not_now: super::steam_add_screen::Back = Rc::new(|app, router| match session() {
+        Some(s) => show_step(app, router, &s),
+        None => close_current_dialog(app, router),
+    });
+    super::steam_add_screen::open(app, router, ports, then, not_now);
 }
 
 /// "Yes" on a page of ours that asked first.
@@ -863,9 +881,8 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
             Some(key) => super::steam_icons_screen::open_for(app, router, Some(key.clone()), back_here),
             None => super::steam_icons_screen::open(app, router, back_here),
         },
-        Fix::AddToSteam => super::steam_screens::open_steam_screen_for(app, router, s.scope.as_deref()),
-        // Asked and done on the checkup's own pages (`repoint`), never handed off.
-        Fix::Repoint => {}
+        // Asked and done on pages of ours (`repoint`, `add_to_steam`), never handed off.
+        Fix::Repoint | Fix::AddToSteam => {}
         Fix::PickProgram(key) => {
             if let Some(port) = port_by_key(app, &key) {
                 super::install_launch::open_favorite_exe_picker(app, router, port);

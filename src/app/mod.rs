@@ -26,6 +26,7 @@ pub mod save_restore_screen;
 pub mod settings_menu_screen;
 pub mod setup_wizard_screen;
 pub mod state;
+pub mod steam_add_screen; // Fork: "Add to Steam with artwork?" for a few named ports
 pub mod steam_close_screen;
 pub mod steam_icons_screen;
 pub mod steam_screens;

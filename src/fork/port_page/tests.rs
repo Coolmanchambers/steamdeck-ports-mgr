@@ -315,6 +315,11 @@ fn the_steam_page_offers_only_what_applies_and_the_link_page_shows_the_address_f
     let p = port();
     let s = steam_page(&p, &SteamFacts { state: Ok(SteamState::NotInSteam), ..SteamFacts::default() });
     assert_eq!(s.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::SteamAdd]);
+    // A change to a shortcut that is there goes to the list's review (it shows the change first), not the add page.
+    for state in [SteamState::NeedsUpdate("target".into()), SteamState::OtherProgram("another program".into())] {
+        let s = steam_page(&p, &SteamFacts { state: Ok(state), ..SteamFacts::default() });
+        assert_eq!(s.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::SteamChange]);
+    }
     let s = steam_page(&p, &SteamFacts { state: Ok(SteamState::InSteam), at_old_copy: true, icon_problem: Some("missing".into()), ..SteamFacts::default() });
     assert_eq!(s.options.iter().map(|o| o.action).collect::<Vec<_>>(), [Act::SteamRepoint, Act::SteamFixIcon]);
     let fine = steam_page(&p, &SteamFacts { state: Ok(SteamState::InSteam), ..SteamFacts::default() });
