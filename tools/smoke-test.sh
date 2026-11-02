@@ -98,6 +98,21 @@ start_fresh() {
         "$FRESH_DIR/ports_launcher" >>"$OUT/fresh-app.log" 2>&1 &
     FRESH=$!
 }
+# Where Home put things, from the app's own log line "home: layout view=0 columns=6 tile=WxH gap=G body=X,Y button=X,Y,S" (logical
+# pixels from the window's top left corner, which are pixels on Xvfb). $1 = second-tile (the middle of the second poster tile)
+# or button (the middle of the view button). Prints "x y", or nothing when the app has not logged a layout.
+home_point() {
+    grep '^home: layout ' "$OUT/app.log" 2>/dev/null | tail -1 | awk -v what="$1" '{
+        for (i = 1; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2] }
+        split(v["tile"], t, "x"); split(v["body"], b, ","); split(v["button"], bt, ",")
+        if (t[1] == "" || bt[3] == "") exit
+        if (what == "second-tile") printf "%d %d\n", b[1] + t[1] + v["gap"] + t[1] / 2, b[2] + t[2] / 2
+        else printf "%d %d\n", bt[1] + bt[3] / 2, bt[2] + bt[3] / 2 }'
+}
+wait_for() {  # $1 = a shell test; waits up to 6 s for it to hold (the app may be busy drawing)
+    for _ in $(seq 1 30); do eval "$1" && return 0; sleep 0.2; done
+    return 1
+}
 find_window() {  # $1 = name regex; waits up to 20 s
     local w
     for _ in $(seq 1 100); do
@@ -289,8 +304,9 @@ if [ "$alive" = yes ]; then
         # The Port page: a right-click on a port's tile (the second tile is a port, with or without the Fix tile first) opens
         # it; a card's page opens and B comes back; B on the Port page returns to Home.
         eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
-        cols=$(( WIDTH / 160 )); [ "$cols" -lt 2 ] && cols=2; [ "$cols" -gt 8 ] && cols=8
-        tx=$(( X + 12 + (WIDTH - 24) * 3 / (2 * cols) )); ty=$(( Y + 200 ))
+        # Aimed at the tile the app says it laid out (its "home: layout" log line), not at guessed offsets.
+        read -r rx ry <<<"$(home_point second-tile)"
+        if [ -n "$rx" ]; then tx=$(( X + rx )); ty=$(( Y + ry )); else echo "info: no home: layout line, aiming by the old offsets"; tx=$(( X + 12 + (WIDTH - 24) * 3 / 6 )); ty=$(( Y + 200 )); fi
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.3
         xdotool mousemove $((X + 40)) $((Y + 600)); sleep 0.3; xdotool mousemove "$tx" "$ty"; sleep 0.3; xdotool mousemove $((tx + 5)) $((ty + 5)); sleep 0.3; xdotool click 3
         pp=$(find_window '^Deck Ports Manager: Port: ') || pp=""
@@ -323,15 +339,21 @@ if [ "$alive" = yes ]; then
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key Tab; sleep 1; xdotool type --delay 120 "pin"; sleep 0.8
         xdotool key Escape; sleep 1; xdotool key Escape; sleep 1.2
         check "B twice from a search in All ports: cleared, then Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -2 | head -1)" = "list: search cleared" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && kill -0 "$APP" 2>/dev/null'
-        # Home's view switch: the button left of the gear (about 71 px from the window's right edge, 141 px down) changes
-        # Posters to List and back; the choice is kept in fork-settings.json. The controller's R3 calls the same function.
+        # Home's view switch: the button left of the gear (where the app's "home: layout" line says it is) changes Posters to
+        # List and back; the choice is kept in fork-settings.json. The controller's R3 and Ctrl+L call the same function.
         eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
-        vx=$((X + WIDTH - 71)); vy=$((Y + 141))
-        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool mousemove $((vx - 40)) "$vy"; sleep 0.3; xdotool mousemove "$vx" "$vy"; sleep 0.3; xdotool click 1; sleep 1.2
+        read -r bx by <<<"$(home_point button)"
+        if [ -n "$bx" ]; then vx=$((X + bx)); vy=$((Y + by)); else echo "info: no home: layout line, aiming by the old offsets"; vx=$((X + WIDTH - 71)); vy=$((Y + 141)); fi
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool mousemove $((vx - 40)) "$vy"; sleep 0.3; xdotool mousemove "$vx" "$vy"; sleep 0.3; xdotool click 1; wait_for 'grep -q "^home: view List$" "$OUT/app.log"'
         import -window root "$OUT/home-list.png" 2>/dev/null
         check "Home: the view button switches to the List and keeps it in fork-settings.json" 'grep -q "^home: view List$" "$OUT/app.log" && grep -q "\"home_view\": \"list\"" "$APP_DIR/fork-settings.json" && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
-        xdotool click 1; sleep 1.2
+        xdotool click 1; wait_for '[ "$(grep "^home: view " "$OUT/app.log" | tail -1)" = "home: view Posters" ]'
         check "Home: the view button switches back to Posters" '[ "$(grep "^home: view " "$OUT/app.log" | tail -1)" = "home: view Posters" ] && grep -q "\"home_view\": \"posters\"" "$APP_DIR/fork-settings.json"'
+        # The keyboard way (Ctrl+L) is the same switch; the hint bar of the controller says R3.
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.3; xdotool key ctrl+l; wait_for '[ "$(grep "^home: view " "$OUT/app.log" | tail -1)" = "home: view List" ]'
+        check "Home: Ctrl+L switches the view too" '[ "$(grep "^home: view " "$OUT/app.log" | tail -1)" = "home: view List" ]'
+        xdotool key ctrl+l; wait_for '[ "$(grep "^home: view " "$OUT/app.log" | tail -1)" = "home: view Posters" ]'
+        check "Home: Ctrl+L again goes back to Posters" '[ "$(grep "^home: view " "$OUT/app.log" | tail -1)" = "home: view Posters" ]'
         # Settings is a page of groups: the title bar's Settings button opens it, then the keyboard picks a group and a card
         # (Down presses; Up first, since a page remembers where the cursor was). The pages are one window each, found by
         # name ("Settings", "Settings: Ports"...). Without a window manager keys reach a window only after an explicit

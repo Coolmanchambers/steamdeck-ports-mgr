@@ -149,20 +149,27 @@ pub fn build(ports: &[PortFacts], setup_done: bool, checkup: Option<&crate::fork
 /// The controller hint bar for what is focused (the real bindings: A plays, X opens the Port page (Fork, port page), Y opens Settings, R3
 /// (a click of the right stick) switches between posters and the list, L1/R1 and Tab switch lists). `None` focus: the empty
 /// card (nothing to switch there).
-pub fn hints(focused: Option<TileKind>) -> String {
+pub fn hints(focused: Option<TileKind>, view: View) -> String {
     let gap = crate::fork::page::HINT_GAP;
+    let switch = view_hint(view);
     match focused {
         None => ["A Choose", "D-pad Move", "Y Settings", "L1/R1 Lists"].join(gap),
-        Some(TileKind::Setup) => ["A Set up", "D-pad Move", "Y Settings", VIEW_HINT, "L1/R1 Lists"].join(gap),
-        Some(TileKind::Add) => ["A Add", "D-pad Move", "Y Settings", VIEW_HINT, "L1/R1 Lists"].join(gap),
-        Some(TileKind::Checkup) => ["A Fix", "D-pad Move", "Y Settings", VIEW_HINT, "L1/R1 Lists"].join(gap),
-        Some(_) => ["A Play", "X Options", "D-pad Move", "Y Settings", VIEW_HINT, "L1/R1 Lists"].join(gap),
+        Some(TileKind::Setup) => ["A Set up", "D-pad Move", "Y Settings", switch, "L1/R1 Lists"].join(gap),
+        Some(TileKind::Add) => ["A Add", "D-pad Move", "Y Settings", switch, "L1/R1 Lists"].join(gap),
+        Some(TileKind::Checkup) => ["A Fix", "D-pad Move", "Y Settings", switch, "L1/R1 Lists"].join(gap),
+        Some(_) => ["A Play", "X Options", "D-pad Move", "Y Settings", switch, "L1/R1 Lists"].join(gap),
     }
 }
 
 /// The controller button that switches Home between posters and the list: a click of the right stick (Select already
-/// toggles the full screen for the whole app, and every face and shoulder button has its job).
-pub const VIEW_HINT: &str = "R3 View";
+/// toggles the full screen for the whole app, and every face and shoulder button has its job). The hint says what the
+/// press shows: "R3 List" while posters show, "R3 Posters" while the list shows.
+pub fn view_hint(showing: View) -> &'static str {
+    match showing {
+        View::Posters => "R3 List",
+        View::List => "R3 Posters",
+    }
+}
 
 /// How Home shows the ports: cover tiles ("Posters") or one detailed row each ("List"). Kept in `fork-settings.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -309,65 +316,69 @@ pub struct TileLayout {
     pub tile_h: f32,
     /// Whole rows that fit the room at once (rows beyond them scroll a whole row at a time).
     pub visible_rows: usize,
+    /// The frame a cover is drawn in (the tile less its margin, title and badge lines); a poster fills as much of it as its
+    /// own shape allows.
+    pub cover_w: f32,
+    pub cover_h: f32,
 }
 
+/// A portrait cover, about 1:1.4.
 const COVER_RATIO: f32 = 1.4;
-/// The room under a cover, in font heights: its padding, two title lines and the badge line.
-const TEXT_UNITS: f32 = 3.4;
-/// The narrowest tile worth showing everything at once (in font heights); narrower, and the tiles scroll instead.
-const MIN_TILE_W_UNITS: f32 = 6.5;
-/// The widest a tile grows (in font heights), so a handful of ports do not become giant posters.
-const MAX_TILE_W_UNITS: f32 = 12.0;
-/// How much taller than its natural height a tile may stretch to use up the room of whole rows.
-const STRETCH: f32 = 1.12;
-/// The narrowest a tile gets so its badge line ("Add game files") shows whole (in font heights); a tile whose cover is limited by the room's height
-/// is made this wide anyway, the cover simply sitting in a wider frame.
-const TEXT_W_UNITS: f32 = 8.6;
-
-/// A tile's height for a width: a portrait cover (about 1:1.4) and the room for two title lines and the badge line.
-fn natural_tile_h(w: f32, font: f32) -> f32 {
-    w * COVER_RATIO + font * TEXT_UNITS
-}
+/// What a Tile draws around its cover, in font heights: `TILE_PAD_UNITS` above and below, and one title line (elided) and
+/// the badge line between the cover and the bottom margin. `ui/fork/home.slint` (component Tile: `pad`, `text-h`) must say
+/// the same numbers; a test reads the file and compares.
+pub const TILE_PAD_UNITS: f32 = 0.4;
+pub const TILE_TEXT_UNITS: f32 = 2.9;
+const TEXT_UNITS: f32 = TILE_PAD_UNITS * 2.0 + TILE_TEXT_UNITS;
+/// The smallest cover frame width worth showing everything at once, and the biggest (in font heights; a handful of ports do
+/// not become giant posters).
+const MIN_COVER_UNITS: f32 = 5.5;
+const MAX_COVER_UNITS: f32 = 9.5;
+const MAX_COLUMNS: usize = 12;
+/// Arrangements whose covers are within this of the biggest count as equal; the one with the most rows, then columns, wins, so the
+/// room is filled and the tiles run the width of the screen.
+const TIE: f32 = 0.985;
 
 /// The poster layout for `count` tiles in a room of `width` by `height` (logical pixels), with `font` the tile text size
-/// and `gap` the space between tiles. It takes the arrangement with the biggest tiles that shows every tile at once, so no
-/// row is cut off; when even the narrowest worthwhile tile cannot do that, as many columns as the width gives and as many
-/// whole rows as the height gives, and the rest scrolls a whole row at a time.
+/// and `gap` the space between tiles. It takes the arrangement with the biggest covers that shows every tile at once, so no
+/// row is cut off (and, among equals, the most columns, so the tiles use the width); when even the smallest worthwhile cover
+/// cannot do that, as many whole rows as keep a cover readable, columns to match, and the rest scrolls a whole row at a time.
 pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -> TileLayout {
     let (width, height) = (width.max(1.0), height.max(1.0));
     let n = count.max(1);
-    let max_w = font * MAX_TILE_W_UNITS;
-    // (rows, columns, cover width, tile width): the biggest tile wins, a tile narrower than its badge words counting as that wide.
-    let mut best: Option<(usize, usize, f32, f32)> = None;
-    for rows in 1..=n {
-        let columns = n.div_ceil(rows);
-        if n.div_ceil(columns) != rows {
-            continue;
+    let (text, margin) = (font * TEXT_UNITS, font * TILE_PAD_UNITS * 2.0);
+    let (min_cover, max_cover) = (font * MIN_COVER_UNITS, font * MAX_COVER_UNITS);
+    // (columns, rows, tile width at most, row height) and the cover frame width each gives.
+    let options: Vec<(usize, usize, f32, f32, f32)> = (1..=n.min(MAX_COLUMNS))
+        .map(|columns| {
+            let rows = n.div_ceil(columns);
+            let tile_max = (width - gap * (columns - 1) as f32) / columns as f32;
+            let per_row = (height - gap * (rows - 1) as f32) / rows as f32;
+            let cover = (tile_max - margin).min((per_row - text) / COVER_RATIO).min(max_cover);
+            (columns, rows, tile_max, per_row, cover)
+        })
+        .collect();
+    let biggest = options.iter().map(|o| o.4).fold(f32::MIN, f32::max);
+    if biggest >= min_cover {
+        if let Some(&(columns, rows, tile_max, per_row, cover)) = options.iter().filter(|o| o.4 >= biggest * TIE).max_by_key(|o| (o.1, o.0)) {
+            let tile_w = tile_max.min(cover + margin + gap * 2.0);
+            let tile_h = per_row.min(cover * COVER_RATIO + text);
+            return TileLayout { columns, tile_w, tile_h, visible_rows: rows, cover_w: tile_w - margin, cover_h: tile_h - text };
         }
-        let by_width = (width - gap * (columns - 1) as f32) / columns as f32;
-        let per_row = (height - gap * (rows - 1) as f32) / rows as f32;
-        let by_height = (per_row - font * TEXT_UNITS) / COVER_RATIO;
-        let w = by_width.min(by_height).min(max_w);
-        let tile_w = w.max(font * TEXT_W_UNITS).min(by_width);
-        if best.is_none_or(|(_, _, _, b)| tile_w > b * 1.03) {
-            best = Some((rows, columns, w, tile_w));
-        }
-    }
-    if let Some((rows, columns, w, tile_w)) = best.filter(|(_, _, w, _)| *w >= font * MIN_TILE_W_UNITS) {
-        let per_row = (height - gap * (rows - 1) as f32) / rows as f32;
-        return TileLayout { columns, tile_w, tile_h: per_row.min(natural_tile_h(w, font) * STRETCH), visible_rows: rows };
     }
     // Too many to show at once: as many whole rows as keep a cover readable, columns to match, the rest scrolls.
-    let cover_w = |rows: usize| ((height - gap * (rows - 1) as f32) / rows as f32 - font * TEXT_UNITS) / COVER_RATIO;
+    let cover_for = |rows: usize| ((height - gap * (rows - 1) as f32) / rows as f32 - text) / COVER_RATIO;
     let mut visible = 1;
-    while visible < 8 && cover_w(visible + 1) >= font * MIN_TILE_W_UNITS {
+    while visible < 8 && cover_for(visible + 1) >= min_cover {
         visible += 1;
     }
     let per_row = (height - gap * (visible - 1) as f32) / visible as f32;
-    let target = cover_w(visible).clamp(font * MIN_TILE_W_UNITS, font * 11.0).max(font * TEXT_W_UNITS);
-    let columns = (((width + gap) / (target + gap)).floor() as usize).clamp(1, 8);
-    let w = ((width - gap * (columns - 1) as f32) / columns as f32).min(max_w * 1.2);
-    TileLayout { columns, tile_w: w, tile_h: per_row.max(font * 9.0).min(height), visible_rows: visible }
+    let cover = cover_for(visible).clamp(min_cover, max_cover);
+    let natural = cover + margin;
+    let columns = (((width + gap) / (natural + gap)).floor() as usize).clamp(1, MAX_COLUMNS);
+    let tile_w = ((width - gap * (columns - 1) as f32) / columns as f32).min(natural + gap * 2.0);
+    let tile_h = per_row.max(text + min_cover).min(height);
+    TileLayout { columns, tile_w, tile_h, visible_rows: visible, cover_w: tile_w - margin, cover_h: tile_h - text }
 }
 
 /// Which tile has the focus, by what it is and not by where it sits: the checkup tile can appear in front of it (the
@@ -606,8 +617,8 @@ mod tests {
         let Home::Tiles(unplayed) = build(&[port("a", 0)], true, Some(&tile)) else { panic!() };
         assert_eq!(unplayed.iter().map(|t| t.kind).collect::<Vec<_>>(), [TileKind::Checkup, TileKind::Port, TileKind::Add]);
         assert_eq!(build(&[], true, Some(&tile)), Home::Empty, "nothing installed: nothing to fix");
-        assert!(hints(Some(TileKind::Checkup)).starts_with("A Fix"));
-        assert!(!hints(Some(TileKind::Checkup)).contains("X Options"));
+        assert!(hints(Some(TileKind::Checkup), View::Posters).starts_with("A Fix"));
+        assert!(!hints(Some(TileKind::Checkup), View::Posters).contains("X Options"));
     }
 
     #[test]
@@ -694,20 +705,22 @@ mod tests {
 
     #[test]
     fn the_hint_bar_names_the_real_buttons() {
-        assert!(hints(Some(TileKind::Port)).starts_with("A Play"));
-        assert!(hints(Some(TileKind::Continue)).contains("X Options"));
-        assert!(hints(Some(TileKind::Setup)).starts_with("A Set up"));
-        assert!(hints(Some(TileKind::Add)).starts_with("A Add"));
-        assert!(!hints(Some(TileKind::Add)).contains("X Options"), "nothing to show Info for");
-        assert!(!hints(None).contains("X Options"));
-        assert!(hints(None).contains("L1/R1 Lists"));
+        assert!(hints(Some(TileKind::Port), View::Posters).starts_with("A Play"));
+        assert!(hints(Some(TileKind::Continue), View::Posters).contains("X Options"));
+        assert!(hints(Some(TileKind::Setup), View::Posters).starts_with("A Set up"));
+        assert!(hints(Some(TileKind::Add), View::Posters).starts_with("A Add"));
+        assert!(!hints(Some(TileKind::Add), View::Posters).contains("X Options"), "nothing to show Info for");
+        assert!(!hints(None, View::Posters).contains("X Options"));
+        assert!(hints(None, View::Posters).contains("L1/R1 Lists"));
         for kind in [TileKind::Port, TileKind::Continue, TileKind::Setup, TileKind::Add, TileKind::Checkup] {
-            assert!(hints(Some(kind)).contains("R3 View"), "{kind:?} names the view switch");
+            assert!(hints(Some(kind), View::Posters).contains("R3 List"), "{kind:?} says the press shows the list");
+            assert!(hints(Some(kind), View::List).contains("R3 Posters"), "{kind:?} says the press shows the posters");
+            assert!(!hints(Some(kind), View::List).contains("R3 List"));
         }
-        assert!(!hints(None).contains("View"), "the empty card has nothing to switch");
-        let longest = hints(Some(TileKind::Port));
-        assert!(longest.chars().count() < 90, "one line at 1280 px: {longest}");
-        assert!(!hints(Some(TileKind::Port)).contains('\u{2014}'), "no em dashes");
+        assert!(!hints(None, View::Posters).contains("View"), "the empty card has nothing to switch");
+        let longest = hints(Some(TileKind::Port), View::List);
+        assert!(longest.chars().count() < 100, "one line at 1280 px: {longest}");
+        assert!(!hints(Some(TileKind::Port), View::Posters).contains('\u{2014}'), "no em dashes");
     }
 
     #[test]
@@ -783,63 +796,57 @@ mod tests {
         assert_eq!(initial_of("..."), "?");
     }
 
-    /// Whole rows fit, never cut: the last row's bottom is inside the room.
+    /// Whole rows fit, never cut: the rows shown are inside the room.
     fn fits(l: &TileLayout, n: usize, height: f32, gap: f32) -> bool {
-        let rows = n.div_ceil(l.columns);
-        rows <= l.visible_rows && l.visible_rows as f32 * l.tile_h + gap * (l.visible_rows as f32 - 1.0) <= height + 0.01
+        n.div_ceil(l.columns) <= l.visible_rows && l.visible_rows as f32 * l.tile_h + gap * (l.visible_rows as f32 - 1.0) <= height + 0.01
     }
 
-    #[test]
-    fn seven_tiles_on_the_decks_screen_all_fit_in_whole_rows() {
-        // Big mode at 1280 x 800: the room under the top line and above the hint line is about 640 px tall.
-        let (font, gap) = (18.4, 16.6);
-        let l = tile_layout(1256.0, 640.0, 7, font, gap);
-        assert!(fits(&l, 7, 640.0, gap), "{l:?}");
-        assert_eq!((l.columns, l.visible_rows), (4, 2), "two full rows of four, not six and one");
-        assert!(l.tile_w >= font * MIN_TILE_W_UNITS && l.tile_w <= font * MAX_TILE_W_UNITS + 0.01, "{l:?}");
-        assert!(l.tile_h >= natural_tile_h(l.tile_w, font) / 1.2, "the cover keeps its portrait shape: {l:?}");
-        assert!(l.tile_h <= natural_tile_h(l.tile_w, font) * STRETCH + 0.01);
+    fn used_width(l: &TileLayout, gap: f32) -> f32 {
+        l.columns as f32 * l.tile_w + gap * (l.columns as f32 - 1.0)
     }
 
+    // Measured on the Deck's 1280 x 800 screen in big mode: text 20 px, the room under the top line about 575 px tall. Before
+    // this layout the covers were about 136 x 204 and a second row was cut off.
+    const DECK: (f32, f32, f32, f32) = (1256.0, 575.0, 20.0, 18.0);
+
     #[test]
-    fn seven_and_eight_tiles_fit_the_room_the_deck_really_gives() {
-        // Measured on the 1280 x 800 screen in big mode: text 20 px, the room under the top line about 575 px tall.
-        let (font, gap) = (20.0, 18.0);
-        for n in [6usize, 7, 8] {
-            let l = tile_layout(1256.0, 575.0, n, font, gap);
-            assert!(fits(&l, n, 575.0, gap), "{n} tiles: {l:?}");
-            assert_eq!(l.visible_rows, n.div_ceil(l.columns), "{n} tiles: nothing is left to scroll to: {l:?}");
-            assert!(l.visible_rows <= 2, "{n} tiles: {l:?}");
-            assert!(l.tile_w >= font * TEXT_W_UNITS - 0.01, "{n} tiles: wide enough for the badge words: {l:?}");
-            assert!(l.tile_h <= natural_tile_h(l.tile_w, font) * STRETCH + 0.01, "{n} tiles: {l:?}");
-            assert!(l.columns as f32 * l.tile_w + gap * (l.columns as f32 - 1.0) <= 1256.0 + 0.01, "{n} tiles: inside the width: {l:?}");
+    fn the_decks_screen_shows_up_to_a_dozen_tiles_in_two_whole_rows_with_covers_at_least_as_big_as_before() {
+        let (w, h, font, gap) = DECK;
+        for n in 7usize..=12 {
+            let l = tile_layout(w, h, n, font, gap);
+            assert!(fits(&l, n, h, gap), "{n} tiles: {l:?}");
+            assert_eq!(l.visible_rows, 2, "{n} tiles: two whole rows, nothing cut: {l:?}");
+            assert!(l.columns >= 6, "{n} tiles: six or more columns: {l:?}");
+            assert!(l.cover_w >= 136.0 && l.cover_h >= 203.0, "{n} tiles: covers no smaller than the old 136 x 204: {l:?}");
+            assert!(used_width(&l, gap) >= w - 1.0, "{n} tiles: no side bands, the tiles run the width: {l:?}");
         }
     }
 
     #[test]
-    fn a_few_ports_make_one_row_of_ordinary_tiles_and_never_giant_ones() {
-        let (font, gap) = (18.4, 16.6);
-        let l = tile_layout(1256.0, 640.0, 3, font, gap);
+    fn six_tiles_and_a_few_ports_get_one_row_of_ordinary_covers_and_never_giant_ones() {
+        let (w, h, font, gap) = DECK;
+        let six = tile_layout(w, h, 6, font, gap);
+        assert!(fits(&six, 6, h, gap) && six.visible_rows == 1 && six.cover_w >= 136.0, "{six:?}");
+        let l = tile_layout(w, h, 3, font, gap);
         assert_eq!((l.columns, l.visible_rows), (3, 1));
-        assert!(l.tile_w <= font * MAX_TILE_W_UNITS + 0.01, "{l:?}");
-        let one = tile_layout(1256.0, 640.0, 1, font, gap);
+        assert!(l.cover_w <= font * MAX_COVER_UNITS + 2.0 * gap + 0.01, "{l:?}");
+        let one = tile_layout(w, h, 1, font, gap);
         assert_eq!((one.columns, one.visible_rows), (1, 1));
-        assert!(fits(&one, 1, 640.0, gap));
-        let none = tile_layout(1256.0, 640.0, 0, font, gap);
+        assert!(fits(&one, 1, h, gap));
+        let none = tile_layout(w, h, 0, font, gap);
         assert!(none.columns >= 1 && none.tile_w > 0.0 && none.tile_h > 0.0, "nothing to draw but never a zero size");
     }
 
     #[test]
     fn too_many_tiles_scroll_in_whole_rows() {
-        let (font, gap) = (18.4, 16.6);
-        for n in [20, 33, 60] {
-            let l = tile_layout(1256.0, 640.0, n, font, gap);
+        let (w, h, font, gap) = DECK;
+        for n in [20usize, 33, 60] {
+            let l = tile_layout(w, h, n, font, gap);
             assert!(l.visible_rows >= 1 && l.columns >= 1, "{l:?}");
             let shown = l.visible_rows as f32 * l.tile_h + gap * (l.visible_rows as f32 - 1.0);
-            assert!(shown <= 640.0 + 0.01, "{n} tiles: the rows shown are whole and inside the room: {l:?}");
-            assert!(l.tile_w >= font * MIN_TILE_W_UNITS, "{n} tiles: still readable: {l:?}");
-            assert!(l.tile_w >= font * TEXT_W_UNITS - 0.01, "{n} tiles: wide enough for the badge words: {l:?}");
-            assert!(l.columns as f32 * l.tile_w + gap * (l.columns as f32 - 1.0) <= 1256.0 + 0.01, "{n} tiles: inside the width: {l:?}");
+            assert!(shown <= h + 0.01, "{n} tiles: the rows shown are whole and inside the room: {l:?}");
+            assert!(l.cover_w >= font * MIN_COVER_UNITS - 0.01, "{n} tiles: still readable: {l:?}");
+            assert!(used_width(&l, gap) <= w + 0.01, "{n} tiles: inside the width: {l:?}");
             assert!(n.div_ceil(l.columns) > l.visible_rows, "{n} tiles really do scroll");
         }
     }
@@ -852,16 +859,33 @@ mod tests {
                     let gap = font * 0.9;
                     let l = tile_layout(w, h, n, font, gap);
                     let ctx = format!("{w}x{h} font {font} n {n}: {l:?}");
-                    assert!(l.columns >= 1 && l.columns <= 8.max(n.max(1)), "{ctx}");
+                    assert!(l.columns >= 1 && l.columns <= MAX_COLUMNS, "{ctx}");
                     assert!(l.visible_rows >= 1, "{ctx}");
                     assert!(l.tile_w.is_finite() && l.tile_w > 0.0 && l.tile_h.is_finite() && l.tile_h > 0.0, "{ctx}");
-                    let enough_room = h >= font * 9.0;
-                    if enough_room {
+                    if h >= font * 9.0 {
                         assert!(l.tile_h <= h + 0.01, "a tile is never taller than the room: {ctx}");
                     }
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_tile_draws_exactly_the_text_block_the_layout_reserves() {
+        // The layout reserves TEXT_UNITS font heights under the cover's top edge margin; `component Tile` in the screen file
+        // must draw that and no more (it once drew 5.4 where the layout assumed 3.4, so posters came out smaller).
+        let slint = include_str!("../../ui/fork/home.slint");
+        let start = slint.find("component Tile inherits").expect("component Tile");
+        let tile = &slint[start..slint.find("component Row inherits").expect("component Row")];
+        let units = |name: &str| -> f32 {
+            let prefix = format!("property <length> {name}: root.font-px * ");
+            let line = tile.lines().find(|l| l.trim_start().starts_with(&prefix)).unwrap_or_else(|| panic!("Tile has no {name}"));
+            line.trim_start()[prefix.len()..].trim().trim_end_matches(';').parse().unwrap()
+        };
+        assert_eq!(units("pad"), TILE_PAD_UNITS);
+        assert_eq!(units("text-h"), TILE_TEXT_UNITS);
+        assert!((TEXT_UNITS - (2.0 * units("pad") + units("text-h"))).abs() < 1e-6);
+        assert!(tile.contains("wrap: no-wrap;"), "one title line, elided");
     }
 
 

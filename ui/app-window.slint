@@ -118,7 +118,7 @@ export component AppWindow inherits Window {
     // and the tile layout (src/fork/home.rs `tile_layout`).
     in property <int> home-view: 0;
     callback home-view-requested();
-    callback home-layout-reported(int);
+    callback home-layout-reported(int, string);
     pure callback home-tile-layout(length, length, int, length, length) -> TileLayout;
     in property <int> home-cloud: 0;
     in property <string> home-cloud-text: "";
@@ -399,6 +399,10 @@ export component AppWindow inherits Window {
                                             accept
                                         } else if (!root.big-mode && event.modifiers.control && event.text == "=") {
                                             root.border-adjust-requested(1);
+                                            accept
+                                        } else if (root.home-mode && event.modifiers.control && event.text == "l") {
+                                            // Fork (home view): Ctrl+L switches Home between posters and the list (letters alone search).
+                                            root.home-view-requested();
                                             accept
                                         } else if (event.text == Key.UpArrow || (event.modifiers.control && event.text == "w")) {
                                             root.move-requested(0, -1);
@@ -760,7 +764,7 @@ export component AppWindow inherits Window {
                             add-requested => { root.home-add-requested(); }
                             empty-hovered(i) => { root.home-empty-hovered(i); }
                             view-requested => { root.home-view-requested(); }
-                            layout-reported(c) => { root.home-layout-reported(c); }
+                            layout-reported(c, g) => { root.home-layout-reported(c, g); }
                             tile-layout(w, h, n, f, g) => { return root.home-tile-layout(w, h, n, f, g); }
                         }
 

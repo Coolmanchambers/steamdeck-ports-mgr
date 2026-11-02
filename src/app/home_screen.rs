@@ -120,7 +120,10 @@ pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
     }
     {
         let app = app.clone();
-        window.on_home_layout_reported(move |c| app.home.cols.set(c.max(0) as usize));
+        window.on_home_layout_reported(move |c, g| {
+            app.home.cols.set(c.max(0) as usize);
+            eprintln!("{g}");
+        });
     }
     window.on_home_tile_layout(|w, h, n, font, gap| {
         let l = home::tile_layout(w, h, n.max(0) as usize, font, gap);
@@ -454,7 +457,7 @@ fn focused_kind(app: &AppState) -> Option<TileKind> {
 fn push_selected(app: &AppState) {
     let window = app.window();
     window.set_home_selected(app.home.selected.get() as i32);
-    window.set_home_hint(home::hints(focused_kind(app)).into());
+    window.set_home_hint(home::hints(focused_kind(app), app.home.view.get()).into());
     window.set_scroll_trigger(!window.get_scroll_trigger());
 }
 

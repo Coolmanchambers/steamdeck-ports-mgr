@@ -141,8 +141,9 @@ to a file that came from upstream is listed here with its date.
 | 2026-11-01 | `src/app/dialogs.rs` | Same game: Info's Select version on a port that is not installed goes through `same_game_screen::confirm_then` (choosing a version there is an install); on an installed port it opens the version list as before |
 | 2026-11-01 | `src/app/mod.rs` | One module line, `same_game_screen` |
 | 2026-11-02 | `src/app/mod.rs` | One module line, `steam_add_screen` |
-| 2026-11-01 | `ui/app-window.slint` | Home view: `TileLayout` imported; `home-view`, `home-view-requested`, `home-layout-reported` and a pure `home-tile-layout` callback (replacing `home-columns`) passed to `HomeView`; while Home is shown `content-body` takes the window's height (also windowed: `vertical-stretch` and `preferred-height` read `home-mode`); in big mode on Home the bottom padding is 6 px and the zero-height footer row is left out (`if`), so Home runs to the bottom edge. Every other screen lays out as before |
+| 2026-11-01 | `ui/app-window.slint` | Home view: `TileLayout` imported; `home-view`, `home-view-requested`, `home-layout-reported` and a pure `home-tile-layout` callback (replacing `home-columns`) passed to `HomeView`; while Home is shown `content-body` takes the window's height (also windowed: `vertical-stretch` and `preferred-height` read `home-mode`); in big mode on Home the bottom padding is 6 px and the zero-height footer row is left out (`if`), so Home runs to the bottom edge. Ctrl+L on the search box asks for the switch while Home shows; `home-layout-reported` carries the screen's layout line (logged for the smoke test). Every other screen lays out as before |
 | 2026-11-01 | `src/core/gamepad.rs`, `src/ui/gamepad_router.rs`, `src/app/gamepad_target.rs` | Home view: a click of the right stick (R3, `Button::RightThumb`) is a ninth button, `GamepadAction::SwitchView` (`GamepadTarget::switch_view`, no-op by default); only the main window's target acts on it (`home_screen::toggle_view`). Select stays the full-screen toggle; tests |
+| 2026-11-02 | `tools/smoke-test.sh` | Home view: the right-click on a Home tile and the view-button click are aimed by the app's own `home: layout` log line (`home_point`) instead of fixed offsets; checks that the view button and Ctrl+L switch Posters / List and that the choice is kept in `fork-settings.json` |
 
 Files added by this fork:
 
@@ -461,13 +462,20 @@ The first thing the app shows (Tim, 2026-10-25: "want a better first impression 
 - **Buttons on Home**: A plays (or sets up on the Setup tile and the empty card), X opens Info, Y opens Settings, B does
   nothing; the hint bar says so ("A Play · X Info · D-pad Move · Y Settings · L1/R1 Lists").
 - **Sizes**: redrawn when the mode changes. Since 2026-11-01 (home view) the cover size is picked so whole rows fit the
-  room between the top line and the hint line (`home::tile_layout`, called by the screen through a pure callback):
-  the arrangement with the biggest tiles that shows every tile at once (7 tiles on a Deck in big mode: two full rows of
-  four); with too many for that, as many whole rows as keep a cover readable, and the rest scrolls a whole row at a
-  time (the selected row is brought into view). Home takes the whole window height: the hint line sits at the bottom edge.
+  room between the top line and the hint line (`home::tile_layout`, called by the screen through a pure callback). A tile
+  is a cover, one title line (elided) and the badge line; the layout and `component Tile` share the numbers
+  (`TILE_PAD_UNITS`, `TILE_TEXT_UNITS`; a test reads the screen file and compares). It takes the arrangement with the
+  biggest covers that shows every tile at once, and among equals the most rows, then columns, so the room is filled and the
+  tiles run the width. On a Deck in big mode (room 1256 x 575, text 20 px) 7 to 12 tiles are two whole rows of 6 or 7 with
+  covers of about 146 x 204, no smaller than the old 136 x 204; with too many for that, as many whole rows as keep a cover
+  readable, and the rest scrolls a whole row at a time (the selected row is brought into view). The grid is left-aligned
+  under "Your ports". Home takes the whole window height: the hint line sits at the bottom edge. The screen logs a line
+  "home: layout view=0 columns=6 tile=WxH gap=G body=X,Y button=X,Y,S" when the layout changes; the smoke test aims its
+  clicks by it.
 - **Posters or List** (2026-11-01): a button on the top line left of the gear (three lines while posters show, four
   squares while the list shows) and R3 (a click of the right stick; Select is the full-screen toggle) switch the view; the
-  hint bar says "R3 View". The choice is kept in `fork-settings.json` (`home_view`: `posters` (default) or `list`). List:
+  hint bar says "R3 List" while posters show and "R3 Posters" while the list shows; Ctrl+L does the same on the keyboard (letters
+  alone search, so a Ctrl combination). The choice is kept in `fork-settings.json` (`home_view`: `posters` (default) or `list`). List:
   one row per tile in the same order, about 1.5 times the app's own list row, a small cover, the name on one line, the
   badge with its mark, a "Continue" tag on the port played last, and a muted line of what the app knows for the port
   (system from the catalog tags, installed version, "Played today" or the date from the app's own play record, play
