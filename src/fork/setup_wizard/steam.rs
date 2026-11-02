@@ -52,16 +52,31 @@ pub fn add_all(screen: &mut SteamScreen, steam: &dyn SteamProcessCheck, settings
         return SteamOutcome::Problem("Choose your Steam account first.".to_string());
     }
     screen.select_all_missing();
+    add_selected(screen, steam, settings, queue_path, now, stamp, false)
+}
+
+/// Fork (steam add page): [`add_all`] for the rows already selected (the Port page's one shortcut to update, found by
+/// name or not). `behind_waiting`: with Steam closed and other changes already waiting, these are queued behind them
+/// (`Queued { game_mode: false }`: the Close Steam flow then makes them all, the list backed up first) instead of
+/// refused.
+pub fn add_selected(screen: &SteamScreen, steam: &dyn SteamProcessCheck, settings: &ForkSettings, queue_path: &Path, now: SystemTime, stamp: &str, behind_waiting: bool) -> SteamOutcome {
+    if let Some(problem) = &screen.load_error {
+        return SteamOutcome::Problem(problem.clone());
+    }
+    if screen.account.is_none() {
+        return SteamOutcome::Problem("Choose your Steam account first.".to_string());
+    }
     let count = screen.selected_count();
     if count == 0 {
         return SteamOutcome::Nothing;
     }
+    let behind = behind_waiting && !screen.game_mode && !screen.queue.is_empty();
     // Writing now while other changes wait (a moved port's shortcut that still points at its old copy) would add a
     // second shortcut for that port: those are made first, through the close-Steam flow.
-    if !screen.can_queue(steam) && !screen.queue.is_empty() {
+    if !screen.can_queue(steam) && !screen.queue.is_empty() && !behind {
         return SteamOutcome::Problem("Some Steam changes are still waiting. Update those first; then the rest can be added.".to_string());
     }
-    if screen.can_queue(steam) {
+    if screen.can_queue(steam) || behind {
         let changes = changes_from_screen(screen, stamp);
         return match queue_changes(queue_path, changes, screen.game_mode) {
             Ok(_) => SteamOutcome::Queued { count, game_mode: screen.game_mode },
@@ -293,6 +308,43 @@ mod tests {
         let out = add_all(&mut now_closed, &closed, &settings(&home), &queue, SystemTime::now(), "20261023-100100");
         assert!(matches!(&out, SteamOutcome::Problem(t) if t.contains("still waiting")), "{out:?}");
         assert_eq!(fs::read(&path).unwrap(), before, "shortcuts.vdf untouched");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn behind_changes_already_waiting_the_selection_is_queued_and_nothing_is_written() {
+        let (home, library, path) = fake_home("behind", &[1234]);
+        let queue = home.join("steam-queue.json");
+        let mut first = screen(&home, &library, false);
+        for row in &mut first.rows {
+            row.selected = row.folder == "blocks" && row.can_change();
+        }
+        assert_eq!(add_selected(&first, &running, &settings(&home), &queue, SystemTime::now(), "20261023-100000", false), SteamOutcome::Queued { count: 1, game_mode: false });
+        let before = fs::read(&path).unwrap();
+        let mut s = screen(&home, &library, false);
+        s.select_all_missing();
+        let out = add_selected(&s, &closed, &settings(&home), &queue, SystemTime::now(), "20261023-100100", true);
+        assert_eq!(out, SteamOutcome::Queued { count: 2, game_mode: false }, "the Close Steam flow then makes them all");
+        assert_eq!(fs::read(&path).unwrap(), before, "shortcuts.vdf untouched");
+        assert_eq!(steam_queue::load(&queue).queue.len(), 2, "Blocks once, Dusklight behind it");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn one_selected_shortcut_found_by_name_is_repointed_after_a_backup() {
+        let (home, library, path) = fake_home("selected_byname", &[1234]);
+        let entry = steam_entry(0, 0xAAAA_0002, "Dusklight", "\"/old/dusk\"", "\"/old/\"", &[]);
+        fs::write(&path, file_of(&[entry])).unwrap();
+        let mut s = screen(&home, &library, false);
+        for row in &mut s.rows {
+            row.selected = row.folder == "dusklight" && row.can_change();
+        }
+        assert_eq!(s.selected_count(), 1);
+        assert_eq!(add_selected(&s, &closed, &settings(&home), &home.join("steam-queue.json"), SystemTime::now(), "20261023-100000", true), SteamOutcome::Added(1));
+        assert_eq!(backups::list_backups(&path).unwrap().len(), 1, "backed up first");
+        let list = crate::fork::shortcuts::list(&crate::fork::store::ShortcutsFile::load(&path).unwrap().doc);
+        assert!(list.iter().find(|e| e.app_name == "Dusklight").unwrap().exe_path().ends_with("dusklight/dusk"));
+        assert!(!list.iter().any(|e| e.app_name == "Blocks"), "only the one selected");
         let _ = fs::remove_dir_all(home);
     }
 

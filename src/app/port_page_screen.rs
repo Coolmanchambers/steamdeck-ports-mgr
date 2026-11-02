@@ -551,6 +551,21 @@ fn notice(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, card: Card, titl
     show_built(app, router, s, Screen::Notice(card), page);
 }
 
+/// Fork (steam add page): after the Steam card's add or shortcut change, what happened as a note under the card (its
+/// button goes back to the card); with nothing to say, the card itself.
+fn steam_notice(s: &Rc<Session>) -> super::steam_add_screen::Then {
+    let (s, back) = (s.clone(), back_to(s, Screen::Card(Card::Steam)));
+    Rc::new(move |app, router, notes| {
+        let installed = app.catalog.borrow().iter().any(|p| p.key() == s.key && app.is_installed(p));
+        if notes.is_empty() || !installed {
+            return back(app, router);
+        }
+        read_disk(app, &s);
+        let title = crate::fork::steam_add::result_title(&notes);
+        notice(app, router, &s, Card::Steam, title, notes.into_iter().map(|(_, text)| text).collect());
+    })
+}
+
 /// Back to a card's page after a hand-off: the facts are read again (the hand-off may have changed them).
 fn back_to(s: &Rc<Session>, screen: Screen) -> Back {
     let s = s.clone();
@@ -647,23 +662,9 @@ fn on_act(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
         }
         // Fork (steam add page): "Add to Steam with artwork?" for this port (not the full list); the result is a note under
         // the Steam card, Not now goes back to the card.
-        Act::SteamAdd => {
-            let (s2, back) = (s.clone(), back_to(s, Screen::Card(Card::Steam)));
-            let then: super::steam_add_screen::Then = Rc::new(move |app, router, notes| {
-                let installed = app.catalog.borrow().iter().any(|p| p.key() == s2.key && app.is_installed(p));
-                if notes.is_empty() || !installed {
-                    return back(app, router);
-                }
-                read_disk(app, &s2);
-                let title = crate::fork::steam_add::result_title(&notes);
-                notice(app, router, &s2, Card::Steam, title, notes.into_iter().map(|(_, text)| text).collect());
-            });
-            super::steam_add_screen::open(app, router, vec![port], then, back_to(s, Screen::Card(Card::Steam)));
-        }
-        Act::SteamChange => {
-            close_current_dialog(app, router);
-            super::steam_screens::open_steam_screen_for(app, router, Some(&s.key));
-        }
+        Act::SteamAdd => super::steam_add_screen::open(app, router, vec![port], crate::fork::steam_add::Caller::PortPage, steam_notice(s), back_to(s, Screen::Card(Card::Steam))),
+        // Fork (steam add page): "Update its Steam shortcut?" / "Use that shortcut for this port?" on one page too.
+        Act::SteamChange => super::steam_add_screen::open_change(app, router, port, steam_notice(s), back_to(s, Screen::Card(Card::Steam))),
         Act::SteamRepoint => match super::checkup_screen::repoint_ports(app, std::slice::from_ref(&s.key)) {
             None => notice(app, router, s, Card::Steam, "Nothing was changed", vec!["Where Steam and the old copies are could not be read.".into()]),
             Some((queued, notes)) if queued > 0 => {

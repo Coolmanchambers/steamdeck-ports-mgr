@@ -249,6 +249,8 @@ fn apply_now(app: &Rc<AppState>, router: &Router, run: &Rc<Run>, closed: SteamCl
         return show(app, router, run, steam_close::blocked_page(&Blocked::CheckFailed("no home folder".into()), waiting_now(app)));
     };
     let settings = ForkSettings::load(&super::steam_screens::settings_path(app));
+    // Fork (steam add page): what was waiting, so the result page says "Steam shows these ports" after an add.
+    let kinds: Vec<steam_queue::QueuedKind> = steam_queue::load(&queue_path(app)).queue.entries.iter().map(|e| e.kind).collect();
     let outcome = {
         let catalog = app.catalog.borrow();
         let state = app.state.borrow();
@@ -269,5 +271,5 @@ fn apply_now(app: &Rc<AppState>, router: &Router, run: &Rc<Run>, closed: SteamCl
     *run.details.borrow_mut() = outcome.text.clone();
     // Steam back up (it came back before the write): no "Start Steam again".
     let steam_up = SystemSteamCheck::new().running_steam_processes().map_or(true, |p| !p.is_empty());
-    show(app, router, run, steam_close::result_page(&outcome, run.closed_by_us.get(), steam_up));
+    show(app, router, run, steam_close::result_page_for(&outcome, run.closed_by_us.get(), steam_up, &kinds));
 }

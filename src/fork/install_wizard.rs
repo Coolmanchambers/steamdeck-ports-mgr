@@ -448,10 +448,11 @@ pub fn steam_page(name: &str, art: &Option<ArtRef>, game_mode: bool, steam_runni
     if game_mode {
         p.paragraphs.push("Steam cannot be changed while it runs: you are asked to add it in Desktop Mode.".to_string());
     } else if steam_running {
-        p.paragraphs.push("Steam has to close for a moment to add it; you are asked first.".to_string());
+        p.paragraphs.push("Steam closes for a moment to add it; you can start it again after.".to_string());
     }
+    let yes = if game_mode { "Saved; it is added in Desktop Mode" } else { "Adds its shortcut and artwork; Steam's list is backed up first" };
     p.options = vec![
-        recommended(option("Yes", "Adds its shortcut and artwork; Steam's list is backed up first", WizAct::SteamYes)),
+        recommended(option("Yes", yes, WizAct::SteamYes)),
         option("Not now", "Its Port page can add it later", WizAct::SteamNo),
     ];
     p.b_does(&WizAct::SteamNo)
@@ -882,8 +883,10 @@ mod tests {
         assert_eq!(s.title, "Add it to Steam with its artwork?");
         assert_eq!(action_at(&s, initial_focus(&s)), Some(WizAct::SteamYes));
         assert_eq!(s.paragraphs.len(), 1);
-        assert!(steam_page("X", &None, false, true).paragraphs[1].contains("close"));
+        assert_eq!(steam_page("X", &None, false, true).paragraphs[1], "Steam closes for a moment to add it; you can start it again after.", "no second question follows");
         assert!(steam_page("X", &None, true, true).paragraphs[1].contains("you are asked to add it in Desktop Mode"));
+        assert_eq!(steam_page("X", &None, true, true).options[0].detail, "Saved; it is added in Desktop Mode");
+        assert_eq!(s.options[0].detail, "Adds its shortcut and artwork; Steam's list is backed up first");
         let ready = done_page("Dusklight", &None, true, &[(Mark::Done, "Added to Steam".into())]);
         assert_eq!(ready.title, "Dusklight is ready");
         assert_eq!(action_at(&ready, initial_focus(&ready)), Some(WizAct::PlayNow));

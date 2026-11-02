@@ -485,8 +485,8 @@ pub enum Act {
     OpenInEditor(usize),
     /// Not in Steam: "Add to Steam with artwork?" for this port.
     SteamAdd,
-    /// A shortcut is out of date, or one with its name starts another program: the Add to Steam list with this port
-    /// selected, whose review shows the change first.
+    /// A shortcut is out of date, or one with its name starts another program: "Update its Steam shortcut?" (or "Use
+    /// that shortcut for this port?"), a page that says what changes first.
     SteamChange,
     SteamRepoint,
     SteamFixIcon,

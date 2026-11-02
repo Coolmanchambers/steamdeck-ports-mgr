@@ -310,6 +310,10 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
     assert_eq!(p.title, "Steam shortcuts updated");
     assert_eq!(p.facts[..2], ["1 Steam change made.", "Your old shortcut list was backed up first."]);
     assert_eq!(p.paragraphs, ["Steam will start these ports from their new place when it runs again."]);
+    use steam_queue::QueuedKind;
+    assert_eq!(result_page_for(&out, true, false, &[QueuedKind::Add, QueuedKind::Add]).paragraphs, ["Steam shows these ports when it runs again."], "an add is not a move");
+    assert_eq!(result_page_for(&out, true, false, &[QueuedKind::Add, QueuedKind::Update]).paragraphs, ["Steam shows the changes when it runs again."]);
+    assert_eq!(result_page_for(&out, true, false, &[QueuedKind::Add, QueuedKind::Repoint]).paragraphs, p.paragraphs, "a move among them keeps the move's line");
     assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::StartSteam, CloseAction::Done]);
     assert!(p.options[0].recommended && p.initial == Focus::Option(0));
     let b = back_action(&p);
@@ -463,7 +467,8 @@ fn the_ask_page_starts_on_close_unless_it_came_up_by_itself() {
 fn the_closing_page_counts_the_wait_and_offers_only_stop_waiting() {
     let p = closing_page(12);
     assert_eq!(p.facts, [format!("Waited 12 s of up to {} s.", TIMEOUT.as_secs())]);
-    assert_eq!(p.options[0].detail, "Steam still closes on its own. Nothing is written; the app asks again once Steam is gone.");
+    assert_eq!(p.options[0].detail, "Steam still closes; the app asks again once it is gone");
+    assert!(p.options[0].detail.chars().count() <= 66, "one line on the 800 px page");
     assert!(timed_out_page(1).paragraphs[1].contains("tray icon > Exit Steam"));
     assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [CloseAction::StopWaiting]);
     assert_eq!(back_action(&p), CloseAction::StopWaiting);

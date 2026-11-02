@@ -346,7 +346,7 @@ pub fn closing_page(seconds: u64) -> ClosePage {
     let mut p = base("closing Steam", "Closing Steam...");
     p.paragraphs = vec!["Waiting for Steam to close. This usually takes a few seconds.".to_string()];
     p.facts = vec![format!("Waited {seconds} s of up to {} s.", TIMEOUT.as_secs())];
-    p.options = vec![option("Stop waiting", "Steam still closes on its own. Nothing is written; the app asks again once Steam is gone.", CloseAction::StopWaiting, false)];
+    p.options = vec![option("Stop waiting", "Steam still closes; the app asks again once it is gone", CloseAction::StopWaiting, false)];
     p.initial = Focus::Option(0);
     p
 }
@@ -404,6 +404,25 @@ pub fn blocked_page(blocked: &Blocked, waiting: usize) -> ClosePage {
 /// again (Desktop Mode only, which is the only place it runs), unless `steam_up` says it is running again
 /// (it came back before the write, say).
 pub fn result_page(outcome: &QueueApplyOutcome, closed_by_us: bool, steam_up: bool) -> ClosePage {
+    result_page_for(outcome, closed_by_us, steam_up, &[])
+}
+
+/// The line after changes were made, by what was waiting (`kinds`, read before applying): ports added, shortcuts
+/// brought up to date, or (anything else, or not known) ports that moved.
+fn made_line(kinds: &[steam_queue::QueuedKind]) -> &'static str {
+    use steam_queue::QueuedKind::{Add, Update};
+    if !kinds.is_empty() && kinds.iter().all(|k| *k == Add) {
+        "Steam shows these ports when it runs again."
+    } else if !kinds.is_empty() && kinds.iter().all(|k| matches!(k, Add | Update)) {
+        "Steam shows the changes when it runs again."
+    } else {
+        "Steam will start these ports from their new place when it runs again."
+    }
+}
+
+/// Fork (steam add page): [`result_page`] that says what was made by `kinds`, the kinds of the changes that were
+/// waiting (an add is not a move).
+pub fn result_page_for(outcome: &QueueApplyOutcome, closed_by_us: bool, steam_up: bool, kinds: &[steam_queue::QueuedKind]) -> ClosePage {
     let mut p;
     if outcome.refused {
         p = base("not finished", if outcome.done == 0 { "Nothing was changed" } else { "Some changes are still waiting" });
@@ -426,7 +445,7 @@ pub fn result_page(outcome: &QueueApplyOutcome, closed_by_us: bool, steam_up: bo
             p.facts.push("Your old shortcut list was backed up first.".to_string());
         }
         if outcome.done > 0 {
-            p.paragraphs = vec!["Steam will start these ports from their new place when it runs again.".to_string()];
+            p.paragraphs = vec![made_line(kinds).to_string()];
         }
         if outcome.dropped > 0 {
             p.facts.push(format!("{} could not be made any more: Details says why.", if outcome.dropped == 1 { "1 change".to_string() } else { format!("{} changes", outcome.dropped) }));

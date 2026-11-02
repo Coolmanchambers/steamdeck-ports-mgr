@@ -313,6 +313,7 @@ Files added by this fork:
 | 2026-11-01 | `src/fork/ports_folder.rs`, `src/fork/port_page/mod.rs` | Install wizard: the missing ports folder is named the human way; the Uninstall page says a reinstall offers to put kept files back |
 | 2026-11-02 | `src/fork/steam_add.rs`, `src/app/steam_add_screen.rs`, `src/fork/mod.rs` | "Add to Steam with artwork?" for a few named ports (see that section): the page, its working page, whether to ask and the notes (moved from the install wizard: `steam_account_note`, `steam_added_note`, with their tests), the result title; the screen's `open` / `ask` / `add`. Tests: one port, several, Desktop Mode with Steam running, Game Mode, each skip note, and a fit test with long real names and one or three ports |
 | 2026-11-02 | `src/app/checkup_screen.rs`, `src/app/port_page_screen.rs`, `src/app/install_wizard_screen.rs`, `src/app/steam_screens.rs`, `src/fork/install_wizard.rs`, `src/fork/port_page/mod.rs` | Steam add page: `Fix::AddToSteam` and the Port page's Add to Steam ask on the new page (were the full Add to Steam list with one port selected); the install wizard's Steam step calls the shared `ask` and `add`; `Act::SteamChange` keeps the list for an out-of-date shortcut or one with its name; 1 test |
+| 2026-11-02 | `src/fork/steam_add.rs`, `src/app/steam_add_screen.rs`, `src/app/port_page_screen.rs`, `src/app/checkup_screen.rs`, `src/fork/install_wizard.rs`, `src/fork/setup_wizard/steam.rs`, `src/fork/checkup.rs`, `src/fork/steam_close.rs`, `src/app/steam_close_screen.rs` | Steam add page review fixes: the Close Steam flow without a second question; `Act::SteamChange` asks on `change_page` (was the full list); `add_selected` (`add_all` for the rows already selected, queued behind changes already waiting); a port uninstalled meanwhile, a failed Steam check and other waiting changes handled; `steam_shortcuts` is `Queued` when the missing ports only wait for Steam; `result_page_for` says "Steam shows these ports" after adds; the Stop waiting detail fits one line; the Port page's own words, Game Mode details. Tests for each |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -1335,8 +1336,8 @@ now = the save finder's `backup_before_update`; Restore; Find saves; open the fo
 settings extensions, under 1 MB, two levels of the port and save folders, minus logs, catalog game files and the app's own
 files; a local entry's optional `settings` field, same shape as `save`, names them exactly; a read-only View page with the
 place on top, 48 KB / 400 lines), Game files (the search for this port, its result as card pages), Steam (this port only:
-Add to Steam with artwork? for a port not in Steam, the Add to Steam list with this port pre-selected for an out-of-date
-shortcut or one with its name, the checkup's repoint, icon repair for one port, Close Steam), Updates (check now, Update now,
+Add to Steam with artwork? for a port not in Steam, Update its Steam shortcut? for an out-of-date shortcut or one with
+its name, the checkup's repoint, icon repair for one port, Close Steam), Updates (check now, Update now,
 the update switch, Select version, Install extras), Files (place, size on a worker, version, `.previous` versions),
 Uninstall (a plain confirm page over the guarded `delete_port`), More (project page, All details = upstream Info, Reset game
 time). Everything that reads the disk runs on a worker; looking writes nothing.
@@ -1487,7 +1488,7 @@ names.
    Done page then says "Steam: start Steam once, then its Port page can add it", or with several accounts and none
    chosen "Steam: choose your account in Settings > Add to Steam first"): the cover and icon are fetched first, then the
    setup wizard's one-port add (`setup_wizard::steam::add_all` on a screen of this port only): written with Steam closed
-   (`shortcuts.vdf` backed up), else queued, and outside Game Mode the Close Steam flow asks to close Steam. "with its
+   (`shortcuts.vdf` backed up), else queued, and outside Game Mode the Close Steam flow closes Steam (since 2026-11-02 without asking a second time). "with its
    artwork" is said only when the cover and icon are in the cache afterwards, else "its artwork could not be fetched".
 6. **Done**: "<name> is ready" (Play now), or "Installed, game files still needed" with the reason in a paragraph and
    "Add its game files now" (the game files pages, then this page again) instead of Play, with what happened (kept
@@ -1510,15 +1511,25 @@ Add to Steam list (every installed port, the account row, the Steam-running line
 2026-11-02 they ask on one short page for exactly the ports concerned (the problem's own list; the Port page's one port):
 "Add to Steam with artwork?", the port's card (several: a cover tile each), "<name> is not in Steam yet." or "These ports
 are not in Steam yet.", a line when Steam runs ("Steam closes for a moment to add them; you can start it again after.",
-in Game Mode "You are asked to add them in Desktop Mode."), "Add it" / "Add them" (recommended) and "Not now". Nothing is
-asked when there is nothing to do (no account, several and none chosen, Steam's files unreadable, already waiting for
-Steam, already in Steam): the note shows instead. Add fetches the covers and icons first, then `setup_wizard::steam::add_all`
-on a screen of just those ports (written with Steam closed after the `shortcuts.vdf` backup, else queued) and, outside Game
-Mode, the Close Steam flow (it asks first). No new Steam code. Fix problems shows the result on its page after the fix;
-the Port page shows it as a note under its Steam card. The install wizard's Steam step shares the decision, the artwork
-fetch, the add and the notes (its own page and words unchanged). Settings > Add to Steam keeps the full list, and so do the
-Port page's "Update the shortcut" and "Use that shortcut for this port" (`Act::SteamChange`), whose review shows the
-change first. Page titles, option titles and details are checked to fit with long real names and one or three ports.
+in Game Mode "You are asked to add them in Desktop Mode." and the Add detail "Saved; they are added in Desktop Mode"),
+"Add it" / "Add them" (recommended) and "Not now". Other Steam changes already waiting are said ("2 other Steam changes
+already waiting are made too.") and made in the same go. Nothing is asked when there is nothing to do (no account,
+several and none chosen, Steam's files unreadable, whether Steam runs cannot be told, already waiting for Steam, already
+in Steam, a port uninstalled meanwhile): the note shows instead. Add fetches the covers and icons first, then
+`setup_wizard::steam::add_selected` on a screen of just those ports: written with Steam closed after the `shortcuts.vdf`
+backup, else queued; with Steam closed but other changes waiting, queued behind them. A queue outside Game Mode goes to
+the Close Steam flow without its "Update your Steam shortcuts?" question (the page already asked; the flow still stops
+for a running game, an app started from Steam, a failed shutdown or a timeout, and `apply` checks Steam again before
+writing). Stop waiting or B there ends with the "added when Steam next closes" note. Its result page says "Steam shows
+these ports when it runs again." when only adds were waiting. No new Steam code. Fix problems shows the result on its
+page after the fix (a check whose ports only wait for Steam is "Queued, not finished", never "That is fixed"); the Port
+page shows it as a note under its Steam card. The Port page's "Update the shortcut" and "Use that shortcut for this port"
+(`Act::SteamChange`) ask the same way on one page ("Update its Steam shortcut?" / "Use that shortcut for this port?":
+what it starts now and after, "Its name, play time and launch options stay.", "Update it" / "Not now"), then the same
+write or queue for that one shortcut. The install wizard's Steam step shares the decision, the artwork fetch, the add and
+the notes (its own page; its Steam-running line now "Steam closes for a moment to add it; you can start it again
+after."). Settings > Add to Steam keeps the full list. Page titles, option titles and details are checked to fit with
+long real names and one or three ports.
 
 ## Fixes to upstream behavior
 

@@ -784,7 +784,9 @@ fn open_fix(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
 
 /// Fork (steam add page): "Add to Steam with artwork?" for exactly the ports the problem names
 /// (`steam_add_screen::open`, not the full Add to Steam list). What happened shows on the after page, as a repoint's
-/// notes do; Not now goes back to the step page it came from.
+/// notes do; Not now goes back to the step page it came from. Stop waiting (or B) while Steam closes also lands on the
+/// after page, with the "added when Steam next closes" note: the look finds the check queued ("Queued, not finished",
+/// with Close Steam as the way to finish), which the step page would pass over.
 fn add_to_steam(app: &Rc<AppState>, router: &Router, keys: &[String]) {
     let ports: Vec<Port> = keys.iter().filter_map(|k| port_by_key(app, k)).collect();
     let then: super::steam_add_screen::Then = Rc::new(|app, router, notes| {
@@ -796,7 +798,7 @@ fn add_to_steam(app: &Rc<AppState>, router: &Router, keys: &[String]) {
         Some(s) => show_step(app, router, &s),
         None => close_current_dialog(app, router),
     });
-    super::steam_add_screen::open(app, router, ports, then, not_now);
+    super::steam_add_screen::open(app, router, ports, crate::fork::steam_add::Caller::Checkup, then, not_now);
 }
 
 /// "Yes" on a page of ours that asked first.

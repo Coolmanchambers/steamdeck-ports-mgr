@@ -192,6 +192,25 @@ fn an_installed_port_with_no_shortcut_is_flagged_once_other_ports_are_in_steam()
 }
 
 #[test]
+fn ports_whose_add_only_waits_for_steam_are_queued_not_fixed() {
+    let mut f = fine();
+    f.installed.push(named("abuse"));
+    f.shortcuts = Ok(vec![ok_icon("soh")]);
+    f.queue = Ok(vec![queued("dusk", QueuedKind::Add), queued("abuse", QueuedKind::Add)]);
+    let o = check(Check::SteamShortcuts, &f);
+    let Outcome::Queued { summary, fix_label, desktop_only } = &o else { panic!("every missing port is queued: {o:?}") };
+    assert_eq!(summary, "Queued: finishes when Steam closes (DUSK and ABUSE)");
+    assert_eq!((fix_label.as_str(), *desktop_only), ("Close Steam and update shortcuts", false));
+    let page = crate::fork::checkup::pages::after_page(Check::SteamShortcuts, &o, 1, 1, true, false);
+    assert_eq!(page.title, "Queued, not finished", "never \"That is fixed\" while it only waits");
+    f.game_mode = true;
+    assert!(matches!(check(Check::SteamShortcuts, &f), Outcome::Queued { desktop_only: true, .. }));
+    f.game_mode = false;
+    f.queue = Ok(vec![queued("dusk", QueuedKind::Add)]);
+    assert_eq!(problem_of(check(Check::SteamShortcuts, &f)).summary, "Not in Steam: ABUSE", "one still missing: still a problem to fix");
+}
+
+#[test]
 fn programs_missing_files_and_saves_name_their_ports_and_fixes() {
     let mut f = fine();
     f.programs = vec![named("severed"), named("soh")];
@@ -647,12 +666,14 @@ fn a_shortcut_that_still_starts_an_old_copy_is_in_steam_but_wrong_and_never_offe
     g.shortcuts = Ok(vec![only]);
     g.installed = vec![named("dusk")];
     assert!(!problem_of(check(Check::SteamShortcuts, &g)).summary.contains("Not in Steam"));
-    // Any queued kind for a port counts as in Steam.
+    // Any queued kind for a port not in Steam is taken care of: never offered as an Add again, but not "fixed" either
+    // (since 2026-11-02: queued, not finished, until Steam closes).
     for kind in [QueuedKind::Add, QueuedKind::Repoint, QueuedKind::Icon, QueuedKind::Update] {
         let mut h = fine();
         h.installed.push(named("abuse"));
         h.queue = Ok(vec![queued("abuse", kind)]);
-        assert_eq!(check(Check::SteamShortcuts, &h), Outcome::Ok("Every port is in Steam".into()), "{kind:?}");
+        let o = check(Check::SteamShortcuts, &h);
+        assert!(matches!(&o, Outcome::Queued { summary, .. } if summary == "Queued: finishes when Steam closes (ABUSE)"), "{kind:?}: {o:?}");
     }
     // A Deck with no shortcuts yet and nothing queued is not nagged.
     let mut k = fine();

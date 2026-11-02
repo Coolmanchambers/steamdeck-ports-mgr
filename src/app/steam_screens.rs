@@ -56,15 +56,9 @@ fn no_home(app: &Rc<AppState>, router: &Router, title: &str) {
 
 // -- Add to Steam ---------------------------------------------------------------------------
 
+/// Settings > Add to Steam: the full list. Fork (steam add page): the Port page and Fix problems no longer open it with
+/// one port selected; they ask on `steam_add_screen`'s pages.
 pub(crate) fn open_steam_screen(app: &Rc<AppState>, router: &Router) {
-    open_steam_screen_for(app, router, None);
-}
-
-/// Add to Steam with only one port selected (`Some(key)`: the Port page's "Update the shortcut" and "Use that shortcut
-/// for this port", whose review shows the change first); every other row stays on the screen, switched off. `None` is
-/// the usual screen. Fork (steam add page): adding a port that is not in Steam (the Port page, Fix problems) asks on
-/// `steam_add_screen`'s page instead.
-pub(crate) fn open_steam_screen_for(app: &Rc<AppState>, router: &Router, only: Option<&str>) {
     if dialog_is_open(app) {
         return;
     }
@@ -80,12 +74,6 @@ pub(crate) fn open_steam_screen_for(app: &Rc<AppState>, router: &Router, only: O
     screen.queue = loaded.queue;
     screen.queue_note = loaded.problem;
     screen.game_mode = steam_queue::game_mode_from_env();
-    if let Some(key) = only {
-        // The port asked for is on (even a shortcut found by name only: the review shows what it would repoint).
-        for row in &mut screen.rows {
-            row.selected = row.key == key && row.can_change();
-        }
-    }
     prefetch_art(app);
     show_steam_screen(app, router, Rc::new(RefCell::new(screen)));
 }

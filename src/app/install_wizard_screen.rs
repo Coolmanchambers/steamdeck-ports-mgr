@@ -28,7 +28,7 @@ use crate::fork::page::{Mark, Page};
 use crate::fork::port_page::paths::{human_path, Places};
 use crate::fork::rom_screens::job::Background;
 use crate::fork::same_game::{self, Game};
-use crate::fork::steam_add::Ask;
+use crate::fork::steam_add::{Ask, Caller};
 use crate::fork::uninstall_keep;
 use crate::ui::gamepad_router::GamepadRouter;
 use serde_json::Value;
@@ -625,12 +625,12 @@ fn steam_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
     let Some(port) = port_of(app, flow) else { return finish_quietly(app, router, flow) };
     // No account to add it to (Steam never ran here, or several and none chosen), already in Steam, waiting: the Done
     // page says so.
-    let (running, game_mode) = match super::steam_add_screen::ask(app, std::slice::from_ref(&port)) {
+    let (running, game_mode) = match super::steam_add_screen::ask(app, std::slice::from_ref(&port), Caller::Wizard) {
         Ask::Skip(note) => {
             flow.notes.borrow_mut().extend(note);
             return done_step(app, router, flow);
         }
-        Ask::Ask { running, game_mode } => (running, game_mode),
+        Ask::Ask { running, game_mode, .. } => (running, game_mode),
     };
     let page = wiz::steam_page(&flow.name, &flow.art, game_mode, running);
     let f = flow.clone();
@@ -646,7 +646,7 @@ fn steam_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
 
 /// Yes: the shared one-port add (`steam_add_screen::add`): the cover and icon are fetched into the cache first, then
 /// written now with Steam closed (`shortcuts.vdf` backed up first), else queued and, outside Game Mode, the Close Steam
-/// flow (it asks first). Its notes go on the Done page.
+/// flow (it closes Steam without asking again: this page asked). Its notes go on the Done page.
 fn add_to_steam(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, port: &Port) {
     let working = wiz::working_page(&flow.name, &flow.art, "Getting the artwork", "Fetching its cover and icon for Steam.");
     let f = flow.clone();

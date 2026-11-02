@@ -704,6 +704,22 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
     }
     let missing: Vec<Named> = f.installed.iter().filter(|p| !in_steam.contains(p.key.as_str()) && !queued.contains(p.key.as_str())).cloned().collect();
     if at_old.is_empty() && missing.is_empty() {
+        // Fork (steam add page): ports not in Steam whose add only waits for Steam to close: not fixed yet, and not
+        // "every port is in Steam" (like a queued icon repair). A queued repoint of a shortcut that is there stays Ok
+        // here: it is counted under "Steam changes".
+        let mut waiting: Vec<String> = Vec::new();
+        for p in f.installed.iter().filter(|p| queued.contains(p.key.as_str()) && !in_steam.contains(p.key.as_str())) {
+            if !waiting.contains(&p.name) {
+                waiting.push(p.name.clone());
+            }
+        }
+        if !waiting.is_empty() {
+            return Outcome::Queued {
+                summary: format!("Queued: finishes when Steam closes ({})", names(&waiting)),
+                fix_label: if f.game_mode { "See how to finish this" } else { "Close Steam and update shortcuts" }.to_string(),
+                desktop_only: f.game_mode,
+            };
+        }
         return Outcome::Ok(one_or_all(f, "In Steam", "Every port is in Steam").to_string());
     }
     let mut parts = Vec::new();
