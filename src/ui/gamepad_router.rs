@@ -22,6 +22,8 @@ pub trait GamepadTarget {
     fn open_settings(&self) {}
     // Fork: L1 / R1.
     fn switch_list(&self) {}
+    // Fork (home view): R3, the right stick's click.
+    fn switch_view(&self) {}
 }
 
 fn read_directions(state: &GamepadState) -> [bool; 4] {
@@ -34,7 +36,7 @@ fn read_directions(state: &GamepadState) -> [bool; 4] {
 }
 
 fn read_buttons(state: &GamepadState) -> [bool; BUTTON_COUNT] {
-    [state.button_a, state.button_start, state.button_b, state.button_x, state.button_back, state.button_y, state.button_lb, state.button_rb]
+    [state.button_a, state.button_start, state.button_b, state.button_x, state.button_back, state.button_y, state.button_lb, state.button_rb, state.button_r3]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,9 +47,10 @@ pub enum GamepadAction {
     ToggleFullscreen,
     OpenSettings,
     SwitchList,
+    SwitchView,
 }
 
-const BUTTON_COUNT: usize = 8;
+const BUTTON_COUNT: usize = 9;
 
 const BUTTON_ACTIONS: [GamepadAction; BUTTON_COUNT] = [
     GamepadAction::ActivateSelection,
@@ -58,10 +61,11 @@ const BUTTON_ACTIONS: [GamepadAction; BUTTON_COUNT] = [
     GamepadAction::OpenSettings,
     GamepadAction::SwitchList,
     GamepadAction::SwitchList,
+    GamepadAction::SwitchView,
 ];
 
 const BUTTON_INPUTS: [CheatInput; BUTTON_COUNT] =
-    [CheatInput::A, CheatInput::Other, CheatInput::B, CheatInput::Other, CheatInput::Other, CheatInput::Y, CheatInput::Other, CheatInput::Other];
+    [CheatInput::A, CheatInput::Other, CheatInput::B, CheatInput::Other, CheatInput::Other, CheatInput::Y, CheatInput::Other, CheatInput::Other, CheatInput::Other];
 
 type Move = ((i32, i32), Option<CheatInput>);
 
@@ -182,6 +186,7 @@ pub fn dispatch(result: PollResult) {
             GamepadAction::ToggleFullscreen => result.target.toggle_fullscreen(),
             GamepadAction::OpenSettings => result.target.open_settings(),
             GamepadAction::SwitchList => result.target.switch_list(),
+            GamepadAction::SwitchView => result.target.switch_view(),
         });
     }
 }
@@ -251,6 +256,7 @@ mod tests {
         assert_eq!(pressed(5), vec![GamepadAction::OpenSettings]);
         assert_eq!(pressed(6), vec![GamepadAction::SwitchList]);
         assert_eq!(pressed(7), vec![GamepadAction::SwitchList]);
+        assert_eq!(pressed(8), vec![GamepadAction::SwitchView]);
     }
 
     #[test]

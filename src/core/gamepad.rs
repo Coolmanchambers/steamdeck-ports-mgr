@@ -15,6 +15,8 @@ pub struct GamepadState {
     // Fork: L1 / R1 switch between All ports and the Deck-ready list.
     pub button_lb: bool,
     pub button_rb: bool,
+    // Fork (home view): a click of the right stick (R3) switches Home between posters and the list.
+    pub button_r3: bool,
     pub stick_x: f32,
     pub stick_y: f32,
 }
@@ -50,6 +52,7 @@ impl GamepadPoller {
             button_back: gamepad.is_pressed(Button::Select),
             button_lb: gamepad.is_pressed(Button::LeftTrigger),
             button_rb: gamepad.is_pressed(Button::RightTrigger),
+            button_r3: gamepad.is_pressed(Button::RightThumb),
             stick_x: gamepad.value(Axis::LeftStickX),
             stick_y: gamepad.value(Axis::LeftStickY),
         }))
@@ -73,6 +76,7 @@ fn merge_states(states: impl Iterator<Item = GamepadState>) -> Option<GamepadSta
         button_back: a.button_back || b.button_back,
         button_lb: a.button_lb || b.button_lb,
         button_rb: a.button_rb || b.button_rb,
+        button_r3: a.button_r3 || b.button_r3,
         stick_x: further(a.stick_x, b.stick_x),
         stick_y: further(a.stick_y, b.stick_y),
     })
@@ -107,7 +111,15 @@ mod tests {
         let third = GamepadState { button_b: true, ..Default::default() };
         let merged = merge_states([idle, active, third].into_iter()).unwrap();
         assert!(merged.dpad_down && merged.button_a && merged.button_start && merged.button_b);
-        assert!(!merged.dpad_up && !merged.button_x && !merged.button_y && !merged.button_back);
+        assert!(!merged.dpad_up && !merged.button_x && !merged.button_y && !merged.button_back && !merged.button_r3);
+    }
+
+    #[test]
+    fn a_stick_click_on_any_pad_counts() {
+        let idle = GamepadState::default();
+        let click = GamepadState { button_r3: true, ..Default::default() };
+        assert!(merge_states([idle, click].into_iter()).unwrap().button_r3);
+        assert!(!merge_states([idle, idle].into_iter()).unwrap().button_r3);
     }
 
     #[test]

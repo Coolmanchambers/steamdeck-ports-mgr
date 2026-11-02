@@ -57,6 +57,10 @@ pub(crate) struct HomeUi {
     list_button: Cell<bool>,
     /// Fork (port page): the list was opened from the Add a port page (`Some(from_settings)`): B goes back to that page.
     from_add_port: Cell<Option<bool>>,
+    /// Fork (home view): posters or the list (kept in `fork-settings.json`), and how many tiles a poster row holds now
+    /// (reported by the screen, which lays them out; 0 until it has).
+    view: Cell<home::View>,
+    cols: Cell<usize>,
 }
 
 impl HomeUi {
@@ -109,7 +113,39 @@ pub(crate) fn wire(window: &AppWindow, app: &Rc<AppState>, router: &Router) {
         let (app, router) = (app.clone(), router.clone());
         window.on_list_home_requested(move || list_home(&app, &router));
     }
+    // Fork (home view): the switch for the mouse and touch, the poster layout, and the choice kept from last time.
+    {
+        let app = app.clone();
+        window.on_home_view_requested(move || toggle_view(&app));
+    }
+    {
+        let app = app.clone();
+        window.on_home_layout_reported(move |c| app.home.cols.set(c.max(0) as usize));
+    }
+    window.on_home_tile_layout(|w, h, n, font, gap| {
+        let l = home::tile_layout(w, h, n.max(0) as usize, font, gap);
+        crate::TileLayout { columns: l.columns as i32, tile_w: l.tile_w, tile_h: l.tile_h, visible_rows: l.visible_rows as i32 }
+    });
+    let view = home::view_from_settings(&crate::fork::settings::ForkSettings::load(&settings_path(app)));
+    app.home.view.set(view);
+    window.set_home_view(view.code());
     start(app);
+}
+
+/// Fork (home view): posters to the list and back (the button on the top line, R3 on the controller). Kept for next time.
+pub(crate) fn toggle_view(app: &AppState) {
+    if !app.home.is_active() || app.home.empty.get() || dialog_is_open(app) {
+        return;
+    }
+    let view = app.home.view.get().other();
+    app.home.view.set(view);
+    app.window().set_home_view(view.code());
+    let mut settings = crate::fork::settings::ForkSettings::load(&settings_path(app));
+    if let Err(e) = home::save_view(&mut settings, view) {
+        eprintln!("home: could not keep the view ({e})");
+    }
+    push_selected(app);
+    eprintln!("home: view {}", view.name());
 }
 
 /// At start: the app opens on Home, and the update check runs once in the background.
@@ -339,10 +375,17 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
                         (None, _) => installing.clone().unwrap_or_else(|| t.badge.label().to_string()),
                     };
                     let mark = if installing.is_some() { crate::fork::page::Mark::Waiting } else { t.checkup.as_ref().map_or_else(|| t.badge.mark(), |c| c.mark) };
+                    // Fork (home view): the List view's second line, from what the app keeps for this port.
+                    let detail = match t.kind {
+                        TileKind::Port | TileKind::Continue => by_key.get(t.key.as_str()).map(|p| home::detail_line(&row_facts(app, p))).unwrap_or_default(),
+                        kind => home::action_detail(kind).to_string(),
+                    };
                     HomeTile {
                         title: t.title.clone().into(),
                         image,
                         badge: badge.into(),
+                        detail: detail.into(),
+                        initial: home::initial_of(&t.title).into(),
                         mark: mark.code(),
                         kind: match t.kind {
                             TileKind::Port => 0,
@@ -361,7 +404,6 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
             app.ensure_card_images_cached(&installed);
         }
     }
-    window.set_home_columns(columns(app) as i32);
     let (cloud, cloud_text) = super::cloud_screen::home_status(app);
     window.set_home_cloud(cloud);
     window.set_home_cloud_text(cloud_text.into());
@@ -369,13 +411,35 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
     true
 }
 
-/// How many tiles fit a row: about 210 px a tile in big mode, 160 px windowed. From the size the mode gives the window
-/// (not its size this moment, which follows a mode change only a little later).
+/// How many tiles a poster row holds: what the screen laid out and reported (`tile_layout` picks it from the room the
+/// tiles have). Before the first report (and as a fallback), about 210 px a tile in big mode, 160 px windowed, from the
+/// size the mode gives the window.
 fn columns(app: &AppState) -> usize {
+    let reported = app.home.cols.get();
+    if reported > 0 {
+        return reported;
+    }
     let big = app.window().get_big_mode();
     let width = if big { app.window_geometry.fullscreen_mode.borrow().logical_width } else { app.window_geometry.normal_mode.borrow().logical_width };
     let tile = if big { 210.0 } else { 160.0 };
     ((width as f32 / tile).floor() as usize).clamp(2, 8)
+}
+
+/// Fork (home view): what the app keeps for a port, for its list row (the system from the catalog, the rest from the
+/// app's own record; a fact it does not have is left out).
+fn row_facts(app: &AppState, port: &Port) -> home::RowFacts {
+    let state = app.state.borrow();
+    let info = state.get(port.key());
+    home::RowFacts {
+        system: home::system_of(&port.tags_lower),
+        version: info.and_then(|i| i.installed_tag.clone()),
+        last_played: info.and_then(|i| match super::playtime::format_last_played(&i.last_played_at) {
+            super::playtime::LastPlayed::Never => None,
+            super::playtime::LastPlayed::Today => Some("today".to_string()),
+            super::playtime::LastPlayed::Date(d) => Some(format!("on {d}")),
+        }),
+        playtime_seconds: info.map_or(0, |i| i.playtime_seconds),
+    }
 }
 
 fn focused_kind(app: &AppState) -> Option<TileKind> {
@@ -408,8 +472,15 @@ pub(crate) fn move_selection(app: &AppState, dx: i32, dy: i32) {
         return;
     }
     let len = app.home.tiles.borrow().len();
-    let cols = columns(app).max(1);
     let at = app.home.selected.get();
+    // Fork (home view): in the list the D-pad goes up and down one row at a time; left and right do nothing.
+    if app.home.view.get() == home::View::List {
+        if dx == 0 {
+            select(app, home::list_step(at, dy, len));
+        }
+        return;
+    }
+    let cols = columns(app).max(1);
     if let Some((r, c)) = crate::core::grid::next_grid_position((at / cols, at % cols), dx, dy, cols, len) {
         select(app, r * cols + c);
     }

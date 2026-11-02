@@ -7,7 +7,7 @@ import { DeckReadyList, DeckReadyRow, DeckReadyTag, DeckReadyInfoDialog } from "
 // Fork: the setup wizard page.
 import { SetupWizardDialog, WizardCard, WizardFact, WizardOption, WizardTile } from "fork/setup-wizard.slint";
 // Fork: the home screen.
-import { HomeView, HomeTile } from "fork/home.slint";
+import { HomeView, HomeTile, TileLayout } from "fork/home.slint";
 // Fork: the dim layer while a page or dialog is open (src/app/dialog_layer.rs).
 import { DialogLayer } from "fork/dialog-layer.slint";
 export { AppTray } from "tray.slint";
@@ -114,7 +114,12 @@ export component AppWindow inherits Window {
     in property <[HomeTile]> home-tiles: [];
     in property <int> home-selected: 0;
     in property <bool> home-empty: false;
-    in property <int> home-columns: 4;
+    // Fork (home view): 0 posters, 1 list; the switch; how many tiles a poster row holds (reported by the screen);
+    // and the tile layout (src/fork/home.rs `tile_layout`).
+    in property <int> home-view: 0;
+    callback home-view-requested();
+    callback home-layout-reported(int);
+    pure callback home-tile-layout(length, length, int, length, length) -> TileLayout;
     in property <int> home-cloud: 0;
     in property <string> home-cloud-text: "";
     in property <string> home-hint: "";
@@ -321,6 +326,9 @@ export component AppWindow inherits Window {
 
                 VerticalLayout {
                     padding: content-margin;
+                    // Fork (home view): full-screen Home runs down to the bottom edge (the hint line sits there), so the margin
+                    // under it is small and the zero-height footer row below does not add a spacing.
+                    padding-bottom: root.big-mode && root.home-mode ? 6px / Theme.scale-factor : content-margin;
                     spacing: content-margin;
 
                     Rectangle {
@@ -436,8 +444,9 @@ export component AppWindow inherits Window {
                     }
 
                     content-body := Rectangle {
-                        vertical-stretch: root.big-mode ? 1 : 0;
-                        preferred-height: root.big-mode ? 0px : content-body-height;
+                        // Fork (home view): Home takes whatever height the window has (windowed too), not only the 25 rows.
+                        vertical-stretch: root.big-mode || root.home-mode ? 1 : 0;
+                        preferred-height: root.big-mode || root.home-mode ? 0px : content-body-height;
                         transform-rotation: root.roll-angle + root.tilt-angle + (root.flipped ? 180deg : 0deg);
                         transform-scale-x: root.head-scale * 100%;
                         transform-scale-y: root.head-scale * 100%;
@@ -737,7 +746,7 @@ export component AppWindow inherits Window {
                             tiles: root.home-tiles;
                             selected: root.home-selected;
                             empty: root.home-empty;
-                            columns: root.home-columns;
+                            view: root.home-view;
                             font-px: item-font-px * (root.big-mode ? 1.15 : 1.0);
                             cloud: root.home-cloud;
                             cloud-text: root.home-cloud-text;
@@ -750,6 +759,9 @@ export component AppWindow inherits Window {
                             setup-requested => { root.home-setup-requested(); }
                             add-requested => { root.home-add-requested(); }
                             empty-hovered(i) => { root.home-empty-hovered(i); }
+                            view-requested => { root.home-view-requested(); }
+                            layout-reported(c) => { root.home-layout-reported(c); }
+                            tile-layout(w, h, n, f, g) => { return root.home-tile-layout(w, h, n, f, g); }
                         }
 
                         if root.deck-ready-mode: DeckReadyList {
@@ -773,7 +785,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle {
+                    if !(root.big-mode && root.home-mode): Rectangle {
                         vertical-stretch: 0;
                         height: root.big-mode ? 0px : row-height;
 

@@ -141,6 +141,8 @@ to a file that came from upstream is listed here with its date.
 | 2026-11-01 | `src/app/dialogs.rs` | Same game: Info's Select version on a port that is not installed goes through `same_game_screen::confirm_then` (choosing a version there is an install); on an installed port it opens the version list as before |
 | 2026-11-01 | `src/app/mod.rs` | One module line, `same_game_screen` |
 | 2026-11-02 | `src/app/mod.rs` | One module line, `steam_add_screen` |
+| 2026-11-01 | `ui/app-window.slint` | Home view: `TileLayout` imported; `home-view`, `home-view-requested`, `home-layout-reported` and a pure `home-tile-layout` callback (replacing `home-columns`) passed to `HomeView`; while Home is shown `content-body` takes the window's height (also windowed: `vertical-stretch` and `preferred-height` read `home-mode`); in big mode on Home the bottom padding is 6 px and the zero-height footer row is left out (`if`), so Home runs to the bottom edge. Every other screen lays out as before |
+| 2026-11-01 | `src/core/gamepad.rs`, `src/ui/gamepad_router.rs`, `src/app/gamepad_target.rs` | Home view: a click of the right stick (R3, `Button::RightThumb`) is a ninth button, `GamepadAction::SwitchView` (`GamepadTarget::switch_view`, no-op by default); only the main window's target acts on it (`home_screen::toggle_view`). Select stays the full-screen toggle; tests |
 
 Files added by this fork:
 
@@ -458,8 +460,19 @@ The first thing the app shows (Tim, 2026-10-25: "want a better first impression 
   searches All ports (the app switches to it with what was typed).
 - **Buttons on Home**: A plays (or sets up on the Setup tile and the empty card), X opens Info, Y opens Settings, B does
   nothing; the hint bar says so ("A Play · X Info · D-pad Move · Y Settings · L1/R1 Lists").
-- **Sizes**: about 210 px a tile in big mode (6 on a Deck), 160 px windowed, never taller than the room left; redrawn
-  when the mode changes.
+- **Sizes**: redrawn when the mode changes. Since 2026-11-01 (home view) the cover size is picked so whole rows fit the
+  room between the top line and the hint line (`home::tile_layout`, called by the screen through a pure callback):
+  the arrangement with the biggest tiles that shows every tile at once (7 tiles on a Deck in big mode: two full rows of
+  four); with too many for that, as many whole rows as keep a cover readable, and the rest scrolls a whole row at a
+  time (the selected row is brought into view). Home takes the whole window height: the hint line sits at the bottom edge.
+- **Posters or List** (2026-11-01): a button on the top line left of the gear (three lines while posters show, four
+  squares while the list shows) and R3 (a click of the right stick; Select is the full-screen toggle) switch the view; the
+  hint bar says "R3 View". The choice is kept in `fork-settings.json` (`home_view`: `posters` (default) or `list`). List:
+  one row per tile in the same order, about 1.5 times the app's own list row, a small cover, the name on one line, the
+  badge with its mark, a "Continue" tag on the port played last, and a muted line of what the app knows for the port
+  (system from the catalog tags, installed version, "Played today" or the date from the app's own play record, play
+  time; a fact it does not have is left out). The D-pad goes up and down one row, A, X and Y do what they do on a tile,
+  right-click or a long press opens the Port page, and the resting-pointer guard covers rows too.
 
 ## Add a port and Settings as pages (`src/fork/add_port.rs`, `src/fork/settings_menu.rs`, `src/app/add_port_screen.rs`, `src/app/settings_menu_screen.rs`)
 

@@ -323,6 +323,15 @@ if [ "$alive" = yes ]; then
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key Tab; sleep 1; xdotool type --delay 120 "pin"; sleep 0.8
         xdotool key Escape; sleep 1; xdotool key Escape; sleep 1.2
         check "B twice from a search in All ports: cleared, then Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -2 | head -1)" = "list: search cleared" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && kill -0 "$APP" 2>/dev/null'
+        # Home's view switch: the button left of the gear (about 71 px from the window's right edge, 141 px down) changes
+        # Posters to List and back; the choice is kept in fork-settings.json. The controller's R3 calls the same function.
+        eval "$(xdotool getwindowgeometry --shell "$win" 2>/dev/null)"
+        vx=$((X + WIDTH - 71)); vy=$((Y + 141))
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool mousemove $((vx - 40)) "$vy"; sleep 0.3; xdotool mousemove "$vx" "$vy"; sleep 0.3; xdotool click 1; sleep 1.2
+        import -window root "$OUT/home-list.png" 2>/dev/null
+        check "Home: the view button switches to the List and keeps it in fork-settings.json" 'grep -q "^home: view List$" "$OUT/app.log" && grep -q "\"home_view\": \"list\"" "$APP_DIR/fork-settings.json" && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+        xdotool click 1; sleep 1.2
+        check "Home: the view button switches back to Posters" '[ "$(grep "^home: view " "$OUT/app.log" | tail -1)" = "home: view Posters" ] && grep -q "\"home_view\": \"posters\"" "$APP_DIR/fork-settings.json"'
         # Settings is a page of groups: the title bar's Settings button opens it, then the keyboard picks a group and a card
         # (Down presses; Up first, since a page remembers where the cursor was). The pages are one window each, found by
         # name ("Settings", "Settings: Ports"...). Without a window manager keys reach a window only after an explicit

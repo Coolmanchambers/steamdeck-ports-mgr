@@ -14,6 +14,17 @@ export struct HomeTile {
     badge: string,
     mark: int,
     kind: int,
+    // The List view's second line (system, version, last played, play time), and the letter for a row with no cover.
+    detail: string,
+    initial: string,
+}
+
+// How the poster tiles sit in the room Home has (src/fork/home.rs `tile_layout`): whole rows only.
+export struct TileLayout {
+    columns: int,
+    tile-w: length,
+    tile-h: length,
+    visible-rows: int,
 }
 
 component Tile inherits Rectangle {
@@ -188,6 +199,187 @@ component Tile inherits Rectangle {
     }
 }
 
+// One port (or action) as a row of the List view: a small cover, the name, the status badge, and a muted line of facts.
+component Row inherits Rectangle {
+    in property <HomeTile> tile;
+    in property <bool> selected: false;
+    in property <length> font-px: 14px;
+    callback clicked();
+    callback moved(length, length);
+    callback options();
+    property <bool> long-fired: false;
+    property <length> pad: root.font-px * 0.5;
+    property <length> thumb-h: root.height - root.pad * 1.2;
+    property <length> thumb-w: root.thumb-h * 0.75;
+    property <length> text-x: root.pad * 1.6 + root.thumb-w;
+    // The right-hand side: the Continue tag and the badge.
+    property <length> right-w: min(root.width * 0.4, root.font-px * 17);
+    property <bool> narrow: root.width < root.font-px * 36;
+
+    background: root.selected ? FocusLook.fill : Theme.search-background;
+    border-width: 1px;
+    border-color: Theme.border-color;
+
+    area := TouchArea {
+        clicked => {
+            if (!root.long-fired) {
+                root.clicked();
+            }
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.move) {
+                root.moved(self.mouse-x, self.mouse-y);
+            }
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                root.long-fired = false;
+            }
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                root.options();
+            }
+        }
+    }
+    Timer {
+        interval: 650ms;
+        running: area.pressed && !root.long-fired;
+        triggered => {
+            root.long-fired = true;
+            root.options();
+        }
+    }
+
+    thumb := Rectangle {
+        x: root.pad;
+        y: (root.height - self.height) / 2;
+        width: root.thumb-w;
+        height: root.thumb-h;
+        background: Theme.list-background;
+        clip: true;
+        if root.tile.image.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            source: root.tile.image;
+            image-fit: contain;
+        }
+        if root.tile.image.width == 0 && root.tile.kind < 2: Text {
+            width: 100%;
+            height: 100%;
+            text: root.tile.initial;
+            color: Theme.list-text;
+            font-size: root.font-px * 1.4;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        if root.tile.kind == 2: Path {
+            width: 60%;
+            height: 60%;
+            x: parent.width * 0.2;
+            y: parent.height * 0.2;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 8 22 L 16 30 L 30 14 M 44 22 H 92 M 8 52 L 16 60 L 30 44 M 44 52 H 92 M 8 82 L 16 90 L 30 74 M 44 82 H 92";
+            stroke: SemanticColors.info;
+            stroke-width: root.font-px * 0.12;
+        }
+        if root.tile.kind == 3: Path {
+            width: 50%;
+            height: 50%;
+            x: parent.width * 0.25;
+            y: parent.height * 0.25;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 50 8 L 50 92 M 8 50 L 92 50";
+            stroke: SemanticColors.info;
+            stroke-width: root.font-px * 0.14;
+        }
+        if root.tile.kind == 4: Path {
+            width: 56%;
+            height: 56%;
+            x: parent.width * 0.22;
+            y: parent.height * 0.22;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 6 50 A 44 44 0 1 1 94 50 A 44 44 0 1 1 6 50 Z M 50 26 V 56 M 50 70 V 72";
+            stroke: root.tile.mark == 5 ? SemanticColors.danger : SemanticColors.info;
+            stroke-width: root.font-px * 0.12;
+        }
+    }
+
+    VerticalLayout {
+        x: root.text-x;
+        y: 0px;
+        width: root.width - root.text-x - root.right-w - root.pad * 2;
+        height: root.height;
+        alignment: center;
+        spacing: root.font-px * 0.1;
+        Text {
+            text: root.tile.title;
+            color: Theme.list-text;
+            font-size: root.font-px;
+            font-weight: 700;
+            overflow: elide;
+        }
+        if root.tile.detail != "" || (root.tile.kind == 1 && root.narrow): Text {
+            text: (root.tile.kind == 1 && root.narrow ? "Continue" + (root.tile.detail != "" ? " \u{b7} " : "") : "") + root.tile.detail;
+            color: Theme.search-text;
+            font-size: root.font-px * 0.85;
+            overflow: elide;
+        }
+    }
+
+    HorizontalLayout {
+        x: root.width - root.right-w - root.pad;
+        y: 0px;
+        width: root.right-w;
+        height: root.height;
+        alignment: end;
+        spacing: root.font-px * 0.6;
+        // Continue's tag; in a narrow window it moves to the muted line instead (there is no room beside the badge).
+        if root.tile.kind == 1 && !root.narrow: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: continue-label.preferred-width + root.font-px * 1.2;
+                height: root.font-px * 1.6;
+                border-radius: self.height / 2;
+                background: FocusLook.accent;
+                continue-label := Text {
+                    text: "Continue";
+                    color: SemanticColors.text-on-accent;
+                    font-size: root.font-px * 0.8;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+        }
+        if root.tile.badge != "": HorizontalLayout {
+            spacing: root.font-px * 0.35;
+            VerticalLayout {
+                alignment: center;
+                StatusIcon {
+                    mark: root.tile.mark;
+                    width: root.font-px * 1.0;
+                    height: root.font-px * 1.0;
+                }
+            }
+            Text {
+                text: root.tile.badge;
+                color: Theme.search-text;
+                font-size: root.font-px * 0.85;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
+    }
+    if root.selected: FocusRing {
+        width: 100%;
+        height: 100%;
+        ring-px: max(3px, 4px / Theme.scale-factor);
+    }
+}
+
 component CardButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
@@ -229,7 +421,8 @@ export component HomeView inherits Rectangle {
     // The focused tile; with nothing installed, 0 is "Set up" and 1 is "Browse ports".
     in property <int> selected: 0;
     in property <bool> empty: false;
-    in property <int> columns: 4;
+    // Fork (home view): 0 shows the cover tiles, 1 one detailed row per port. The poster columns come from `tile-layout`.
+    in property <int> view: 0;
     in property <length> font-px: 14px;
     // The cloud backup status: 0 not signed in (nothing shown), 1 backed up, 3 waiting or copying, 5 a problem.
     in property <int> cloud: 0;
@@ -244,6 +437,11 @@ export component HomeView inherits Rectangle {
     callback setup-requested();
     callback add-requested();
     callback empty-hovered(int);
+    // Fork (home view): the switch between posters and the list; and how many tiles a poster row holds now (the D-pad
+    // moves by it).
+    callback view-requested();
+    callback layout-reported(int);
+    pure callback tile-layout(length, length, int, length, length) -> TileLayout;
 
     // A pointer that merely rests where the tiles are drawn must not take the highlight from the controller: the first
     // pointer event only records where it is; the highlight follows once the pointer really moves (as on the guided
@@ -253,6 +451,10 @@ export component HomeView inherits Rectangle {
     property <length> seen-x: 0px;
     property <length> seen-y: 0px;
     changed tiles => {
+        root.pointer-armed = false;
+        root.seen-id = -2;
+    }
+    changed view => {
         root.pointer-armed = false;
         root.seen-id = -2;
     }
@@ -275,10 +477,25 @@ export component HomeView inherits Rectangle {
     property <length> gap: root.font-px * 0.9;
     property <length> top-h: root.font-px * 2.4;
     property <length> hint-h: root.hint-text == "" ? 0px : root.font-px * 2.0;
-    property <length> tile-w: (root.width - root.gap * (root.columns - 1)) / max(1, root.columns);
-    // A portrait cover and two lines, but never taller than the room below the top line (a small desktop window).
-    property <length> tile-h: min(root.tile-w * 1.25 + root.font-px * 3.4, max(root.font-px * 9, (root.height - root.top-h - root.hint-h - root.gap) * 0.96));
+    // The room for the tiles: under the top line, above the hint line.
+    property <length> body-y: root.top-h + root.gap * 0.5;
+    property <length> body-h: max(1px, root.height - root.body-y - root.hint-h - root.gap * 0.5);
+    // Fork (home view): the cover size is picked so whole rows fit the room (src/fork/home.rs `tile_layout`); rows that
+    // do not fit scroll a whole row at a time.
+    property <TileLayout> lay: root.tile-layout(root.width, root.body-h, root.tiles.length, root.font-px, root.gap);
+    property <length> tile-w: root.lay.tile-w;
+    property <length> tile-h: root.lay.tile-h;
+    property <int> columns: root.lay.columns;
     property <int> rows: Math.ceil(root.tiles.length / max(1, root.columns));
+    // The block of tiles sits in the middle of the width (a few ports on a wide screen are not pushed to the left edge).
+    property <int> used-columns: Math.min(root.columns, max(1, root.tiles.length));
+    property <length> grid-x: max(0px, (root.width - (root.used-columns * root.tile-w + (root.used-columns - 1) * root.gap)) / 2);
+    changed columns => { root.layout-reported(root.columns); }
+    init => { root.layout-reported(root.columns); }
+    // The List view: one row per tile, tall enough to touch.
+    property <length> row-h: root.font-px * 3.0;
+    property <length> row-gap: root.font-px * 0.3;
+    property <length> row-step: root.row-h + root.row-gap;
 
     // The top line: "Your ports", the cloud backup status and the Settings gear.
     Text {
@@ -302,10 +519,22 @@ export component HomeView inherits Rectangle {
         icon-commands: "M 32 50 A 18 18 0 1 1 68 50 A 18 18 0 1 1 32 50 Z M 50 12 L 50 26 M 50 74 L 50 88 M 12 50 L 26 50 M 74 50 L 88 50 M 23 23 L 33 33 M 67 67 L 77 77 M 77 23 L 67 33 M 33 67 L 23 77";
         clicked => { root.settings-requested(); }
     }
+    // Fork (home view): the other view's picture, for the mouse and touch (R3 on the controller does the same): three lines
+    // while posters show, four squares while the list shows.
+    view-btn := TitleBarIconButton {
+        visible: !root.empty;
+        x: gear.x - self.width - root.gap * 0.6;
+        y: (root.top-h - self.height) / 2;
+        size: root.top-h * 0.8;
+        hover-color: #AA8ED6;
+        hover-stroke-color: SemanticColors.text-on-accent;
+        icon-commands: root.view == 0 ? "M 20 30 L 80 30 M 20 50 L 80 50 M 20 70 L 80 70" : "M 20 20 L 44 20 L 44 44 L 20 44 Z M 56 20 L 80 20 L 80 44 L 56 44 Z M 20 56 L 44 56 L 44 80 L 20 80 Z M 56 56 L 80 56 L 80 80 L 56 80 Z";
+        clicked => { root.view-requested(); }
+    }
     if root.cloud > 0: HorizontalLayout {
         x: root.width * 0.5;
         y: 0px;
-        width: gear.x - root.width * 0.5 - root.gap;
+        width: (root.empty ? gear.x : view-btn.x) - root.width * 0.5 - root.gap;
         height: root.top-h;
         alignment: end;
         spacing: root.font-px * 0.4;
@@ -342,27 +571,61 @@ export component HomeView inherits Rectangle {
         }
     }
 
-    // The tiles.
-    if !root.empty: body := Flickable {
+    // The tiles. Whole rows only: the selected row is brought into view by moving the first shown row.
+    if !root.empty && root.view == 0: body := Flickable {
         x: 0px;
-        y: root.top-h + root.gap * 0.5;
+        y: root.body-y;
         width: root.width;
-        height: root.height - self.y - root.hint-h - root.gap * 0.5;
+        height: root.body-h;
         content-height: max(self.height, root.rows * (root.tile-h + root.gap));
         property <bool> trigger: root.scroll-trigger;
-        property <length> sel-top: Math.floor(root.selected / max(1, root.columns)) * (root.tile-h + root.gap);
-        changed trigger => {
-            if (self.sel-top + self.content-y < 0px) {
-                self.content-y = -self.sel-top;
-            } else if (self.sel-top + root.tile-h + self.content-y > self.height) {
-                self.content-y = self.height - self.sel-top - root.tile-h;
-            }
+        function ensure-visible() {
+            let step = root.tile-h + root.gap;
+            let shown = max(1, root.lay.visible-rows);
+            let current = Math.round(-self.content-y / step);
+            let sel = Math.floor(root.selected / max(1, root.columns));
+            let first = sel < current ? sel : (sel >= current + shown ? sel - shown + 1 : current);
+            self.content-y = -first * step;
         }
+        changed trigger => { self.ensure-visible(); }
+        init => { self.ensure-visible(); }
         for t[i] in root.tiles: Tile {
-            x: Math.mod(i, max(1, root.columns)) * (root.tile-w + root.gap);
+            x: root.grid-x + Math.mod(i, max(1, root.columns)) * (root.tile-w + root.gap);
             y: Math.floor(i / max(1, root.columns)) * (root.tile-h + root.gap);
             width: root.tile-w;
             height: root.tile-h;
+            tile: t;
+            selected: i == root.selected;
+            font-px: root.font-px;
+            clicked => { root.tile-activated(i); }
+            options => { root.tile-options(i); }
+            moved(x, y) => { root.pointer-moved(i, x, y); }
+        }
+    }
+
+    // Fork (home view): the List view, one row per tile in the same order.
+    if !root.empty && root.view == 1: list := Flickable {
+        x: 0px;
+        y: root.body-y;
+        width: root.width;
+        height: root.body-h;
+        content-height: max(self.height, root.tiles.length * root.row-step);
+        property <bool> trigger: root.scroll-trigger;
+        function ensure-visible() {
+            let top = root.selected * root.row-step;
+            if (top + self.content-y < 0px) {
+                self.content-y = -top;
+            } else if (top + root.row-h + self.content-y > self.height) {
+                self.content-y = self.height - top - root.row-h;
+            }
+        }
+        changed trigger => { self.ensure-visible(); }
+        init => { self.ensure-visible(); }
+        for t[i] in root.tiles: Row {
+            x: 0px;
+            y: i * root.row-step;
+            width: root.width;
+            height: root.row-h;
             tile: t;
             selected: i == root.selected;
             font-px: root.font-px;

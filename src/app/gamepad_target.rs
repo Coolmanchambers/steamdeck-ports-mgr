@@ -234,6 +234,11 @@ impl GamepadTarget for AppGamepadTarget {
         show_info_for_current_selection(&self.app, &self.router);
     }
 
+    // Fork (home view): R3 switches Home between posters and the list.
+    fn switch_view(&self) {
+        super::home_screen::toggle_view(&self.app);
+    }
+
     fn toggle_fullscreen(&self) {
         self.app.toggle_fullscreen();
     }
