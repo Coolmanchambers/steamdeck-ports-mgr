@@ -332,16 +332,16 @@ pub const TILE_TEXT_UNITS: f32 = 2.9;
 const TEXT_UNITS: f32 = TILE_PAD_UNITS * 2.0 + TILE_TEXT_UNITS;
 /// The smallest cover frame width worth showing everything at once, and the biggest (in font heights; a handful of ports do
 /// not become giant posters).
-const MIN_COVER_UNITS: f32 = 5.5;
+const MIN_COVER_UNITS: f32 = 6.8;
 const MAX_COVER_UNITS: f32 = 9.5;
 const MAX_COLUMNS: usize = 12;
-/// Arrangements whose covers are within this of the biggest count as equal; the one with the most rows, then columns, wins, so the
-/// room is filled and the tiles run the width of the screen.
+/// Arrangements whose covers are within this of the biggest count as equal; of those the one with the fewest columns that still run
+/// the width wins (the same cover and a wider title); with too few tiles for that, the one with the most rows, then columns.
 const TIE: f32 = 0.985;
 
 /// The poster layout for `count` tiles in a room of `width` by `height` (logical pixels), with `font` the tile text size
 /// and `gap` the space between tiles. It takes the arrangement with the biggest covers that shows every tile at once, so no
-/// row is cut off (and, among equals, the most columns, so the tiles use the width); when even the smallest worthwhile cover
+/// row is cut off (and, among equals, the fewest columns that still run the width); when even the smallest worthwhile cover
 /// cannot do that, as many whole rows as keep a cover readable, columns to match, and the rest scrolls a whole row at a time.
 pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -> TileLayout {
     let (width, height) = (width.max(1.0), height.max(1.0));
@@ -360,7 +360,10 @@ pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -
         .collect();
     let biggest = options.iter().map(|o| o.4).fold(f32::MIN, f32::max);
     if biggest >= min_cover {
-        if let Some(&(columns, rows, tile_max, per_row, cover)) = options.iter().filter(|o| o.4 >= biggest * TIE).max_by_key(|o| (o.1, o.0)) {
+        let ties: Vec<&(usize, usize, f32, f32, f32)> = options.iter().filter(|o| o.4 >= biggest * TIE).collect();
+        // The fewest columns whose tiles still run the width (a wider title, the same cover); with too few tiles for that, the fullest.
+        let pick = ties.iter().filter(|o| o.2 <= o.4 + margin + gap * 2.0 + 0.01).min_by_key(|o| o.0).or_else(|| ties.iter().max_by_key(|o| (o.1, o.0)));
+        if let Some(&&(columns, rows, tile_max, per_row, cover)) = pick {
             let tile_w = tile_max.min(cover + margin + gap * 2.0);
             let tile_h = per_row.min(cover * COVER_RATIO + text);
             return TileLayout { columns, tile_w, tile_h, visible_rows: rows, cover_w: tile_w - margin, cover_h: tile_h - text };
@@ -810,13 +813,14 @@ mod tests {
     const DECK: (f32, f32, f32, f32) = (1256.0, 575.0, 20.0, 18.0);
 
     #[test]
-    fn the_decks_screen_shows_up_to_a_dozen_tiles_in_two_whole_rows_with_covers_at_least_as_big_as_before() {
+    fn the_decks_screen_shows_up_to_fourteen_tiles_in_two_whole_rows_with_covers_at_least_as_big_as_before() {
         let (w, h, font, gap) = DECK;
-        for n in 7usize..=12 {
+        for n in 7usize..=14 {
             let l = tile_layout(w, h, n, font, gap);
             assert!(fits(&l, n, h, gap), "{n} tiles: {l:?}");
             assert_eq!(l.visible_rows, 2, "{n} tiles: two whole rows, nothing cut: {l:?}");
-            assert!(l.columns >= 6, "{n} tiles: six or more columns: {l:?}");
+            let expected = if n <= 12 { 6 } else { 7 };
+            assert_eq!(l.columns, expected, "{n} tiles: the fewest columns that run the width (a wider title, the same cover): {l:?}");
             assert!(l.cover_w >= 136.0 && l.cover_h >= 203.0, "{n} tiles: covers no smaller than the old 136 x 204: {l:?}");
             assert!(used_width(&l, gap) >= w - 1.0, "{n} tiles: no side bands, the tiles run the width: {l:?}");
         }
@@ -840,7 +844,7 @@ mod tests {
     #[test]
     fn too_many_tiles_scroll_in_whole_rows() {
         let (w, h, font, gap) = DECK;
-        for n in [20usize, 33, 60] {
+        for n in [15usize, 20, 33, 60] {
             let l = tile_layout(w, h, n, font, gap);
             assert!(l.visible_rows >= 1 && l.columns >= 1, "{l:?}");
             let shown = l.visible_rows as f32 * l.tile_h + gap * (l.visible_rows as f32 - 1.0);

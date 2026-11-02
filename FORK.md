@@ -465,8 +465,8 @@ The first thing the app shows (Tim, 2026-10-25: "want a better first impression 
   room between the top line and the hint line (`home::tile_layout`, called by the screen through a pure callback). A tile
   is a cover, one title line (elided) and the badge line; the layout and `component Tile` share the numbers
   (`TILE_PAD_UNITS`, `TILE_TEXT_UNITS`; a test reads the screen file and compares). It takes the arrangement with the
-  biggest covers that shows every tile at once, and among equals the most rows, then columns, so the room is filled and the
-  tiles run the width. On a Deck in big mode (room 1256 x 575, text 20 px) 7 to 12 tiles are two whole rows of 6 or 7 with
+  biggest covers that shows every tile at once, and among equals the fewest columns whose tiles still run the width (the same cover, a wider title).
+  On a Deck in big mode (room 1256 x 575, text 20 px) 7 to 12 tiles are two whole rows of 6 and 13 to 14 of 7, with
   covers of about 146 x 204, no smaller than the old 136 x 204; with too many for that, as many whole rows as keep a cover
   readable, and the rest scrolls a whole row at a time (the selected row is brought into view). The grid is left-aligned
   under "Your ports". Home takes the whole window height: the hint line sits at the bottom edge. The screen logs a line
