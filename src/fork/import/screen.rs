@@ -287,7 +287,8 @@ impl FoldersScreen {
             ..Page::default()
         };
         if let Some(note) = &self.note {
-            p.fact(Mark::Problem, note.clone());
+            // What the last change did ("Added ...", "already in the list", a save that failed): plain, no mark.
+            p.fact(Mark::None, note.clone());
         }
         p.options.push(option("Add a folder to look in", "Pick a folder that has ports in it", FolderLine::Add));
         let mut switches = Vec::new();
