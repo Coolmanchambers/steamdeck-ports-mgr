@@ -1,4 +1,3 @@
-use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
 use super::install_launch::{open_favorite_exe_picker, open_version_picker};
 use super::playtime::{format_last_played, format_playtime, LastPlayed};
@@ -1003,19 +1002,5 @@ pub(crate) fn open_language_picker(app: &Rc<AppState>, router: &Router) {
     });
 }
 
-pub(crate) fn start_save_backup(app: &Rc<AppState>, router: &Router) {
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    open_progress_dialog(app, router, &tr.invoke_dialog_title_saves_backup(), &tr.invoke_progress_backing_up_saves());
-
-    let catalog = app.catalog.borrow().clone();
-    let library_dir = app.paths.library_dir();
-    let saves_backup_dir = app.paths.saves_backup_dir.clone();
-    let events = app.events.clone();
-    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    std::thread::spawn(move || {
-        let mut on_progress = |name: &str| lock(&events).push(AppEvent::SaveBackupProgress { name: name.to_string() });
-        let summary = crate::core::save_backup::run_global_backup(&catalog, &library_dir, &saves_backup_dir, &date, &mut on_progress);
-        lock(&events).push(AppEvent::SaveBackupDone { copied: summary.copied, skipped: summary.skipped, failed: summary.failed, no_linux_folder: summary.no_linux_folder });
-    });
-}
+// Fork (ports folder and saves pages): `start_save_backup` (the "Saves Backup" progress dialog) is gone; Back up saves
+// is `save_backup_screen::start`, a waiting page and a done page.

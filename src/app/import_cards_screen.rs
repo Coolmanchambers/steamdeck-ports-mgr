@@ -744,7 +744,7 @@ pub(super) fn show_finished(app: &Rc<AppState>, router: &Router, ctx: &Ctx, text
         let keys_now = keys.to_vec();
         move |app: &Rc<AppState>, router: &Router, action: CardAction| match action {
             CardAction::Leave => leave(app, router, &ctx),
-            CardAction::Details => details_text(app, router, "Import ports", &format!("{full}\n"), this.clone()),
+            CardAction::Details => details_text(app, router, "Import ports", &full, this.clone()),
             // The game file search, as its own page after this one (no summary on top of it).
             CardAction::FindGameFiles => {
                 let leave_after: Step = {

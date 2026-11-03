@@ -21,6 +21,7 @@
 //! rather than a guess. This module only adds guards against replacing something far too broad.
 
 pub mod broad;
+pub mod pages;
 pub mod running;
 pub mod view;
 pub mod zip_index;
@@ -229,7 +230,7 @@ impl BackupKind {
     pub fn label(self) -> &'static str {
         match self {
             BackupKind::BeforeUpdate => "Before update",
-            BackupKind::AllPorts => "Backup Saves (all ports)",
+            BackupKind::AllPorts => "From Back up saves",
             BackupKind::BeforeRestore => "Before restore",
         }
     }

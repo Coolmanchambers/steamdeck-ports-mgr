@@ -35,7 +35,9 @@ pub mod port_mover;
 pub mod ports_folder;
 pub mod program_detect;
 pub mod home;
+pub mod ports_folder_pages; // Settings > Ports > Ports folder as pages
 pub mod ports_folder_view;
+pub mod backup_pages; // Back up saves: the waiting page and the done page
 pub mod press_echo;
 pub mod save_finder;
 pub mod save_notes;

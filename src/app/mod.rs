@@ -23,6 +23,7 @@ pub mod playtime;
 pub mod ports_folder_screen;
 pub mod rom_screens;
 pub mod same_game_screen; // Fork: same game, another project
+pub mod save_backup_screen; // Fork: Back up saves as pages
 pub mod save_finder_screen;
 pub mod save_restore_screen;
 pub mod settings_menu_screen;

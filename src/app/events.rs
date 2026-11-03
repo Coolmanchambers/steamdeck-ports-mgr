@@ -38,8 +38,8 @@ pub(crate) enum AppEvent {
     // Fork (upstream bug O6): a failed catalog or themes check, retried after `retry_in`.
     PortsCheckFailed { retry_in: std::time::Duration },
     ThemesCheckFailed { retry_in: std::time::Duration },
-    SaveBackupProgress { name: String },
-    SaveBackupDone { copied: usize, skipped: usize, failed: usize, no_linux_folder: Vec<String> },
+    // Fork (ports folder and saves pages): SaveBackupProgress and SaveBackupDone are gone; Back up saves runs its own
+    // pages (`save_backup_screen`).
     // Fork: the Deck-ready list finished a background check.
     DeckReadyFetched(Box<crate::fork::deck_ready::sync::Outcome>),
 }
@@ -67,13 +67,10 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
     refresh_live_playtime_display(app);
     let drained: Vec<AppEvent> = std::mem::take(&mut *lock(&app.events));
     let last_install_progress = drained.iter().rposition(|e| matches!(e, AppEvent::InstallProgress { .. }));
-    let last_backup_progress = drained.iter().rposition(|e| matches!(e, AppEvent::SaveBackupProgress { .. }));
     for (i, event) in drained.into_iter().enumerate() {
         match event {
             AppEvent::InstallProgress { .. } if Some(i) != last_install_progress => {}
-            AppEvent::SaveBackupProgress { .. } if Some(i) != last_backup_progress => {}
             AppEvent::InstallProgress { message } => show_progress(app, |_| message.into()),
-            AppEvent::SaveBackupProgress { name } => show_progress(app, |tr| tr.invoke_progress_backing_up_named(name.into())),
             AppEvent::InstallDone { key, tag, pin_version } => {
                 let background = finish_operation(app, router, &key);
                 super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::UpdateBackup); // Fork: the update's save backup
@@ -164,16 +161,6 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 let active = app.state.borrow().active_theme.clone();
                 crate::ui::theme::load(&app.paths.themes_path, &mut app.theme.theme_config.borrow_mut(), &active);
                 apply_theme(&app.window(), &app.theme.theme_config.borrow(), app.window_geometry.border_width.get());
-            }
-            AppEvent::SaveBackupDone { copied, skipped, failed, no_linux_folder } => {
-                close_current_dialog(app, router);
-                let window = app.window();
-                let tr = window.global::<Tr>();
-                let summary = tr.invoke_message_backup_summary(copied as i32, skipped as i32, failed as i32);
-                // Fork: name the installed ports whose catalog entry gives no Linux save folder.
-                let summary = format!("{summary}{}", crate::fork::save_notes::no_linux_folder_note(&no_linux_folder));
-                open_message_dialog(app, router, &tr.invoke_dialog_title_saves_backup(), &summary);
-                super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::SaveBackup); // Fork: copy it to the cloud
             }
             AppEvent::BringToForeground => chrome::restore_window(app.window().window()),
             AppEvent::DeckReadyFetched(outcome) => super::deck_ready_screen::on_fetched(app, *outcome),

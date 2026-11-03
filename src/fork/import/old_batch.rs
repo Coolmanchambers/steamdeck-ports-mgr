@@ -13,7 +13,7 @@ use crate::fork::art::thumbs::ArtRef;
 use crate::fork::page::{Card, Focus, Mark, Page, PageButton, PageOption};
 use crate::fork::port_mover::old_copies::{OldCopy, Readiness};
 use crate::fork::rom_screens::util::{ellipsize, human_bytes};
-use crate::fork::screens::short_path;
+use crate::fork::port_page::paths::{human_path, plain_paths, Places};
 use std::path::Path;
 
 /// An old copy with what its check said (`Ok` with the bytes it would free, or why it must stay) and whether
@@ -166,25 +166,25 @@ impl Batch {
         parts.join("\n")
     }
 
-    /// The old folders and their sizes, and where the saves of a removed copy are zipped first: the paths are
-    /// behind Details, not on the page. `home` shortens the paths; `saves` is where the backups go.
-    pub fn details_text(&self, home: &Path, saves: &Path) -> String {
+    /// The old folders and their sizes, and where the saves of a removed copy are backed up first: the places are
+    /// behind Details, not on the page, told the human way (`places`); `saves` is where the backups go.
+    pub fn details_text(&self, places: &Places, saves: &Path) -> String {
         let mut lines: Vec<String> = Vec::new();
         for c in &self.items {
             let size = match &c.check {
-                Ok(_) if c.copy.link_only => "a link, the folder it points to stays".to_string(),
+                Ok(_) if c.copy.link_only => "it points to a folder elsewhere, which stays".to_string(),
                 Ok(bytes) => human_bytes(*bytes),
                 Err(_) => human_bytes(c.copy.bytes),
             };
-            lines.push(format!("{}: {} ({size}). {}", c.copy.name, short_path(&c.copy.old_path, home), c.ready.line()));
+            lines.push(format!("{}: {} ({size}). {}", c.copy.name, human_path(&c.copy.old_path, places), c.ready.line()));
             if let Err(why) = &c.check {
                 if c.ready.is_ready() {
-                    lines.push(format!("  Kept: {why}"));
+                    lines.push(format!("  Kept: {}", plain_paths(why, places)));
                 }
             }
         }
         lines.push(String::new());
-        lines.push(format!("Before an old copy is removed, its saves are zipped into {}.", short_path(saves, home)));
+        lines.push(format!("Before an old copy is removed, its saves are backed up to {}.", human_path(saves, places)));
         lines.push("An old copy can go once Steam starts the new copy and the port was started from its new place (or you said it starts and your saves are there).".to_string());
         lines.push("Whatever is kept stays listed under Settings, Ports folder, Old copies.".to_string());
         lines.join("\n")
@@ -242,7 +242,7 @@ impl Batch {
         let (keep, remove) = if n == 1 { ("Keep it", "Remove it") } else { ("Keep them", "Remove them") };
         p.options = vec![
             PageOption { title: keep.to_string(), detail: format!("Nothing is deleted. You can remove {} later from Settings.", if n == 1 { "it" } else { "them" }), choice: None, enabled: true, recommended: true, action: BatchAction::Keep },
-            PageOption { title: remove.to_string(), detail: if one { "Its saves are zipped to a backup first".to_string() } else { "Only the ready ones. Saves are zipped to a backup first".to_string() }, choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
+            PageOption { title: remove.to_string(), detail: if one { "Its saves are backed up first".to_string() } else { "Only the ready ones. Their saves are backed up first".to_string() }, choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
         ];
         p.options.extend(self.confirm_option());
         p
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn one_old_copy_reads_in_the_singular() {
         let p = Batch::new(vec![ok("Dusklight", 3_000_000_000)]).page();
-        assert_eq!(p.options[1].detail, "Its saves are zipped to a backup first");
+        assert_eq!(p.options[1].detail, "Its saves are backed up first");
         assert_eq!(p.title, "Remove the old copy?");
         assert_eq!(p.paragraphs, ["This port starts from its new place, so its old copy can go. The old copy uses 3.0 GB."]);
         assert_eq!(p.options[0].title, "Keep it");
@@ -494,10 +494,12 @@ mod tests {
     #[test]
     fn details_list_each_old_folder_with_its_size_and_status_and_say_where_the_save_backups_go() {
         let b = Batch::new(vec![ok("Dusklight", 3_000_000_000), stays("SoH", "Steam shortcuts still point into it")]);
-        let text = b.details_text(Path::new("/home/deck"), Path::new("/home/deck/Apps/dpm/Saves Backup"));
-        assert!(text.contains("Dusklight: ~/Games/Dusklight (3.0 GB). Ready to remove") || text.contains("Dusklight: /home/deck/Games/Dusklight (3.0 GB). Ready to remove"), "{text}");
+        let places = Places { home: Some("/home/deck".into()), ..Places::default() };
+        let text = b.details_text(&places, Path::new("/home/deck/Apps/dpm/Saves Backup"));
+        assert!(text.contains("Dusklight: Internal storage > Games > Dusklight (3.0 GB). Ready to remove"), "{text}");
         assert!(text.contains("SoH: ") && text.contains("(5 B)") && text.contains("Kept: Steam shortcuts still point into it"), "{text}");
-        assert!(text.contains("saves are zipped into ~/Apps/dpm/Saves Backup"), "{text}");
+        assert!(text.contains("saves are backed up to Internal storage > Apps > dpm > Saves Backup"), "{text}");
+        assert!(!text.contains("~/") && !text.contains("/home/") && !text.contains("zip"), "{text}");
         assert!(text.contains("Settings, Ports folder, Old copies"), "{text}");
         for page in [b.page(), Batch::new(vec![stays("SoH", "x")]).page()] {
             let details = page.buttons[crate::fork::page::LEFT].as_ref().expect("Details is in the footer");

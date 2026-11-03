@@ -108,14 +108,8 @@ impl Ctx {
     }
 }
 
-/// The dialogs size themselves from a text estimate that comes out a line short for wrapped text, which
-/// clips the last line; one spare line keeps it readable.
-fn padded(text: &str) -> String {
-    format!("{text}\n")
-}
-
 pub(super) fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
-    open_message_dialog(app, router, title, &padded(text));
+    open_message_dialog(app, router, title, text);
 }
 
 /// A confirm dialog whose Cancel (and B) runs `on_cancel` instead of only closing, optionally starting on
@@ -152,7 +146,7 @@ pub(super) fn confirm_back(app: &Rc<AppState>, router: &Router, title: &str, tex
         return;
     }
     let button_cancel = on_cancel.clone();
-    open_confirm_dialog_or(app, router, title.into(), padded(text).into(), label.into(), on_confirm, move |app, router| button_cancel(app, router));
+    open_confirm_dialog_or(app, router, title.into(), text.into(), label.into(), on_confirm, move |app, router| button_cancel(app, router));
     if let DialogSlot::TwoButton(d) = &*app.dialog_nav.dialogs.borrow() {
         if preselect_cancel {
             d.set_selected_index(1);

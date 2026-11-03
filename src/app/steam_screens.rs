@@ -44,12 +44,6 @@ fn queue_path(app: &AppState) -> PathBuf {
     steam_queue::queue_path(&app.paths.config_dir)
 }
 
-/// The dialogs size themselves from a text estimate that comes out a line short for wrapped text, which
-/// clips the last line; one spare line keeps it readable.
-fn padded(text: &str) -> String {
-    format!("{text}\n")
-}
-
 fn no_home(app: &Rc<AppState>, router: &Router, title: &str) {
     open_message_dialog(app, router, title, "Could not find your home folder, so there is nowhere to look.");
 }
@@ -122,7 +116,7 @@ fn show_steam_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<Ste
                 Some(SteamLine::Status) | None => {}
                 Some(SteamLine::QueueNote) => {
                     let note = screen.borrow().queue_note.clone().unwrap_or_default();
-                    return open_message_dialog(&app, &router, QUEUE_TITLE, &padded(&note));
+                    return open_message_dialog(&app, &router, QUEUE_TITLE, &note);
                 }
                 Some(SteamLine::ApplyQueue) => return offer_queue(&app, &router, &steam),
                 Some(SteamLine::ManageQueue) => return show_manage_queue(&app, &router, false),
@@ -180,18 +174,18 @@ fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<
     // Steam is closed but changes still wait (a moved port's shortcut that still points at its old copy): writing
     // adds now could add a second shortcut for that port, so the waiting ones go first (the first row).
     if !screen.borrow().queue.is_empty() {
-        return open_message_dialog(app, router, STEAM_TITLE, &padded("Some Steam changes are still waiting. Update those first (the first row), then review the rest."));
+        return open_message_dialog(app, router, STEAM_TITLE, "Some Steam changes are still waiting. Update those first (the first row), then review the rest.");
     }
     let problem = screen.borrow().review_problem(&steam);
     if let Some(message) = problem {
-        return open_message_dialog(app, router, STEAM_TITLE, &padded(&message));
+        return open_message_dialog(app, router, STEAM_TITLE, &message);
     }
-    let text = padded(&screen.borrow().review_text());
+    let text = screen.borrow().review_text();
     open_confirm_dialog(app, router, "Review Steam changes".into(), text.into(), "Apply".into(), move |app, router| {
         let settings = ForkSettings::load(&settings_path(app));
         match screens::apply_selected(&screen.borrow(), &SystemSteamCheck::new(), &settings, SystemTime::now()) {
-            Ok(done) => open_message_dialog(app, router, "Added to Steam", &padded(&done.text)),
-            Err(message) => open_message_dialog(app, router, STEAM_TITLE, &padded(&message)),
+            Ok(done) => open_message_dialog(app, router, "Added to Steam", &done.text),
+            Err(message) => open_message_dialog(app, router, STEAM_TITLE, &message),
         }
     });
 }
@@ -200,7 +194,7 @@ fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<
 
 fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::QueuedChange>, game_mode: bool, show_accounts: bool) {
     let (title, text) = steam_queue::queue_confirm(&changes, game_mode, show_accounts);
-    open_confirm_dialog(app, router, title.into(), padded(&text).into(), "Queue".into(), move |app, router| {
+    open_confirm_dialog(app, router, title.into(), text.into(), "Queue".into(), move |app, router| {
         match steam_queue::queue_changes(&queue_path(app), changes.clone(), game_mode) {
             // Desktop Mode: Steam can be closed from here, so the next question is whether to do that now.
             Ok(_) if !game_mode => {
@@ -208,8 +202,8 @@ fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::
                 let lead = format!("Queued {n} change{}.", if n == 1 { "" } else { "s" });
                 close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, lead: Some(lead), ..Default::default() }, true);
             }
-            Ok(text) => open_message_dialog(app, router, QUEUE_TITLE, &padded(&text)),
-            Err(text) => open_message_dialog(app, router, STEAM_TITLE, &padded(&text)),
+            Ok(text) => open_message_dialog(app, router, QUEUE_TITLE, &text),
+            Err(text) => open_message_dialog(app, router, STEAM_TITLE, &text),
         }
     });
 }
@@ -232,7 +226,7 @@ fn close_steam_flow(app: &Rc<AppState>, router: &Router, opts: steam_close_scree
 fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessCheck) {
     let loaded = steam_queue::load(&queue_path(app));
     if let Some(problem) = loaded.problem {
-        return open_message_dialog(app, router, QUEUE_TITLE, &padded(&problem));
+        return open_message_dialog(app, router, QUEUE_TITLE, &problem);
     }
     if loaded.queue.is_empty() {
         return open_message_dialog(app, router, QUEUE_TITLE, "Nothing is queued.");
@@ -252,7 +246,7 @@ fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessChec
 fn show_manage_queue(app: &Rc<AppState>, router: &Router, select_back: bool) {
     let loaded = steam_queue::load(&queue_path(app));
     if let Some(problem) = &loaded.problem {
-        return open_message_dialog(app, router, QUEUE_TITLE, &padded(problem));
+        return open_message_dialog(app, router, QUEUE_TITLE, problem);
     }
     let queue = loaded.queue;
     let device_accounts = home_dir().map_or(0, |home| steam_queue::device_account_count(&home));
@@ -277,7 +271,7 @@ fn show_manage_queue(app: &Rc<AppState>, router: &Router, select_back: bool) {
             Some(ManageLine::Clear) => {
                 let n = queue.len();
                 let text = format!("Remove all {n} queued Steam change{}? shortcuts.vdf is not touched.", if n == 1 { "" } else { "s" });
-                open_confirm_dialog(&app, &router, QUEUE_TITLE.into(), padded(&text).into(), "Clear".into(), |app, router| {
+                open_confirm_dialog(&app, &router, QUEUE_TITLE.into(), text.into(), "Clear".into(), |app, router| {
                     match steam_queue::save(&queue_path(app), &steam_queue::SteamQueue::default()) {
                         Ok(()) => open_steam_screen(app, router),
                         Err(e) => open_message_dialog(app, router, QUEUE_TITLE, &format!("Could not clear the queue: {e}")),
@@ -350,7 +344,7 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
         if !watch.shown_problems.borrow().contains(&problem) {
             eprintln!("steam queue: {}", problem.replace('\n', " "));
             watch.shown_problems.borrow_mut().push(problem.clone());
-            open_message_dialog(app, router, QUEUE_TITLE, &padded(&problem));
+            open_message_dialog(app, router, QUEUE_TITLE, &problem);
         }
         return;
     }

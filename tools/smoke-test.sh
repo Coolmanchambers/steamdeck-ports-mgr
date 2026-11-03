@@ -20,10 +20,13 @@
 #   - Ports > Game files opens its page; "Where your game files are" opens the folder picker and closing it comes back; B on
 #     "Ports that need game files" goes back one level to the Game files page, and B there to the Ports page; Ports > Kept
 #     files opens its page and B returns to the Ports page;
-#   - Ports > Ports folder opens, its "Choose another folder..." opens the folder picker, and
-#     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
-#     ports into ~/Games/Ports (New folder here, Use this folder, Move, Keep for now twice) and checks the
-#     setting, the copy (program bits), the kept old copies and their records, and a relaunch;
+#   - Saves > Back up saves ends on its done page and OK goes back to the Saves page; Saves > Restore saves opens its
+#     page and B goes back to the Saves page;
+#   - Ports > Ports folder opens its page, its "Choose another folder" opens the folder picker, and
+#     closing the picker returns to the Ports folder page; then, end to end, it moves the two seeded
+#     ports into ~/Games/Ports (New folder here, Use this folder, Move them, the old copies stay, OK) and checks the
+#     setting, the copy (program bits), the kept old copies and their records, and a relaunch; B on the old copies
+#     page goes back to the Ports folder page, and B there to the Ports page;
 #   - a fresh start (no fork-settings.json) opens the setup wizard by itself, Skip setup leaves the
 #     main window, and quitting the wizard half-way leaves setup unfinished; every other run seeds
 #     setup_done so it goes straight to the main window; the wizard's pages (Import ports included) stay in
@@ -386,7 +389,7 @@ if [ "$alive" = yes ]; then
         entry_downs() {  # $1 = group, $2 = entry
             local n=""
             [ -f "$MENU_SRC" ] && n=$(grep -m1 "Group::$1 => &\[" "$MENU_SRC" | sed 's/.*&\[//; s/\].*//' | tr ',' '\n' | awk -v e="Entry::$2" '$1==e {print NR - 1; exit}')
-            [ -z "$n" ] && case "$1:$2" in Ports:AddPort|Updates:CheckUpdates) n=0 ;; Ports:ImportPorts) n=1 ;; Ports:PortsFolder) n=2 ;; Ports:GameFiles) n=3 ;; Ports:KeptFiles) n=5 ;; Steam:ArtSources) n=1 ;; Saves:CloudBackup) n=2 ;; esac
+            [ -z "$n" ] && case "$1:$2" in Ports:AddPort|Updates:CheckUpdates) n=0 ;; Ports:ImportPorts) n=1 ;; Ports:PortsFolder) n=2 ;; Ports:GameFiles) n=3 ;; Ports:KeptFiles) n=5 ;; Steam:ArtSources) n=1 ;; Saves:BackupSaves) n=0 ;; Saves:RestoreSaves) n=1 ;; Saves:CloudBackup) n=2 ;; esac
             echo "$n"
         }
         open_settings_page() {
@@ -496,6 +499,28 @@ if [ "$alive" = yes ]; then
                         press_keys "$cb" Escape; sleep 1.5
                         check "B leaves Cloud backup for the Saves settings page" '[ -z "$(xdotool search --name "^Deck Ports Manager: Cloud backup$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
                     fi
+                    # Saves > Back up saves runs behind a waiting page and ends on a done page; OK there goes back up to the
+                    # Saves page. Saves > Restore saves opens its page of ports with backups, and B goes back to the Saves page.
+                    sv=$(find_window '^Deck Ports Manager: Settings: Saves$') || sv=""
+                    if [ -n "$sv" ]; then
+                        press_keys "$sv" Up Up Up Up Up $(downs "$(entry_downs Saves BackupSaves)") Return
+                        bd=$(find_window '^Deck Ports Manager: Back up saves: done$') || bd=""
+                        import -window root "$OUT/back-up-saves-done.png" 2>/dev/null
+                        check "Back up saves ends on its done page and the app keeps running" '[ -n "$bd" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+                        if [ -n "$bd" ]; then
+                            press_keys "$bd" Return; sleep 1.5
+                            check "OK on the Back up saves page goes back to the Saves settings page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Back up saves" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
+                        fi
+                        sv=$(find_window '^Deck Ports Manager: Settings: Saves$') || sv=""
+                        [ -n "$sv" ] && press_keys "$sv" Up Up Up Up Up $(downs "$(entry_downs Saves RestoreSaves)") Return
+                        rs=$(find_window '^Deck Ports Manager: Settings: Saves: Restore saves$') || rs=""
+                        import -window root "$OUT/restore-saves.png" 2>/dev/null
+                        check "Restore saves opens its page" '[ -n "$rs" ] && kill -0 "$APP" 2>/dev/null'
+                        if [ -n "$rs" ]; then
+                            press_keys "$rs" Escape; sleep 1.5
+                            check "B on Restore saves goes back one level, to the Saves settings page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves: Restore saves$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
+                        fi
+                    fi
                 fi
                 close_settings
                 eval "$(xdotool getwindowgeometry --shell "$win")"
@@ -573,24 +598,26 @@ if [ "$alive" = yes ]; then
                 fi
             fi
             close_settings
-            # Settings > Ports > Ports folder, then its "Choose another folder..." row (third) opens the picker;
-            # the picker's close button cancels back to the Ports folder list.
+            # Settings > Ports > Ports folder is a page of cards; the cursor starts on "Choose another folder", which opens the
+            # picker; the picker's close button cancels back to the Ports folder page.
+            PF='^Deck Ports Manager: Settings: Ports: Ports folder$'
             eval "$(xdotool getwindowgeometry --shell "$win")"
             open_settings_page && settings_entry Ports PortsFolder; sleep 2
-            pf=$(xdotool search --name "^Deck Ports Manager: Ports folder$" 2>/dev/null | head -1)
+            pf=$(find_window "$PF") || pf=""
+            import -window root "$OUT/ports-folder.png" 2>/dev/null
             check "Ports folder screen opens and the app keeps running" 'kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log" && [ -n "$pf" ]'
             if [ -n "$pf" ]; then
-                eval "$(xdotool getwindowgeometry --shell "$pf")"; PX=$X; PY=$Y
-                xdotool mousemove $((PX + 100)) $((PY + 63 + 42 * 2)) click 1; sleep 2
+                press_keys "$pf" Return; sleep 2
                 import -window root "$OUT/folder-picker.png" 2>/dev/null
                 picker=$(xdotool search --name "^Deck Ports Manager: Choose the ports folder$" 2>/dev/null | head -1)
                 check "Choose another folder... opens the folder picker" '[ -n "$picker" ] && kill -0 "$APP" 2>/dev/null'
                 if [ -n "$picker" ]; then
                     eval "$(xdotool getwindowgeometry --shell "$picker")"
                     xdotool mousemove $((X + WIDTH - 16)) $((Y + 16)) click 1; sleep 1.5
-                    check "closing the picker returns to the Ports folder list" '[ -z "$(xdotool search --name "^Deck Ports Manager: Choose the ports folder$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Ports folder$" 2>/dev/null)" ]'
-                    # End to end: Choose another folder > Games > New folder here "Ports" > Use this folder >
-                    # Move 2 ports here > Keep for now twice. Keys go to the focused dialog (no window manager).
+                    check "closing the picker returns to the Ports folder page" '[ -z "$(xdotool search --name "^Deck Ports Manager: Choose the ports folder$" 2>/dev/null)" ] && wait_for "[ -n \"\$(xdotool search --onlyvisible --name \"$PF\" 2>/dev/null)\" ]"'
+                    # End to end: Choose another folder > Games > New folder here "Ports" > Use this folder > "Move your 2
+                    # ports there?" Move them > the old copies page (they stay) > the done page, OK > the Ports folder page.
+                    # Keys go to the focused window (no window manager); each page is found by its window title.
                     wait_window() {
                         local w
                         for _ in $(seq 1 "${2:-50}"); do
@@ -606,10 +633,10 @@ if [ "$alive" = yes ]; then
                         xdotool windowfocus "$w" 2>/dev/null; sleep 0.4; xdotool key --delay 200 "$@"; sleep 1.5
                         STEP=$((${STEP:-0} + 1)); import -window root "$OUT/e2e-$STEP.png" 2>/dev/null; echo "e2e: step $STEP keys $* to $name ($w), focus now $(xdotool getwindowfocus getwindowname 2>&1)" >>"$OUT/e2e.log"
                     }
-                    pf=$(wait_window "^Deck Ports Manager: Ports folder$")
+                    pf=$(wait_window "$PF")
                     if [ -n "$pf" ]; then
-                        eval "$(xdotool getwindowgeometry --shell "$pf")"
-                        xdotool mousemove $((X + 100)) $((Y + 63 + 42 * 2)) click 1; sleep 2
+                        # The page keeps its cursor on "Choose another folder".
+                        press_keys "$pf" Return; sleep 2
                         E2E=1
                         # From "Use this folder": Up skips the heading to the Games place (Places: Home, Games).
                         key_to "^Deck Ports Manager: Choose the ports folder$" Up Return
@@ -617,16 +644,37 @@ if [ "$alive" = yes ]; then
                         nf=$(wait_window "^Deck Ports Manager: New folder in")
                         if [ -n "$nf" ]; then xdotool windowfocus "$nf" 2>/dev/null; sleep 0.4; xdotool type --delay 80 "Ports"; sleep 0.3; xdotool key Return; sleep 1.5; fi
                         key_to "^Deck Ports Manager: Choose the ports folder$" Return
-                        key_to "^Deck Ports Manager: Switch the ports folder" Return
-                        key_to "^Deck Ports Manager: Remove the old copy now" Return
-                        key_to "^Deck Ports Manager: Remove the old copy now" Return
+                        key_to "^Deck Ports Manager: Ports folder: move your ports$" Return
+                        check "end to end: the move asks on a page (Move your 2 ports there?)" 'grep -q "^e2e: step [0-9]* keys Return to \^Deck Ports Manager: Ports folder: move your ports" "$OUT/e2e.log"'
+                        key_to "^Deck Ports Manager: Ports folder: old copies$" Return
+                        key_to "^Deck Ports Manager: Ports folder: done$" Return
                         import -window root "$OUT/move-done.png" 2>/dev/null
+                        check "end to end: the done page's OK comes back to the Ports folder page" 'wait_for "[ -n \"\$(xdotool search --onlyvisible --name \"$PF\" 2>/dev/null)\" ]"'
                         cp "$APP_DIR/fork-settings.json" "$APP_DIR/port-moves.json" "$OUT/" 2>/dev/null
                         check "end to end: the new ports folder is saved" 'grep -q "\"ports_folder\": \"$HOME_DIR/Games/Ports\"" "$APP_DIR/fork-settings.json"'
                         check "end to end: program bits kept in the copy (755)" '[ "$(stat -c %a "$HOME_DIR/Games/Ports/SpaceCadetPinball/SpaceCadetPinball" 2>/dev/null)" = 755 ]'
                         check "end to end: the old copy is kept" '[ -f "$APP_DIR/Library/SpaceCadetPinball/SpaceCadetPinball" ]'
                         check "end to end: both old copies recorded" '[ "$(grep -c "\"old_path\"" "$APP_DIR/port-moves.json" 2>/dev/null)" = 2 ]'
                         check "end to end: no staging folder left" '[ -d "$HOME_DIR/Games/Ports" ] && [ -z "$(find "$HOME_DIR/Games/Ports" -maxdepth 1 -name ".*.dpm-moving-*" 2>/dev/null)" ]'
+                        # B goes back one level: Old copies kept after moves (the third card in Desktop Mode, after
+                        # Choose another folder and Open the ports folder) > B > the Ports folder page > B > the Ports page.
+                        pf=$(wait_window "$PF")
+                        if [ -n "$pf" ]; then
+                            press_keys "$pf" Up Up Up Up Down Down Return
+                            oc=$(find_window '^Deck Ports Manager: Ports folder: old copies kept$') || oc=""
+                            import -window root "$OUT/old-copies.png" 2>/dev/null
+                            check "Old copies kept after moves opens its page" '[ -n "$oc" ] && kill -0 "$APP" 2>/dev/null'
+                            if [ -n "$oc" ]; then
+                                press_keys "$oc" Escape; sleep 1.5
+                                check "B on the old copies page goes back one level, to the Ports folder page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Ports folder: old copies kept$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "$PF" 2>/dev/null)" ]'
+                            fi
+                            pf=$(find_window "$PF") || pf=""
+                            if [ -n "$pf" ]; then
+                                press_keys "$pf" Escape; sleep 1.5
+                                check "B on the Ports folder page goes back one level, to the Ports page of Settings" '[ -z "$(xdotool search --onlyvisible --name "$PF" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Ports$" 2>/dev/null)" ]'
+                            fi
+                            close_settings
+                        fi
                     fi
                 fi
             fi

@@ -302,7 +302,7 @@ fn run_job<T: Send + 'static>(
     done: impl FnOnce(&Rc<AppState>, &Router, Result<T, String>) + 'static,
 ) {
     if job_is_running() {
-        return open_message_dialog(app, router, TITLE, "Another artwork task is still running. Wait for it to finish, then try again.\n");
+        return open_message_dialog(app, router, TITLE, "Another artwork task is still running. Wait for it to finish, then try again.");
     }
     // The list first: if it cannot open, nothing has been started.
     let Some(dialog) = build_picker_dialog(app, router, TITLE, &sizing) else { return };

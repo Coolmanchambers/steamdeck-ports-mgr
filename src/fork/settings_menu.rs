@@ -336,7 +336,7 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::AddToSteam if f.steam_waiting > 0 => Card { title: "Add to Steam".into(), detail: format!("{} waiting for Steam to close", count(f.steam_waiting, "change", "changes")), switch: None },
         Entry::AddToSteam => plain("Add to Steam", "Shortcuts and art for your ports"),
         Entry::ArtSources => plain("Artwork sources", "Where covers and pictures come from"),
-        Entry::BackupSaves => plain(&plain_or_translated(&l.backup_saves, "Save Backup", "Back up saves now"), "Back up every port's saves now"),
+        Entry::BackupSaves => plain(&plain_or_translated(&l.backup_saves, "Save Backup", crate::fork::backup_pages::ACTION), "Every port's saves into one backup, now"),
         Entry::RestoreSaves => plain("Restore saves", "Put an earlier backup back"),
         Entry::CloudBackup => plain(
             "Cloud backup",
@@ -610,7 +610,7 @@ mod tests {
         // English keeps the plain names (the translated label is still upstream's English word).
         let en = Labels::english("1");
         assert_eq!(group_page(Group::Ports, &en, &f).options[4].title, "Open the ports folder");
-        assert_eq!(group_page(Group::Saves, &en, &f).options[0].title, "Back up saves now");
+        assert_eq!(group_page(Group::Saves, &en, &f).options[0].title, "Back up saves");
         assert_eq!(plain_or_translated("Library", "Library", "Open the ports folder"), "Open the ports folder");
         assert_eq!(plain_or_translated("Bibliothèque", "Library", "Open the ports folder"), "Bibliothèque");
         assert_eq!(group_page(Group::Saves, &l, &f).options[0].title, "Sauvegarde");

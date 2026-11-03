@@ -63,14 +63,8 @@ fn leave(app: &Rc<AppState>, router: &Router, then: &Then) {
     }
 }
 
-/// The dialogs size themselves from a text estimate that comes out a line short for wrapped text, which
-/// clips the last line; one spare line keeps it readable.
-fn padded(text: &str) -> String {
-    format!("{text}\n")
-}
-
 fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
-    open_message_dialog(app, router, title, &padded(text));
+    open_message_dialog(app, router, title, text);
 }
 
 fn home_dir() -> Option<PathBuf> {

@@ -1,7 +1,8 @@
 //! The pages of the wizard's first question once a place is chosen: the place cannot be used, it needs to be made,
 //! "Move your 3 ports there?", a game file problem before a copy, the progress of the move, and what to do when
-//! some ports did not move. They replace the lists of Settings > Ports folder inside the wizard (the Settings screen
-//! keeps its lists); the decisions are the same ones (`ports_folder_screen` runs them). Plain words, no file paths.
+//! some ports did not move. Settings > Ports > Ports folder shows the same pages outside the wizard ([`for_settings`]:
+//! its own header and window titles, no step bar, the chosen place named the human way); `ports_folder_screen` runs
+//! them. Plain words, no file paths.
 
 use crate::fork::page::{Focus, Page, PageButton, PageOption, LEFT};
 use crate::fork::rom_screens::util::human_bytes;
@@ -30,7 +31,37 @@ pub enum FolderAction {
     Undo,
     /// Stop the copy in progress.
     CancelMove,
+    /// OK on a notice.
+    Ok,
     Back,
+}
+
+/// The header of these pages outside the setup wizard.
+pub const SETTINGS_HEADER: &str = "Ports folder";
+
+/// A wizard page of this flow as Settings > Ports > Ports folder shows it: "Ports folder" as the header, no step bar,
+/// the window title without "Setup wizard: ". `place` is the folder the user chose, the human way ("SD card > Ports"):
+/// said first, so the page names where it is about.
+pub fn for_settings(mut p: Page<FolderAction>, place: Option<&str>) -> Page<FolderAction> {
+    p.window_title = p.window_title.strip_prefix("Setup wizard: ").unwrap_or(&p.window_title).to_string();
+    p.header = SETTINGS_HEADER.to_string();
+    p.step_text.clear();
+    p.step_number = 0;
+    p.step_count = 0;
+    if let Some(place) = place.filter(|s| !s.is_empty()) {
+        p.paragraphs.insert(0, format!("The folder you chose: {place}."));
+    }
+    p
+}
+
+/// Something to say, with OK (B does the same): a reason the move cannot start, that it was cancelled, a folder that
+/// is already the ports folder. `text` is paragraphs split at blank lines.
+pub fn notice_page(window: &str, title: &str, text: &str) -> Page<FolderAction> {
+    let mut p = base(window, title);
+    p.paragraphs = text.split("\n\n").map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect();
+    p.options = vec![option("OK", "", FolderAction::Ok, true)];
+    p.initial = Focus::Option(0);
+    p.b_does(&FolderAction::Ok)
 }
 
 fn base(window: &str, title: &str) -> Page<FolderAction> {
@@ -106,7 +137,7 @@ pub fn move_page(f: &MoveFacts) -> Page<FolderAction> {
     }
     if f.stale {
         let mut p = base("Ports folder: old copy in the way", "An old copy is in the way");
-        p.paragraphs = vec!["A copy you kept earlier is already there. It is replaced by the one in use, and its saves are zipped to a backup first.".to_string()];
+        p.paragraphs = vec!["A copy you kept earlier is already there. It is replaced by the one in use, and its saves are backed up first.".to_string()];
         p.options = vec![option("Replace and move", "", FolderAction::ReplaceAndMove, false), option("Pick another place", "", FolderAction::PickAnother, true)];
         back_button(&mut p);
         p.initial = Focus::Option(1);
@@ -190,7 +221,7 @@ pub fn progress_lines(names: &[String], text: &str) -> Vec<String> {
 pub fn moving_page(names: &[String], text: &str, cancelling: bool, replaces: bool) -> Page<FolderAction> {
     let mut p = base("Ports folder: moving", "Moving your ports");
     p.paragraphs = vec![if replaces {
-        "The old copy you kept is replaced first (its saves are zipped). Then each port is copied and checked.".to_string()
+        "The old copy you kept is replaced first (its saves are backed up). Then each port is copied and checked.".to_string()
     } else {
         "Each port is copied and checked. Nothing is deleted.".to_string()
     }];
@@ -269,7 +300,7 @@ mod tests {
         let mut f = facts(1, Some(900_000_000_000));
         f.stale = true;
         let p = move_page(&f);
-        assert!(all_text(&p).contains("saves are zipped to a backup first"));
+        assert!(all_text(&p).contains("saves are backed up first"));
         assert_eq!(actions(&p), [FolderAction::ReplaceAndMove, FolderAction::PickAnother]);
         assert_eq!(p.initial, Focus::Option(1));
     }
@@ -337,7 +368,57 @@ mod tests {
         assert!(plain.contains("Nothing is deleted") && plain.contains("Nothing is changed"));
         let replacing = all_text(&moving_page(&names, "", false, true));
         assert!(!replacing.contains("Nothing is deleted") && !replacing.contains("Nothing is changed"), "{replacing}");
-        assert!(replacing.contains("replaced first") && replacing.contains("saves are zipped") && replacing.contains("The copy in progress is removed"));
+        assert!(replacing.contains("replaced first") && replacing.contains("saves are backed up") && replacing.contains("The copy in progress is removed"));
+    }
+
+    fn every_page() -> Vec<Page<FolderAction>> {
+        let long = "The Legend of Zelda: The Wind Waker HD (ZeldaWWHDRecomp)".to_string();
+        let mut stale = facts(12, Some(900_000_000_000));
+        stale.stale = true;
+        vec![
+            cannot_use_page(&["That is a system folder. Pick or create a folder of your own, like Games/Ports in your home folder or a folder on the SD card.".to_string()]),
+            create_page(),
+            move_page(&facts(12, Some(900_000_000_000))),
+            move_page(&facts(12, Some(1))),
+            move_page(&stale),
+            game_file_page(&long, "oot.z64: the original game file is missing.", 3),
+            already_there_page(3),
+            nothing_moved_page(2),
+            moving_page(&[long.clone(), "Dusk".into()], "Copying 1 of 2: x\n1.0 MB of 2.0 MB", false, true),
+            moving_page(&[long.clone()], "", true, false),
+            some_failed_page(&[(long.clone(), "the copy could not be checked".into())], 2),
+            notice_page("Ports folder: notice", "Move cancelled", "Nothing changed.\n\nThe copies made so far were removed."),
+        ]
+    }
+
+    #[test]
+    fn every_page_fits_and_says_it_plainly_in_the_wizard_and_in_settings() {
+        let place = "SD card (SD512) > Emulation > Ports for the Deck > A long folder name";
+        for page in every_page() {
+            for p in [page.clone(), for_settings(page, Some(place))] {
+                crate::fork::rom_screens::settings_pages::tests::assert_fits(&p);
+                crate::fork::rom_screens::settings_pages::tests::assert_plain(&p, &["ZeldaWWHDRecomp"]);
+                for t in crate::fork::rom_screens::settings_pages::tests::shown(&p) {
+                    let lower = t.to_lowercase();
+                    for word in ["zip", "/run/media", "/home/", "repoint", "staging", "(s)", "json"] {
+                        assert!(!lower.contains(word), "{word:?} in {t:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn outside_the_wizard_the_pages_have_their_own_header_and_name_the_place() {
+        let p = for_settings(move_page(&facts(3, Some(900_000_000_000))), Some("SD card > Ports"));
+        assert_eq!(p.window_title, "Ports folder: move your ports");
+        assert_eq!((p.header.as_str(), p.step_text.as_str(), p.step_count, p.step_number), ("Ports folder", "", 0, 0));
+        assert_eq!(p.paragraphs[0], "The folder you chose: SD card > Ports.");
+        assert_eq!(p.title, "Move your 3 ports there?");
+        assert_eq!(for_settings(create_page(), None).paragraphs.len(), 1, "no place, no extra line");
+        let n = notice_page("Ports folder: notice", "Move cancelled", "a\n\nb");
+        assert_eq!((n.paragraphs.len(), n.back_hint.as_str()), (2, "OK"));
+        assert_eq!(n.options.iter().map(|o| o.action).collect::<Vec<_>>(), [FolderAction::Ok]);
     }
 
     #[test]

@@ -774,7 +774,7 @@ fn open_fix(app: &Rc<AppState>, router: &Router, s: &Rc<Session>) {
             show(app, router, s, Stage::Confirm, page);
         }
         Fix::BackUpNow => {
-            let page = pages::confirm_page(check, "Back up every port's saves now?", vec!["The saves are copied into a zip. Nothing is deleted or replaced.".to_string()], "Back up now", n, total);
+            let page = pages::confirm_page(check, "Back up every port's saves now?", vec!["The saves are copied into one backup. Nothing is deleted or replaced.".to_string()], crate::fork::backup_pages::ACTION, n, total);
             show(app, router, s, Stage::Confirm, page);
         }
         Fix::AddToSteam => add_to_steam(app, router, &problem.ports),
@@ -906,7 +906,7 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
                 super::install_wizard_screen::open(app, router, port, back_here);
             }
         }
-        Fix::BackUpNow => super::dialogs::start_save_backup(app, router),
+        Fix::BackUpNow => super::save_backup_screen::start(app, router),
         Fix::Cloud => super::cloud_screen::open_from_settings(app, router),
     }
     s.entering.set(false);

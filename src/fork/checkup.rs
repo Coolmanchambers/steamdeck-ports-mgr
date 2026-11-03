@@ -128,8 +128,8 @@ impl Fix {
         use crate::fork::settings_menu::Group;
         match (self, menu) {
             (Fix::PortsFolderGone | Fix::PortsFolderMenu | Fix::GameFiles | Fix::OldCopies, Menu::SettingsGroup(Group::Ports)) => true,
-            (Fix::Cloud, Menu::SettingsGroup(Group::Saves)) => true,
-            // The old copies list's Back row opens the Ports folder menu: that is leaving it.
+            (Fix::Cloud | Fix::BackUpNow, Menu::SettingsGroup(Group::Saves)) => true,
+            // B on the old copies page opens the Ports folder page: that is leaving it.
             (Fix::OldCopies, Menu::PortsFolder) => true,
             _ => false,
         }
@@ -830,7 +830,7 @@ fn backups(f: &Facts) -> Outcome {
     match (stale, f.cloud_problem) {
         (Some(words), cloud) => {
             let summary = if cloud { format!("{words}; cloud backup has a problem") } else { words };
-            advisory(problem(Mark::ToDo, summary, Vec::new(), Fix::BackUpNow, "Back up saves now"))
+            advisory(problem(Mark::ToDo, summary, Vec::new(), Fix::BackUpNow, crate::fork::backup_pages::ACTION))
         }
         (None, true) => advisory(problem(Mark::ToDo, "Cloud backup has a problem".to_string(), Vec::new(), Fix::Cloud, "Look at cloud backup")),
         (None, false) if f.saves_known == 0 && f.backup_days.is_none() => Outcome::Ok("No save folders known yet".to_string()),

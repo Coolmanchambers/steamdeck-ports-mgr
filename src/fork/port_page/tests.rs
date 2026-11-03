@@ -46,6 +46,21 @@ fn a_card_that_is_not_mounted_now_is_still_not_shown_by_its_id() {
 }
 
 #[test]
+fn paths_inside_a_sentence_are_told_the_human_way() {
+    let p = deck_places();
+    let sd = "/run/media/deck/c14f9023-6854-443f-9348-735551234567";
+    assert_eq!(plain_paths(&format!("Could not create {sd}/Ports: Permission denied"), &p), "Could not create SD card > Ports: Permission denied");
+    assert_eq!(plain_paths("Your ports folder /home/deck/Games/Ports is not there any more.", &p), "Your ports folder Internal storage > Games > Ports is not there any more.");
+    assert_eq!(plain_paths("disk full -- /home/deck/Saves Backup/x", &p), "disk full: Internal storage > Saves Backup > x", "spaces stay inside, the double hyphen goes");
+    assert_eq!(plain_paths("saves are in /home/deck/a/.s.before-restore-1 (move them back to /home/deck/a/s); x", &p), "saves are in Internal storage > a > .s.before-restore-1 (move them back to Internal storage > a > s); x");
+    assert_eq!(plain_paths("ends here /home/deck/Games.", &p), "ends here Internal storage > Games.");
+    assert_eq!(plain_paths("the folder /home/deck/Saves Backup is full.", &p), "the folder Internal storage > Saves Backup is full.");
+    assert_eq!(plain_paths("a/b and /usr/lib and 1/2", &p), "a/b and /usr/lib and 1/2", "only paths under the home folder or a drive");
+    assert_eq!(plain_paths("/home/deckard/x", &p), "/home/deckard/x", "a folder that only starts like home");
+    assert_eq!(plain_paths("plain text", &p), "plain text");
+}
+
+#[test]
 fn the_top_places_are_internal_storage_and_each_drive() {
     let p = deck_places();
     assert_eq!(p.tops(), [PathBuf::from("/home/deck"), PathBuf::from("/run/media/deck/c14f9023-6854-443f-9348-735551234567")]);

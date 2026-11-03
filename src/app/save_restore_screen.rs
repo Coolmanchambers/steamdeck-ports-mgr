@@ -1,24 +1,21 @@
-//! The "Restore saves" screens: Info dialog > "Restore saves..." and Settings > "Restore saves...".
-//!
-//! Every screen is a list built from the picker dialog the app already has, so it works with the
-//! controller (D-pad, A, B), keyboard and mouse, in a window or fullscreen. What the screens say is
-//! built in `crate::fork::save_restore::view` and the restore itself is
-//! `crate::fork::save_restore::restore` (both tested without any UI); this file draws the lists and
-//! runs the restore on a worker thread behind a progress dialog. English only, like the fork's other
-//! screens.
+//! The "Restore saves" pages: Settings > Saves > Restore saves (which port, then which backup), the Port page's Saves >
+//! Restore and the cloud backup's hand-over (which backup), then "Put back the saves from ...?", a waiting page and a
+//! done page, all in the guided page window (`page_dialog::show_page`). What the pages say is
+//! `crate::fork::save_restore::pages` and the restore itself is `crate::fork::save_restore::restore` (both tested
+//! without any UI); this file shows them and runs the restore on a worker thread. The restore is unchanged: the saves
+//! now are backed up before anything is replaced. English only, like the fork's other screens.
 
-use super::dialogs::{
-    build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_info_dialog, open_message_dialog, open_progress_dialog,
-    update_progress_dialog, DialogSlot,
-};
+use super::dialogs::{close_current_dialog, dialog_is_open, open_info_dialog, open_message_dialog};
+use super::page_dialog::{show_page, show_page_handle, Handlers, PageHandle};
 use super::playtime::is_port_running;
 use super::state::AppState;
 use crate::core::models::Port;
 use crate::core::path_safety::safe_join;
+use crate::fork::port_page::paths::{human_path, plain_paths_here, Places};
 use crate::fork::rom_screens::job::Background;
-use crate::fork::save_restore::{self, view, Backup, RestoreError, RestoreInput, SaveTarget};
+use crate::fork::save_restore::pages::{self, PortChoice, RsAct};
+use crate::fork::save_restore::{self, Backup, RestoreError, RestoreInput, SaveTarget, Target};
 use crate::ui::gamepad_router::GamepadRouter;
-use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -29,37 +26,8 @@ type Back = Rc<dyn Fn(&Rc<AppState>, &Router)>;
 
 const TITLE: &str = "Restore saves";
 
-/// The dialogs size themselves from a text estimate that comes out a line short for wrapped text, which
-/// clips the last line; one spare line keeps it readable.
-fn padded(text: &str) -> String {
-    format!("{text}\n")
-}
-
-fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
-    open_message_dialog(app, router, title, &padded(text));
-}
-
 fn home_dir() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v)).map(PathBuf::from).filter(|p| p.is_absolute())
-}
-
-fn port_title(port: &Port) -> String {
-    format!("Restore saves: {}", port.display_name())
-}
-
-/// A list whose information rows do nothing when chosen; action rows open the next dialog. The cursor
-/// starts on row `start`.
-fn open_list(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, start: usize, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) {
-    let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
-    let start = start.min(labels.len().saturating_sub(1)) as i32;
-    dialog.set_selected_index(start);
-    app.dialog_nav.picker_index.set(start);
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| on_select(&app, &router, index as usize));
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
 fn targets_for(app: &AppState, port: &Port) -> Option<Vec<SaveTarget>> {
@@ -67,9 +35,23 @@ fn targets_for(app: &AppState, port: &Port) -> Option<Vec<SaveTarget>> {
     Some(save_restore::save_targets(port, &game_dir, &app.paths.saves_backup_dir, home_dir().as_deref()))
 }
 
+/// Handlers for a page here: B runs `back`, the title bar X leaves.
+fn handlers(on_action: impl Fn(&Rc<AppState>, &Router, RsAct) + 'static, back: Back) -> Handlers<RsAct> {
+    Handlers { on_action: Rc::new(on_action), on_back: back, on_exit: Rc::new(close_current_dialog), on_input: None }
+}
+
+/// Something to say on a page with OK, then `then` (OK and B alike).
+fn notice(app: &Rc<AppState>, router: &Router, header: &str, title: &str, text: &str, then: Back) {
+    let page = pages::notice_page(header, title, &plain_paths_here(text));
+    let after = then.clone();
+    if !show_page(app, router, page, handlers(move |app, router, _| after(app, router), then.clone())) {
+        then(app, router);
+    }
+}
+
 // -- Entry points -----------------------------------------------------------------------------------
 
-/// Info dialog > "Restore saves...". Back returns to the Info dialog.
+/// The Info dialog's "Restore saves...". Back returns to the Info dialog.
 pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
     if super::ports_folder_screen::refuse_when_blocked(app) {
         return;
@@ -81,89 +63,102 @@ pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
     show_port(app, router, &port, back);
 }
 
-/// Settings > "Restore saves...": every port that has at least one backup.
+/// Up from the Settings page: the Saves page of Settings.
+fn to_saves_page(app: &Rc<AppState>, router: &Router) {
+    close_current_dialog(app, router);
+    super::settings_menu_screen::open_group(app, router, crate::fork::settings_menu::Group::Saves);
+}
+
+/// Settings > Saves > Restore saves: every port that has at least one backup, a card each.
 pub(crate) fn open_from_settings(app: &Rc<AppState>, router: &Router) {
     if super::ports_folder_screen::refuse_when_blocked(app) {
         return;
     }
     let all = save_restore::list_all_backups(&app.paths.saves_backup_dir);
-    let rows: Vec<(String, Option<Port>, usize)> = {
+    let rows: Vec<(PortChoice, Option<Port>)> = {
         let catalog = app.catalog.borrow();
         all.iter()
             .map(|(folder, backups)| {
                 let port = catalog.iter().find(|p| &p.folder == folder && !p.is_android_only()).cloned();
-                let label = match &port {
-                    Some(p) => view::port_row(p.display_name(), backups),
-                    None => format!("{} (not in the catalog)", view::port_row(folder, backups)),
-                };
-                (label, port, backups.len())
+                let name = port.as_ref().map_or_else(|| folder.clone(), |p| p.display_name().to_string());
+                let newest = backups.first().map(pages::when_short).unwrap_or_default();
+                (PortChoice { name, backups: backups.len(), newest, known: port.is_some() }, port)
             })
             .collect()
     };
-    let mut labels: Vec<String> = rows.iter().map(|(label, ..)| label.clone()).collect();
-    if rows.is_empty() {
-        labels.push("No save backups yet. One is made before every update, and by Settings > Backup Saves.".into());
-    }
-    let back_index = labels.len();
-    labels.push("Back".into());
-    let backups_dir = app.paths.saves_backup_dir.clone();
-    open_list(app, router, TITLE, labels, 0, move |app, router, index| {
-        if index == back_index {
-            close_current_dialog(app, router);
-            return super::settings_menu_screen::open_group(app, router, crate::fork::settings_menu::Group::Saves);
-        }
-        match rows.get(index) {
-            Some((_, Some(port), _)) => {
-                let back: Back = Rc::new(|app, router| open_from_settings(app, router));
-                show_port(app, router, port, back);
-            }
-            Some((label, None, _)) => message(
-                app,
-                router,
-                TITLE,
-                &format!(
-                    "{label}\n\nThat port is not in the catalog any more, so the app does not know where its saves go and cannot restore them. The backups stay in {}.",
-                    backups_dir.display()
-                ),
-            ),
-            None => {}
-        }
-    });
+    let page = pages::ports_page(&rows.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>());
+    let place = crate::fork::port_page::paths::human_path_here(&app.paths.saves_backup_dir);
+    let up: Back = Rc::new(to_saves_page);
+    let here: Back = Rc::new(open_from_settings);
+    show_page(
+        app,
+        router,
+        page,
+        handlers(
+            move |app, router, act| match act {
+                RsAct::Port(i) => match rows.get(i) {
+                    Some((_, Some(port))) => show_port(app, router, port, here.clone()),
+                    Some((choice, None)) => notice(
+                        app,
+                        router,
+                        &choice.name,
+                        "Not in your ports list",
+                        &format!("{} is not in your ports list any more, so the app does not know where its saves go and cannot put them back.\n\nIts backups stay in {place}.", choice.name),
+                        here.clone(),
+                    ),
+                    None => {}
+                },
+                _ => to_saves_page(app, router),
+            },
+            up,
+        ),
+    );
 }
 
 // -- One port ---------------------------------------------------------------------------------------
 
+/// A port's backups, newest first (and any restore that stopped part way). `back` is where B goes.
 pub(crate) fn show_port(app: &Rc<AppState>, router: &Router, port: &Port, back: Back) {
+    let name = port.display_name().to_string();
+    let places = Places::system();
     let Some(targets) = targets_for(app, port) else {
-        return message(app, router, &port_title(port), "This port's folder name is not usable, so its saves cannot be restored.");
+        return notice(app, router, &name, "Cannot put saves back", "This port's folder name cannot be used, so its saves cannot be put back.", back);
     };
-    if !view::any_restorable(&targets) {
-        return message(app, router, &port_title(port), &view::nothing_restorable_text(port.display_name(), &targets));
+    if !targets.iter().any(|t| matches!(t.target, Target::Folder(_))) {
+        return notice(app, router, &name, "Nothing to put back", &pages::nothing_restorable_text(&name, &targets, &places), back);
     }
     let backups = save_restore::list_backups(&app.paths.saves_backup_dir, &port.folder);
     // Folders an interrupted restore left beside a save folder come first; they are never deleted here.
     let interrupted = save_restore::interrupted_restores(&targets);
-    let mut labels: Vec<String> = interrupted.iter().map(view::interrupted_row).collect();
-    labels.extend(targets.iter().map(view::target_row));
-    let first_backup = labels.len();
-    labels.extend(backups.iter().map(view::backup_row));
-    if backups.is_empty() {
-        labels.push("No backups of these saves yet. One is made before every update, and by Settings > Backup Saves.".into());
-    }
-    let back_index = labels.len();
-    labels.push("Back".into());
+    let saves: Vec<String> = targets.iter().filter_map(|t| if let Target::Folder(p) = &t.target { Some(human_path(p, &places)) } else { None }).collect();
+    let page = pages::backups_page(&name, &backups, &saves, interrupted.len());
+    let again: Back = {
+        let (port, back) = (port.clone(), back.clone());
+        Rc::new(move |app, router| show_port(app, router, &port, back.clone()))
+    };
     let port = port.clone();
-    open_list(app, router, &port_title(&port), labels, first_backup, move |app, router, index| {
-        if index == back_index {
-            return back(app, router);
-        }
-        if let Some(item) = interrupted.get(index) {
-            return message(app, router, &port_title(&port), &view::interrupted_text(item));
-        }
-        if let Some(backup) = index.checked_sub(first_backup).and_then(|i| backups.get(i)) {
-            choose_backup(app, router, &port, backup.clone());
-        }
-    });
+    let on_back = back.clone();
+    show_page(
+        app,
+        router,
+        page,
+        handlers(
+            move |app, router, act| match act {
+                RsAct::Interrupted(i) => {
+                    if let Some(item) = interrupted.get(i) {
+                        notice(app, router, &name, "A restore stopped part way", &pages::interrupted_text(item, &places), again.clone());
+                    }
+                }
+                RsAct::Backup(i) => {
+                    if let Some(backup) = backups.get(i) {
+                        choose_backup(app, router, &port, backup.clone(), again.clone());
+                    }
+                }
+                _ => back(app, router),
+            },
+            on_back,
+        ),
+    );
 }
 
 fn busy_reason(app: &AppState, port: &Port) -> Option<String> {
@@ -180,7 +175,7 @@ fn busy_reason(app: &AppState, port: &Port) -> Option<String> {
         }
     }
     if app.install_runtime.installing.borrow().contains(port.key()) {
-        return Some("This port is being installed or updated. Wait for that to finish, then restore; nothing was changed.".into());
+        return Some("This port is being installed or updated. Wait for that to finish, then put the saves back; nothing was changed.".into());
     }
     if RESTORE_RUNNING.with(Cell::get) {
         return Some("Another restore is still running. Wait for it to finish, then try again.".into());
@@ -188,26 +183,41 @@ fn busy_reason(app: &AppState, port: &Port) -> Option<String> {
     None
 }
 
-fn choose_backup(app: &Rc<AppState>, router: &Router, port: &Port, backup: Backup) {
-    let title = port_title(port);
+/// A backup was chosen: "Put back the saves from ...?" (or why it cannot be put back). `again` is the backups page.
+fn choose_backup(app: &Rc<AppState>, router: &Router, port: &Port, backup: Backup, again: Back) {
+    let name = port.display_name().to_string();
     if let Some(problem) = &backup.problem {
-        return message(app, router, &title, &RestoreError::UnusableBackup(problem.clone()).to_string());
+        return notice(app, router, &name, "This backup cannot be used", &RestoreError::UnusableBackup(problem.clone()).to_string(), again);
     }
     if let Some(reason) = busy_reason(app, port) {
-        return message(app, router, &title, &reason);
+        return notice(app, router, &name, "Not now", &reason, again);
     }
-    let Some(targets) = targets_for(app, port) else { return };
+    let Some(targets) = targets_for(app, port) else { return again(app, router) };
+    let places = Places::system();
     let plan = save_restore::plan_restore(&targets, &backup);
     if plan.replace.is_empty() {
-        let mut text = "This backup holds no save folder the app can restore here:".to_string();
+        let mut text = "This backup holds no saves the app can put back here.".to_string();
         for (field, why) in &plan.skipped {
-            text.push_str(&format!("\n  {}: {why}", field.label()));
+            text.push_str(&format!("\n\n{}: {why}.", field.label()));
         }
-        return message(app, router, &title, &text);
+        return notice(app, router, &name, "Nothing to put back", &text, again);
     }
-    let text = view::confirm_text(port.display_name(), &backup, &plan, &app.paths.saves_backup_dir, &port.folder);
+    let kept_at = app.paths.saves_backup_dir.join(save_restore::RESTORE_BACKUPS_DIR).join(&port.folder);
+    let page = pages::ask_page(&pages::ask_facts(&name, &backup, &plan, &kept_at, &places));
     let port = port.clone();
-    open_confirm_dialog(app, router, title.into(), padded(&text).into(), "Restore".into(), move |app, router| start_restore(app, router, port.clone(), backup.clone()));
+    let back = again.clone();
+    show_page(
+        app,
+        router,
+        page,
+        handlers(
+            move |app, router, act| match act {
+                RsAct::Restore => start_restore(app, router, port.clone(), backup.clone(), again.clone()),
+                _ => again(app, router),
+            },
+            back,
+        ),
+    );
 }
 
 // -- Running the restore ----------------------------------------------------------------------------
@@ -217,16 +227,33 @@ thread_local! {
     static RESTORE_RUNNING: Cell<bool> = const { Cell::new(false) };
     /// Close or Quit was asked for while a restore ran: the app quits once it has finished.
     static QUIT_PENDING: Cell<bool> = const { Cell::new(false) };
+    /// The waiting page of the restore running now, and a line to add to it (a refusal while it runs).
+    static WORKING: RefCell<Option<Rc<PageHandle<RsAct>>>> = const { RefCell::new(None) };
+    static NOTE: RefCell<Option<String>> = const { RefCell::new(None) };
+    static WORKING_NAME: RefCell<String> = const { RefCell::new(String::new()) };
+    static WORKING_STEP: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 const QUIT_NOTE: &str = "The app closes when the restore is done. Do not turn the Deck off.";
 
-/// Shows `text` in the restore's progress dialog when it is up, else in a message.
-fn tell(app: &Rc<AppState>, router: &Router, text: &str) {
-    if let DialogSlot::Progress(d) = &*app.dialog_nav.dialogs.borrow() {
-        return update_progress_dialog(app, d, text);
+/// Redraws the waiting page with the step and the note.
+fn redraw_working() {
+    let Some(handle) = WORKING.with(|w| w.borrow().clone()) else { return };
+    let name = WORKING_NAME.with(|n| n.borrow().clone());
+    let mut text = WORKING_STEP.with(|s| s.borrow().clone());
+    if let Some(note) = NOTE.with(|n| n.borrow().clone()) {
+        text = format!("{text}\n{note}");
     }
-    message(app, router, TITLE, text);
+    handle.update(pages::working_page(&name, &text));
+}
+
+/// Says `text` on the restore's waiting page when it is up, else in a message.
+fn tell(app: &Rc<AppState>, router: &Router, text: &str) {
+    if WORKING.with(|w| w.borrow().as_ref().is_some_and(|h| h.is_open())) {
+        NOTE.with(|n| *n.borrow_mut() = Some(text.to_string()));
+        return redraw_working();
+    }
+    open_message_dialog(app, router, TITLE, text);
 }
 
 /// Window Close (when it would quit), tray Quit and self-update ask this first. While a restore runs,
@@ -236,7 +263,7 @@ pub(crate) fn quit_waits_for_restore(app: &Rc<AppState>, router: &Router) -> boo
         return false;
     }
     QUIT_PENDING.with(|q| q.set(true));
-    tell(app, router, &format!("Finishing the restore first.\n{QUIT_NOTE}"));
+    tell(app, router, &format!("Finishing the restore first. {QUIT_NOTE}"));
     true
 }
 
@@ -245,7 +272,7 @@ pub(crate) fn restore_running() -> bool {
     RESTORE_RUNNING.with(Cell::get)
 }
 
-/// Settings entries that read or write saves (Backup Saves, Restore saves, Force update) ask this first.
+/// Settings entries that read or write saves (Back up saves, Restore saves, Force update) ask this first.
 pub(crate) fn refuse_while_restoring(app: &Rc<AppState>, router: &Router) -> bool {
     if !RESTORE_RUNNING.with(Cell::get) {
         return false;
@@ -255,39 +282,46 @@ pub(crate) fn refuse_while_restoring(app: &Rc<AppState>, router: &Router) -> boo
 }
 
 /// What the user is told when the restore thread panicked: unlike other jobs, it may have stopped part way.
-fn panic_text(port: &Port, detail: &str, saves_backup_dir: &std::path::Path) -> String {
+fn panic_text(app: &AppState, port: &Port, detail: &str) -> String {
     let detail = detail.strip_suffix("; nothing else was changed").unwrap_or(detail);
+    let kept = crate::fork::port_page::paths::human_path_here(&app.paths.saves_backup_dir.join(save_restore::RESTORE_BACKUPS_DIR).join(&port.folder));
     format!(
-        "The restore stopped because of an error inside the app ({detail}).\n\nCheck the save folder. Your saves from before the restore are in {}, and a folder named .<save folder>.before-restore-... beside the save folder may hold them too; open Info > Restore saves... to see it.",
-        saves_backup_dir.join(save_restore::RESTORE_BACKUPS_DIR).join(&port.folder).display()
+        "The restore stopped because of an error inside the app ({detail}).\n\nCheck your saves. Your saves from before the restore may be in a backup in {kept}.\n\nIf your saves look wrong, open Restore saves for this port again: it shows what was kept."
     )
 }
 
-fn start_restore(app: &Rc<AppState>, router: &Router, port: Port, backup: Backup) {
-    let title = port_title(&port);
-    // Checked again here: the game may have been started while the confirm dialog was up.
+fn start_restore(app: &Rc<AppState>, router: &Router, port: Port, backup: Backup, again: Back) {
+    let name = port.display_name().to_string();
+    // Checked again here: the game may have been started while the question was up.
     if let Some(reason) = busy_reason(app, &port) {
-        return message(app, router, &title, &reason);
+        return notice(app, router, &name, "Not now", &reason, again);
     }
-    let Ok(game_dir) = safe_join(&app.paths.library_dir(), &port.folder) else { return };
+    let Ok(game_dir) = safe_join(&app.paths.library_dir(), &port.folder) else { return again(app, router) };
     let key = port.key().to_string();
     // Holding the port's install slot keeps an install, update or launch of it from starting meanwhile.
     app.install_runtime.installing.borrow_mut().insert(key.clone());
     RESTORE_RUNNING.with(|r| r.set(true));
-    open_progress_dialog(app, router, &title, "Backing up your current saves...");
+    NOTE.with(|n| *n.borrow_mut() = None);
+    WORKING_NAME.with(|n| *n.borrow_mut() = name.clone());
+    WORKING_STEP.with(|s| *s.borrow_mut() = String::new());
+    // Nothing on the waiting page can be chosen, and B does nothing: the restore cannot be stopped part way.
+    let nothing: Back = Rc::new(|_, _| {});
+    let waiting = Handlers { on_action: Rc::new(|_, _, _: RsAct| {}), on_back: nothing.clone(), on_exit: nothing, on_input: None };
+    let handle = show_page_handle(app, router, pages::working_page(&name, ""), waiting).map(Rc::new);
+    WORKING.with(|w| *w.borrow_mut() = handle.clone());
 
     let saves_backup_dir = app.paths.saves_backup_dir.clone();
-    let shown_backup_dir = saves_backup_dir.clone();
     let home = home_dir();
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let worker_port = port.clone();
+    let worker_backup = backup.clone();
     let job = Background::spawn(move |ctl| {
         let input = RestoreInput {
             port: &worker_port,
             game_dir: &game_dir,
             saves_backup_dir: &saves_backup_dir,
             home: home.as_deref(),
-            backup: &backup,
+            backup: &worker_backup,
             game_running: false,
             stamp: &stamp,
         };
@@ -295,41 +329,54 @@ fn start_restore(app: &Rc<AppState>, router: &Router, port: Port, backup: Backup
     });
 
     let (app, router) = (app.clone(), router.clone());
-    let last = RefCell::new(String::new());
+    let when = pages::when_short(&backup);
     RESTORE_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
             if let Some(result) = job.take() {
                 RESTORE_TIMER.with(slint::Timer::stop);
                 RESTORE_RUNNING.with(|r| r.set(false));
+                WORKING.with(|w| *w.borrow_mut() = None);
                 app.install_runtime.installing.borrow_mut().remove(&key);
                 super::cloud_screen::trigger(&app, crate::fork::cloud::hooks::Why::RestoreBackup); // Fork: the safety backup made before the restore
-                if matches!(&*app.dialog_nav.dialogs.borrow(), DialogSlot::Progress(_)) {
-                    close_current_dialog(&app, &router);
-                }
                 // A restore that could not be fully undone must be seen, even after Close or Quit.
                 let must_tell = matches!(&result, Ok(Err(RestoreError::RollbackFailed(_))) | Err(_));
                 if QUIT_PENDING.with(|q| q.replace(false)) && !must_tell {
                     let _ = slint::quit_event_loop();
                     return;
                 }
-                match result {
-                    Ok(Ok(done)) => message(&app, &router, "Saves restored", &view::done_text(port.display_name(), &done)),
-                    Ok(Err(e)) => message(&app, &router, &title, &e.to_string()),
-                    Err(panic) => message(&app, &router, &title, &panic_text(&port, &panic, &shown_backup_dir)),
+                let ours = handle.as_ref().is_some_and(|h| h.is_open());
+                if !ours && !must_tell && dialog_is_open(&app) {
+                    // Something else is on screen now; the next visit to Restore saves shows what was put back.
+                    eprintln!("restore saves: {} finished while another dialog was open", port.display_name());
+                    return;
                 }
+                let places = Places::system();
+                let page = match result {
+                    Ok(Ok(done)) => pages::done_page(&pages::done_facts(port.display_name(), &when, &done, &places)),
+                    Ok(Err(e)) => {
+                        eprintln!("restore saves: {}: {e}", port.display_name());
+                        pages::failed_page(port.display_name(), &e, &places)
+                    }
+                    Err(panic) => {
+                        eprintln!("restore saves: {}: the worker stopped: {panic}", port.display_name());
+                        let mut p = pages::notice_page(port.display_name(), "The restore stopped", &plain_paths_here(&panic_text(&app, &port, &panic)));
+                        p.window_title = "Restore saves: not done".to_string();
+                        p
+                    }
+                };
+                let after = again.clone();
+                show_page(&app, &router, page, handlers(move |app, router, _| after(app, router), again.clone()));
                 return;
             }
-            let mut text = job.progress();
-            if text.is_empty() || text == *last.borrow() {
+            let step = job.progress();
+            if step.is_empty() || WORKING_STEP.with(|s| *s.borrow() == step) {
                 return;
             }
-            *last.borrow_mut() = text.clone();
+            WORKING_STEP.with(|s| *s.borrow_mut() = step);
             if QUIT_PENDING.with(Cell::get) {
-                text = format!("{text}\n{QUIT_NOTE}");
+                NOTE.with(|n| *n.borrow_mut() = Some(QUIT_NOTE.to_string()));
             }
-            if let DialogSlot::Progress(d) = &*app.dialog_nav.dialogs.borrow() {
-                update_progress_dialog(&app, d, &text);
-            }
+            redraw_working();
         });
     });
 }

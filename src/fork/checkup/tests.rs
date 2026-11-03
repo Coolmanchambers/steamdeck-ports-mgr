@@ -693,6 +693,7 @@ fn only_the_menus_the_chosen_fix_returns_to_hand_control_back() {
     let ports = Menu::SettingsGroup(Group::Ports);
     assert!(Fix::GameFiles.returns_to(ports) && Fix::OldCopies.returns_to(ports) && Fix::PortsFolderMenu.returns_to(ports));
     assert!(Fix::Cloud.returns_to(Menu::SettingsGroup(Group::Saves)));
+    assert!(Fix::BackUpNow.returns_to(Menu::SettingsGroup(Group::Saves)), "OK on the Back up saves done page goes up to the Saves page: that is leaving");
     assert!(!Fix::Cloud.returns_to(ports), "the cloud flow's own menus are not the Ports page");
     assert!(Fix::OldCopies.returns_to(Menu::PortsFolder), "the old copies list's Back row opens the ports folder menu: that is leaving");
     assert!(!Fix::GameFiles.returns_to(Menu::PortsFolder), "the Game files flow opening the ports folder menu is part of the flow");

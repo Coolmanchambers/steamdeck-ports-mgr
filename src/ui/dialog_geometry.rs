@@ -30,8 +30,12 @@ pub fn main_sized_dialog_size(windowed_w: i32, windowed_h: i32, work_w: i32, wor
     (scaled(windowed_w, BIG_MODE_SCALE).min(screen_cap(work_w)), scaled(windowed_h, BIG_MODE_SCALE).min(screen_cap(work_h)))
 }
 
-fn with_wrap_margin(measured_height: i32) -> i32 {
-    (measured_height as f64 * 1.15).ceil() as i32
+// Fork: at least one whole line of room. The estimate breaks lines by its own measure (fontdue widths of the font
+// fc-match names) and the window by Slint's shaping; where they disagree on one wrap point the window needs one line
+// more, and 15% of a two or three line message is less than a line, so the last line was cut (screens added "\n" to
+// every message to make up for it).
+fn with_wrap_margin(measured_height: i32, linespace: i32) -> i32 {
+    ((measured_height as f64 * 1.15).ceil() as i32).max(measured_height + linespace.max(1))
 }
 
 fn widen_for_longest_word(width: i32, max_width: i32, family: &str, item_font_px: i32, text: &str, border_width_px: i32) -> i32 {
@@ -44,7 +48,7 @@ fn text_dialog_width_and_height(work_w: i32, family: &str, item_font_px: i32, bo
     let base_width = clamp_to_screen_scaled(0.28, 380, 480, work_w, scale).min(screen_cap(work_w));
     let width = widen_for_longest_word(base_width, clamp_to_screen(0.9, 380, i32::MAX, work_w), family, item_font_px, text, border_width_px);
     let text_width = (width - border_width_px * 2 - GUTTER * 2).max(1);
-    let text_height = with_wrap_margin(super::font_metrics::wrapped_text_height(family, item_font_px, text, text_width));
+    let text_height = with_wrap_margin(super::font_metrics::wrapped_text_height(family, item_font_px, text, text_width), super::font_metrics::linespace_for_size(family, item_font_px));
     (width, text_height)
 }
 
@@ -147,6 +151,20 @@ mod tests {
         let long_message = "This is a much longer message that should wrap across several lines once constrained to a narrow dialog width, taking up noticeably more vertical space than a short one-liner. ".repeat(4);
         let (_, h_long) = message_dialog_size(500, 500, "Segoe UI", 14, 34, 3, &long_message, false);
         assert!(h_long > h_short, "h_short={h_short} h_long={h_long}");
+    }
+
+    // Fork: a message gets one whole line more than its measured text, so a wrap the window breaks differently never
+    // cuts its last line (no "\n" at the end of messages any more).
+    #[test]
+    fn message_dialog_has_a_spare_line_for_its_wrapped_text() {
+        let text = "The restore did not happen because the backup could not be read. Nothing was changed. Try another backup.";
+        let (w, h) = message_dialog_size(1280, 800, "", 20, 40, 3, text, false);
+        let text_width = w - 3 * 2 - GUTTER * 2;
+        let measured = super::super::font_metrics::wrapped_text_height("", 20, text, text_width);
+        let line = super::super::font_metrics::linespace_for_size("", 20);
+        assert!(h >= 40 + GUTTER * 2 + measured + line + 3 * 2, "h={h} measured={measured} line={line}");
+        assert_eq!(with_wrap_margin(100, 30), 130, "a short text: one line");
+        assert_eq!(with_wrap_margin(1000, 30), 1150, "a long one keeps its 15%");
     }
 
     #[test]

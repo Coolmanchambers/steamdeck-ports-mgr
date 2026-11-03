@@ -1,6 +1,7 @@
-//! The import's one question about all its old copies, instead of one per port: "Remove the 4 old copies?"
-//! (`crate::fork::import::old_batch` says what the page says). Settings > Ports folder keeps its per-copy
-//! questions; only Import ports comes here.
+//! The one question about old copies, instead of one per port: "Remove the 4 old copies?"
+//! (`crate::fork::import::old_batch` says what the page says), after an import, after a move, after "Finish
+//! switching", and for one copy chosen in Settings > Ports > Ports folder > Old copies kept after moves. From the Ports
+//! folder, Remove asks once more on a yes/no page that says where the saves are backed up first (`ask_remove`).
 //!
 //! Every old copy is checked first (`removal_check` and its readiness, on the worker thread); each port gets one
 //! status line and only the Ready ones that passed are offered. Keep is the default and is what B does. Remove
@@ -26,7 +27,7 @@ type Then = Rc<dyn Fn(&Rc<AppState>, &Router, Option<String>)>;
 const CHECKING: &str = "Checking the old copies";
 const CHECKING_SENTENCE: &str = "Each one is looked at before anything can be removed. Nothing is changed.";
 const REMOVING: &str = "Removing the old copies";
-const REMOVING_SENTENCE: &str = "Saves are zipped to a backup first. Only the ready ones are removed.";
+const REMOVING_SENTENCE: &str = "Saves are backed up first. Only the ready ones are removed.";
 
 /// The check or the removal as a page in the guided window, so the old copies page that follows takes the same window
 /// back (one window, no flash of the main list). Nothing to choose; B and the X do nothing while it runs, as with the
@@ -100,7 +101,12 @@ pub(crate) fn prompt_old_copies_batch_then(app: &Rc<AppState>, router: &Router, 
             }
             match result {
                 Ok(checked) => {
-                    let items = checked.into_iter().map(|(copy, check, ready)| Checked { art: art_of(&app2, &copy.port_key), copy, check, ready }).collect();
+                    // Fork (ports folder pages): a reason that names a folder names it the human way.
+                    let places = crate::fork::port_page::paths::Places::system();
+                    let items = checked
+                        .into_iter()
+                        .map(|(copy, check, ready)| Checked { art: art_of(&app2, &copy.port_key), copy, check: check.map_err(|e| crate::fork::port_page::paths::plain_paths(&e, &places)), ready })
+                        .collect();
                     ask(&app2, &router2, Rc::new(Batch::from(items, origin)), summary, then);
                 }
                 Err(e) => then(&app2, &router2, Some(format!("{summary}\n\nThe old copies {CHECK_FAILED} ({e}), so they stay. Remove them later in Settings, Ports folder, Old copies.").trim_start().to_string())),
@@ -171,7 +177,7 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
             Rc::new(move |app: &Rc<AppState>, router: &Router, action: BatchAction| match action {
                 BatchAction::Keep | BatchAction::Ok => keep(app, router),
                 BatchAction::Details => {
-                    let text = format!("{}\n", batch.details_text(&super::home_dir().unwrap_or_default(), &app.paths.saves_backup_dir));
+                    let text = batch.details_text(&crate::fork::port_page::paths::Places::system(), &app.paths.saves_backup_dir);
                     let again: crate::app::import_screen::Step = {
                         let (batch, summary, then, done) = (batch.clone(), summary.clone(), then.clone(), done.clone());
                         Rc::new(move |app, router| show_ask(app, router, batch.clone(), summary.clone(), then.clone(), done.clone()))
@@ -180,6 +186,10 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
                     crate::app::import_screen::confirm_back(app, router, "Old copies", &text, "OK", false, move |app, router| on_ok(app, router), again);
                 }
                 BatchAction::Remove => {
+                    // Fork (ports folder pages): from Settings, a yes/no page first that says where the saves go.
+                    if batch.origin == Origin::PortsFolder && !crate::app::setup_wizard_screen::active() {
+                        return ask_remove(app, router, batch.clone(), summary.clone(), then.clone(), done.clone());
+                    }
                     if done.replace(true) {
                         return;
                     }
@@ -219,6 +229,50 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
     if !show_page(app, router, page, handlers) {
         // The page could not be built: nothing is removed, and the flow goes on.
         then(app, router, Some(with_summary(&summary, &batch.kept_text())));
+    }
+}
+
+/// "Remove the old copy of Dusklight?": what goes, where its saves are backed up first, and No as the default. Yes
+/// removes them as the page's Remove always did; No and B go back to the old copies page; the X keeps them and leaves.
+fn ask_remove(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<String>, then: Then, done: Rc<Cell<bool>>) {
+    use crate::fork::ports_folder_pages::{remove_page, PfAct, RemoveFacts};
+    let removable = batch.removable();
+    let saves = app.paths.saves_backup_dir.join(crate::fork::save_restore::UPDATE_BACKUPS_DIR);
+    let facts = RemoveFacts {
+        names: removable.iter().map(|c| c.copy.name.clone()).collect(),
+        bytes: batch.freed_bytes(),
+        saves_place: crate::fork::port_page::paths::human_path_here(&saves),
+    };
+    let again: Rc<dyn Fn(&Rc<AppState>, &Router)> = {
+        let (batch, summary, then, done) = (batch.clone(), summary.clone(), then.clone(), done.clone());
+        Rc::new(move |app, router| show_ask(app, router, batch.clone(), summary.clone(), then.clone(), done.clone()))
+    };
+    let keep_and_leave: Rc<dyn Fn(&Rc<AppState>, &Router)> = {
+        let (batch, summary, then, done) = (batch.clone(), summary.clone(), then.clone(), done.clone());
+        Rc::new(move |app, router| {
+            if done.replace(true) {
+                return;
+            }
+            close_current_dialog(app, router);
+            then(app, router, Some(with_summary(&summary, &batch.kept_text())));
+        })
+    };
+    let on_action = {
+        let again = again.clone();
+        Rc::new(move |app: &Rc<AppState>, router: &Router, action: PfAct| match action {
+            PfAct::Remove => {
+                if done.replace(true) {
+                    return;
+                }
+                close_current_dialog(app, router);
+                remove_all(app, router, batch.clone(), summary.clone(), then.clone());
+            }
+            _ => again(app, router),
+        })
+    };
+    let handlers = Handlers { on_action, on_back: again.clone(), on_exit: keep_and_leave, on_input: None };
+    if !show_page(app, router, remove_page(&facts), handlers) {
+        again(app, router);
     }
 }
 
@@ -306,10 +360,10 @@ fn remove_all(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc
             let ctx = RemovalCtx { home: &parts.home, config_dir: &parts.config_dir, library_dir: &parts.library, active_paths: &parts.active, running: &running_in, save_folders: &saves };
             lines.push(match old_copies::remove(&entry, &ctx, &backup) {
                 Ok(removed) => {
-                    let zip = if removed.saves_zip.is_some() { " Its saves were zipped to a backup first." } else { "" };
-                    format!("Removed the old copy of {} ({} freed).{zip}", entry.name, human_bytes(removed.bytes))
+                    let backed = if removed.saves_zip.is_some() { " Its saves were backed up first." } else { "" };
+                    format!("Removed the old copy of {} ({} freed).{backed}", entry.name, human_bytes(removed.bytes))
                 }
-                Err(e) => format!("The old copy of {} was kept: {e}", entry.name),
+                Err(e) => format!("The old copy of {} was kept: {}", entry.name, crate::fork::port_page::paths::plain_paths_here(&e)),
             });
         }
         lines

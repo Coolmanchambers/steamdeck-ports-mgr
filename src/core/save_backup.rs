@@ -185,6 +185,32 @@ pub struct GlobalBackupSummary {
     pub failed: usize,
     // Fork: installed ports whose save folder is not known on Linux (also counted in `skipped`).
     pub no_linux_folder: Vec<String>,
+    // Fork (back up saves page): what happened to each port, by name (installed ports, and any port whose saves were
+    // found), and why nothing at all could be done (the Saves Backup folder could not be made).
+    pub ports: Vec<(String, PortBackup)>,
+    pub problem: Option<String>,
+}
+
+// Fork (back up saves page): one port's outcome, for a done page that counts ports, not save folders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortBackup {
+    BackedUp,
+    /// Its save folders are empty or not there yet.
+    NothingYet,
+    /// The catalog does not say where it keeps its saves on Linux.
+    NoPlace,
+    /// Why, in plain words.
+    Failed(String),
+}
+
+// Fork (back up saves page): an error in plain words.
+fn plain_io_reason(e: &io::Error) -> String {
+    match (e.kind(), e.raw_os_error()) {
+        (_, Some(28)) => "the drive is full".to_string(),
+        (io::ErrorKind::PermissionDenied, _) => "a file could not be read (no permission)".to_string(),
+        (io::ErrorKind::NotFound, _) => "a file went away while it was copied".to_string(),
+        _ => format!("a file could not be copied ({e})"),
+    }
 }
 
 // Fork: for `save` and `save2`, whether it has no known Linux location (see `SaveLocation`).
@@ -216,37 +242,64 @@ pub fn run_global_backup(
     on_progress: &mut dyn FnMut(&str),
 ) -> GlobalBackupSummary {
     let mut summary = GlobalBackupSummary::default();
-    if fs::create_dir_all(saves_backup_dir).is_err() {
+    if let Err(e) = fs::create_dir_all(saves_backup_dir) {
+        summary.problem = Some(format!("the backup folder could not be made: {}", plain_io_reason(&e))); // Fork
         return summary;
     }
-    let Ok(staging) = tempfile::Builder::new().prefix("_backup_").tempdir_in(saves_backup_dir) else {
-        return summary;
+    let staging = match tempfile::Builder::new().prefix("_backup_").tempdir_in(saves_backup_dir) {
+        Ok(staging) => staging,
+        Err(e) => {
+            summary.problem = Some(format!("nothing could be written in the backup folder: {}", plain_io_reason(&e))); // Fork
+            return summary;
+        }
     };
 
     for port in catalog {
         on_progress(&port.name);
         let Ok(game_dir) = safe_join(library_dir, &port.folder) else { continue };
         let Ok(port_staging) = safe_join(staging.path(), &port.folder) else { continue };
-        if game_dir.is_dir() && save_folder_unknown_on_linux(port, &game_dir) {
+        let no_linux = game_dir.is_dir() && save_folder_unknown_on_linux(port, &game_dir);
+        if no_linux {
             summary.no_linux_folder.push(port.name.clone());
         }
+        let (mut copied, mut failed) = (false, None); // Fork: this port's outcome
         for (save_folder, field) in save_fields(port) {
             match save_folder.and_then(|v| resolve_save_folder(v, &game_dir)).filter(|src| src.exists()) {
                 Some(src) => match copy_save(&src, &port_staging.join(field)) {
-                    Ok(true) => summary.copied += 1,
+                    Ok(true) => {
+                        summary.copied += 1;
+                        copied = true;
+                    }
                     Ok(false) => summary.skipped += 1,
-                    Err(_) => summary.failed += 1,
+                    Err(e) => {
+                        summary.failed += 1;
+                        failed.get_or_insert_with(|| plain_io_reason(&e));
+                    }
                 },
                 None => summary.skipped += 1,
             }
         }
+        // Fork (back up saves page): one outcome per port that is installed or had saves.
+        let outcome = match failed {
+            Some(why) => Some(PortBackup::Failed(why)),
+            None if copied => Some(PortBackup::BackedUp),
+            None if !game_dir.is_dir() => None,
+            None if no_linux || (port.save.is_none() && port.save2.is_none()) => Some(PortBackup::NoPlace),
+            None => Some(PortBackup::NothingYet),
+        };
+        summary.ports.extend(outcome.map(|o| (port.name.clone(), o)));
     }
 
     if summary.copied > 0 {
         let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join(format!("{date}.zip"));
-        if zip_staging_dir(staging.path(), &zip_path).is_err() {
+        if let Err(e) = zip_staging_dir(staging.path(), &zip_path) {
             summary.failed += summary.copied;
             summary.copied = 0;
+            // Fork (back up saves page): the copies were made, but the one backup file that holds them was not.
+            eprintln!("save backup: the backup file could not be made: {e}");
+            for (_, o) in summary.ports.iter_mut().filter(|(_, o)| *o == PortBackup::BackedUp) {
+                *o = PortBackup::Failed("the backup file could not be made".to_string());
+            }
         }
     }
     summary
@@ -403,7 +456,7 @@ mod tests {
 
         let summary = run_global_backup(&[port], &library_dir, &saves_backup_dir, "2026-08-23", &mut |_| {});
 
-        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![] });
+        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![], ports: vec![("MyGame".into(), PortBackup::BackedUp)], problem: None });
         let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
         assert_eq!(read_zip_entry(&zip_path, "MyGame/save_folder/game.sav"), "precious");
         assert!(!zip_path.with_extension("extracted").join("MyGame").join("save_folder").join("game.exe").exists());
@@ -514,7 +567,7 @@ mod tests {
         let summary = run_global_backup(&[port], &library_dir, &saves_backup_dir, "2026-08-23", &mut |name| seen.push(name.to_string()));
 
         assert_eq!(seen, vec!["MyGame".to_string()]);
-        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![] });
+        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![], ports: vec![("MyGame".into(), PortBackup::BackedUp)], problem: None });
         let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
         assert_eq!(read_zip_entry(&zip_path, "MyGame/save_folder/slot1.dat"), "precious");
     }
@@ -531,9 +584,33 @@ mod tests {
 
         let summary = run_global_backup(&[port], &library_dir, &saves_backup_dir, "2026-08-23", &mut |_| {});
 
-        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![] });
+        assert_eq!(summary, GlobalBackupSummary { copied: 1, skipped: 1, failed: 0, no_linux_folder: vec![], ports: vec![("MyGame".into(), PortBackup::BackedUp)], problem: None });
         let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
         assert_eq!(read_zip_entry(&zip_path, "MyGame/save_folder2/slot1.dat"), "precious");
+    }
+
+    // Fork (back up saves page): each installed port gets one outcome; a port that is not installed and has no saves
+    // is not counted at all.
+    #[test]
+    fn run_global_backup_says_what_happened_to_each_port() {
+        let dir = temp_dir("global_outcomes");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        fs::create_dir_all(library_dir.join("Empty").join("saves")).unwrap();
+        fs::create_dir_all(library_dir.join("NoSaves")).unwrap();
+        fs::create_dir_all(library_dir.join("Full").join("saves")).unwrap();
+        fs::write(library_dir.join("Full").join("saves").join("a.sav"), b"a").unwrap();
+        let ports = [
+            port_with_save_folders("Empty", Some("saves"), None),
+            port_with_save_folders("NoSaves", None, None),
+            port_with_save_folders("Full", Some("saves"), None),
+            port_with_save_folders("NotHere", Some("saves"), None),
+        ];
+        let summary = run_global_backup(&ports, &library_dir, &saves_backup_dir, "2026-08-24", &mut |_| {});
+        assert_eq!(summary.ports, vec![("Empty".into(), PortBackup::NothingYet), ("NoSaves".into(), PortBackup::NoPlace), ("Full".into(), PortBackup::BackedUp)]);
+        assert_eq!(summary.problem, None);
+        assert_eq!(plain_io_reason(&io::Error::from_raw_os_error(28)), "the drive is full");
+        assert_eq!(plain_io_reason(&io::Error::from(io::ErrorKind::PermissionDenied)), "a file could not be read (no permission)");
     }
 
     #[test]
@@ -580,7 +657,7 @@ mod tests {
 
         let summary = run_global_backup(&[installed, not_installed], &library_dir, &saves_backup_dir, "2026-10-21", &mut |_| {});
 
-        assert_eq!(summary, GlobalBackupSummary { copied: 0, skipped: 4, failed: 0, no_linux_folder: vec!["Osu".to_string()] });
+        assert_eq!(summary, GlobalBackupSummary { copied: 0, skipped: 4, failed: 0, no_linux_folder: vec!["Osu".to_string()], ports: vec![("Osu".into(), PortBackup::NoPlace)], problem: None });
         assert!(!saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-10-21.zip").exists());
     }
 

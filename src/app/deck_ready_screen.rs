@@ -327,20 +327,20 @@ fn folder_taken(app: &AppState, folder: &str) -> bool {
 fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
     let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).map(|e| (e.clone(), view::display_name(e))) else { return };
     let Some(folder) = entry::folder_for(&entry, |f| folder_taken(app, f)) else {
-        return open_message_dialog(app, router, &name, "There is no free folder name for this port in Library, so nothing was added.\n");
+        return open_message_dialog(app, router, &name, "There is no free folder name for this port in Library, so nothing was added.");
     };
     // Built and checked before anything is written, so a failure leaves ports.local.json alone.
     // Fork: the cover, icon and notes of the catalog's entry for this folder, even when upstream turned it off.
     let raw = crate::fork::catalog_extras::RawCatalog::load(&app.paths.config_dir.join("ports.json"));
     let Some((value, mut port)) = entry::local_entry_with(&entry, &name, &folder, &raw).and_then(|v| crate::core::models::port_from_value(&v).ok().map(|p| (v, p))) else {
-        return open_message_dialog(app, router, &name, "Nothing was added: the entry could not be built from the list.\n");
+        return open_message_dialog(app, router, &name, "Nothing was added: the entry could not be built from the list.");
     };
     port.user_managed = true;
     let to_add = port.clone();
     let prepare: super::install_wizard_screen::Prepare = Rc::new(move |app, router| {
         let local_json = app.paths.config_dir.join("ports.local.json");
         if let Err(e) = entry::add_to_local_file(&local_json, value.clone(), &crate::fork::store::backup_stamp()) {
-            open_message_dialog(app, router, &name, &format!("Nothing was added: {e}.\n"));
+            open_message_dialog(app, router, &name, &format!("Nothing was added: {e}."));
             return None;
         }
         {

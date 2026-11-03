@@ -706,7 +706,8 @@ fn a_link_to_a_folder_inside_a_save_folder_keeps_the_old_folder() {
         assert!(fs::symlink_metadata(kept.join("linked")).unwrap().file_type().is_symlink());
         assert_eq!(fs::read(elsewhere.join("big.dat")).unwrap(), b"not ours to touch");
         assert!(!save.join("linked").exists());
-        assert!(view::done_text("MyGame", &done).contains("was kept at"));
+        let page = pages::done_page(&pages::done_facts("MyGame", "2026-10-22 08:00", &done, &crate::fork::port_page::paths::Places::default()));
+        assert!(page.paragraphs.iter().any(|p| p.starts_with("The folder it replaced is kept next to it: ")), "{:?}", page.paragraphs);
     }
 }
 
@@ -735,8 +736,8 @@ fn folders_left_by_an_interrupted_restore_are_reported_kept_and_do_not_block_a_r
     let targets = save_targets(&game, &dir, &fx.saves_backup, None);
     let found = interrupted_restores(&targets);
     assert_eq!(found.iter().map(|i| (i.path.clone(), i.holds_previous)).collect::<Vec<_>>(), vec![(before.clone(), true), (restoring.clone(), false)]);
-    assert!(view::interrupted_text(&found[0]).contains(&before.display().to_string()));
-    assert!(view::interrupted_row(&found[0]).starts_with("A restore was interrupted"));
+    assert!(pages::interrupted_text(&found[0], &crate::fork::port_page::paths::Places::default()).contains(&before.display().to_string()));
+    assert_eq!(pages::backups_page("MyGame", &[], &[], found.len()).options[1].action, pages::RsAct::Interrupted(1), "a card for each, before the backups");
 
     let backup = list_backups(&fx.saves_backup, "MyGame").remove(0);
     restore(&fx.input(&game, &dir, &backup, "s"), &mut |_| {}).unwrap();
@@ -773,7 +774,7 @@ fn an_empty_save_value_does_not_say_where_the_saves_are() {
     }
     let p = port("Empty", Some(json!("")), None);
     let targets = save_targets(&p, &fx.game_dir(&p), &fx.saves_backup, None);
-    assert!(view::nothing_restorable_text("Empty", &targets).contains("does not say where it keeps its saves"));
+    assert!(pages::nothing_restorable_text("Empty", &targets, &crate::fork::port_page::paths::Places::default()).contains("does not say where it keeps its saves"));
 }
 
 #[test]

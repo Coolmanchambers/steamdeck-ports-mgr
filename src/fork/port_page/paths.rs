@@ -79,6 +79,63 @@ pub fn human_path_here(path: &Path) -> String {
     human_path(path, &Places::system())
 }
 
+/// A sentence from the engines (an error, a refusal) with every path in it told the human way: a path that starts at
+/// the home folder or a drive's folder ("/home/deck/Games/Ports", "/run/media/deck/SD/Ports") becomes "Internal storage >
+/// Games > Ports" (where a path ends: [`path_end`]). The engines' ` -- ` between a reason and its path becomes `: `. Text
+/// without such a path comes back as it was.
+pub fn plain_paths(text: &str, places: &Places) -> String {
+    let mut roots: Vec<PathBuf> = places.home.iter().cloned().chain(places.media_roots.iter().cloned()).chain(places.drives.iter().map(|d| d.mount_point.clone())).collect();
+    roots.retain(|r| r.is_absolute() && r.as_os_str().len() > 1);
+    let text = text.replace(" -- ", ": ");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    'scan: while let Some(at) = rest.find('/') {
+        let (before, from) = rest.split_at(at);
+        let boundary = before.chars().last().is_none_or(|c| c.is_whitespace() || "(\"'".contains(c));
+        let root_hit = boundary && roots.iter().any(|r| {
+            let r = r.to_string_lossy();
+            from.starts_with(r.as_ref()) && from[r.len()..].chars().next().is_none_or(|c| c == '/' || !c.is_alphanumeric())
+        });
+        if !root_hit {
+            out.push_str(before);
+            out.push('/');
+            rest = &from[1..];
+            continue 'scan;
+        }
+        let path = &from[..path_end(from)];
+        out.push_str(before);
+        out.push_str(&human_path(Path::new(path), places));
+        rest = &from[path.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `plain_paths` with this system's places.
+pub fn plain_paths_here(text: &str) -> String {
+    plain_paths(text, &Places::system())
+}
+
+/// Where the path at the start of `from` ends: at `(`, `)`, `,`, `;`, `"`, a line break, `: `, a `.` before a space or
+/// the end, or a space that is not followed by a capital letter or a digit (the app's own folders have names like
+/// "Saves Backup" and "Update Backups"; a sentence goes on in small letters: "/home/deck/Ports is not there").
+fn path_end(from: &str) -> usize {
+    let chars: Vec<(usize, char)> = from.char_indices().collect();
+    for (k, (i, c)) in chars.iter().enumerate() {
+        let next = chars.get(k + 1).map(|(_, n)| *n);
+        let stop = match c {
+            '(' | ')' | ',' | ';' | '"' | '\n' => true,
+            ':' | '.' => next.is_none_or(char::is_whitespace),
+            ' ' => !next.is_some_and(|n| n.is_uppercase() || n.is_ascii_digit()),
+            _ => false,
+        };
+        if stop {
+            return *i;
+        }
+    }
+    from.len()
+}
+
 /// Bytes as "1.2 GB", "340 MB", "12 KB" (decimal units, as file managers on the Deck show them).
 pub fn size_text(bytes: u64) -> String {
     const UNITS: [(&str, f64); 3] = [("GB", 1e9), ("MB", 1e6), ("KB", 1e3)];

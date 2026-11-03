@@ -9,7 +9,7 @@
 //! The lines are read when a page is drawn and none of them waits on slow input or output: the mount table, the queue
 //! file, one look at the backup folder.
 
-use super::dialogs::{close_current_dialog, dialog_is_open, open_files_picker, open_language_picker, open_theme_picker, open_tools_picker, start_save_backup};
+use super::dialogs::{close_current_dialog, dialog_is_open, open_files_picker, open_language_picker, open_theme_picker, open_tools_picker};
 use super::page_dialog::{show_page, Handlers};
 use super::state::AppState;
 use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts};
@@ -142,7 +142,7 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
         ),
         Entry::KeptFiles => open_kept_files(app, router),
         Entry::ArtSources => super::art_screens::open_art_sources(app, router),
-        Entry::BackupSaves => start_save_backup(app, router),
+        Entry::BackupSaves => super::save_backup_screen::start(app, router),
         Entry::RestoreSaves => super::save_restore_screen::open_from_settings(app, router),
         Entry::CloudBackup => super::cloud_screen::open_from_settings(app, router),
         Entry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
