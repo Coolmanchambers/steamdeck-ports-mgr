@@ -130,7 +130,7 @@ pub fn move_page(f: &MoveFacts) -> Page<FolderAction> {
         p.options = vec![option("Pick another place", "", FolderAction::PickAnother, true)];
         // A copy kept earlier sits where a port would go: using the place without moving would use that old copy.
         if f.stale {
-            p.paragraphs.push("A copy you kept earlier is already there, so that place can only be used once your ports are moved into it.".to_string());
+            p.paragraphs.push("An old copy you kept is in that folder. Using it without moving your ports would start that old copy instead, so free up room there or pick another place.".to_string());
         } else {
             p.options.push(option("Use it without moving my ports", "They stay where they are and show as not installed", FolderAction::LeaveThem, false));
         }
@@ -181,8 +181,8 @@ pub fn game_file_page(port: &str, problem: &str, more: usize) -> Page<FolderActi
 /// would then use that old copy), so the choices are moving it anyway or another place.
 pub fn game_file_page_kept_copy(port: &str, problem: &str, more: usize) -> Page<FolderAction> {
     let mut p = game_file_page(port, problem, more);
-    p.paragraphs.push("A copy you kept earlier is already in the new place, so this port cannot stay behind.".to_string());
-    p.options = vec![option("Pick another place", "", FolderAction::PickAnother, true), option("Move anyway", "Copy it without that file", FolderAction::MoveAnyway, false)];
+    p.paragraphs.push("A copy you kept earlier is already in the new place and would be used instead, so this port has to move too.".to_string());
+    p.options = vec![option("Pick another place", "", FolderAction::PickAnother, true), option("Move anyway", "Copies it without that file; the game may need it to start", FolderAction::MoveAnyway, false)];
     p.initial = Focus::Option(0);
     p
 }
@@ -249,14 +249,23 @@ pub fn moving_page(names: &[String], text: &str, cancelling: bool, replaces: boo
     p.b_means("Cancel")
 }
 
-/// Some ports did not move. `failed` is name and a short reason; `moved` is how many did.
-pub fn some_failed_page(failed: &[(String, String)], moved: usize) -> Page<FolderAction> {
+/// Some ports did not move. `failed` is name and a short reason; `moved` is how many did; `kept_in_way` names the ports
+/// whose kept old copy could not be replaced and still sits in the new place: then switching is not offered (it would
+/// start that old copy), only Undo.
+pub fn some_failed_page(failed: &[(String, String)], moved: usize, kept_in_way: &[String]) -> Page<FolderAction> {
     let mut p = base("Ports folder: some ports did not move", &format!("{} did not move", ports(failed.len())));
     p.facts = failed.iter().take(3).map(|(name, why)| format!("{name}: {why}")).collect();
     if failed.len() > 3 {
         p.facts.push(format!("And {} more.", failed.len() - 3));
     }
     p.options = Vec::new();
+    if !kept_in_way.is_empty() {
+        let names = kept_in_way.join(", ");
+        p.paragraphs.push(format!("An old copy of {names} is still in the new place; switching now would start that old copy."));
+        p.options.push(option("Undo", "The new copies are removed; try again later", FolderAction::Undo, true));
+        p.initial = Focus::Option(0);
+        return p;
+    }
     if moved > 0 {
         p.options.push(option(&format!("Go on with the {} that moved", ports(moved)), "The others stay where they are", FolderAction::UseMoved, true));
     }
@@ -348,15 +357,15 @@ mod tests {
     #[test]
     fn some_ports_not_moving_offers_going_on_with_the_rest_or_undo() {
         let failed = vec![("A".to_string(), "its game file is missing".to_string())];
-        let p = some_failed_page(&failed, 2);
+        let p = some_failed_page(&failed, 2, &[]);
         assert_eq!(p.title, "1 port did not move");
         assert_eq!(actions(&p), [FolderAction::UseMoved, FolderAction::Undo]);
         assert!(p.options[0].title.contains("2 ports"));
-        let none = some_failed_page(&failed, 0);
+        let none = some_failed_page(&failed, 0, &[]);
         assert_eq!(actions(&none), [FolderAction::Undo], "nothing moved, so nothing to go on with");
         assert!(none.options[0].recommended);
         let many: Vec<(String, String)> = (0..5).map(|i| (format!("P{i}"), "x".to_string())).collect();
-        let p = some_failed_page(&many, 1);
+        let p = some_failed_page(&many, 1, &[]);
         assert_eq!(p.facts.len(), 4);
         assert_eq!(p.facts[3], "And 2 more.");
     }
@@ -364,7 +373,7 @@ mod tests {
     #[test]
     fn the_other_pages_have_a_way_back_and_no_paths() {
         let mut pages = vec![create_page(), cannot_use_page(&["The folder is read-only.".to_string()]), game_file_page("P", "x", 0), move_page(&facts(2, None))];
-        pages.push(some_failed_page(&[("P".to_string(), "x".to_string())], 1));
+        pages.push(some_failed_page(&[("P".to_string(), "x".to_string())], 1, &[]));
         for p in &pages {
             let t = all_text(p);
             assert!(!t.contains('/') && !t.contains(".json"), "{t}");
@@ -385,6 +394,16 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_copy_that_could_not_be_replaced_blocks_the_switch() {
+        let failed = vec![("Dusk".to_string(), "a game is running from it".to_string())];
+        let p = some_failed_page(&failed, 2, &["Dusk".to_string()]);
+        assert_eq!(actions(&p), [FolderAction::Undo], "no Go on: the switch would start the old copy");
+        assert_eq!(p.paragraphs, ["An old copy of Dusk is still in the new place; switching now would start that old copy."]);
+        assert!(p.options[0].recommended);
+        assert!(actions(&some_failed_page(&failed, 2, &[])).contains(&FolderAction::UseMoved), "without a kept copy the moved ones can be used");
+    }
+
+    #[test]
     fn a_kept_copy_in_the_way_never_offers_using_the_place_without_moving() {
         // Not enough room and a kept old copy at the new place: using it without moving would use that old copy.
         let mut f = facts(2, Some(10_000_000));
@@ -392,7 +411,7 @@ mod tests {
         let p = move_page(&f);
         assert_eq!(p.title, "Not enough room there");
         assert_eq!(actions(&p), [FolderAction::PickAnother]);
-        assert!(all_text(&p).contains("A copy you kept earlier is already there"));
+        assert!(all_text(&p).contains("Using it without moving your ports would start that old copy instead"));
         f.free = Some(900_000_000_000);
         assert!(!actions(&move_page(&f)).contains(&FolderAction::LeaveThem));
         f.free = None;
@@ -422,7 +441,8 @@ mod tests {
             nothing_moved_page(2),
             moving_page(&[long.clone(), "Dusk".into()], "Copying 1 of 2: x\n1.0 MB of 2.0 MB", false, true),
             moving_page(&[long.clone()], "", true, false),
-            some_failed_page(&[(long.clone(), "the copy could not be checked".into())], 2),
+            some_failed_page(&[(long.clone(), "the copy could not be checked".into())], 2, &[]),
+            some_failed_page(&[(long.clone(), "a game is running from it".into())], 2, &[long.clone()]),
             notice_page("Ports folder: notice", "Move cancelled", "Nothing changed.\n\nThe copies made so far were removed."),
         ]
     }

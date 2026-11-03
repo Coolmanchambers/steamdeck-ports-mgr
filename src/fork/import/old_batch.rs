@@ -263,7 +263,9 @@ impl Batch {
         ];
         p.options.extend(self.confirm_option());
         if self.asks_again() {
-            // The question is asked once, on the page Remove opens; this one only says they can go.
+            // The question is asked once, on the page Remove opens; this one only says they can go (once).
+            let size = if freed > 0 { format!(" The old {} {} {}.", copies(n), if n == 1 { "uses" } else { "use" }, size_text(freed)) } else { String::new() };
+            p.paragraphs[0] = format!("{} from {} new place.{size}", if n == 1 { "This port starts" } else { "These ports start" }, if n == 1 { "its" } else { "their" });
             p.title = if n == 1 { "This old copy can go".to_string() } else { "These old copies can go".to_string() };
             p.options[1].detail = format!("Asks once more, and says where {} saves go", if n == 1 { "its" } else { "their" });
         }
@@ -462,6 +464,7 @@ mod tests {
     fn from_the_ports_folder_the_page_only_says_it_can_go_and_names_its_place() {
         let p = Batch::from(vec![ok("Dusklight", 3_000_000_000)], Origin::PortsFolder).with_place(Some("Internal storage > Games > Dusklight".into())).page();
         assert_eq!(p.title, "This old copy can go");
+        assert_eq!(p.paragraphs[1], "This port starts from its new place. The old copy uses 3.0 GB.");
         assert_eq!(p.paragraphs[0], "The old copy is in Internal storage > Games > Dusklight.");
         assert_eq!((p.options[1].title.as_str(), p.options[1].detail.as_str()), ("Remove it", "Asks once more, and says where its saves go"));
         let two = Batch::from(vec![ok("A", 1), ok("B", 1)], Origin::PortsFolder).page();

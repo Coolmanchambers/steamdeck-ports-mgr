@@ -540,6 +540,8 @@ struct MoveRun {
     failed: Vec<(String, String, bool)>,
     cancelled: bool,
     drive_gone: Option<String>,
+    /// Ports whose kept old copy could not be replaced: it still sits in the new place, so the switch must not happen.
+    kept_in_way: Vec<String>,
 }
 
 fn move_env_parts(app: &AppState) -> (PathBuf, PathBuf) {
@@ -605,13 +607,14 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
         let settings = ForkSettings::load(&config_dir.join(FILE_NAME));
         let steam = SystemSteamCheck::new();
         let env = MoveEnv { home: &home, config_dir: &config_dir, settings: &settings, steam: &steam, game_mode: false, running: &running_in, free_space: &free_space };
-        let mut run = MoveRun { moved: Vec::new(), failed: Vec::new(), cancelled: false, drive_gone: None };
+        let mut run = MoveRun { moved: Vec::new(), failed: Vec::new(), cancelled: false, drive_gone: None, kept_in_way: Vec::new() };
         // Kept old copies in the way go first (checked, saves backed up, then removed), so their ports can move.
         let mut blocked: Vec<String> = Vec::new();
         for (s, record, port) in &stale {
             ctl.set_progress(format!("Checking and replacing the old copy of {}", s.name));
             if let Err(e) = replace_stale(s, record.as_ref(), port.as_ref(), &saves_dir, &parts) {
                 run.failed.push((s.name.clone(), e, false));
+                run.kept_in_way.push(s.name.clone());
                 blocked.push(s.key.clone());
             }
         }
@@ -738,7 +741,7 @@ fn with_problems(mut text: String, problems: Vec<String>) -> String {
 }
 
 fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun) {
-    let MoveRun { moved, failed, cancelled, drive_gone } = run;
+    let MoveRun { moved, failed, cancelled, drive_gone, kept_in_way } = run;
     if let Some(why) = drive_gone {
         return notice(app, router, "The drive went away", &with_problems(why, discard_all(&moved)));
     }
@@ -774,7 +777,7 @@ fn after_move(app: &Rc<AppState>, router: &Router, new_dir: &Path, run: MoveRun)
         }
         notice(app, router, "Nothing changed", &with_problems("The new copies were removed. The ports you use were not touched.".into(), problems));
     };
-    let page = ports_pages::some_failed_page(&shown, count);
+    let page = ports_pages::some_failed_page(&shown, count, &kept_in_way);
     let page = if wizard { page } else { ports_pages::for_settings(page, Some(&human(&new_dir))) };
     let handlers = Handlers {
         on_action: Rc::new(move |app, router, action| match action {

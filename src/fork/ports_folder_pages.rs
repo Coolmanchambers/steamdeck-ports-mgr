@@ -199,7 +199,7 @@ pub fn remove_page(f: &RemoveFacts) -> Page<PfAct> {
             "{} only {} to a folder elsewhere, which stays. Only the old {} removed. The copy you use now is not touched.",
             if one { "It" } else { "They" },
             if one { "points" } else { "point" },
-            if one { "shortcut is" } else { "shortcuts are" }
+            if one { "link to it is" } else { "links to them are" }
         ));
     } else {
         let whose = if one { "Its".to_string() } else { "Their".to_string() };
@@ -353,7 +353,8 @@ mod tests {
     fn every_ports_folder_page_fits_and_says_it_plainly() {
         for p in all_pages() {
             assert_fits(&p);
-            assert_plain(&p, &["ZeldaWWHDRecomp"]);
+            // "Only the old link to it is removed": the words asked for (a shortcut means Steam elsewhere in the app).
+            assert_plain(&p, &["ZeldaWWHDRecomp", "old link to it", "old links to them"]);
             for t in shown(&p) {
                 let lower = t.to_lowercase();
                 for word in ["zip", "/run/media", "/home/", "~/", "repoint", "staging", "(s)", "json", "display()", "symlink", "queue"] {
@@ -426,7 +427,7 @@ mod tests {
         assert_eq!(many.facts.last().map(String::as_str), Some("And 2 more."));
         // Only a shortcut to a folder elsewhere: no saves are backed up, and the page does not say they are.
         let link = remove_page(&RemoveFacts { names: vec!["Dusk".into()], links_only: true, saves_place: "x".into(), ..RemoveFacts::default() });
-        assert_eq!(link.paragraphs, ["It only points to a folder elsewhere, which stays. Only the old shortcut is removed. The copy you use now is not touched."]);
+        assert_eq!(link.paragraphs, ["It only points to a folder elsewhere, which stays. Only the old link to it is removed. The copy you use now is not touched."]);
         assert_eq!(link.options[0].detail, "The folder it leads to stays");
         assert!(!link.paragraphs.iter().any(|t| t.contains("backed up")));
     }
