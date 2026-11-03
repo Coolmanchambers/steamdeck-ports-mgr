@@ -24,6 +24,8 @@ export component ListPickerDialog inherits Window {
     callback item-selected(int);
     callback item-hovered(int);
     callback close-requested();
+    // Fork: the title bar's X, apart from B and Escape (src/app/dialogs.rs: B takes a list's Back row, the X leaves).
+    callback title-close-requested();
     callback move-selection-requested(int);
     callback activate-selection-requested();
 
@@ -59,7 +61,7 @@ export component ListPickerDialog inherits Window {
             logical-w: root.logical-w;
             logical-h: root.logical-h;
             content-clip: true;
-            close-requested => { root.close-requested(); }
+            close-requested => { root.title-close-requested(); }
 
             picker-list := Flickable {
                 x: root.gutter;

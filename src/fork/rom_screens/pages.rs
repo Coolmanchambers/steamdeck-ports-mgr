@@ -320,7 +320,7 @@ pub fn how_page(name: &str, files: &[(String, bool)], ways: &[Method], suggested
         .iter()
         .map(|w| {
             let mut o = match w {
-                Method::Symlink => option(&format!("Point to {it}"), &format!("No extra space; the port's folder points to {them}"), GfAct::Way(*w)),
+                Method::Symlink => option("Put a shortcut in the port's folder", &format!("No extra space; the shortcut leads to {them}"), GfAct::Way(*w)),
                 Method::Copy => option(&format!("Copy {it} into the port's folder"), &format!("Uses {}; the original stays where it is", human_bytes(copy_bytes)), GfAct::Way(*w)),
                 Method::UseInPlace => option(&format!("Read {it} where {}", if many { "they are" } else { "it is" }), "Nothing is added to the port's folder", GfAct::Way(*w)),
             };
@@ -363,6 +363,47 @@ pub fn batch_page(ports: &[(String, Option<ArtRef>, String)], has_folder: bool) 
     p.primary = Some(RIGHT);
     p.initial = if ports.is_empty() { Focus::Button(RIGHT) } else { Focus::Tile(0) };
     p.b_does(&GfAct::Done)
+}
+
+/// Whether "Copy the game files?" is asked after the plan is made. Not when the user already chose "Copy it into the
+/// port's folder" on the how page (its size was shown there) and the plan has nothing more to say (no warnings): the
+/// plan's own checks, free space among them, have passed by then. Always for a port that only allows a copy (no how
+/// page was shown) and whenever the plan has a warning.
+pub fn ask_copy_again(copy_chosen_on_how_page: bool, plan_has_warnings: bool) -> bool {
+    !copy_chosen_on_how_page || plan_has_warnings
+}
+
+/// The done page's note for files matched by name only (the file names are in the lines above it).
+pub fn unchecked_note(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some("It was not checked: only the name matches. If the game does not start, choose the file yourself.".to_string()),
+        _ => Some("They were not checked: only the names match. If the game does not start, choose the files yourself.".to_string()),
+    }
+}
+
+/// Why "Find their game files" (or "Look in another folder" after it) did not start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoSearch {
+    /// Another game files task runs.
+    Busy,
+    /// The ports folder is missing or being moved, or its startup message is still due.
+    PortsFolderBusy,
+    /// The record of connected game files could not be read.
+    StoreUnreadable,
+    /// None of the ports names game files it needs.
+    NothingToFind,
+}
+
+impl NoSearch {
+    pub fn words(self) -> &'static str {
+        match self {
+            NoSearch::Busy => "Another game files task is still running. Try again in a moment.",
+            NoSearch::PortsFolderBusy => "Your ports folder is being moved or cannot be reached right now. Try again when it is back.",
+            NoSearch::StoreUnreadable => "The list of connected game files could not be read, so nothing was looked for.",
+            NoSearch::NothingToFind => "None of these ports needs game files, so there is nothing to look for.",
+        }
+    }
 }
 
 /// The after-import search stopped or could not run: what happened, and one button.
@@ -516,7 +557,7 @@ mod tests {
         assert_eq!(
             opts,
             [
-                ("Point to it", "No extra space; the port's folder points to your file", GfAct::Way(Method::Symlink)),
+                ("Put a shortcut in the port's folder", "No extra space; the shortcut leads to your file", GfAct::Way(Method::Symlink)),
                 ("Copy it into the port's folder", "Uses 64.0 MB; the original stays where it is", GfAct::Way(Method::Copy)),
                 ("Add it later", LATER_DETAIL, GfAct::Later),
             ]
@@ -527,6 +568,32 @@ mod tests {
         assert_eq!(copy_first.options[0].title, "Copy them into the port's folder");
         assert_eq!(copy_first.options[1].title, "Read them where they are");
         assert_eq!(copy_first.facts, ["a (not checked: the name matches)", "b (checked: it is the right file)"]);
+    }
+
+    #[test]
+    fn a_copy_chosen_on_the_how_page_is_not_asked_again_unless_the_plan_has_a_warning() {
+        assert!(!ask_copy_again(true, false), "chosen with its size shown, every check passed: no second question");
+        assert!(ask_copy_again(true, true), "a warning is still shown before copying");
+        assert!(ask_copy_again(false, false), "a copy-only port saw no how page: asked once, here");
+        assert!(ask_copy_again(false, true));
+    }
+
+    #[test]
+    fn the_unchecked_note_does_not_repeat_the_file_name() {
+        assert_eq!(unchecked_note(0), None);
+        assert_eq!(unchecked_note(1).unwrap(), "It was not checked: only the name matches. If the game does not start, choose the file yourself.");
+        assert!(unchecked_note(2).unwrap().starts_with("They were not checked"));
+    }
+
+    #[test]
+    fn a_search_that_cannot_start_says_why_in_plain_words() {
+        let all = [NoSearch::Busy, NoSearch::PortsFolderBusy, NoSearch::StoreUnreadable, NoSearch::NothingToFind];
+        let words: std::collections::HashSet<&str> = all.iter().map(|n| n.words()).collect();
+        assert_eq!(words.len(), 4, "a different sentence for each reason");
+        for n in all {
+            let page = batch_notice_page("Could not look again", n.words());
+            crate::fork::rom_screens::settings_pages::tests::assert_plain(&page, &[]);
+        }
     }
 
     #[test]

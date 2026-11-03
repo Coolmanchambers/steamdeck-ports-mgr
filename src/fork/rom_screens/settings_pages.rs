@@ -121,6 +121,8 @@ pub fn menu_page(f: &MenuFacts) -> Page<GsAct> {
         n => format!("{} connected", plural(n, "port", "ports")),
     };
     p.options = vec![folder, look, found, option("Ports that need game files", need, GsAct::NeedFiles), option("Connected ports", connected, GsAct::Connected)];
+    // The cursor starts on what to do next (the Recommended card), else on the first card.
+    p.initial = Focus::Option(p.options.iter().position(|o| o.recommended).unwrap_or(0));
     p.icon(0, Icon::Folder).icon(1, Icon::Update).icon(2, Icon::Browse).icon(3, Icon::GameFiles).icon(4, Icon::Link)
 }
 
@@ -190,12 +192,12 @@ pub struct FoundFacts {
 pub fn found_page(f: &FoundFacts) -> Page<GsAct> {
     let mut p = base("Game files: what was found", "What was found");
     p.paragraphs.push(format!("{} in {}.", capital(&count_files(f.total)), f.place));
-    p.paragraphs.push(format!(
-        "{} not used by any of your ports, and {} other {} left alone. Choose a console to see its ports.",
-        plural_be(f.unused, "is", "are"),
-        f.ignored,
-        if f.ignored == 1 { "file was" } else { "files were" }
-    ));
+    let left_alone = match f.ignored {
+        0 => String::new(),
+        1 => ", and 1 other file was left alone".to_string(),
+        n => format!(", and {n} other files were left alone"),
+    };
+    p.paragraphs.push(format!("{} not used by any of your ports{left_alone}. Choose a console to see its ports.", plural_be(f.unused, "is", "are")));
     if f.problems > 0 {
         p.fact(Mark::Problem, format!("{} could not be read and {} skipped", plural(f.problems, "folder", "folders"), if f.problems == 1 { "was" } else { "were" }));
     }
@@ -282,7 +284,7 @@ pub fn need_page(ports: &[(String, bool)]) -> Page<GsAct> {
 pub fn way_words(m: Method) -> &'static str {
     match m {
         Method::UseInPlace => "read where it is",
-        Method::Symlink => "its folder points to your file",
+        Method::Symlink => "a shortcut in its folder leads to your file",
         Method::Copy => "copied into its folder",
     }
 }
@@ -298,7 +300,7 @@ pub fn health_words(h: Health) -> &'static str {
     }
 }
 
-/// "oot.z64: its folder points to your file", "game.cue and 1 more: your file is gone (card or drive out?)". The file
+/// "oot.z64: a shortcut in its folder leads to your file", "game.cue and 1 more: your file is gone (card or drive out?)". The file
 /// name is shortened first, so what happened always shows.
 pub fn connection_words(c: &ConnGroup) -> String {
     let more = if c.more > 0 { format!(" and {} more", c.more) } else { String::new() };
@@ -467,6 +469,8 @@ pub(crate) mod tests {
         let first = menu_page(&MenuFacts { folder: Some("SD card".into()), ..MenuFacts::default() });
         assert_eq!(first.options[1].title, "Look through the folder");
         assert!(first.options[1].recommended && first.options[1].enabled);
+        assert_eq!(action_at(&first, initial_focus(&first)), Some(GsAct::LookAgain), "the cursor starts on the Recommended card");
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(GsAct::ChooseFolder));
         assert!(!first.options[2].enabled, "nothing found yet");
         assert_eq!(first.options[3].detail, "None of your installed ports needs game files");
         assert_eq!(first.options[4].detail, "None yet");
@@ -478,6 +482,8 @@ pub(crate) mod tests {
         assert_eq!(p.paragraphs[0], "352 game files in SD card > Emulation > roms.");
         assert_eq!(p.paragraphs[1], "12 are not used by any of your ports, and 340 other files were left alone. Choose a console to see its ports.");
         assert_eq!(p.facts, ["1 folder could not be read and was skipped"]);
+        let none_left = found_page(&FoundFacts { place: "SD card".into(), total: 4, unused: 2, systems: vec![sys("N64", 1)], ..FoundFacts::default() });
+        assert_eq!(none_left.paragraphs[1], "2 are not used by any of your ports. Choose a console to see its ports.", "no \"0 other files\"");
         assert_eq!(p.options[0].detail, "1 connected, 2 found, 1 to choose, 1 needs a look, 3 missing");
         assert!(p.options[0].enabled && !p.options[1].enabled);
         assert_eq!(p.options[1].detail, "12,431 game files, no port of yours needs them");
@@ -488,7 +494,7 @@ pub(crate) mod tests {
     #[test]
     fn the_connected_page_says_how_each_file_reaches_its_port_and_forgetting_starts_on_no() {
         let p = connected_page(&[conn("SoH", "fake.z64", 0, Method::Symlink, Health::Ok), conn("Severed Chains", "fake.cue", 1, Method::UseInPlace, Health::SourceMissing)]);
-        assert_eq!(p.options[0].detail, "fake.z64: its folder points to your file");
+        assert_eq!(p.options[0].detail, "fake.z64: a shortcut in its folder leads to your file");
         assert_eq!(p.options[1].detail, "fake.cue and 1 more: your file is gone (card or drive out?)");
         let f = forget_page(&conn("SoH", "fake.z64", 0, Method::Copy, Health::Ok));
         assert_eq!(f.title, "Forget this connection?");

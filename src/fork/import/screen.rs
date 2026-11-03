@@ -5,7 +5,7 @@
 //! `src/app/import_screen.rs` draw them.
 
 use super::cards::Cards;
-use super::folders::ScanFolders;
+use super::folders::{AddOutcome, ScanFolders};
 use super::plan::{Block, PortPlan};
 use super::scan::{Found, ImportScan};
 use crate::core::models::Port;
@@ -238,6 +238,18 @@ pub struct FoldersScreen {
     pub folders: ScanFolders,
     /// What happened to the last change ("already in the list", "could not save").
     pub note: Option<String>,
+}
+
+/// Fork (game files settings): the note after "Add a folder to look in", places the human way ("Added Internal storage >
+/// Emulation > ports", never "~/Emulation/ports"). `places` are told against `home`.
+pub fn add_note(outcome: &AddOutcome, picked: &Path, home: &Path, places: &Places) -> String {
+    let places = Places { home: Some(home.to_path_buf()), ..places.clone() };
+    match outcome {
+        AddOutcome::Added => format!("Added {}", human_path(picked, &places)),
+        AddOutcome::DefaultTurnedOn(name) => format!("{} is back on", human_path(&home.join(name), &places)),
+        AddOutcome::AlreadyListed => "That folder is already in the list".to_string(),
+        AddOutcome::NotAFolder => "That is not a folder".to_string(),
+    }
 }
 
 /// Fork (game files settings): the window title of the scan folders page.
@@ -581,6 +593,18 @@ mod folders_page_tests {
         assert_eq!(action_at(&p, initial_focus(&p)), Some(FolderLine::Add));
         assert_eq!(p.buttons[0].as_ref().map(|b| b.action), Some(FolderLine::Back));
         assert!(p.facts.is_empty());
+    }
+
+    #[test]
+    fn the_add_folder_note_names_the_place_the_human_way() {
+        let home = Path::new("/home/deck");
+        assert_eq!(add_note(&AddOutcome::Added, &home.join("Emulation/ports"), home, &places()), "Added Internal storage > Emulation > ports");
+        assert_eq!(add_note(&AddOutcome::DefaultTurnedOn("Games".into()), &home.join("Games"), home, &places()), "Internal storage > Games is back on");
+        assert!(add_note(&AddOutcome::Added, Path::new("/run/media/deck/1234-ABCD/Ports"), home, &places()).starts_with("Added SD card > Ports"));
+        assert_eq!(add_note(&AddOutcome::AlreadyListed, home, home, &places()), "That folder is already in the list");
+        for o in [AddOutcome::Added, AddOutcome::DefaultTurnedOn("Games".into()), AddOutcome::AlreadyListed, AddOutcome::NotAFolder] {
+            assert!(!add_note(&o, &home.join("Games"), home, &places()).contains('~'));
+        }
     }
 
     #[test]

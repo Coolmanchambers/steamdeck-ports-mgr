@@ -179,11 +179,13 @@ fn run_job<T: Send + 'static>(
     // In the setup wizard the scan's progress is a page (one line, and Cancel) instead of a list.
     let mut page_handle = None;
     let page_closed = Rc::new(Cell::new(false));
+    // Fork (game files settings): the title bar X on a waiting page cancels and leaves; only B goes where the flow said.
+    let exited = Rc::new(Cell::new(false));
     let own_page = matches!(ui, JobUi::Page { .. });
     let progress_mode = match &ui {
         JobUi::Page { title, cancellable } => {
             let (cancel_job, closed_job) = (job.clone(), job.clone());
-            let (cancelling_now, closed, closed_exit) = (cancelling.clone(), page_closed.clone(), page_closed.clone());
+            let (cancelling_now, closed, closed_exit, exited_now) = (cancelling.clone(), page_closed.clone(), page_closed.clone(), exited.clone());
             let cancellable = *cancellable;
             let handlers = Handlers {
                 on_action: Rc::new(move |_, _, _: ProgressAction| {
@@ -196,7 +198,10 @@ fn run_job<T: Send + 'static>(
                         closed.set(true);
                     }
                 }),
-                on_exit: Rc::new(move |_, _| closed_exit.set(true)),
+                on_exit: Rc::new(move |_, _| {
+                    exited_now.set(true);
+                    closed_exit.set(true);
+                }),
                 on_input: None,
             };
             page_handle = show_page_handle(app, router, work_page(title, "", cancellable, false).with_progress(None), handlers);
@@ -252,7 +257,9 @@ fn run_job<T: Send + 'static>(
                 stop_job_timer();
                 let hook = ABANDON_HOOK.with(|h| h.borrow_mut().take());
                 if abandoned.get() {
-                    if let Some(hook) = hook {
+                    if own_page && exited.get() {
+                        close_current_dialog(&app, &router);
+                    } else if let Some(hook) = hook {
                         hook(&app, &router);
                     } else if page_handle.is_some() && super::setup_wizard_screen::active() && !own_page {
                         // B on the wizard's scan page: the page goes, and the wizard's game files page comes back

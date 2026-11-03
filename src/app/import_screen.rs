@@ -42,7 +42,6 @@ use crate::fork::port_mover::game_files::Issue;
 use crate::fork::port_mover::old_copies;
 use crate::fork::rom_screens::job::{Background, Ctl};
 use crate::fork::rom_screens::util::{ellipsize, free_bytes};
-use crate::fork::screens::short_path;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::fork::steam_queue;
 use crate::fork::store::SystemSteamCheck;
@@ -858,17 +857,17 @@ fn add_folder(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersS
     open_folder_picker(
         app,
         router,
-        PickerRequest::new("Add a folder to scan", &start, Purpose::ScanFolder),
+        PickerRequest::new("Add a folder to look in", &start, Purpose::ScanFolder),
         move |app, router, path| {
             let home = home_dir().unwrap_or_default();
             {
                 let mut screen = chosen_state.screen.borrow_mut();
                 let outcome = screen.folders.add_user(&path, &home);
+                // Fork (game files settings): places the human way (`import::screen::add_note`), never "~/Games".
+                let note = crate::fork::import::screen::add_note(&outcome, &path, &home, &crate::fork::port_page::paths::Places::system());
                 screen.note = match &outcome {
-                    AddOutcome::Added => save_folders(app, &screen.folders).or_else(|| Some(format!("Added {}", short_path(&path, &home)))),
-                    AddOutcome::DefaultTurnedOn(name) => save_folders(app, &screen.folders).or_else(|| Some(format!("~/{name} is back on"))),
-                    AddOutcome::AlreadyListed => Some("That folder is already in the list".to_string()),
-                    AddOutcome::NotAFolder => Some("That is not a folder".to_string()),
+                    AddOutcome::Added | AddOutcome::DefaultTurnedOn(_) => save_folders(app, &screen.folders).or(Some(note)),
+                    AddOutcome::AlreadyListed | AddOutcome::NotAFolder => Some(note),
                 };
                 if matches!(outcome, AddOutcome::Added | AddOutcome::DefaultTurnedOn(_)) {
                     chosen_state.changed.set(true);

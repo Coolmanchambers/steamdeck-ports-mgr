@@ -693,13 +693,27 @@ pub(crate) fn build_picker_dialog(app: &Rc<AppState>, router: &Router, title: &s
         });
     }
     wire_keyboard_nav!(dialog, app, vertical);
-    // Fork: B on a list with a Back row does what that row does (up one level); without one it closes, as before
-    // (crate::fork::list_back). The rows are read when B comes, so a list relabelled later is still right.
+    // Fork: B (the pad's B, or Escape) on a list with a Back row does what that row does (up one level); without one it
+    // closes, as before (crate::fork::list_back). The rows are read when B comes, so a list relabelled later is still
+    // right. The title bar's X goes through the same close-requested (a screen that wired its own keeps it), flagged as
+    // the X, so here it leaves the list instead of taking the Back row.
     {
+        let by_x = Rc::new(std::cell::Cell::new(false));
+        let (flag, weak) = (by_x.clone(), dialog.as_weak());
+        dialog.on_title_close_requested(move || {
+            if let Some(d) = weak.upgrade() {
+                flag.set(true);
+                d.invoke_close_requested();
+                flag.set(false);
+            }
+        });
         let (app, router, weak) = (app.clone(), router.clone(), dialog.as_weak());
         dialog.on_close_requested(move || {
             if !crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
                 return;
+            }
+            if by_x.get() {
+                return close_current_dialog(&app, &router);
             }
             let back = weak.upgrade().and_then(|d| {
                 let labels: Vec<String> = slint::Model::iter(&d.get_items()).map(|i| i.label.to_string()).collect();

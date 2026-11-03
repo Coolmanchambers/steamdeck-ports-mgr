@@ -279,11 +279,12 @@ pub fn apply_plans(store_path: &Path, plans: &[ConnectPlan], approval: Approval)
 
 /// What was connected, one paragraph per file (blank lines between them, so a result page keeps every line), every
 /// place the human way ("SD card > Emulation > roms").
-pub fn done_text(port_name: &str, plans: &[ConnectPlan], mappings: &[Mapping]) -> String {
-    done_text_with(port_name, plans, mappings, &crate::fork::port_page::paths::human_path_here)
+/// `notes` (what the user should know: a file not checked, a warning) go before the last line.
+pub fn done_text(port_name: &str, plans: &[ConnectPlan], mappings: &[Mapping], notes: &[String]) -> String {
+    done_text_with(port_name, plans, mappings, notes, &crate::fork::port_page::paths::human_path_here)
 }
 
-pub fn done_text_with(port_name: &str, plans: &[ConnectPlan], mappings: &[Mapping], place: &dyn Fn(&Path) -> String) -> String {
+pub fn done_text_with(port_name: &str, plans: &[ConnectPlan], mappings: &[Mapping], notes: &[String], place: &dyn Fn(&Path) -> String) -> String {
     let mut parts = vec![format!("Connected game files for {port_name}.")];
     for m in mappings {
         let name = file_name(&m.source);
@@ -291,7 +292,7 @@ pub fn done_text_with(port_name: &str, plans: &[ConnectPlan], mappings: &[Mappin
         let how = match (m.method, was_there) {
             (_, true) => "was already in place".to_string(),
             (Method::UseInPlace, _) => format!("stays where it is, in {}", m.source.parent().map_or_else(|| place(&m.source), place)),
-            (Method::Symlink, _) => "the port's folder points to it".to_string(),
+            (Method::Symlink, _) => "a shortcut in the port's folder leads to your file".to_string(),
             (Method::Copy, _) => "copied into the port's folder".to_string(),
         };
         parts.push(format!("{name}: {how}"));
@@ -299,6 +300,7 @@ pub fn done_text_with(port_name: &str, plans: &[ConnectPlan], mappings: &[Mappin
     if mappings.iter().any(|m| m.method == Method::UseInPlace) {
         parts.push("For \"stays where it is\" files, point the port at that place if it asks for the game.".to_string());
     }
+    parts.extend(notes.iter().cloned());
     parts.push("Your originals were not changed.".to_string());
     parts.join("\n\n")
 }
@@ -405,7 +407,7 @@ mod tests {
         assert!(again.chosen_files().is_empty(), "a connected file is not offered again");
         assert!(again.requests().is_err());
         assert!(!again.is_editable(0));
-        assert!(done_text("Zelda Port", &plan.plans, &mappings).contains("the port's folder points to it"));
+        assert!(done_text("Zelda Port", &plan.plans, &mappings, &[]).contains("a shortcut in the port's folder leads to your file"));
     }
 
     #[test]
@@ -415,10 +417,10 @@ mod tests {
         let plan = make_plan(screen.requests().unwrap()).unwrap();
         let mappings = apply_plans(&f.store_path, &plan.plans, Approval::None).unwrap();
         assert!(fs::read_dir(&f.port_dir).unwrap().next().is_none());
-        let text = done_text("Zelda Port", &plan.plans, &mappings);
+        let text = done_text("Zelda Port", &plan.plans, &mappings, &[]);
         assert!(text.contains("stays where it is") && text.contains("Zelda renamed.z64"), "{text}");
         // Every line survives the result page (it splits on blank lines), and the place is told the human way.
-        let text = done_text_with("Zelda Port", &plan.plans, &mappings, &|_| "SD card > Emulation > roms".to_string());
+        let text = done_text_with("Zelda Port", &plan.plans, &mappings, &["It was not checked: only the name matches.".to_string()], &|_| "SD card > Emulation > roms".to_string());
         let page = crate::fork::rom_screens::pages::result_page("Zelda Port", "Game files connected", &text);
         assert_eq!(
             page.paragraphs,
@@ -426,6 +428,7 @@ mod tests {
                 "Connected game files for Zelda Port.",
                 "Zelda renamed.z64: stays where it is, in SD card > Emulation > roms",
                 "For \"stays where it is\" files, point the port at that place if it asks for the game.",
+                "It was not checked: only the name matches.",
                 "Your originals were not changed.",
             ]
         );
