@@ -273,6 +273,7 @@ pub fn run_global_backup(
                     Ok(false) => summary.skipped += 1,
                     Err(e) => {
                         summary.failed += 1;
+                        eprintln!("save backup: {} ({field}): {e}", port.name); // Fork: the raw error, for a report
                         failed.get_or_insert_with(|| plain_io_reason(&e));
                     }
                 },

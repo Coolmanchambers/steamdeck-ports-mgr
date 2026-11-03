@@ -202,8 +202,7 @@ fn choose_backup(app: &Rc<AppState>, router: &Router, port: &Port, backup: Backu
         }
         return notice(app, router, &name, "Nothing to put back", &text, again);
     }
-    let kept_at = app.paths.saves_backup_dir.join(save_restore::RESTORE_BACKUPS_DIR).join(&port.folder);
-    let page = pages::ask_page(&pages::ask_facts(&name, &backup, &plan, &kept_at, &places));
+    let page = pages::ask_page(&pages::ask_facts(&name, &backup, &plan, &places));
     let port = port.clone();
     let back = again.clone();
     show_page(

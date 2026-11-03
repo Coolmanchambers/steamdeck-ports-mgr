@@ -42,6 +42,13 @@ pub(crate) fn start(app: &Rc<AppState>, router: &Router) {
     let handle = show_page_handle(app, router, waiting_page(&place, ""), handlers);
     RUNNING.with(|r| r.set(true));
     let catalog = app.catalog.borrow().clone();
+    // The backup reports the catalog's own names ("Space Cadet (SpaceCadetPinball)"); the pages use the shown name.
+    let shown: std::collections::HashMap<String, String> = catalog.iter().map(|p| (p.name.clone(), p.display_name().to_string())).collect();
+    let shown = Rc::new(shown);
+    let shown_name = {
+        let shown = shown.clone();
+        move |name: &str| shown.get(name).cloned().unwrap_or_else(|| name.to_string())
+    };
     let library_dir = app.paths.library_dir();
     let saves_backup_dir = app.paths.saves_backup_dir.clone();
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -55,7 +62,7 @@ pub(crate) fn start(app: &Rc<AppState>, router: &Router) {
                 if now != *last.borrow() {
                     *last.borrow_mut() = now.clone();
                     if let Some(h) = &handle {
-                        h.update(waiting_page(&place, &now));
+                        h.update(waiting_page(&place, &shown_name(&now)));
                     }
                 }
                 return;
@@ -65,7 +72,8 @@ pub(crate) fn start(app: &Rc<AppState>, router: &Router) {
             let page = match result {
                 Ok(summary) => {
                     eprintln!("save backup: {} save folder(s) copied, {} skipped, {} failed", summary.copied, summary.skipped, summary.failed);
-                    done_page(&summary.ports, summary.problem.as_deref(), &place)
+                    let ports: Vec<_> = summary.ports.iter().map(|(name, o)| (shown_name(name), o.clone())).collect();
+                    done_page(&ports, summary.problem.as_deref(), &place)
                 }
                 Err(e) => done_page(&[], Some(&format!("the app ran into an error ({e})")), &place),
             };

@@ -320,7 +320,7 @@ fn restore_round_trip_is_byte_identical_and_can_be_undone() {
     assert_eq!(done.folders.len(), 1);
     assert_eq!(done.folders[0].files, 3);
     assert_eq!(done.folders[0].kept_old, None);
-    assert_eq!(steps.first().map(String::as_str), Some("Backing up your current saves..."));
+    assert_eq!(steps.first().map(String::as_str), Some("Backing up your saves now..."));
     assert!(leftovers_beside(&save).is_empty(), "{:?}", leftovers_beside(&save));
 
     // The safety backup was taken before the swap: it holds the "later" saves, and restoring it undoes the restore.

@@ -12,7 +12,6 @@
 //! (`port_page::paths`).
 
 use super::{Backup, BackupKind, Interrupted, RestoreDone, RestoreError, RestorePlan, SaveTarget, Target};
-use std::path::Path;
 use crate::fork::page::{Focus, Mark, Page, PageButton, PageOption, LEFT};
 use crate::fork::port_page::paths::{human_path, plain_paths, size_text, Places};
 use crate::fork::rom_screens::util::ellipsize;
@@ -76,7 +75,7 @@ pub fn when_short(backup: &Backup) -> String {
 pub fn kind_words(kind: BackupKind) -> &'static str {
     match kind {
         BackupKind::BeforeUpdate => "Made before an update",
-        BackupKind::AllPorts => "From Back up saves",
+        BackupKind::AllPorts => "Made by Back up saves",
         BackupKind::BeforeRestore => "Made before a restore",
     }
 }
@@ -210,20 +209,17 @@ pub struct AskFacts {
     pub folders: Vec<String>,
     /// What the backup holds that is not put back, and why ("Save folder 2: no save folder is known for Linux").
     pub skipped: Vec<String>,
-    /// Where the saves now are backed up first, the human way.
-    pub kept_at: String,
 }
 
-/// The question about `backup` for the port `name`: `plan` is what the restore would do, `kept_at` the folder the saves
-/// now are backed up to first (Saves Backup > Restore Backups > the port's folder).
-pub fn ask_facts(name: &str, backup: &Backup, plan: &RestorePlan, kept_at: &Path, places: &Places) -> AskFacts {
+/// The question about `backup` for the port `name`: `plan` is what the restore would do. The saves now are backed up
+/// first to Saves Backup > Restore Backups (the Yes card says so).
+pub fn ask_facts(name: &str, backup: &Backup, plan: &RestorePlan, places: &Places) -> AskFacts {
     AskFacts {
         name: name.to_string(),
         when: when_short(backup),
         kind: kind_words(backup.kind).to_string(),
         folders: plan.replace.iter().map(|(_, path)| human_path(path, places)).collect(),
         skipped: plan.skipped.iter().map(|(field, why)| format!("{} ({})", field.label(), plain_paths(why, places))).collect(),
-        kept_at: human_path(kept_at, places),
     }
 }
 
@@ -238,26 +234,21 @@ pub fn done_facts(name: &str, when: &str, done: &RestoreDone, places: &Places) -
     }
 }
 
-/// "Put back the saves from 2026-10-30 14:22?": the saves now are backed up first (and where), then the folders get
-/// the backup's saves. No is where the cursor starts, and what B does.
+/// "Put back the saves from 2026-10-30 14:22?": one sentence says the saves now are backed up first, then the folders
+/// that get the backup's saves are listed. No is where the cursor starts, and what B does.
 pub fn ask_page(f: &AskFacts) -> Page<RsAct> {
     let title = [format!("Put back the saves from {}?", f.when), format!("Put back saves from {}?", f.when)].into_iter().find(|t| t.chars().count() <= 40).unwrap_or_else(|| "Put back these saves?".to_string());
     let mut p = base("Restore saves: put back", &f.name, &title);
-    p.paragraphs.push(format!("Your saves now are kept first: they are backed up to {}. If that backup does not work, nothing is changed.", f.kept_at));
-    p.paragraphs.push(format!(
-        "Then the {} below {} the saves from that backup ({}). Saves made since then are replaced; they stay in the backup made first, so you can put them back the same way.",
-        if f.folders.len() == 1 { "folder" } else { "folders" },
-        if f.folders.len() == 1 { "gets" } else { "get" },
-        f.kind.chars().take(1).flat_map(char::to_lowercase).chain(f.kind.chars().skip(1)).collect::<String>()
-    ));
+    let kind = f.kind.chars().take(1).flat_map(char::to_lowercase).chain(f.kind.chars().skip(1)).collect::<String>();
+    let these = if f.folders.len() == 1 { "this folder gets" } else { "these folders get" };
+    p.paragraphs.push(format!("Quit the game first. Your saves now are backed up before anything changes; if that backup fails, nothing is replaced. Then {these} the saves from that backup, {kind}:"));
     for folder in &f.folders {
         p.fact(Mark::ToDo, folder.clone());
     }
     for s in &f.skipped {
-        p.paragraphs.push(format!("Not put back: {s}."));
+        p.fact(Mark::Skipped, format!("Not put back: {s}"));
     }
-    p.paragraphs.push("Quit the game first.".to_string());
-    p.options = vec![option("Yes, put them back", "Your saves now are backed up first", RsAct::Restore), option("No, keep my saves now", "Nothing changes", RsAct::Keep)];
+    p.options = vec![option("Yes, put them back", "Saves now go to Saves Backup > Restore Backups first", RsAct::Restore), option("No, keep my saves now", "Nothing changes", RsAct::Keep)];
     p.options[1].recommended = true;
     p.initial = Focus::Option(1);
     p.buttons = [None, None, None, None];
@@ -302,7 +293,7 @@ pub fn done_page(f: &DoneFacts) -> Page<RsAct> {
     let mut p = base("Restore saves: done", &f.name, "Your saves are back");
     p.paragraphs.push(format!("The saves from {} are back.", f.when));
     for d in &f.folders {
-        p.fact(Mark::Done, format!("{}: {} {}", ellipsize(&d.folder, 70), d.files, if d.files == 1 { "file" } else { "files" }));
+        p.fact(Mark::Done, format!("{}: {} {}", d.folder, d.files, if d.files == 1 { "file" } else { "files" }));
         if let Some(old) = &d.kept_old {
             p.paragraphs.push(format!("The folder it replaced is kept next to it: {old}."));
         }
@@ -366,8 +357,8 @@ mod tests {
             backups_page(LONG, &backups, &[PLACE.into(), PLACE.into()], 2),
             backups_page("SoH", &[], &[], 0),
             notice_page(LONG, "Nothing to put back", &nothing_restorable_text(LONG, &[SaveTarget { field: SaveField::Save, target: Target::Folder("/home/deck/x".into()) }, SaveTarget { field: SaveField::Save2, target: Target::Refused("is the folder /home/deck itself".into()) }], &p)),
-            ask_page(&AskFacts { name: LONG.into(), when: "2026-10-30 14:22 (2)".into(), kind: kind_words(BackupKind::AllPorts).into(), folders: vec![PLACE.into(), PLACE.into()], skipped: vec!["Save folder 2: no save folder is known for Linux".into()], kept_at: "Internal storage > Applications > Deck Ports Manager > Saves Backup > Restore Backups > zelda".into() }),
-            working_page(LONG, "Backing up your current saves..."),
+            ask_page(&AskFacts { name: LONG.into(), when: "2026-10-30 14:22 (2)".into(), kind: kind_words(BackupKind::AllPorts).into(), folders: vec![PLACE.into(), PLACE.into()], skipped: vec!["Save folder 2: no save folder is known for Linux".into()] }),
+            working_page(LONG, "Backing up your saves now..."),
             working_page(LONG, ""),
             done_page(&DoneFacts { name: LONG.into(), when: "2026-10-30 14:22".into(), folders: vec![PutBack { folder: PLACE.into(), files: 1, kept_old: Some(PLACE.into()) }], skipped: vec!["x".into()], backed_up_first: true }),
             done_page(&DoneFacts { name: "SoH".into(), when: "2026-10-21".into(), folders: vec![], skipped: vec![], backed_up_first: false }),
@@ -399,7 +390,7 @@ mod tests {
         assert_eq!(p.title, "Choose a backup");
         assert_eq!(p.header, "Dusk");
         assert_eq!((p.options[0].title.as_str(), p.options[0].detail.as_str()), ("2026-10-30 14:22", "Made before an update, 1.2 MB"));
-        assert_eq!((p.options[1].title.as_str(), p.options[1].detail.as_str()), ("2026-10-21", "From Back up saves, 1.2 MB"));
+        assert_eq!((p.options[1].title.as_str(), p.options[1].detail.as_str()), ("2026-10-21", "Made by Back up saves, 1.2 MB"));
         assert_eq!(p.paragraphs[0], "Your saves are in Internal storage > Dusk > saves.");
         assert_eq!(action_at(&p, initial_focus(&p)), Some(RsAct::Backup(0)));
         let stopped = backups_page("Dusk", &b, &[], 1);
@@ -414,11 +405,11 @@ mod tests {
 
     #[test]
     fn the_question_says_the_saves_now_are_kept_first_and_where_and_starts_on_no() {
-        let p = ask_page(&AskFacts { name: "Dusk".into(), when: "2026-10-30 14:22".into(), kind: "Made before an update".into(), folders: vec!["Internal storage > Dusk > saves".into()], skipped: vec![], kept_at: "Internal storage > Saves Backup > Restore Backups > Dusk".into() });
+        let p = ask_page(&AskFacts { name: "Dusk".into(), when: "2026-10-30 14:22".into(), kind: "Made before an update".into(), folders: vec!["Internal storage > Dusk > saves".into()], skipped: vec![] });
         assert_eq!(p.title, "Put back saves from 2026-10-30 14:22?");
-        assert_eq!(p.paragraphs[0], "Your saves now are kept first: they are backed up to Internal storage > Saves Backup > Restore Backups > Dusk. If that backup does not work, nothing is changed.");
-        assert!(p.paragraphs[1].starts_with("Then the folder below gets the saves from that backup (made before an update)."), "{}", p.paragraphs[1]);
+        assert_eq!(p.paragraphs, ["Quit the game first. Your saves now are backed up before anything changes; if that backup fails, nothing is replaced. Then this folder gets the saves from that backup, made before an update:"]);
         assert_eq!(p.facts, ["Internal storage > Dusk > saves"]);
+        assert_eq!(p.options[0].detail, "Saves now go to Saves Backup > Restore Backups first");
         assert_eq!(action_at(&p, initial_focus(&p)), Some(RsAct::Keep));
         assert_eq!(p.back_hint, "No, keep my saves now");
         assert_eq!(ask_page(&AskFacts { when: "2026-10-21".into(), folders: vec!["x".into()], ..AskFacts::default() }).title, "Put back the saves from 2026-10-21?");

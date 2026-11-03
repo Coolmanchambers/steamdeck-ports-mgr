@@ -56,6 +56,7 @@ pub fn done_page(outcomes: &[(String, PortBackup)], problem: Option<&str>, place
     let title = match (problem, backed, failed.len()) {
         (Some(_), _, _) => "Your saves were not backed up",
         (None, 0, 0) => "There were no saves to back up",
+        (None, _, 0) if !no_place.is_empty() => "Most saves are backed up",
         (None, _, 0) => "Your saves are backed up",
         (None, 0, _) => "Your saves were not backed up",
         (None, _, _) => "Some saves could not be backed up",
@@ -84,7 +85,15 @@ pub fn done_page(outcomes: &[(String, PortBackup)], problem: Option<&str>, place
         }
     }
     if !no_place.is_empty() {
-        p.paragraphs.push(format!("{} {} not say where {} saves are kept, so {} not backed up: {}.", ports(no_place.len()), if no_place.len() == 1 { "does" } else { "do" }, if no_place.len() == 1 { "its" } else { "their" }, if no_place.len() == 1 { "it was" } else { "they were" }, names(&no_place)));
+        let one = no_place.len() == 1;
+        p.paragraphs.push(format!(
+            "The app does not know where {} {} {} saves, so {} not backed up: {}.",
+            ports(no_place.len()),
+            if one { "keeps" } else { "keep" },
+            if one { "its" } else { "their" },
+            if one { "it was" } else { "they were" },
+            names(&no_place)
+        ));
     }
     if problem.is_none() && backed == 0 && nothing == 0 && failed.is_empty() && no_place.is_empty() {
         p.paragraphs.push("None of your ports has saves to back up yet.".to_string());
@@ -126,7 +135,10 @@ mod tests {
         assert_eq!(p.facts[5], "And 2 more.");
         let q = done_page(&all(&[("Osu", PortBackup::NoPlace), ("X", PortBackup::NoPlace), ("Y", PortBackup::NoPlace), ("Z", PortBackup::NoPlace)]), None, PLACE);
         assert_eq!(q.title, "There were no saves to back up");
-        assert_eq!(q.paragraphs, ["4 ports do not say where their saves are kept, so they were not backed up: Osu, X and 2 more."]);
+        assert_eq!(q.paragraphs, ["The app does not know where 4 ports keep their saves, so they were not backed up: Osu, X and 2 more."]);
+        let most = done_page(&all(&[("A", PortBackup::BackedUp), ("Space Cadet", PortBackup::NoPlace)]), None, PLACE);
+        assert_eq!(most.title, "Most saves are backed up");
+        assert_eq!(most.paragraphs[1], "The app does not know where 1 port keeps its saves, so it was not backed up: Space Cadet.");
         let none = done_page(&[], None, PLACE);
         assert_eq!(none.paragraphs, ["None of your ports has saves to back up yet."]);
         let broken = done_page(&[], Some("the backup folder could not be made: the drive is full"), PLACE);

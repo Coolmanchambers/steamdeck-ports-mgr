@@ -32,12 +32,12 @@ use crate::fork::page::Page;
 use crate::fork::port_mover::game_files::{check_before, GameFiles, Issue};
 use crate::fork::port_mover::old_copies::{self, OldCopy, RemovalCtx};
 use crate::fork::port_mover::{self, BatchItem, BatchOutcome, MoveEnv, MoveError, MoveOptions, PortRef, Prepared, Stage, SwitchReport};
-use crate::fork::port_page::paths::{human_path, plain_paths, plain_paths_here, Places};
+use crate::fork::port_page::paths::{human_path, plain_paths, plain_paths_here, size_text, Places};
 use crate::fork::ports_folder::{self, CheckCtx, MovePlan, PortToMove, Startup, SystemProbe};
 use crate::fork::ports_folder_pages::{self as pages, CopyLine, FolderFacts, MovedPort, PfAct};
 use crate::fork::ports_folder_view::{self as view, Act, ListModel};
 use crate::fork::rom_screens::job::Background;
-use crate::fork::rom_screens::util::{ellipsize, free_bytes, human_bytes};
+use crate::fork::rom_screens::util::{ellipsize, free_bytes};
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use crate::fork::setup_wizard::ports_pages::{self, FolderAction, MoveFacts};
 use crate::fork::store::SystemSteamCheck;
@@ -265,7 +265,7 @@ pub(crate) fn show_missing(app: &Rc<AppState>, router: &Router, again: bool) {
         STARTUP_PENDING.with(|p| p.set(false));
         close_current_dialog(app, router);
     };
-    let Some(dialog) = open_model(app, router, "Ports folder not available", view::missing(&dir, &why, again), move |app, router, act| match act {
+    let Some(dialog) = open_model(app, router, "Ports folder not available", view::missing(&human(&dir), &why, again), move |app, router, act| match act {
         Act::TryAgain => show_missing(app, router, true),
         Act::ChooseAnother => {
             STARTUP_PENDING.with(|p| p.set(false));
@@ -303,7 +303,7 @@ fn folder_facts(app: &AppState, unfinished: &[OldCopy], old: &[OldCopy]) -> Fold
         None => {
             let mut parts = Vec::new();
             if let Some(free) = free_bytes(&dir) {
-                parts.push(format!("{} free", human_bytes(free)));
+                parts.push(format!("{} free", size_text(free)));
             }
             if let Some(d) = crate::fork::folder_picker::mounts::drive_of(&dir, &system_mounts(), &default_media_roots()) {
                 parts.push(d.title());
@@ -512,9 +512,12 @@ fn ask_game_files(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: R
     for i in same.iter().rev() {
         issues.remove(*i);
     }
-    let page = ports_pages::game_file_page(&name, &problem, others.len());
+    // A port whose kept old copy sits in the new place cannot be skipped: the switch would then use that old copy.
+    let kept_copy_there = plan.stale.iter().any(|p| p.name == name);
+    let page = if kept_copy_there { ports_pages::game_file_page_kept_copy(&name, &problem, others.len()) } else { ports_pages::game_file_page(&name, &problem, others.len()) };
     folder_page(app, router, page, None, move |app, router, action| match action {
-        FolderAction::SkipPort => {
+        FolderAction::PickAnother => choose_folder(app, router),
+        FolderAction::SkipPort if !kept_copy_there => {
             let mut smaller = (*plan).clone();
             if let Some(key) = &key {
                 smaller.ports.retain(|p| &p.key != key);
@@ -618,7 +621,7 @@ fn start_move(app: &Rc<AppState>, router: &Router, new_dir: PathBuf, plan: Rc<Mo
         let options = |i: usize| MoveOptions { game_files: batch_files[i].clone(), accept_issues_before: accept_issues || accept_keys.contains(&batch_items[i].port.key), ..Default::default() };
         let count = names.len().max(1) as f32;
         let mut progress = |i: usize, done: u64, size: u64| {
-            ctl.set_progress(format!("Copying {} of {total}: {}\n{} of {}", i + 1, names[i], human_bytes(done), human_bytes(size)));
+            ctl.set_progress(format!("Copying {} of {total}: {}\n{} of {}", i + 1, names[i], size_text(done), size_text(size)));
             ctl.set_fraction((i as f32 + if size == 0 { 1.0 } else { done as f32 / size as f32 }) / count);
         };
         let result = port_mover::run_batch(&batch_items, &env, &options, &mut progress, ctl.flag());
@@ -854,8 +857,9 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
         // only once, at install time).
         if let Some(port) = find_port(app, &p.port.key) {
             let missing = port_mover::game_files::required_not_found(&p.to, &GameFiles::for_port(&port, &config_dir));
+            // For the log only: often needed once, at install time, so not worth a line on the success page.
             if !missing.is_empty() {
-                notes.push(format!("{}: {} is not in its folder. That is fine if it was only needed when installing.", p.port.name, missing.join(", ")));
+                eprintln!("ports folder: {}: {} is not in its folder (fine if it was only needed when installing)", p.port.name, missing.join(", "));
             }
         }
         if let Some(entry) = old_copies::load(&config_dir).unwrap_or_default().into_iter().find(|o| o.old_path == p.from) {
@@ -962,7 +966,8 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
         .iter()
         .map(|o| CopyLine {
             name: o.name.clone(),
-            place: human_path(&o.old_path, &places),
+            // The drive only ("Internal storage", "SD card"); the old copy's own page names the full place.
+            drive: human_path(&o.old_path, &places).split(" > ").next().unwrap_or_default().to_string(),
             bytes: o.bytes,
             // Short, so the place has room on the card; the old copy's own page says it in full.
             state: match (std::fs::symlink_metadata(&o.old_path).is_err(), parts.readiness(o)) {

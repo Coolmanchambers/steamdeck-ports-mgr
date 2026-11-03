@@ -12,7 +12,8 @@
 //! (`port_page::paths::human_path`).
 
 use crate::fork::page::{Focus, Icon, Mark, Page, PageButton, PageOption, LEFT};
-use crate::fork::rom_screens::util::{ellipsize, human_bytes};
+use crate::fork::port_page::paths::size_text;
+use crate::fork::rom_screens::util::ellipsize;
 
 /// The window title of the Ports folder page.
 pub const MENU_WINDOW: &str = "Settings: Ports: Ports folder";
@@ -99,13 +100,14 @@ pub fn menu_page(f: &FolderFacts) -> Page<PfAct> {
     let mut icons = vec![Icon::Update; p.options.len()];
     p.options.push(option("Choose another folder", "Your ports can move there, or stay where they are", PfAct::ChooseAnother));
     icons.push(Icon::Folder);
-    if !f.game_mode {
+    // A file manager window cannot be used in Game Mode, and there is nothing to show while the folder is not there.
+    if !f.game_mode && f.room.is_some() {
         p.options.push(option("Open the ports folder", "Show it in the file manager", PfAct::OpenFolder));
         icons.push(Icon::Browse);
     }
     if f.old_copies > 0 {
-        p.options.push(option("Old copies kept after moves", format!("{}, {}", plural(f.old_copies, "copy", "copies"), human_bytes(f.old_bytes)), PfAct::OldCopies));
-        icons.push(Icon::Remove);
+        p.options.push(option("Old copies kept after moves", format!("{}, {}", plural(f.old_copies, "copy", "copies"), size_text(f.old_bytes)), PfAct::OldCopies));
+        icons.push(Icon::Folder);
     }
     if !f.is_default {
         p.options.push(option("Use the default folder", f.default_place.clone(), PfAct::UseDefault));
@@ -125,8 +127,8 @@ pub fn menu_page(f: &FolderFacts) -> Page<PfAct> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyLine {
     pub name: String,
-    /// Where the old copy is, the human way.
-    pub place: String,
+    /// The drive the old copy is on ("Internal storage", "SD card"); its own page names the full place.
+    pub drive: String,
     pub bytes: u64,
     /// "Ready to remove", "Start it once first", "Waiting for Steam", or "Gone already".
     pub state: String,
@@ -134,13 +136,11 @@ pub struct CopyLine {
     pub link_only: bool,
 }
 
-/// "<state>, <size>: <place>" in 66 characters; the place is shortened in the middle, so its start and the port's own
-/// folder at the end both stay.
+/// "Start it once first, 700 MB, on Internal storage": its state, its size and its drive (the old copy's own page names
+/// the full place).
 pub fn copy_detail(c: &CopyLine) -> String {
-    let size = if c.link_only { "frees no space".to_string() } else { human_bytes(c.bytes) };
-    let lead = format!("{}, {size}: ", c.state);
-    let room = 66usize.saturating_sub(lead.chars().count()).max(12);
-    ellipsize(&format!("{lead}{}", ellipsize(&c.place, room)), 66)
+    let size = if c.link_only { "frees no space".to_string() } else { size_text(c.bytes) };
+    ellipsize(&format!("{}, {size}, on {}", c.state, c.drive), 66)
 }
 
 /// The old copies kept after moves: one card each. Choosing one asks about it (its status, Remove when it is ready).
@@ -156,15 +156,16 @@ pub fn old_copies_page(copies: &[CopyLine]) -> Page<PfAct> {
     p
 }
 
-/// The old copy of `name` is not there any more: forget its record? Keep is where the cursor starts.
+/// The old copy of `name` is not there any more: forget its record? Forget is recommended (it only drops the app's note);
+/// B keeps it listed.
 pub fn gone_page(name: &str, place: &str) -> Page<PfAct> {
     let mut p = base("Ports folder: old copy gone", "This old copy is gone");
     p.header = name.to_string();
     p.paragraphs.push(format!("The old copy of {name} is not in {place} any more."));
     p.paragraphs.push("Forget it, so it is no longer listed? Nothing else is changed.".to_string());
-    p.options = vec![option("Forget it", "It is no longer listed", PfAct::Forget), option("Keep it listed", "Nothing changes", PfAct::Keep)];
-    p.options[1].recommended = true;
-    p.initial = Focus::Option(1);
+    p.options = vec![option("Forget it", "Nothing on the Deck is changed", PfAct::Forget), option("Keep it listed", "Nothing changes", PfAct::Keep)];
+    p.options[0].recommended = true;
+    p.initial = Focus::Option(0);
     p.buttons = [None, None, None, None];
     p.b_does(&PfAct::Keep)
 }
@@ -178,6 +179,8 @@ pub struct RemoveFacts {
     pub bytes: u64,
     /// Where their saves are backed up first, the human way.
     pub saves_place: String,
+    /// Every one of them only points to a folder elsewhere: nothing is backed up, and that folder stays.
+    pub links_only: bool,
 }
 
 /// "Remove the old copy of Dusklight?" before anything is removed. No is where the cursor starts, and what B does.
@@ -190,10 +193,20 @@ pub fn remove_page(f: &RemoveFacts) -> Page<PfAct> {
         p.title = "Remove this old copy?".to_string();
         p.header = f.names[0].clone();
     }
-    let whose = if one { "Its".to_string() } else { "Their".to_string() };
-    p.paragraphs.push(format!("{whose} saves are backed up first, to {}. If that backup does not work, nothing is removed.", f.saves_place));
-    let freed = if f.bytes > 0 { format!(" This frees {}.", human_bytes(f.bytes)) } else { String::new() };
-    p.paragraphs.push(format!("Then the old {} removed. The copy you use now is not touched.{freed}", if one { "copy is" } else { "copies are" }));
+    if f.links_only {
+        // Only a shortcut to a folder elsewhere goes; no saves are in it, so none are backed up.
+        p.paragraphs.push(format!(
+            "{} only {} to a folder elsewhere, which stays. Only the old {} removed. The copy you use now is not touched.",
+            if one { "It" } else { "They" },
+            if one { "points" } else { "point" },
+            if one { "shortcut is" } else { "shortcuts are" }
+        ));
+    } else {
+        let whose = if one { "Its".to_string() } else { "Their".to_string() };
+        p.paragraphs.push(format!("{whose} saves are backed up first, to {}. If that backup does not work, nothing is removed.", f.saves_place));
+        let freed = if f.bytes > 0 { format!(" This frees {}.", size_text(f.bytes)) } else { String::new() };
+        p.paragraphs.push(format!("Then the old {} removed. The copy you use now is not touched.{freed}", if one { "copy is" } else { "copies are" }));
+    }
     if !one {
         p.facts = f.names.iter().take(6).cloned().collect();
         if f.names.len() > 6 {
@@ -201,7 +214,7 @@ pub fn remove_page(f: &RemoveFacts) -> Page<PfAct> {
         }
     }
     p.options = vec![
-        option(if one { "Yes, remove it" } else { "Yes, remove them" }, "After the saves are backed up", PfAct::Remove),
+        option(if one { "Yes, remove it" } else { "Yes, remove them" }, if f.links_only { "The folder it leads to stays" } else { "After the saves are backed up" }, PfAct::Remove),
         option(if one { "No, keep it" } else { "No, keep them" }, "Nothing is removed", PfAct::Keep),
     ];
     p.options[1].recommended = true;
@@ -279,7 +292,7 @@ impl MovedPort {
 pub fn switched_paragraphs(place: &str, moved: &[MovedPort], bytes: u64, notes: &[String]) -> Vec<String> {
     let mut out = vec![format!("Your ports folder is now {place}.")];
     if !moved.is_empty() {
-        out.push(format!("{} moved there ({}), each one copied and checked. The old copies are kept until you remove them.", plural(moved.len(), "port", "ports"), human_bytes(bytes)));
+        out.push(format!("{} moved there ({}), each one copied and checked. The old copies are kept until you remove them.", plural(moved.len(), "port", "ports"), size_text(bytes)));
     }
     out.extend(moved.iter().filter_map(MovedPort::line));
     out.extend(notes.iter().cloned());
@@ -309,7 +322,7 @@ mod tests {
     }
 
     fn copy(name: &str, state: &str) -> CopyLine {
-        CopyLine { name: name.into(), place: PLACE.into(), bytes: 1_234_000_000, state: state.into(), link_only: false }
+        CopyLine { name: name.into(), drive: "SD card (SD512)".into(), bytes: 1_234_000_000, state: state.into(), link_only: false }
     }
 
     fn all_pages() -> Vec<Page<PfAct>> {
@@ -329,9 +342,9 @@ mod tests {
             old_copies_page(&[copy(LONG, "Ready to remove"), copy("Dusk", "Start it once from its new place"), CopyLine { link_only: true, ..copy("SoH", "Waiting for Steam to update") }]),
             old_copies_page(&[]),
             gone_page(LONG, PLACE),
-            remove_page(&RemoveFacts { names: vec![LONG.into()], bytes: 1_000_000_000, saves_place: "Internal storage > Applications > Deck Ports Manager > Saves Backup".into() }),
-            remove_page(&RemoveFacts { names: vec!["Dusk".into()], bytes: 0, saves_place: "SD card > Saves Backup".into() }),
-            remove_page(&RemoveFacts { names: (0..9).map(|i| format!("Port {i}")).collect(), bytes: 5, saves_place: "x".into() }),
+            remove_page(&RemoveFacts { names: vec![LONG.into()], bytes: 1_000_000_000, saves_place: "Internal storage > Applications > Deck Ports Manager > Saves Backup".into(), links_only: false }),
+            remove_page(&RemoveFacts { names: vec!["Dusk".into()], bytes: 0, saves_place: "SD card > Saves Backup".into(), links_only: true }),
+            remove_page(&RemoveFacts { names: (0..9).map(|i| format!("Port {i}")).collect(), bytes: 5, saves_place: "x".into(), links_only: false }),
             result_page("Ports folder: done", "Ports folder changed", switched_paragraphs(PLACE, &[MovedPort { name: LONG.into(), steam_waiting: true, game_files: 2, inner_links: 1, moved_anyway: true, record_problem: true, steam_problems: 1, ..MovedPort::default() }], 5_000_000_000, &["Dusk stays in the old folder.".into()]), vec![]),
         ]
     }
@@ -382,17 +395,17 @@ mod tests {
         f.room = None;
         assert_eq!(menu_page(&f).facts, ["Not available now. Is the SD card in?"]);
         assert_eq!(menu_page(&f).mark_of(0), Mark::Problem);
+        assert!(!menu_page(&f).options.iter().any(|o| o.action == PfAct::OpenFolder), "nothing to open while it is not there");
+        assert_ne!(menu_page(&facts()).icon_of(2), Icon::Remove, "the old copies card has a neutral picture");
     }
 
     #[test]
     fn each_old_copy_is_a_card_with_its_state_size_and_place() {
         let p = old_copies_page(&[copy("Dusk", "Ready to remove")]);
         assert_eq!(p.options[0].title, "Dusk");
-        assert!(p.options[0].detail.starts_with("Ready to remove, 1.2 GB: SD card"), "{}", p.options[0].detail);
-        assert!(p.options[0].detail.chars().count() <= 66);
-        assert!(p.options[0].detail.ends_with("Wind Waker HD"), "the port's own folder stays: {}", p.options[0].detail);
-        let link = copy_detail(&CopyLine { link_only: true, ..copy("Dusk", "Ready to remove") });
-        assert!(link.starts_with("Ready to remove, frees no space: "), "{link}");
+        assert_eq!(p.options[0].detail, "Ready to remove, 1.2 GB, on SD card (SD512)");
+        let link = copy_detail(&CopyLine { link_only: true, ..copy("Dusk", "Start it once first") });
+        assert_eq!(link, "Start it once first, frees no space, on SD card (SD512)");
         let none = old_copies_page(&[]);
         assert!(none.options.is_empty());
         assert_eq!(action_at(&none, initial_focus(&none)), Some(PfAct::Back));
@@ -400,7 +413,7 @@ mod tests {
 
     #[test]
     fn removing_asks_first_says_where_the_saves_go_and_starts_on_no() {
-        let p = remove_page(&RemoveFacts { names: vec!["Dusk".into()], bytes: 2_000_000_000, saves_place: "Internal storage > Saves Backup".into() });
+        let p = remove_page(&RemoveFacts { names: vec!["Dusk".into()], bytes: 2_000_000_000, saves_place: "Internal storage > Saves Backup".into(), links_only: false });
         assert_eq!(p.title, "Remove the old copy of Dusk?");
         assert_eq!(p.paragraphs[0], "Its saves are backed up first, to Internal storage > Saves Backup. If that backup does not work, nothing is removed.");
         assert!(p.paragraphs[1].contains("The copy you use now is not touched. This frees 2.0 GB."));
@@ -411,12 +424,18 @@ mod tests {
         let many = remove_page(&RemoveFacts { names: (0..8).map(|i| format!("P{i}")).collect(), ..RemoveFacts::default() });
         assert_eq!(many.title, "Remove 8 old copies?");
         assert_eq!(many.facts.last().map(String::as_str), Some("And 2 more."));
+        // Only a shortcut to a folder elsewhere: no saves are backed up, and the page does not say they are.
+        let link = remove_page(&RemoveFacts { names: vec!["Dusk".into()], links_only: true, saves_place: "x".into(), ..RemoveFacts::default() });
+        assert_eq!(link.paragraphs, ["It only points to a folder elsewhere, which stays. Only the old shortcut is removed. The copy you use now is not touched."]);
+        assert_eq!(link.options[0].detail, "The folder it leads to stays");
+        assert!(!link.paragraphs.iter().any(|t| t.contains("backed up")));
     }
 
     #[test]
     fn a_gone_copy_is_forgotten_only_when_asked() {
         let p = gone_page("Dusk", "SD card > Ports > Dusk");
-        assert_eq!(action_at(&p, initial_focus(&p)), Some(PfAct::Keep));
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(PfAct::Forget), "forgetting only drops the app's note");
+        assert!(p.options[0].recommended && p.options[0].detail == "Nothing on the Deck is changed");
         assert_eq!(p.back_hint, "Keep it listed");
         assert!(p.paragraphs[0].contains("not in SD card > Ports > Dusk any more"));
     }

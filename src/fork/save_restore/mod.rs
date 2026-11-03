@@ -793,7 +793,7 @@ pub fn restore(input: &RestoreInput, on_progress: &mut dyn FnMut(&str)) -> Resul
         return Err(RestoreError::Failed(problem));
     }
 
-    on_progress("Backing up your current saves...");
+    on_progress("Backing up your saves now...");
     let (safety, incomplete) = safety_backup(input.port, &targets, input.saves_backup_dir, input.stamp).map_err(RestoreError::SafetyBackupFailed)?;
 
     on_progress("Unpacking the backup...");

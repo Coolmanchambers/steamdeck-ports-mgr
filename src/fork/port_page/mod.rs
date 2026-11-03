@@ -634,7 +634,7 @@ pub fn saves_page(p: &PortFacts, f: &SavesFacts, places: &Places) -> Page<Act> {
         c.next().map(|x| x.to_uppercase().collect::<String>() + c.as_str()).unwrap_or(w)
     });
     let has_files = f.folders.iter().any(|s| s.exists && s.files > 0);
-    let back_up = option("Back up this port now", "Copies its saves into a zip in Saves Backup; nothing is changed", Act::BackUpNow);
+    let back_up = option("Back up this port's saves", "Copies its saves into one backup. Nothing is changed", Act::BackUpNow);
     page.options.push(if has_files { back_up } else { disabled(PageOption { detail: "No saves to copy yet".into(), ..back_up }) });
     let restore = option("Restore", if f.backups == 0 { "No backups of this port yet".to_string() } else { format!("Put an earlier backup back ({})", count(f.backups, "backup", "backups")) }, Act::Restore);
     page.options.push(if f.backups == 0 { disabled(restore) } else { restore });

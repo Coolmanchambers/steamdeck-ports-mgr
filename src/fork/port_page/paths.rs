@@ -85,7 +85,8 @@ pub fn human_path_here(path: &Path) -> String {
 /// without such a path comes back as it was.
 pub fn plain_paths(text: &str, places: &Places) -> String {
     let mut roots: Vec<PathBuf> = places.home.iter().cloned().chain(places.media_roots.iter().cloned()).chain(places.drives.iter().map(|d| d.mount_point.clone())).collect();
-    roots.retain(|r| r.is_absolute() && r.as_os_str().len() > 1);
+    // `has_root`, not `is_absolute`: on Windows "/home/deck" has a root but no drive, and the tests use such paths.
+    roots.retain(|r| r.has_root() && r.as_os_str().len() > 1);
     let text = text.replace(" -- ", ": ");
     let mut out = String::with_capacity(text.len());
     let mut rest = text.as_str();

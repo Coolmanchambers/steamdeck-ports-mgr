@@ -12,7 +12,8 @@
 use crate::fork::art::thumbs::ArtRef;
 use crate::fork::page::{Card, Focus, Mark, Page, PageButton, PageOption};
 use crate::fork::port_mover::old_copies::{OldCopy, Readiness};
-use crate::fork::rom_screens::util::{ellipsize, human_bytes};
+use crate::fork::port_page::paths::size_text;
+use crate::fork::rom_screens::util::ellipsize;
 use crate::fork::port_page::paths::{human_path, plain_paths, Places};
 use std::path::Path;
 
@@ -117,20 +118,33 @@ pub struct Batch {
     pub origin: Origin,
     /// Steam changes waiting, so a "Waiting for Steam" port has a way on from this page.
     pub steam: crate::fork::import::cards::SteamWaiting,
+    /// Where the one old copy is, the human way (Settings > Ports folder > an old copy chosen): said first on the page.
+    pub place: Option<String>,
 }
 
 impl Batch {
     pub fn new(items: Vec<Checked>) -> Batch {
-        Batch { items, origin: Origin::Import, steam: crate::fork::import::cards::SteamWaiting::Nothing }
+        Batch { items, origin: Origin::Import, steam: crate::fork::import::cards::SteamWaiting::Nothing, place: None }
     }
 
     pub fn from(items: Vec<Checked>, origin: Origin) -> Batch {
-        Batch { items, origin, steam: crate::fork::import::cards::SteamWaiting::Nothing }
+        Batch { items, origin, steam: crate::fork::import::cards::SteamWaiting::Nothing, place: None }
     }
 
     pub fn with_steam(mut self, steam: crate::fork::import::cards::SteamWaiting) -> Batch {
         self.steam = steam;
         self
+    }
+
+    pub fn with_place(mut self, place: Option<String>) -> Batch {
+        self.place = place;
+        self
+    }
+
+    /// From the Ports folder (Settings), Remove asks once more on its own page (`ports_folder_pages::remove_page`), so
+    /// this page only says the copies can go.
+    fn asks_again(&self) -> bool {
+        self.origin == Origin::PortsFolder
     }
 
     pub fn removable(&self) -> Vec<&Checked> {
@@ -173,8 +187,8 @@ impl Batch {
         for c in &self.items {
             let size = match &c.check {
                 Ok(_) if c.copy.link_only => "it points to a folder elsewhere, which stays".to_string(),
-                Ok(bytes) => human_bytes(*bytes),
-                Err(_) => human_bytes(c.copy.bytes),
+                Ok(bytes) => size_text(*bytes),
+                Err(_) => size_text(c.copy.bytes),
             };
             lines.push(format!("{}: {} ({size}). {}", c.copy.name, human_path(&c.copy.old_path, places), c.ready.line()));
             if let Err(why) = &c.check {
@@ -231,11 +245,14 @@ impl Batch {
             }
             p.paragraphs.extend(start_note);
             p.options.extend(self.confirm_option());
+            if let Some(place) = &self.place {
+                p.paragraphs.insert(0, format!("The old copy is in {place}."));
+            }
             return p;
         }
         p.title = if n == 1 { "Remove the old copy?".to_string() } else { format!("Remove the {n} old copies?") };
         let freed = self.freed_bytes();
-        let size = if freed > 0 { format!(" The old {} {} {}.", copies(n), if n == 1 { "uses" } else { "use" }, human_bytes(freed)) } else { String::new() };
+        let size = if freed > 0 { format!(" The old {} {} {}.", copies(n), if n == 1 { "uses" } else { "use" }, size_text(freed)) } else { String::new() };
         p.paragraphs = vec![format!("{} from {} new place, so {} old {} can go.{size}", if n == 1 { "This port starts" } else { "These ports start" }, if n == 1 { "its" } else { "their" }, if n == 1 { "its" } else { "their" }, copies(n))];
         p.paragraphs.extend(start_note);
         // Every port is named on its status line, so no cover row: the page fits a 7 inch screen without scrolling.
@@ -245,6 +262,14 @@ impl Batch {
             PageOption { title: remove.to_string(), detail: if one { "Its saves are backed up first".to_string() } else { "Only the ready ones. Their saves are backed up first".to_string() }, choice: None, enabled: true, recommended: false, action: BatchAction::Remove },
         ];
         p.options.extend(self.confirm_option());
+        if self.asks_again() {
+            // The question is asked once, on the page Remove opens; this one only says they can go.
+            p.title = if n == 1 { "This old copy can go".to_string() } else { "These old copies can go".to_string() };
+            p.options[1].detail = format!("Asks once more, and says where {} saves go", if n == 1 { "its" } else { "their" });
+        }
+        if let Some(place) = &self.place {
+            p.paragraphs.insert(0, format!("The old copy is in {place}."));
+        }
         p
     }
 }
@@ -434,6 +459,17 @@ mod tests {
     }
 
     #[test]
+    fn from_the_ports_folder_the_page_only_says_it_can_go_and_names_its_place() {
+        let p = Batch::from(vec![ok("Dusklight", 3_000_000_000)], Origin::PortsFolder).with_place(Some("Internal storage > Games > Dusklight".into())).page();
+        assert_eq!(p.title, "This old copy can go");
+        assert_eq!(p.paragraphs[0], "The old copy is in Internal storage > Games > Dusklight.");
+        assert_eq!((p.options[1].title.as_str(), p.options[1].detail.as_str()), ("Remove it", "Asks once more, and says where its saves go"));
+        let two = Batch::from(vec![ok("A", 1), ok("B", 1)], Origin::PortsFolder).page();
+        assert_eq!(two.title, "These old copies can go");
+        assert_eq!(Batch::new(vec![ok("A", 1)]).page().title, "Remove the old copy?", "Import asks on this page, as before");
+    }
+
+    #[test]
     fn one_old_copy_reads_in_the_singular() {
         let p = Batch::new(vec![ok("Dusklight", 3_000_000_000)]).page();
         assert_eq!(p.options[1].detail, "Its saves are backed up first");
@@ -497,7 +533,7 @@ mod tests {
         let places = Places { home: Some("/home/deck".into()), ..Places::default() };
         let text = b.details_text(&places, Path::new("/home/deck/Apps/dpm/Saves Backup"));
         assert!(text.contains("Dusklight: Internal storage > Games > Dusklight (3.0 GB). Ready to remove"), "{text}");
-        assert!(text.contains("SoH: ") && text.contains("(5 B)") && text.contains("Kept: Steam shortcuts still point into it"), "{text}");
+        assert!(text.contains("SoH: ") && text.contains("(5 bytes)") && text.contains("Kept: Steam shortcuts still point into it"), "{text}");
         assert!(text.contains("saves are backed up to Internal storage > Apps > dpm > Saves Backup"), "{text}");
         assert!(!text.contains("~/") && !text.contains("/home/") && !text.contains("zip"), "{text}");
         assert!(text.contains("Settings, Ports folder, Old copies"), "{text}");

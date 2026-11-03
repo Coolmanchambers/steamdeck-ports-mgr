@@ -5,7 +5,7 @@
 //! them. Plain words, no file paths.
 
 use crate::fork::page::{Focus, Page, PageButton, PageOption, LEFT};
-use crate::fork::rom_screens::util::human_bytes;
+use crate::fork::port_page::paths::size_text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FolderAction {
@@ -126,11 +126,14 @@ pub fn move_page(f: &MoveFacts) -> Page<FolderAction> {
     let fits = f.free.is_none_or(|free| free >= f.needed);
     if !fits {
         let mut p = base("Ports folder: not enough room", "Not enough room there");
-        p.paragraphs = vec![format!("Your {} need {}, and that place has {} free.", ports(f.ports), human_bytes(f.needed), human_bytes(f.free.unwrap_or(0)))];
-        p.options = vec![
-            option("Pick another place", "", FolderAction::PickAnother, true),
-            option("Use it without moving my ports", "They stay where they are and show as not installed", FolderAction::LeaveThem, false),
-        ];
+        p.paragraphs = vec![format!("Your {} need {}, and that place has {} free.", ports(f.ports), size_text(f.needed), size_text(f.free.unwrap_or(0)))];
+        p.options = vec![option("Pick another place", "", FolderAction::PickAnother, true)];
+        // A copy kept earlier sits where a port would go: using the place without moving would use that old copy.
+        if f.stale {
+            p.paragraphs.push("A copy you kept earlier is already there, so that place can only be used once your ports are moved into it.".to_string());
+        } else {
+            p.options.push(option("Use it without moving my ports", "They stay where they are and show as not installed", FolderAction::LeaveThem, false));
+        }
         back_button(&mut p);
         p.initial = Focus::Option(0);
         return p;
@@ -146,8 +149,8 @@ pub fn move_page(f: &MoveFacts) -> Page<FolderAction> {
     let mut p = base("Ports folder: move your ports", &format!("Move your {} there?", ports(f.ports)));
     p.paragraphs = vec!["Each one is copied and checked first. The old copies are kept until you choose to remove them.".to_string()];
     p.facts = vec![match f.free {
-        Some(free) => format!("About {}. {} free there.", human_bytes(f.bytes), human_bytes(free)),
-        None => format!("About {}.", human_bytes(f.bytes)),
+        Some(free) => format!("About {}. {} free there.", size_text(f.bytes), size_text(free)),
+        None => format!("About {}.", size_text(f.bytes)),
     }];
     p.options = vec![
         option("Move them", "", FolderAction::MoveThem, true),
@@ -170,6 +173,16 @@ pub fn game_file_page(port: &str, problem: &str, more: usize) -> Page<FolderActi
         option("Move anyway", "Copy it without that file", FolderAction::MoveAnyway, false),
     ];
     back_button(&mut p);
+    p.initial = Focus::Option(0);
+    p
+}
+
+/// The same question for a port whose kept old copy already sits in the new place: it cannot be skipped (the place
+/// would then use that old copy), so the choices are moving it anyway or another place.
+pub fn game_file_page_kept_copy(port: &str, problem: &str, more: usize) -> Page<FolderAction> {
+    let mut p = game_file_page(port, problem, more);
+    p.paragraphs.push("A copy you kept earlier is already in the new place, so this port cannot stay behind.".to_string());
+    p.options = vec![option("Pick another place", "", FolderAction::PickAnother, true), option("Move anyway", "Copy it without that file", FolderAction::MoveAnyway, false)];
     p.initial = Focus::Option(0);
     p
 }
@@ -278,10 +291,10 @@ mod tests {
         assert_eq!(p.title, "Move your 3 ports there?");
         assert_eq!(actions(&p), [FolderAction::MoveThem, FolderAction::LeaveThem]);
         assert!(p.options[0].recommended && p.initial == Focus::Option(0));
-        assert!(p.facts[0].starts_with("About 33") && p.facts[0].contains("free there"), "{:?}", p.facts);
+        assert_eq!(p.facts, ["About 34 MB. 900 GB free there."]);
         assert!(all_text(&p).contains("copied and checked first") && all_text(&p).contains("kept until you choose to remove them"));
         assert_eq!(move_page(&facts(1, None)).title, "Move your 1 port there?");
-        assert_eq!(move_page(&facts(1, None)).facts, ["About 33.5 MB."]);
+        assert_eq!(move_page(&facts(1, None)).facts, ["About 34 MB."]);
         assert_eq!(p.window_title, "Setup wizard: Ports folder: move your ports");
         assert_eq!((p.step_text.as_str(), p.step_count), ("Step 1 of 5", 5));
     }
@@ -290,7 +303,7 @@ mod tests {
     fn not_enough_room_says_how_much_and_offers_another_place_or_leaving_the_ports() {
         let p = move_page(&facts(2, Some(10_000_000)));
         assert_eq!(p.title, "Not enough room there");
-        assert!(p.paragraphs[0].contains("2 ports need") && p.paragraphs[0].contains("10.0 MB free"), "{:?}", p.paragraphs);
+        assert!(p.paragraphs[0].contains("2 ports need") && p.paragraphs[0].contains("10 MB free"), "{:?}", p.paragraphs);
         assert_eq!(actions(&p), [FolderAction::PickAnother, FolderAction::LeaveThem]);
         assert!(!actions(&p).contains(&FolderAction::MoveThem), "a move that cannot fit is not offered");
     }
@@ -369,6 +382,29 @@ mod tests {
         let replacing = all_text(&moving_page(&names, "", false, true));
         assert!(!replacing.contains("Nothing is deleted") && !replacing.contains("Nothing is changed"), "{replacing}");
         assert!(replacing.contains("replaced first") && replacing.contains("saves are backed up") && replacing.contains("The copy in progress is removed"));
+    }
+
+    #[test]
+    fn a_kept_copy_in_the_way_never_offers_using_the_place_without_moving() {
+        // Not enough room and a kept old copy at the new place: using it without moving would use that old copy.
+        let mut f = facts(2, Some(10_000_000));
+        f.stale = true;
+        let p = move_page(&f);
+        assert_eq!(p.title, "Not enough room there");
+        assert_eq!(actions(&p), [FolderAction::PickAnother]);
+        assert!(all_text(&p).contains("A copy you kept earlier is already there"));
+        f.free = Some(900_000_000_000);
+        assert!(!actions(&move_page(&f)).contains(&FolderAction::LeaveThem));
+        f.free = None;
+        assert!(!actions(&move_page(&f)).contains(&FolderAction::LeaveThem), "unknown room too");
+        // Its game file question cannot skip it either.
+        let q = game_file_page_kept_copy("Dusk", "x.", 0);
+        assert_eq!(actions(&q), [FolderAction::PickAnother, FolderAction::MoveAnyway]);
+        assert!(!actions(&q).contains(&FolderAction::SkipPort));
+        // Without a kept copy the old choices stay.
+        let mut ok = facts(2, Some(10_000_000));
+        ok.stale = false;
+        assert_eq!(actions(&move_page(&ok)), [FolderAction::PickAnother, FolderAction::LeaveThem]);
     }
 
     fn every_page() -> Vec<Page<FolderAction>> {

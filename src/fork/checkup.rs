@@ -582,7 +582,12 @@ fn ports_folder(f: &Facts) -> Outcome {
         Folder::Gone => problem(Mark::Problem, "The folder is gone. It may have been moved, renamed or deleted.".into(), all, Fix::PortsFolderGone, "Find the ports folder"),
         Folder::NotAFolder => problem(Mark::Problem, "Something that is not a folder has its name.".into(), all, Fix::PortsFolderGone, "Find the ports folder"),
         Folder::Here if !f.unfinished_moves.is_empty() => {
-            problem(Mark::ToDo, format!("A move did not finish: {}", names(&f.unfinished_moves)), Vec::new(), Fix::PortsFolderMenu, "Finish the move")
+            // The same words as the Ports folder page's card.
+            let label = match f.unfinished_moves.as_slice() {
+                [one] => crate::fork::rom_screens::util::ellipsize(&format!("Finish switching {one}"), 40),
+                many => format!("Finish switching {} ports", many.len()),
+            };
+            problem(Mark::ToDo, format!("A move did not finish: {}", names(&f.unfinished_moves)), Vec::new(), Fix::PortsFolderMenu, &label)
         }
         Folder::Here => Outcome::Ok("Found".to_string()),
     }

@@ -155,7 +155,9 @@ pub(crate) fn result_page(app: &Rc<AppState>, router: &Router, text: &str, origi
 }
 
 fn ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: String, then: Then) {
-    let batch = Rc::new(Batch::from(batch.items.clone(), batch.origin).with_steam(steam_waiting(app)));
+    // From the Ports folder, one old copy chosen: its page says where it is.
+    let place = (batch.origin == Origin::PortsFolder && batch.items.len() == 1).then(|| crate::fork::port_page::paths::human_path_here(&batch.items[0].copy.old_path));
+    let batch = Rc::new(Batch::from(batch.items.clone(), batch.origin).with_steam(steam_waiting(app)).with_place(place));
     // Whichever way the page is left, the closing step runs once.
     show_ask(app, router, batch, Rc::new(summary), then, Rc::new(Cell::new(false)));
 }
@@ -187,7 +189,7 @@ fn show_ask(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc<S
                 }
                 BatchAction::Remove => {
                     // Fork (ports folder pages): from Settings, a yes/no page first that says where the saves go.
-                    if batch.origin == Origin::PortsFolder && !crate::app::setup_wizard_screen::active() {
+                    if batch.origin == Origin::PortsFolder {
                         return ask_remove(app, router, batch.clone(), summary.clone(), then.clone(), done.clone());
                     }
                     if done.replace(true) {
@@ -242,6 +244,7 @@ fn ask_remove(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc
         names: removable.iter().map(|c| c.copy.name.clone()).collect(),
         bytes: batch.freed_bytes(),
         saves_place: crate::fork::port_page::paths::human_path_here(&saves),
+        links_only: !removable.is_empty() && removable.iter().all(|c| c.copy.link_only),
     };
     let again: Rc<dyn Fn(&Rc<AppState>, &Router)> = {
         let (batch, summary, then, done) = (batch.clone(), summary.clone(), then.clone(), done.clone());
@@ -361,7 +364,7 @@ fn remove_all(app: &Rc<AppState>, router: &Router, batch: Rc<Batch>, summary: Rc
             lines.push(match old_copies::remove(&entry, &ctx, &backup) {
                 Ok(removed) => {
                     let backed = if removed.saves_zip.is_some() { " Its saves were backed up first." } else { "" };
-                    format!("Removed the old copy of {} ({} freed).{backed}", entry.name, human_bytes(removed.bytes))
+                    format!("Removed the old copy of {} ({} freed).{backed}", entry.name, size_text(removed.bytes))
                 }
                 Err(e) => format!("The old copy of {} was kept: {}", entry.name, crate::fork::port_page::paths::plain_paths_here(&e)),
             });

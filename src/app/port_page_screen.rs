@@ -796,7 +796,7 @@ fn on_act(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
 
 // -- The actions that run work --------------------------------------------------------------------------------
 
-/// "Back up this port now": the save finder's backup (`backup_before_update`, into Saves Backup / Update Backups), on a
+/// "Back up this port's saves": the save finder's backup (`backup_before_update`, into Saves Backup / Update Backups), on a
 /// worker; B waits for its answer.
 fn back_up(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, port: &Port) {
     if super::save_restore_screen::refuse_while_restoring(app, router) {
@@ -806,7 +806,7 @@ fn back_up(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, port: &Port) {
     let (backups, port2) = (app.paths.saves_backup_dir.clone(), port.clone());
     let stamp = crate::fork::store::backup_stamp();
     let job = Rc::new(Background::spawn(move |ctl| crate::core::save_backup::backup_before_update(&port2, &backups, &dir, &stamp, &mut |t| ctl.set_progress(t.to_string()))));
-    let mut page = model::notice_page(&port_facts(app, s, port), Card::Saves, "Backing up...", vec!["Copying the saves into a zip. Nothing is changed.".into()]).with_progress(None);
+    let mut page = model::notice_page(&port_facts(app, s, port), Card::Saves, "Backing up...", vec!["Copying the saves into one backup. Nothing is changed.".into()]).with_progress(None);
     page.no_back = true;
     page.buttons = [None, None, None, None];
     show_built(app, router, s, Screen::Working(Card::Saves), page);

@@ -5,7 +5,6 @@
 
 use super::ports_folder::Missing;
 use super::rom_screens::util::ellipsize;
-use std::path::Path;
 
 /// What choosing a row does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,11 +41,11 @@ impl ListModel {
     }
 }
 
-/// "Ports folder not available" at startup or after Try again.
-pub fn missing(dir: &Path, why: &Missing, again: bool) -> ListModel {
+/// "Ports folder not available" at startup or after Try again. `place` is the folder the human way ("SD card > Ports").
+pub fn missing(place: &str, why: &Missing, again: bool) -> ListModel {
     let mut m = ListModel::default();
     m.push(if again { "Still not there. Your ports folder:" } else { "Your ports folder is not available:" }, Act::Info);
-    m.push(format!("  {}", ellipsize(&dir.to_string_lossy(), 70)), Act::Info);
+    m.push(format!("  {}", ellipsize(place, 70)), Act::Info);
     let (question, retry) = match why {
         Missing::DriveNotMounted(_) => ("Is the SD card in?", "Try again (the card is in now)"),
         Missing::FolderGone => ("Was it moved, renamed or deleted?", "Try again"),
@@ -76,7 +75,8 @@ mod tests {
 
     #[test]
     fn the_missing_folder_list() {
-        let m = missing(Path::new("/run/media/deck/SD/Ports"), &Missing::DriveNotMounted(PathBuf::from("/run/media/deck/SD")), false);
+        let m = missing("SD card > Ports", &Missing::DriveNotMounted(PathBuf::from("/run/media/deck/SD")), false);
+        assert_eq!(m.labels[1], "  SD card > Ports");
         assert_eq!(m.labels[m.select], "Try again (the card is in now)");
         assert_eq!(m.labels[2], "Is the SD card in?");
         assert_eq!(m.row_of(Act::Quit), Some(m.labels.len() - 1));
