@@ -147,7 +147,7 @@ pub(super) fn show_link_first(app: &Rc<AppState>, router: &Router, ctx: &Ctx, sc
 
 /// Details of the found page: where it looked, what it left out, the folders said not to be ports (with a way to
 /// ask again) and the scan folders.
-fn show_details(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen) {
+pub(super) fn show_details(app: &Rc<AppState>, router: &Router, ctx: &Ctx, screen: Screen) {
     let ignored = ignored_now(app);
     let notes = {
         let s = screen.borrow();

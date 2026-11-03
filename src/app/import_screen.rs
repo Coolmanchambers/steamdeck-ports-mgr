@@ -791,7 +791,8 @@ fn folders_back(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: &Rc<Folde
         let folders = state.screen.borrow().folders.clone();
         return start_scan(app, router, ctx, folders);
     }
-    super::import_cards_screen::show_found(app, router, ctx, state.main.clone());
+    // Fork (game files settings): up one level, to the Details page that opened it (was the found page, two levels up).
+    super::import_cards_screen::show_details(app, router, ctx, state.main.clone());
 }
 
 /// Fork (game files settings): "Where to look for ports" as a page of cards with On / Off switches (was the "Scan
