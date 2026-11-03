@@ -434,9 +434,13 @@ pub fn install_extra(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMu
     let merge_root = extract_to_staging(&archive_path, staging.path(), None)?;
     // Fork (port dialogs): from here on files in the port's folder are replaced, so a failure after this line may have changed
     // some of them; the extras page says "Nothing was changed" only for a failure before it.
-    on_progress("Putting the extra files in place...");
+    on_progress(EXTRA_PLACING);
     merge_into(&merge_root, &dest_dir).install_err()
 }
+
+// Fork (port dialogs): the progress line `install_extra` sends just before files in the port's folder are replaced; the app
+// matches on this constant, not on a copy of the words.
+pub const EXTRA_PLACING: &str = "Putting the extra files in place...";
 
 #[derive(Clone, Copy)]
 pub struct InstallPaths<'a> {

@@ -322,7 +322,7 @@ Files added by this fork:
 | 2026-11-03 | `src/app/events.rs` | Port dialogs: `VersionsFetched`, `VersionsFetchError` and `ExtraInstallDone` go to `port_actions_screen::{versions_fetched, extras_done}` (pages) instead of the "Choose a version" picker and the "Error" and "Extras" message dialogs; `json_field_labels` removed |
 | 2026-11-03 | `src/main.rs`, `src/app/mod.rs`, `src/fork/mod.rs` | Port dialogs: the list row's update button calls `open_updates_row`; module lines for `play_screen`, `port_actions_screen` and `play_pages` |
 | 2026-11-03 | `ui/app-window.slint` | Port dialogs: the orange list-row button that stood for "updates are off" says "Updates off" (it was a struck-through "Update") and opens the Updates page, so the row's button and the Port page's "Update now" can never mean different things |
-| 2026-11-03 | `src/core/installer.rs` | Port dialogs: `install_extra` reports "Putting the extra files in place..." just before `merge_into` (one line), so the extras page can say "Nothing was changed" only for a failure before it |
+| 2026-11-03 | `src/core/installer.rs` | Port dialogs: `install_extra` reports `EXTRA_PLACING` ("Putting the extra files in place...", a pub const the app matches on) just before `merge_into`, so the extras page can say "Nothing was changed" only for a failure before it |
 | 2026-11-03 | `tools/smoke-test.sh` | Port dialogs: the Port page check goes on from Program to start to More > All details (opens, B returns), the page that replaced the Info dialog |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)

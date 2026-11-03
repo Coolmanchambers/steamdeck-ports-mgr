@@ -208,7 +208,7 @@ fn run_extras(app: &Rc<AppState>, router: &Router, port: Port, card: Card, back:
         // The install says when it starts putting files in place; a failure after that may have changed some of them.
         let partway = Cell::new(false);
         let mut on_progress = |line: &str| {
-            if line.starts_with("Putting the extra files in place") {
+            if line == crate::core::installer::EXTRA_PLACING {
                 partway.set(true);
             }
         };
@@ -223,7 +223,7 @@ pub(crate) fn extras_done(app: &Rc<AppState>, router: &Router, key: &str, result
     free(app, key);
     let pending = EXTRAS.with(|e| e.borrow_mut().remove(key));
     if let Err(raw) = &result {
-        eprintln!("extras: the install for {key} failed: {raw}");
+        eprintln!("extras: the install for {key} failed: {}", raw.trim_start_matches(pages::PARTWAY));
     }
     let close: Back = Rc::new(|app, router| close_current_dialog(app, router));
     let (name, back) = match pending {
