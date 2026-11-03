@@ -319,8 +319,10 @@ if [ "$alive" = yes ]; then
             check "a card of the Port page opens its own page (Program to start)" '[ -n "$pc" ]'
             press_keys "$(find_window '^Deck Ports Manager: Port: ')" Escape; sleep 1.2
             check "B on a card page returns to the Port page" '[ -z "$(xdotool search --onlyvisible --name ": Program to start$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Port: " 2>/dev/null)" ]'
-            # More (the last card; the cursor is back on Program to start) > All details (the second option) is a page of plain
-            # summary lines, and B goes back to More. It replaced upstream's Info dialog.
+            # More is the 11th and last card of the Port page (Play, Fix, Program, Saves, Settings, Game files, Steam, Updates,
+            # Files, Uninstall, More) and the cursor is back on the 3rd (Program to start), so 8 Downs reach it; the window title
+            # check below says whether they did. All details (the second option of More) is a page of plain summary lines, and B
+            # goes back to More. It replaced upstream's Info dialog.
             press_keys "$(find_window '^Deck Ports Manager: Port: ')" Down Down Down Down Down Down Down Down Return; sleep 1.5
             check "More opens its page" '[ -n "$(xdotool search --onlyvisible --name ": More$" 2>/dev/null)" ]'
             press_keys "$(find_window ': More$')" Down Return; sleep 1.5

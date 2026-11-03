@@ -106,11 +106,14 @@ pub(crate) fn open_favorite_exe_picker(app: &Rc<AppState>, router: &Router, port
     }
     let key = port.key().to_string();
     let dir = game_dir.clone();
+    // The program remembered now is shown as chosen (or "Ask every time" when none is).
+    let current = app.state.borrow().get(port.key()).and_then(|i| i.favorite_exe.clone());
+    let chosen = current.as_deref().and_then(|cur| candidates.iter().position(|c| crate::fork::program_detect::relative_pick(&game_dir, c).as_deref() == Some(cur)));
     let picked: super::play_screen::Picked = Rc::new(move |app, _, exe| {
         let exe = exe.and_then(|p| crate::fork::program_detect::relative_pick(&dir, &p));
         app.state.borrow_mut().set_favorite_exe(&key, exe);
     });
-    super::play_screen::choose_program(app, router, &port, &game_dir, candidates, true, picked);
+    super::play_screen::choose_program(app, router, &port, &game_dir, candidates, crate::fork::play_pages::Ask::Offer { chosen }, picked);
 }
 
 /// True when the program was started.
@@ -195,7 +198,7 @@ pub(crate) fn launch_installed(app: &Rc<AppState>, router: &Router, port: &Port)
                     }
                 }
             });
-            super::play_screen::choose_program(app, router, port, &game_dir, candidates, false, picked);
+            super::play_screen::choose_program(app, router, port, &game_dir, candidates, crate::fork::play_pages::Ask::Never, picked);
         }
         Err(ExecutableSelectionError::NotFound) => super::play_screen::could_not_start(app, router, port, Problem::NoProgram),
     }

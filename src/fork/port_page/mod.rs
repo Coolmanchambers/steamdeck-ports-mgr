@@ -776,7 +776,7 @@ pub fn updates_page(p: &PortFacts) -> Page<Act> {
         }
         page.options.push(o);
     }
-    let check = option("Check for an update now", "Asks GitHub or GitLab once", Act::CheckNow);
+    let check = option("Look for an update now", "Asks GitHub or GitLab once", Act::CheckNow);
     page.options.push(if p.tracks_releases && p.update_check != UpdateCheck::Checking { check } else { disabled(check) });
     let toggle = option("Check for updates", "Look for new versions of this port when you start it", Act::ToggleUpdates);
     let switch_at = page.options.len();
@@ -786,6 +786,16 @@ pub fn updates_page(p: &PortFacts) -> Page<Act> {
     page.options.push(if p.tracks_releases { select } else { disabled(select) });
     if p.has_extra {
         page.options.push(option("Install extras", "The extra files the catalog lists for this port", Act::InstallExtras));
+    }
+    page
+}
+
+/// The Updates page with the cursor on its "Check for updates" switch: the list row's "Updates off" button leads here, and
+/// the switch is what the user came for.
+pub fn updates_page_at_switch(p: &PortFacts) -> Page<Act> {
+    let mut page = updates_page(p);
+    if let Some(i) = page.options.iter().position(|o| o.action == Act::ToggleUpdates && o.enabled) {
+        page.initial = Focus::Option(i);
     }
     page
 }

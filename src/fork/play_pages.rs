@@ -85,30 +85,35 @@ pub fn wont_start_reason(kind: std::io::ErrorKind, os_error: Option<i32>) -> Str
     }
 }
 
-/// "Could not start <name>": what is wrong, and the ways to put it right. `needs_files`: the port names game files, so
-/// connecting them is one of the ways.
-pub fn could_not_start_page(name: &str, art: &Option<ArtRef>, problem: &Problem, needs_files: bool) -> Page<PlayAct> {
-    let mut p = base(name, art, &could_not_start_title(name));
-    let mut reinstall = true;
-    p.paragraphs.push(match problem {
-        Problem::FolderGone => format!("{name}'s folder is not there any more. It may have been moved, or the SD card it was on is out."),
-        Problem::ProgramGone(file) => format!("The program it starts, {file}, is not there. The game files may be missing or incomplete."),
-        Problem::NoProgram => "No program was found in its folder. The game files may be missing or incomplete.".to_string(),
-        Problem::BadFolderName => {
-            reinstall = false;
-            "The folder name in the port list is not one this app can use, so it cannot be started. Its entry in the port list needs fixing.".to_string()
-        }
-        Problem::WontStart { file, why } => format!("The system would not start {file}. {why}"),
-    });
-    if reinstall {
-        p.options.push(recommended(option("Reinstall", "Downloads it again; saves in its folder are backed up first", PlayAct::Reinstall)));
+/// "Could not start <name>": what is wrong, and the ways to put it right. The name is in the header (no cover card: it
+/// would only repeat it and push the choices down); B and the footer's Back leave. `needs_files`: the port names game files,
+/// so connecting them is one of the ways.
+pub fn could_not_start_page(name: &str, problem: &Problem, needs_files: bool) -> Page<PlayAct> {
+    let mut p = base(name, &None, &could_not_start_title(name));
+    p.card = None;
+    let (paragraph, reinstall) = match problem {
+        Problem::FolderGone => (format!("{name}'s folder is not there any more. It may have been moved, or the SD card it was on is out."), Some("Downloads it again")),
+        Problem::ProgramGone(file) => (format!("The program it starts, {file}, is not there. Part of the port is missing or incomplete. Reinstalling puts it back."), Some(WITH_SAVES)),
+        Problem::NoProgram => ("No program was found in its folder. Part of the port is missing or incomplete. Reinstalling puts it back.".to_string(), Some(WITH_SAVES)),
+        Problem::BadFolderName => ("The folder name in the port list is not one this app can use, so it cannot be started. Its entry in the port list needs fixing.".to_string(), None),
+        Problem::WontStart { file, why } => (format!("The system would not start {file}. {why}"), Some(WITH_SAVES)),
+    };
+    p.paragraphs.push(paragraph);
+    if let Some(detail) = reinstall {
+        p.options.push(recommended(option("Reinstall", detail, PlayAct::Reinstall)));
     }
     if needs_files {
         p.options.push(option("Game files", "Find the game files it needs and connect them", PlayAct::GameFiles));
     }
-    p.options.push(option("Back", "Closes this page", PlayAct::Back));
+    p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Back".to_string(), action: PlayAct::Back });
+    if p.options.is_empty() {
+        p.initial = Focus::Button(crate::fork::page::LEFT);
+    }
     p.b_does(&PlayAct::Back)
 }
+
+/// Reinstall's detail when the port's folder is there (its saves are backed up before anything changes).
+const WITH_SAVES: &str = "Downloads it again; saves in its folder are backed up first";
 
 // -- Which program ------------------------------------------------------------------------------------------------------
 
@@ -157,10 +162,19 @@ pub fn likely_program(game_dir: &Path, candidates: &[PathBuf], folder: &str, nam
     }
 }
 
-/// "Which program starts <name>?": one option per program (file name, then its folder), the likely one recommended.
-/// `ask_every_time`: Fix problems and Port options may also leave it unchosen (Play then asks each time); Play's own
-/// question has no such answer. `hidden`: programs beyond the list's end.
-pub fn which_program_page(name: &str, art: &Option<ArtRef>, choices: &[ProgramChoice], likely: Option<usize>, ask_every_time: bool) -> Page<PlayAct> {
+/// Whether the question may be left open, and what is chosen now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// Play's own question: a program must be picked (nothing is chosen yet, and "Ask every time" is not an answer).
+    Never,
+    /// Fix problems and Port options: "Ask every time" is an answer too. `chosen`: the program remembered now (`None`: Play
+    /// asks every time); the options show it as chosen, like the Program card does.
+    Offer { chosen: Option<usize> },
+}
+
+/// "Which program starts <name>?": one option per program (file name, then its folder), the likely one recommended. `ask`:
+/// Fix problems and Port options may also leave it open (Play then asks each time); Play's own question has no such answer.
+pub fn which_program_page(name: &str, art: &Option<ArtRef>, choices: &[ProgramChoice], likely: Option<usize>, ask: Ask) -> Page<PlayAct> {
     let full = format!("Which program starts {name}?");
     let title = if full.chars().count() <= TITLE_FIT { full } else { "Which program should start?".to_string() };
     let mut p = base(name, art, &title);
@@ -168,16 +182,23 @@ pub fn which_program_page(name: &str, art: &Option<ArtRef>, choices: &[ProgramCh
     for (i, c) in choices.iter().take(MAX_PROGRAMS).enumerate() {
         let mut o = option(&ellipsize(&c.file, 40), &ellipsize(&c.place, 66), PlayAct::Program(i));
         o.recommended = likely == Some(i);
+        if let Ask::Offer { chosen } = ask {
+            o.choice = Some(chosen == Some(i));
+        }
         p.options.push(o);
     }
     if choices.len() > MAX_PROGRAMS {
         p.footnote = format!("{} more programs are not shown (the ones deepest in its folders).", choices.len() - MAX_PROGRAMS);
     }
-    if ask_every_time {
-        p.options.push(option("Ask every time", "Play asks which program to start each time", PlayAct::AskEveryTime));
+    let mut start = likely;
+    if let Ask::Offer { chosen } = ask {
+        let mut o = option("Ask every time", "Play asks which program to start each time", PlayAct::AskEveryTime);
+        o.choice = Some(chosen.is_none());
+        p.options.push(o);
+        start = chosen.or(likely);
     }
     p.buttons[crate::fork::page::LEFT] = Some(PageButton { label: "Back".to_string(), action: PlayAct::Back });
-    p.initial = Focus::Option(likely.filter(|i| *i < MAX_PROGRAMS).unwrap_or(0));
+    p.initial = Focus::Option(start.filter(|i| *i < MAX_PROGRAMS).unwrap_or(0));
     p.b_does(&PlayAct::Back)
 }
 
@@ -216,11 +237,11 @@ mod tests {
         for name in NAMES {
             for problem in problems() {
                 for needs in [false, true] {
-                    pages.push(could_not_start_page(name, &None, &problem, needs));
+                    pages.push(could_not_start_page(name, &problem, needs));
                 }
             }
             let choices = choices_of(&candidates(), &places());
-            for ask in [false, true] {
+            for ask in [Ask::Never, Ask::Offer { chosen: None }, Ask::Offer { chosen: Some(1) }] {
                 pages.push(which_program_page(name, &None, &choices, Some(0), ask));
                 pages.push(which_program_page(name, &None, &choices, None, ask));
             }
@@ -234,7 +255,7 @@ mod tests {
     fn every_page_fits_with_the_longest_real_names_and_paths() {
         for p in all_pages() {
             assert!(p.title.chars().count() <= TITLE_FIT, "title too long ({}): {}", p.title.chars().count(), p.title);
-            assert!(p.card.as_ref().is_some_and(|c| NAMES.contains(&c.title.as_str())), "the card names the port in full");
+            assert!(p.header.is_empty() || NAMES.contains(&p.header.as_str()), "the header names the port in full");
             for o in &p.options {
                 assert!(o.title.chars().count() <= 40, "{:?}: option title too long: {}", p.title, o.title);
                 assert!(o.detail.chars().count() <= 66, "{:?}: detail too long ({}): {}", p.title, o.detail.chars().count(), o.detail);
@@ -263,33 +284,45 @@ mod tests {
 
     #[test]
     fn could_not_start_offers_reinstall_game_files_and_back() {
-        let p = could_not_start_page("Dusklight", &None, &Problem::ProgramGone("dusk.sh".into()), true);
-        assert_eq!(p.paragraphs, ["The program it starts, dusk.sh, is not there. The game files may be missing or incomplete."]);
+        let p = could_not_start_page("Dusklight", &Problem::ProgramGone("dusk.sh".into()), true);
+        assert_eq!(p.paragraphs, ["The program it starts, dusk.sh, is not there. Part of the port is missing or incomplete. Reinstalling puts it back."]);
         let opts: Vec<(&str, &str)> = p.options.iter().map(|o| (o.title.as_str(), o.detail.as_str())).collect();
-        assert_eq!(
-            opts,
-            [("Reinstall", "Downloads it again; saves in its folder are backed up first"), ("Game files", "Find the game files it needs and connect them"), ("Back", "Closes this page")]
-        );
-        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [PlayAct::Reinstall, PlayAct::GameFiles, PlayAct::Back]);
+        assert_eq!(opts, [("Reinstall", "Downloads it again; saves in its folder are backed up first"), ("Game files", "Find the game files it needs and connect them")]);
+        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [PlayAct::Reinstall, PlayAct::GameFiles]);
+        assert_eq!(p.buttons[crate::fork::page::LEFT].as_ref().map(|b| (b.label.as_str(), b.action)), Some(("Back", PlayAct::Back)), "B and the footer leave; no Back option repeats them");
         assert!(p.options[0].recommended);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(PlayAct::Reinstall));
         assert_eq!(p.back_hint, "Back");
         assert_eq!(p.window_title, "Play: Dusklight");
-        assert_eq!(p.card.as_ref().unwrap().title, "Dusklight");
+        assert!(p.card.is_none(), "no empty cover card repeating the name");
+        assert_eq!(p.header, "Dusklight");
+    }
+
+    #[test]
+    fn the_reinstall_detail_fits_the_cause() {
+        let gone = could_not_start_page("Dusklight", &Problem::FolderGone, false);
+        assert_eq!(gone.options[0].detail, "Downloads it again", "no folder, so no saves to speak of");
+        assert!(gone.paragraphs[0].starts_with("Dusklight's folder is not there any more."));
+        for p in [Problem::NoProgram, Problem::ProgramGone("x".into())] {
+            let page = could_not_start_page("Dusklight", &p, false);
+            assert!(page.paragraphs[0].contains("Part of the port is missing or incomplete. Reinstalling puts it back."), "{:?}", page.paragraphs);
+            assert!(!page.paragraphs[0].contains("game files"), "game files means the ROM here");
+            assert!(page.options[0].detail.contains("saves in its folder are backed up first"));
+        }
     }
 
     #[test]
     fn game_files_are_offered_only_to_a_port_that_names_some() {
-        let p = could_not_start_page("Dusklight", &None, &Problem::FolderGone, false);
-        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [PlayAct::Reinstall, PlayAct::Back]);
+        let p = could_not_start_page("Dusklight", &Problem::FolderGone, false);
+        assert_eq!(p.options.iter().map(|o| o.action).collect::<Vec<_>>(), [PlayAct::Reinstall]);
     }
 
     #[test]
     fn a_bad_folder_name_cannot_be_reinstalled_and_a_refusal_has_no_suggested_fix() {
-        let bad = could_not_start_page("Dusklight", &None, &Problem::BadFolderName, true);
-        assert_eq!(bad.options.iter().map(|o| o.action).collect::<Vec<_>>(), [PlayAct::GameFiles, PlayAct::Back]);
+        let bad = could_not_start_page("Dusklight", &Problem::BadFolderName, true);
+        assert_eq!(bad.options.iter().map(|o| o.action).collect::<Vec<_>>(), [PlayAct::GameFiles]);
         assert!(bad.options.iter().all(|o| !o.recommended));
-        let refused = could_not_start_page("Dusklight", &None, &Problem::WontStart { file: "dusk".into(), why: "It is not allowed to run.".into() }, false);
+        let refused = could_not_start_page("Dusklight", &Problem::WontStart { file: "dusk".into(), why: "It is not allowed to run.".into() }, false);
         assert_eq!(refused.paragraphs[0], "The system would not start dusk. It is not allowed to run.");
         assert_eq!(wont_start_reason(std::io::ErrorKind::PermissionDenied, Some(13)), "It is not allowed to run.");
         assert_eq!(wont_start_reason(std::io::ErrorKind::Other, Some(8)), "It is not a program this Deck can run.");
@@ -300,7 +333,7 @@ mod tests {
     fn the_program_question_lists_each_program_with_its_folder() {
         let choices = choices_of(&candidates(), &places());
         assert_eq!(choices[0], ProgramChoice { file: "soh.sh".into(), place: "SD card > Ports > soh".into() });
-        let p = which_program_page("Ship of Harkinian", &None, &choices, Some(0), false);
+        let p = which_program_page("Ship of Harkinian", &None, &choices, Some(0), Ask::Never);
         assert_eq!(p.title, "Which program starts Ship of Harkinian?");
         assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["soh.sh", "soh-updater.sh", "Tool.AppImage"]);
         assert_eq!(p.options[0].detail, "SD card > Ports > soh");
@@ -310,22 +343,34 @@ mod tests {
         assert_eq!(action_at(&p, initial_focus(&p)), Some(PlayAct::Program(0)));
         assert_eq!(p.back_hint, "Back");
         assert!(p.options.iter().all(|o| o.action != PlayAct::AskEveryTime), "Play's own question has no ask-every-time answer");
-        assert_eq!(which_program_page(NAMES[3], &None, &choices, None, false).title, "Which program should start?");
+        assert_eq!(which_program_page(NAMES[3], &None, &choices, None, Ask::Never).title, "Which program should start?");
     }
 
     #[test]
     fn fix_problems_and_port_options_may_leave_it_to_ask_every_time() {
         let choices = choices_of(&candidates(), &places());
-        let p = which_program_page("Dusklight", &None, &choices, None, true);
+        let p = which_program_page("Dusklight", &None, &choices, None, Ask::Offer { chosen: None });
         let last = p.options.last().unwrap();
         assert_eq!((last.title.as_str(), last.detail.as_str(), last.action), ("Ask every time", "Play asks which program to start each time", PlayAct::AskEveryTime));
         assert!(p.options.iter().all(|o| !o.recommended), "nothing tells them apart");
     }
 
     #[test]
+    fn the_remembered_program_is_marked_like_the_program_card() {
+        let choices = choices_of(&candidates(), &places());
+        let p = which_program_page("Dusklight", &None, &choices, Some(0), Ask::Offer { chosen: Some(1) });
+        assert_eq!(p.options.iter().map(|o| o.choice).collect::<Vec<_>>(), [Some(false), Some(true), Some(false), Some(false)]);
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(PlayAct::Program(1)), "the cursor starts on the chosen one");
+        let open = which_program_page("Dusklight", &None, &choices, Some(0), Ask::Offer { chosen: None });
+        assert_eq!(open.options.iter().map(|o| o.choice).collect::<Vec<_>>(), [Some(false), Some(false), Some(false), Some(true)], "asking every time is the choice now");
+        assert_eq!(action_at(&open, initial_focus(&open)), Some(PlayAct::Program(0)));
+        assert!(which_program_page("Dusklight", &None, &choices, Some(0), Ask::Never).options.iter().all(|o| o.choice.is_none()), "Play's question has nothing chosen yet");
+    }
+
+    #[test]
     fn a_long_list_is_cut_and_says_so() {
         let many: Vec<PathBuf> = (0..40).map(|i| game_dir().join(format!("p{i}.sh"))).collect();
-        let p = which_program_page("X", &None, &choices_of(&many, &places()), None, true);
+        let p = which_program_page("X", &None, &choices_of(&many, &places()), None, Ask::Offer { chosen: None });
         assert_eq!(p.options.len(), MAX_PROGRAMS + 1);
         assert_eq!(p.footnote, "10 more programs are not shown (the ones deepest in its folders).");
     }

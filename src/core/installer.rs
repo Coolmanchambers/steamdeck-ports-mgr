@@ -432,6 +432,9 @@ pub fn install_extra(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMu
     let archive_path = download(url, &dest, on_progress, &DownloadCtl::default())?; // Fork (install wizard)
     let staging = temp_dir_in(library_dir, "_extra_staging_")?;
     let merge_root = extract_to_staging(&archive_path, staging.path(), None)?;
+    // Fork (port dialogs): from here on files in the port's folder are replaced, so a failure after this line may have changed
+    // some of them; the extras page says "Nothing was changed" only for a failure before it.
+    on_progress("Putting the extra files in place...");
     merge_into(&merge_root, &dest_dir).install_err()
 }
 

@@ -408,6 +408,19 @@ fn the_page_after_an_uninstall_says_close_because_it_leaves_the_port_page() {
 }
 
 #[test]
+fn the_updates_page_can_start_on_its_switch() {
+    let p = port();
+    let page = updates_page_at_switch(&p);
+    let Focus::Option(i) = page.initial else { panic!("starts on an option") };
+    assert_eq!(page.options[i].action, Act::ToggleUpdates);
+    assert_eq!(page.options[i].title, "Check for updates");
+    assert_eq!(page.toggle_of(i), Some(true));
+    assert_eq!(updates_page(&p).options[0].title, "Look for an update now");
+    let untracked = updates_page_at_switch(&PortFacts { tracks_releases: false, ..port() });
+    assert_eq!(untracked.initial, Focus::Option(0), "a switch that cannot be used does not take the cursor");
+}
+
+#[test]
 fn more_says_play_time_the_same_way_everywhere() {
     let p = PortFacts { playtime: play_time_words(7560), has_playtime: true, ..port() };
     let page = more_page(&p);

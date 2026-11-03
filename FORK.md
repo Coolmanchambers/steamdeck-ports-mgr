@@ -322,6 +322,7 @@ Files added by this fork:
 | 2026-11-03 | `src/app/events.rs` | Port dialogs: `VersionsFetched`, `VersionsFetchError` and `ExtraInstallDone` go to `port_actions_screen::{versions_fetched, extras_done}` (pages) instead of the "Choose a version" picker and the "Error" and "Extras" message dialogs; `json_field_labels` removed |
 | 2026-11-03 | `src/main.rs`, `src/app/mod.rs`, `src/fork/mod.rs` | Port dialogs: the list row's update button calls `open_updates_row`; module lines for `play_screen`, `port_actions_screen` and `play_pages` |
 | 2026-11-03 | `ui/app-window.slint` | Port dialogs: the orange list-row button that stood for "updates are off" says "Updates off" (it was a struck-through "Update") and opens the Updates page, so the row's button and the Port page's "Update now" can never mean different things |
+| 2026-11-03 | `src/core/installer.rs` | Port dialogs: `install_extra` reports "Putting the extra files in place..." just before `merge_into` (one line), so the extras page can say "Nothing was changed" only for a failure before it |
 | 2026-11-03 | `tools/smoke-test.sh` | Port dialogs: the Port page check goes on from Program to start to More > All details (opens, B returns), the page that replaced the Info dialog |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
@@ -1570,20 +1571,23 @@ were still upstream's dialogs. Since 2026-11-03 these port actions are pages in 
   links (each shows its address and a QR code first, as the project page does). A port that is not installed has the same
   page without the disk lines. No "tag", "favorite executable" or "--" any more.
 - **Updates.** The "Update - X" Enable/Disable picker is gone; "Check for updates" on the Updates page is the one switch.
-  The list row's orange button (shown while updates are off) says "Updates off" and opens that page.
-- **Play.** "Could not start <name>" (title "Could not start this port" when the name does not fit) says what is wrong
-  (folder gone, program gone, no program, a folder name that is not valid, the system refused) and offers Reinstall (the
-  install wizard's page; saves are backed up first, as always), Game files (the one-port game files page, only for a port
-  that names some) and Back. "Which program starts <name>?" lists one option per program (file name, then its folder the
+  The list row's orange button (shown while updates are off) says "Updates off" and opens that page with the cursor on that
+  switch ("Look for an update now" is the row above it).
+- **Play.** "Could not start <name>" (title "Could not start this port" when the name does not fit; no cover card, the name
+  is in the header) says what is wrong (folder gone, or "Part of the port is missing or incomplete. Reinstalling puts it
+  back.", a folder name that is not valid, the system refused) and offers Reinstall (the install wizard's page; its detail
+  says saves are backed up first, except when the folder is gone) and Game files (the one-port game files page, only for a
+  port that names some); B and the footer's Back leave. "Which program starts <name>?" lists one option per program (file name, then its folder the
   human way), Recommended on the only program in the shallowest folder or the one named like the port, plus "Ask every time"
-  where Fix problems or Port options may leave it open. A pick from Play is remembered when it starts, as before.
+  where Fix problems or Port options may leave it open (the program remembered now is shown as chosen). A pick from Play is remembered when it starts, as before.
 - **Select version** is "Getting the versions" (Cancel gives up), "Which version?" (each version with its date, and
   "newest", "installed" or "early version" as details; the page says the one chosen turns update checks off, which the
   install has always done) and, when it fails, "Could not get the versions" with the reason in plain words and Try again.
   A chosen version goes through the same-game question (a port that is not installed) and `start_install` as before.
 - **Install extras** is a yes/no page ("Extras are optional add-ons ... They replace any copies of the same files that are
   already there."; the cursor starts on No), "Getting the extras", then "Extras installed" or "Could not install the
-  extras" (never the raw error, which goes to the log).
+  extras" (never the raw error, which goes to the log; "Nothing was changed." only when the failure came before files were put in
+  place, else "Some of its files may already have been replaced.").
 - **Play time** is one name: "Reset the play time for <name>?" with "This cannot be undone." (the cursor starts on No), and
   the Port page shows "Play time: 2.1 hours" (it showed "Played 2.1").
 

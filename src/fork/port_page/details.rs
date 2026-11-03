@@ -87,9 +87,16 @@ pub fn details_page(p: &PortFacts, x: &DetailsExtra, disk: Option<&DiskFacts>, p
             page.fact(Mark::None, program_line(&d.program));
         }
     }
-    page.fact(Mark::None, updates_line(p));
-    page.fact(Mark::None, last_played_line(p));
-    page.fact(Mark::None, play_time_line(p));
+    // A port that is not installed has no update switch to speak of, and no play time to report.
+    if x.installed {
+        page.fact(Mark::None, updates_line(p));
+    }
+    if p.last_played.is_some() {
+        page.fact(Mark::None, last_played_line(p));
+    }
+    if p.playtime.is_some() {
+        page.fact(Mark::None, play_time_line(p));
+    }
     if x.installed {
         if let Some(d) = disk {
             page.fact(Mark::None, format!("Folder: {}", human_path(&d.files.dir, places)));
@@ -229,7 +236,12 @@ mod tests {
         let mut p = facts("Dusklight");
         p.version = None;
         let page = details_page(&p, &DetailsExtra { installed: false, ..extra() }, None, &places());
-        assert_eq!(page.facts, ["Version: not installed", "Updates: on", "Last played: on 2026-10-01", "Play time: 2.1 hours"]);
+        assert_eq!(page.facts, ["Version: not installed", "Last played: on 2026-10-01", "Play time: 2.1 hours"], "no Updates line for a port that is not installed");
+        let unplayed = PortFacts { last_played: None, playtime: None, ..p.clone() };
+        let page = details_page(&unplayed, &DetailsExtra { installed: false, ..extra() }, None, &places());
+        assert_eq!(page.facts, ["Version: not installed"], "no play lines when there is no play time or last played date");
+        let page = details_page(&unplayed, &extra(), Some(&disk()), &places());
+        assert!(page.facts.iter().all(|f| !f.starts_with("Last played") && !f.starts_with("Play time")), "{:?}", page.facts);
         let acts: Vec<Act> = page.options.iter().map(|o| o.action).collect();
         assert_eq!(acts, [Act::InstructionsLink, Act::ProjectPage, Act::ModsLink]);
         let bare = details_page(&p, &DetailsExtra::default(), None, &places());

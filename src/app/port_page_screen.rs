@@ -112,6 +112,8 @@ struct Session {
     update_check: RefCell<UpdateCheck>,
     screen: Cell<Screen>,
     handle: RefCell<Option<PageHandle<Act>>>,
+    /// The Updates page starts on its "Check for updates" switch the first time it is drawn (the list row's "Updates off" button).
+    focus_switch: Cell<bool>,
 }
 
 fn current() -> Option<Rc<Session>> {
@@ -176,8 +178,15 @@ pub(crate) fn open_info(app: &Rc<AppState>, router: &Router, port: &Port) {
 
 /// The orange "Updates off" button of a list row: the port's Updates page (its switch, the update, the version list).
 pub(crate) fn open_updates(app: &Rc<AppState>, router: &Router, port: &Port) {
+    let close: Back = Rc::new(|app, router| close_current_dialog(app, router));
     if app.is_installed(port) && !port.is_android_only() {
-        open_card(app, router, port.key(), Card::Updates, Rc::new(|app, router| close_current_dialog(app, router)));
+        // The cursor starts on the "Check for updates" switch, the one thing this button is for.
+        if let Some(s) = start(app, port.key(), close, true) {
+            s.focus_switch.set(true);
+            open_card_in(app, router, &s, Card::Updates);
+        }
+    } else {
+        open_details(app, router, port, close);
     }
 }
 
@@ -243,6 +252,7 @@ fn start(app: &Rc<AppState>, key: &str, back: Back, direct: bool) -> Option<Rc<S
         update_check: RefCell::new(UpdateCheck::NotAsked),
         screen: Cell::new(Screen::First),
         handle: RefCell::new(None),
+        focus_switch: Cell::new(false),
     });
     SESSION.with(|x| *x.borrow_mut() = Some(s.clone()));
     eprintln!("port page: opened for {}", port.display_name());
@@ -551,6 +561,7 @@ fn page_for(app: &AppState, s: &Session, screen: Screen) -> Option<Page<Act>> {
     Some(match screen {
         Screen::First => model::first_page(&p, d, places),
         Screen::Card(card) => match (card, d) {
+            (Card::Updates, _) if s.focus_switch.get() => model::updates_page_at_switch(&p),
             (Card::Updates, _) => model::updates_page(&p),
             (Card::More, _) => model::more_page(&p),
             (Card::Uninstall, d) => model::uninstall_page(&p, d.map(|d| &d.files), d.map(|d| &d.saves), places),
@@ -590,6 +601,7 @@ fn handlers(s: &Rc<Session>) -> Handlers<Act> {
 fn show(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, screen: Screen) {
     ROUTER.with(|r| *r.borrow_mut() = Some(router.clone()));
     let Some(page) = page_for(app, s, screen) else { return leave(app, router, s) };
+    s.focus_switch.set(false);
     show_built(app, router, s, screen, page);
 }
 

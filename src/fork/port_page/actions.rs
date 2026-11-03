@@ -149,6 +149,20 @@ pub fn versions_failed_page(name: &str, raw: &str) -> Page<Step> {
     p.b_means("Back")
 }
 
+/// A fetch of the version list answers with the port's key and a request number (`key` + separator + number), so an answer
+/// that arrives after Cancel, or after a newer request, is recognised and ignored instead of shown or counted.
+pub fn tag_request(key: &str, id: u64) -> String {
+    format!("{key}\u{1f}{id}")
+}
+
+/// The port's key and the request number of a tagged answer (`None` for a key that carries none).
+pub fn split_request(tagged: &str) -> (&str, Option<u64>) {
+    match tagged.rsplit_once('\u{1f}') {
+        Some((key, n)) => (key, n.parse().ok()),
+        None => (tagged, None),
+    }
+}
+
 // -- Install extras ---------------------------------------------------------------------------------------------------
 
 /// "Install the extra files?": what extras are and that they replace copies already there. The safe answer is the one the
@@ -188,7 +202,11 @@ pub fn extras_reason(raw: &str) -> String {
     }
 }
 
-/// The result: done, or why not (nothing was changed).
+/// Put in front of an extras failure that happened after the files started to be put in place (the install says so with
+/// its "Putting the extra files in place..." progress line): some of its files may already be replaced.
+pub const PARTWAY: &str = "\u{1}partway:";
+
+/// The result: done, or why not. "Nothing was changed" is said only for a failure before the files were put in place.
 pub fn extras_done_page(name: &str, result: Result<(), &str>) -> Page<Step> {
     let mut p = match result {
         Ok(()) => {
@@ -197,9 +215,10 @@ pub fn extras_done_page(name: &str, result: Result<(), &str>) -> Page<Step> {
             p
         }
         Err(raw) => {
+            let partway = raw.starts_with(PARTWAY);
             let mut p = base(name, Card::Updates, "Could not install the extras");
-            p.paragraphs.push(format!("The extra files for {name} were not installed. {}", extras_reason(raw)));
-            p.paragraphs.push("Nothing was changed.".to_string());
+            p.paragraphs.push(format!("The extra files for {name} were not {}installed. {}", if partway { "all " } else { "" }, extras_reason(raw.trim_start_matches(PARTWAY))));
+            p.paragraphs.push(if partway { "Some of its files may already have been replaced." } else { "Nothing was changed." }.to_string());
             p
         }
     };
@@ -215,7 +234,7 @@ pub fn extras_done_page(name: &str, result: Result<(), &str>) -> Page<Step> {
 pub fn reset_ask_page(name: &str, played: &str) -> Page<Step> {
     let title = title_with_name("Reset the play time for ", name, "?", "Reset the play time?");
     let mut p = base(name, Card::More, &title);
-    p.paragraphs.push(format!("Reset the play time for {name}? It is {played} now. This cannot be undone."));
+    p.paragraphs.push(format!("The play time is {played} now for {name}. This cannot be undone."));
     p.options = vec![
         option("Yes, reset it", "The play time goes back to zero", Step::Yes),
         recommended(option("No, keep it", "Nothing is changed", Step::Back)),
@@ -375,6 +394,15 @@ mod tests {
     }
 
     #[test]
+    fn nothing_was_changed_is_only_said_when_it_is_true() {
+        let before = extras_done_page("Dusklight", Err("http status: 404"));
+        assert_eq!(before.paragraphs[1], "Nothing was changed.");
+        let partway = extras_done_page("Dusklight", Err(&format!("{PARTWAY}Permission denied (os error 13)")));
+        assert_eq!(partway.paragraphs[1], "Some of its files may already have been replaced.");
+        assert!(partway.paragraphs.iter().all(|t| !t.contains("Nothing was changed") && !t.contains("os error") && !t.contains('\u{1}')), "{:?}", partway.paragraphs);
+    }
+
+    #[test]
     fn extras_end_on_a_page_never_a_raw_error() {
         let ok = extras_done_page("Dusklight", Ok(()));
         assert_eq!((ok.title.as_str(), ok.paragraphs[0].as_str()), ("Extras installed", "The extra files for Dusklight are in its folder."));
@@ -390,13 +418,22 @@ mod tests {
     fn reset_play_time_asks_by_name_and_says_it_cannot_be_undone() {
         let p = reset_ask_page("Dusklight", "2.1 h");
         assert_eq!(p.title, "Reset the play time for Dusklight?");
-        assert_eq!(p.paragraphs, ["Reset the play time for Dusklight? It is 2.1 h now. This cannot be undone."]);
+        assert_eq!(p.paragraphs, ["The play time is 2.1 h now for Dusklight. This cannot be undone."]);
         assert_eq!(p.options.iter().map(|o| (o.title.as_str(), o.action)).collect::<Vec<_>>(), [("Yes, reset it", Step::Yes), ("No, keep it", Step::Back)]);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(Step::Back));
         let long = reset_ask_page(NAMES[3], "2.1 h");
         assert_eq!(long.title, "Reset the play time?");
         assert!(long.paragraphs[0].contains(NAMES[3]), "the name is always in the text");
         assert_eq!(reset_done_page("Dusklight").title, "Play time reset");
+    }
+
+    #[test]
+    fn a_version_answer_carries_its_request_number() {
+        let tagged = tag_request("owner/repo", 7);
+        assert_eq!(split_request(&tagged), ("owner/repo", Some(7)));
+        assert_eq!(split_request("owner/repo"), ("owner/repo", None));
+        assert_ne!(tag_request("a", 1), tag_request("a", 2), "a late answer is not taken for a newer request's");
+        assert_eq!(split_request(&tag_request("a/b\u{1f}c", 3)), ("a/b\u{1f}c", Some(3)), "the last separator counts");
     }
 
     #[test]

@@ -36,7 +36,7 @@ fn back_here(port: Port, problem: Problem) -> Back {
 pub(crate) fn could_not_start(app: &Rc<AppState>, router: &Router, port: &Port, problem: Problem) {
     eprintln!("play: could not start {}: {problem:?}", port.display_name());
     let name = port.display_name().to_string();
-    let page = pages::could_not_start_page(&name, &Some(ArtRef::of_port(port)), &problem, super::rom_screens::port_needs_game_files(app, port));
+    let page = pages::could_not_start_page(&name, &problem, super::rom_screens::port_needs_game_files(app, port));
     let port = port.clone();
     show_page(
         app,
@@ -51,12 +51,12 @@ pub(crate) fn could_not_start(app: &Rc<AppState>, router: &Router, port: &Port, 
 }
 
 /// "Which program starts <name>?" for `candidates` (paths inside `game_dir`). A choice closes the page and goes to
-/// `picked`; B just closes it. `ask_every_time`: the page also offers to leave the choice open (Fix problems; Play's own
-/// question has no such answer).
-pub(crate) fn choose_program(app: &Rc<AppState>, router: &Router, port: &Port, game_dir: &Path, candidates: Vec<PathBuf>, ask_every_time: bool, picked: Picked) {
+/// `picked`; B just closes it. `ask`: whether the page also offers to leave the choice open, and what is chosen now (Fix
+/// problems; Play's own question has no such answer).
+pub(crate) fn choose_program(app: &Rc<AppState>, router: &Router, port: &Port, game_dir: &Path, candidates: Vec<PathBuf>, ask: pages::Ask, picked: Picked) {
     let choices = pages::choices_of(&candidates, &Places::system());
     let likely = pages::likely_program(game_dir, &candidates, &port.folder, port.display_name());
-    let page = pages::which_program_page(port.display_name(), &Some(ArtRef::of_port(port)), &choices, likely, ask_every_time);
+    let page = pages::which_program_page(port.display_name(), &Some(ArtRef::of_port(port)), &choices, likely, ask);
     show_page(
         app,
         router,

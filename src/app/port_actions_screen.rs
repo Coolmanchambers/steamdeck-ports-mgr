@@ -12,7 +12,7 @@
 
 use super::dialogs::close_current_dialog;
 use super::events::{lock, AppEvent};
-use super::page_dialog::{show_page, Handlers};
+use super::page_dialog::{show_page, show_page_handle, Handlers, PageHandle};
 use super::playtime::is_port_running;
 use super::state::AppState;
 use crate::core::forge::Forge;
@@ -21,7 +21,7 @@ use crate::fork::port_page::actions::{self as pages, Step};
 use crate::fork::port_page::{play_time_words, Card};
 use crate::ui::gamepad_router::GamepadRouter;
 use serde_json::Value;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -32,14 +32,18 @@ pub(crate) type Back = Rc<dyn Fn(&Rc<AppState>, &Router)>;
 /// How many of the newest releases are listed.
 const VERSION_CHOICES: usize = 3;
 
-/// A job that was asked for and has not answered yet: whose it is and where its pages lead back to.
+/// A job that was asked for and has not answered yet: whose it is and where its pages lead back to. `id` numbers the request
+/// (its answer carries it back), `wait` is the waiting page, so an answer is shown only while that page is still on screen.
 struct Pending {
+    id: u64,
     port: Port,
     card: Card,
     back: Back,
+    wait: Option<PageHandle<Step>>,
 }
 
 thread_local! {
+    static NEXT_ID: Cell<u64> = const { Cell::new(1) };
     static VERSIONS: RefCell<HashMap<String, Pending>> = RefCell::new(HashMap::new());
     static EXTRAS: RefCell<HashMap<String, Pending>> = RefCell::new(HashMap::new());
 }
@@ -80,19 +84,24 @@ fn free(app: &Rc<AppState>, key: &str) {
 /// "Getting the versions", then the list. `card` is the Port page card the pages are named after; `back` runs on Back.
 pub(crate) fn versions(app: &Rc<AppState>, router: &Router, port: Port, card: Card, back: Back) {
     let Some(key) = claim(app, router, &port, card, &back) else { return };
-    VERSIONS.with(|v| v.borrow_mut().insert(key.clone(), Pending { port: port.clone(), card, back: back.clone() }));
-    // Cancel (or B) gives up: the answer, when it comes, only frees the port again.
+    let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
+    // Cancel (or B) gives up and frees the port at once; the answer, when it comes, carries a request number that no longer
+    // matches anything and is ignored.
     let giving_up = key.clone();
-    show_page(
+    let on_back = back.clone();
+    let wait = show_page_handle(
         app,
         router,
         pages::versions_wait_page(port.display_name()),
         handlers(move |app, router, _| {
-            VERSIONS.with(|v| v.borrow_mut().remove(&giving_up));
-            back(app, router);
+            if VERSIONS.with(|v| v.borrow_mut().remove(&giving_up)).is_some() {
+                free(app, &giving_up);
+            }
+            on_back(app, router);
         }),
     );
-
+    VERSIONS.with(|v| v.borrow_mut().insert(key.clone(), Pending { id, port: port.clone(), card, back, wait }));
+    let tagged = pages::tag_request(&key, id);
     let (github_token, gitlab_token) = app.api_tokens();
     let events = app.events.clone();
     let repo = port.repo.clone().unwrap_or_default();
@@ -103,18 +112,28 @@ pub(crate) fn versions(app: &Rc<AppState>, router: &Router, port: Port, card: Ca
             None => Ok(Vec::new()),
         };
         let event = match result {
-            Ok(releases) if !releases.is_empty() => AppEvent::VersionsFetched { key, releases },
-            Ok(_) => AppEvent::VersionsFetchError { key, message: "This source has no version history.".to_string() },
-            Err(e) => AppEvent::VersionsFetchError { key, message: e.message().to_string() },
+            Ok(releases) if !releases.is_empty() => AppEvent::VersionsFetched { key: tagged, releases },
+            Ok(_) => AppEvent::VersionsFetchError { key: tagged, message: "This source has no version history.".to_string() },
+            Err(e) => AppEvent::VersionsFetchError { key: tagged, message: e.message().to_string() },
         };
         lock(&events).push(event);
     });
 }
 
-/// The release list (or why not) is in. Nothing happens to a screen the user has left since (Cancel).
-pub(crate) fn versions_fetched(app: &Rc<AppState>, router: &Router, key: &str, result: Result<Vec<Value>, String>) {
+/// The release list (or why not) is in. `tagged` is the port's key with the request number (`pages::tag_request`). An answer
+/// to a request that was given up, or replaced by a newer one, is ignored; so is one that comes after the waiting page was
+/// left for something else.
+pub(crate) fn versions_fetched(app: &Rc<AppState>, router: &Router, tagged: &str, result: Result<Vec<Value>, String>) {
+    let (key, id) = pages::split_request(tagged);
+    let current = VERSIONS.with(|v| v.borrow().get(key).is_some_and(|p| Some(p.id) == id));
+    if !current {
+        return;
+    }
     free(app, key);
     let Some(pending) = VERSIONS.with(|v| v.borrow_mut().remove(key)) else { return };
+    if !pending.wait.as_ref().is_some_and(PageHandle::is_open) {
+        return;
+    }
     match result {
         Ok(releases) if !releases.is_empty() => show_versions(app, router, pending, releases),
         Ok(_) => show_versions_failed(app, router, pending, "This source has no version history."),
@@ -151,7 +170,7 @@ fn show_versions(app: &Rc<AppState>, router: &Router, pending: Pending, releases
 fn show_versions_failed(app: &Rc<AppState>, router: &Router, pending: Pending, raw: &str) {
     eprintln!("versions: could not get them for {}: {raw}", pending.port.key());
     let page = pages::versions_failed_page(pending.port.display_name(), raw);
-    let Pending { port, card, back } = pending;
+    let Pending { port, card, back, .. } = pending;
     show_page(
         app,
         router,
@@ -181,13 +200,20 @@ pub(crate) fn extras(app: &Rc<AppState>, router: &Router, port: Port, card: Card
 
 fn run_extras(app: &Rc<AppState>, router: &Router, port: Port, card: Card, back: Back) {
     let Some(key) = claim(app, router, &port, card, &back) else { return };
-    EXTRAS.with(|e| e.borrow_mut().insert(key.clone(), Pending { port: port.clone(), card, back }));
+    EXTRAS.with(|e| e.borrow_mut().insert(key.clone(), Pending { id: 0, port: port.clone(), card, back, wait: None }));
     show_page(app, router, pages::extras_wait_page(port.display_name()), still_handlers());
     let library_dir = app.paths.library_dir();
     let events = app.events.clone();
     std::thread::spawn(move || {
-        let mut on_progress = |_: &str| {};
+        // The install says when it starts putting files in place; a failure after that may have changed some of them.
+        let partway = Cell::new(false);
+        let mut on_progress = |line: &str| {
+            if line.starts_with("Putting the extra files in place") {
+                partway.set(true);
+            }
+        };
         let result = crate::core::jobs::run_extra_install(&port, &library_dir, &mut on_progress);
+        let result = result.map_err(|e| if partway.get() { format!("{}{e}", pages::PARTWAY) } else { e });
         lock(&events).push(AppEvent::ExtraInstallDone { key, result });
     });
 }
