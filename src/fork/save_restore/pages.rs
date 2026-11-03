@@ -244,11 +244,15 @@ pub fn ask_page(f: &AskFacts) -> Page<RsAct> {
     let title = [format!("Put back the saves from {}?", f.when), format!("Put back saves from {}?", f.when)].into_iter().find(|t| t.chars().count() <= 40).unwrap_or_else(|| "Put back these saves?".to_string());
     let mut p = base("Restore saves: put back", &f.name, &title);
     p.paragraphs.push(format!("Your saves now are kept first: they are backed up to {}. If that backup does not work, nothing is changed.", f.kept_at));
-    let folders = match f.folders.as_slice() {
-        [one] => format!("{one} gets"),
-        many => format!("{} get", many.join(" and ")),
-    };
-    p.paragraphs.push(format!("Then {folders} the saves from the backup of {} ({}). Saves made since then are replaced; they stay in the backup made first, so you can put them back the same way.", f.when, f.kind.to_lowercase()));
+    p.paragraphs.push(format!(
+        "Then the {} below {} the saves from that backup ({}). Saves made since then are replaced; they stay in the backup made first, so you can put them back the same way.",
+        if f.folders.len() == 1 { "folder" } else { "folders" },
+        if f.folders.len() == 1 { "gets" } else { "get" },
+        f.kind.chars().take(1).flat_map(char::to_lowercase).chain(f.kind.chars().skip(1)).collect::<String>()
+    ));
+    for folder in &f.folders {
+        p.fact(Mark::ToDo, folder.clone());
+    }
     for s in &f.skipped {
         p.paragraphs.push(format!("Not put back: {s}."));
     }
@@ -413,7 +417,8 @@ mod tests {
         let p = ask_page(&AskFacts { name: "Dusk".into(), when: "2026-10-30 14:22".into(), kind: "Made before an update".into(), folders: vec!["Internal storage > Dusk > saves".into()], skipped: vec![], kept_at: "Internal storage > Saves Backup > Restore Backups > Dusk".into() });
         assert_eq!(p.title, "Put back saves from 2026-10-30 14:22?");
         assert_eq!(p.paragraphs[0], "Your saves now are kept first: they are backed up to Internal storage > Saves Backup > Restore Backups > Dusk. If that backup does not work, nothing is changed.");
-        assert!(p.paragraphs[1].starts_with("Then Internal storage > Dusk > saves gets the saves from the backup of 2026-10-30 14:22 (made before an update)."), "{}", p.paragraphs[1]);
+        assert!(p.paragraphs[1].starts_with("Then the folder below gets the saves from that backup (made before an update)."), "{}", p.paragraphs[1]);
+        assert_eq!(p.facts, ["Internal storage > Dusk > saves"]);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(RsAct::Keep));
         assert_eq!(p.back_hint, "No, keep my saves now");
         assert_eq!(ask_page(&AskFacts { when: "2026-10-21".into(), folders: vec!["x".into()], ..AskFacts::default() }).title, "Put back the saves from 2026-10-21?");

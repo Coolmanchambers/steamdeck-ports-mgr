@@ -499,28 +499,6 @@ if [ "$alive" = yes ]; then
                         press_keys "$cb" Escape; sleep 1.5
                         check "B leaves Cloud backup for the Saves settings page" '[ -z "$(xdotool search --name "^Deck Ports Manager: Cloud backup$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
                     fi
-                    # Saves > Back up saves runs behind a waiting page and ends on a done page; OK there goes back up to the
-                    # Saves page. Saves > Restore saves opens its page of ports with backups, and B goes back to the Saves page.
-                    sv=$(find_window '^Deck Ports Manager: Settings: Saves$') || sv=""
-                    if [ -n "$sv" ]; then
-                        press_keys "$sv" Up Up Up Up Up $(downs "$(entry_downs Saves BackupSaves)") Return
-                        bd=$(find_window '^Deck Ports Manager: Back up saves: done$') || bd=""
-                        import -window root "$OUT/back-up-saves-done.png" 2>/dev/null
-                        check "Back up saves ends on its done page and the app keeps running" '[ -n "$bd" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
-                        if [ -n "$bd" ]; then
-                            press_keys "$bd" Return; sleep 1.5
-                            check "OK on the Back up saves page goes back to the Saves settings page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Back up saves" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
-                        fi
-                        sv=$(find_window '^Deck Ports Manager: Settings: Saves$') || sv=""
-                        [ -n "$sv" ] && press_keys "$sv" Up Up Up Up Up $(downs "$(entry_downs Saves RestoreSaves)") Return
-                        rs=$(find_window '^Deck Ports Manager: Settings: Saves: Restore saves$') || rs=""
-                        import -window root "$OUT/restore-saves.png" 2>/dev/null
-                        check "Restore saves opens its page" '[ -n "$rs" ] && kill -0 "$APP" 2>/dev/null'
-                        if [ -n "$rs" ]; then
-                            press_keys "$rs" Escape; sleep 1.5
-                            check "B on Restore saves goes back one level, to the Saves settings page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves: Restore saves$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
-                        fi
-                    fi
                 fi
                 close_settings
                 eval "$(xdotool getwindowgeometry --shell "$win")"
@@ -542,6 +520,26 @@ if [ "$alive" = yes ]; then
             if [ -n "$kf" ]; then
                 press_keys "$kf" Escape; sleep 1.5
                 check "B on Kept files returns to the Ports page of Settings" '[ -z "$(xdotool search --name "^Deck Ports Manager: Settings: Ports: Kept files$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings: Ports$" 2>/dev/null)" ]'
+            fi
+            close_settings
+            # Settings > Saves > Back up saves runs behind a waiting page and ends on a done page; OK there goes back up to the
+            # Saves page. Saves > Restore saves opens its page of ports with backups, and B goes back to the Saves page.
+            open_settings_page && settings_entry Saves BackupSaves
+            bd=$(find_window '^Deck Ports Manager: Back up saves: done$') || bd=""
+            import -window root "$OUT/back-up-saves-done.png" 2>/dev/null
+            check "Back up saves ends on its done page and the app keeps running" '[ -n "$bd" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+            if [ -n "$bd" ]; then
+                press_keys "$bd" Return; sleep 1.5
+                check "OK on the Back up saves page goes back to the Saves settings page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Back up saves" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
+            fi
+            sv=$(find_window '^Deck Ports Manager: Settings: Saves$') || sv=""
+            [ -n "$sv" ] && press_keys "$sv" Up Up Up Up Up $(downs "$(entry_downs Saves RestoreSaves)") Return
+            rs=$(find_window '^Deck Ports Manager: Settings: Saves: Restore saves$') || rs=""
+            import -window root "$OUT/restore-saves.png" 2>/dev/null
+            check "Restore saves opens its page" '[ -n "$rs" ] && kill -0 "$APP" 2>/dev/null'
+            if [ -n "$rs" ]; then
+                press_keys "$rs" Escape; sleep 1.5
+                check "B on Restore saves goes back one level, to the Saves settings page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves: Restore saves$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Saves$" 2>/dev/null)" ]'
             fi
             close_settings
             # A switch flips in place and keeps the cursor: Settings > Updates > Check for Updates. Two presses of A flip it twice,

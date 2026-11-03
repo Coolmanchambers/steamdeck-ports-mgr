@@ -880,7 +880,11 @@ fn switch_now(app: &Rc<AppState>, router: &Router, new_dir: &Path, moved: Vec<Pr
 /// (`summary` and the old copies' outcome), then the Ports folder page.
 fn show_old_copies_then_summary(app: &Rc<AppState>, router: &Router, copies: VecDeque<OldCopy>, summary: String, title: &'static str) {
     prompt_old_copies_batch_then(app, router, copies, summary, Origin::PortsFolder, move |app, router, text| {
-        let Some(text) = text.filter(|t| !t.trim().is_empty()) else { return open_menu(app, router) };
+        // `None`: another dialog took the screen while the old copies were checked; it stays (they stay listed).
+        let Some(text) = text else { return };
+        if text.trim().is_empty() {
+            return open_menu(app, router);
+        }
         let paragraphs = text.lines().map(|l| plain_paths_here(l.trim())).collect();
         let page = pages::result_page("Ports folder: done", title, paragraphs, Vec::new());
         let handlers = Handlers {
@@ -960,7 +964,14 @@ pub(crate) fn open_old_copies(app: &Rc<AppState>, router: &Router) {
             name: o.name.clone(),
             place: human_path(&o.old_path, &places),
             bytes: o.bytes,
-            state: if std::fs::symlink_metadata(&o.old_path).is_err() { "Gone already".to_string() } else { parts.readiness(o).line().to_string() },
+            // Short, so the place has room on the card; the old copy's own page says it in full.
+            state: match (std::fs::symlink_metadata(&o.old_path).is_err(), parts.readiness(o)) {
+                (true, _) => "Gone already",
+                (false, old_copies::Readiness::Ready(_)) => "Ready to remove",
+                (false, old_copies::Readiness::StartOnce) => "Start it once first",
+                (false, old_copies::Readiness::WaitingForSteam) => "Waiting for Steam",
+            }
+            .to_string(),
             link_only: o.link_only,
         })
         .collect();

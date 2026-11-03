@@ -128,7 +128,7 @@ pub struct CopyLine {
     /// Where the old copy is, the human way.
     pub place: String,
     pub bytes: u64,
-    /// "Ready to remove", "Start it once from its new place", "Waiting for Steam to update", or "Gone already".
+    /// "Ready to remove", "Start it once first", "Waiting for Steam", or "Gone already".
     pub state: String,
     /// It only points to a folder elsewhere (removing it frees no space).
     pub link_only: bool,
