@@ -38,8 +38,8 @@ component Tile inherits Rectangle {
     callback options();
     property <bool> long-fired: false;
     property <length> pad: root.font-px * 0.4;
-    // One title line (elided) and the badge line (src/fork/home.rs TILE_PAD_UNITS and TILE_TEXT_UNITS say the same numbers).
-    property <length> text-h: root.font-px * 2.9;
+    // Two title lines (the second elided) and the badge line (src/fork/home.rs TILE_PAD_UNITS and TILE_TEXT_UNITS say the same numbers).
+    property <length> text-h: root.font-px * 3.4;
 
     background: root.selected ? FocusLook.fill : Theme.search-background;
     border-width: 1px;
@@ -155,25 +155,26 @@ component Tile inherits Rectangle {
             }
         }
     }
+    // Title: at most two lines (word-wrap, the second elided), a little smaller than the badge-free tile text.
     Text {
         x: root.pad;
-        y: cover.y + cover.height + root.font-px * 0.1;
+        y: cover.y + cover.height + root.font-px * 0.05;
         width: root.width - root.pad * 2;
-        height: root.font-px * 1.3;
+        height: root.font-px * 2.05;
         text: root.tile.title;
         color: Theme.list-text;
-        font-size: root.font-px;
+        font-size: root.font-px * 0.85;
         font-weight: 700;
-        wrap: no-wrap;
+        wrap: word-wrap;
         overflow: elide;
         vertical-alignment: top;
     }
     // The badge: one mark and its words.
     if root.tile.badge != "": HorizontalLayout {
         x: root.pad;
-        y: cover.y + cover.height + root.font-px * 1.45;
+        y: cover.y + cover.height + root.font-px * 2.15;
         width: root.width - root.pad * 2;
-        height: root.font-px * 1.3;
+        height: root.font-px * 1.2;
         spacing: root.font-px * 0.35;
         alignment: start;
         VerticalLayout {

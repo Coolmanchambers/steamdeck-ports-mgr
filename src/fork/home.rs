@@ -324,20 +324,22 @@ pub struct TileLayout {
 
 /// A portrait cover, about 1:1.4.
 const COVER_RATIO: f32 = 1.4;
-/// What a Tile draws around its cover, in font heights: `TILE_PAD_UNITS` above and below, and one title line (elided) and
+/// What a Tile draws around its cover, in font heights: `TILE_PAD_UNITS` above and below, and two title lines (the second elided, a little smaller) and
 /// the badge line between the cover and the bottom margin. `ui/fork/home.slint` (component Tile: `pad`, `text-h`) must say
 /// the same numbers; a test reads the file and compares.
 pub const TILE_PAD_UNITS: f32 = 0.4;
-pub const TILE_TEXT_UNITS: f32 = 2.9;
+pub const TILE_TEXT_UNITS: f32 = 3.4;
 const TEXT_UNITS: f32 = TILE_PAD_UNITS * 2.0 + TILE_TEXT_UNITS;
 /// The smallest cover frame width worth showing everything at once, and the biggest (in font heights; a handful of ports do
 /// not become giant posters).
 const MIN_COVER_UNITS: f32 = 6.8;
 const MAX_COVER_UNITS: f32 = 9.5;
 const MAX_COLUMNS: usize = 12;
-/// Arrangements whose covers are within this of the biggest count as equal; of those the one with the fewest columns that still run
+/// Arrangements whose covers are within this (8%) of the biggest count as equal; of those the one with the fewest columns that still run
 /// the width wins (the same cover and a wider title); with too few tiles for that, the one with the most rows, then columns.
-const TIE: f32 = 0.985;
+const TIE: f32 = 0.92;
+/// How much wider than its cover a tile may be (in gaps) and still count as running the width.
+const SLACK_GAPS: f32 = 3.0;
 
 /// The poster layout for `count` tiles in a room of `width` by `height` (logical pixels), with `font` the tile text size
 /// and `gap` the space between tiles. It takes the arrangement with the biggest covers that shows every tile at once, so no
@@ -362,9 +364,9 @@ pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -
     if biggest >= min_cover {
         let ties: Vec<&(usize, usize, f32, f32, f32)> = options.iter().filter(|o| o.4 >= biggest * TIE).collect();
         // The fewest columns whose tiles still run the width (a wider title, the same cover); with too few tiles for that, the fullest.
-        let pick = ties.iter().filter(|o| o.2 <= o.4 + margin + gap * 2.0 + 0.01).min_by_key(|o| o.0).or_else(|| ties.iter().max_by_key(|o| (o.1, o.0)));
+        let pick = ties.iter().filter(|o| o.2 <= o.4 + margin + gap * SLACK_GAPS + 0.01).min_by_key(|o| o.0).or_else(|| ties.iter().max_by_key(|o| (o.1, o.0)));
         if let Some(&&(columns, rows, tile_max, per_row, cover)) = pick {
-            let tile_w = tile_max.min(cover + margin + gap * 2.0);
+            let tile_w = tile_max.min(cover + margin + gap * SLACK_GAPS);
             let tile_h = per_row.min(cover * COVER_RATIO + text);
             return TileLayout { columns, tile_w, tile_h, visible_rows: rows, cover_w: tile_w - margin, cover_h: tile_h - text };
         }
@@ -379,7 +381,7 @@ pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -
     let cover = cover_for(visible).clamp(min_cover, max_cover);
     let natural = cover + margin;
     let columns = (((width + gap) / (natural + gap)).floor() as usize).clamp(1, MAX_COLUMNS);
-    let tile_w = ((width - gap * (columns - 1) as f32) / columns as f32).min(natural + gap * 2.0);
+    let tile_w = ((width - gap * (columns - 1) as f32) / columns as f32).min(natural + gap * SLACK_GAPS);
     let tile_h = per_row.max(text + min_cover).min(height);
     TileLayout { columns, tile_w, tile_h, visible_rows: visible, cover_w: tile_w - margin, cover_h: tile_h - text }
 }
@@ -821,7 +823,7 @@ mod tests {
             assert_eq!(l.visible_rows, 2, "{n} tiles: two whole rows, nothing cut: {l:?}");
             let expected = if n <= 12 { 6 } else { 7 };
             assert_eq!(l.columns, expected, "{n} tiles: the fewest columns that run the width (a wider title, the same cover): {l:?}");
-            assert!(l.cover_w >= 136.0 && l.cover_h >= 203.0, "{n} tiles: covers no smaller than the old 136 x 204: {l:?}");
+            assert!(l.cover_w >= 136.0 && l.cover_h >= 193.0, "{n} tiles: covers about 137 x 193 or better (the old ones were 136 x 204 with one title line fewer): {l:?}");
             assert!(used_width(&l, gap) >= w - 1.0, "{n} tiles: no side bands, the tiles run the width: {l:?}");
         }
     }
@@ -833,7 +835,7 @@ mod tests {
         assert!(fits(&six, 6, h, gap) && six.visible_rows == 1 && six.cover_w >= 136.0, "{six:?}");
         let l = tile_layout(w, h, 3, font, gap);
         assert_eq!((l.columns, l.visible_rows), (3, 1));
-        assert!(l.cover_w <= font * MAX_COVER_UNITS + 2.0 * gap + 0.01, "{l:?}");
+        assert!(l.cover_w <= font * MAX_COVER_UNITS + SLACK_GAPS * gap + 0.01, "{l:?}");
         let one = tile_layout(w, h, 1, font, gap);
         assert_eq!((one.columns, one.visible_rows), (1, 1));
         assert!(fits(&one, 1, h, gap));
@@ -876,20 +878,66 @@ mod tests {
 
     #[test]
     fn the_tile_draws_exactly_the_text_block_the_layout_reserves() {
-        // The layout reserves TEXT_UNITS font heights under the cover's top edge margin; `component Tile` in the screen file
-        // must draw that and no more (it once drew 5.4 where the layout assumed 3.4, so posters came out smaller).
+        // The layout reserves TEXT_UNITS font heights (the margins, two title lines and the badge line); `component Tile` in the
+        // screen file must draw that and no more (it once drew 5.4 where the layout assumed 3.4, so posters came out smaller).
         let slint = include_str!("../../ui/fork/home.slint");
         let start = slint.find("component Tile inherits").expect("component Tile");
         let tile = &slint[start..slint.find("component Row inherits").expect("component Row")];
-        let units = |name: &str| -> f32 {
-            let prefix = format!("property <length> {name}: root.font-px * ");
-            let line = tile.lines().find(|l| l.trim_start().starts_with(&prefix)).unwrap_or_else(|| panic!("Tile has no {name}"));
-            line.trim_start()[prefix.len()..].trim().trim_end_matches(';').parse().unwrap()
+        let units_in = |block: &str, prefix: &str| -> f32 {
+            let line = block.lines().find(|l| l.trim_start().starts_with(prefix)).unwrap_or_else(|| panic!("Tile has no `{prefix}`"));
+            line.rsplit('*').next().unwrap().trim().trim_end_matches(';').parse().unwrap()
         };
-        assert_eq!(units("pad"), TILE_PAD_UNITS);
-        assert_eq!(units("text-h"), TILE_TEXT_UNITS);
-        assert!((TEXT_UNITS - (2.0 * units("pad") + units("text-h"))).abs() < 1e-6);
-        assert!(tile.contains("wrap: no-wrap;"), "one title line, elided");
+        let (pad, text_h) = (units_in(tile, "property <length> pad:"), units_in(tile, "property <length> text-h:"));
+        assert_eq!(pad, TILE_PAD_UNITS);
+        assert_eq!(text_h, TILE_TEXT_UNITS);
+        assert!((TEXT_UNITS - (2.0 * pad + text_h)).abs() < 1e-6);
+        // The title: word-wrapped, room for two lines (not one, not three), then the badge line, all inside the text block.
+        let title = &tile[tile.find("// Title:").expect("the Tile's title is marked")..tile.find("// The badge:").expect("the badge is marked")];
+        let badge = &tile[tile.find("// The badge:").unwrap()..tile.find("if root.selected: FocusRing").unwrap()];
+        assert!(title.contains("wrap: word-wrap;") && title.contains("overflow: elide;"), "two lines, the second elided");
+        let (title_y, title_h, title_font) = (units_in(title, "y:"), units_in(title, "height:"), units_in(title, "font-size:"));
+        let lines = title_h / (title_font * 1.17);
+        assert!((2.0..3.0).contains(&lines), "room for two title lines, not one or three: {lines}");
+        let (badge_y, badge_h) = (units_in(badge, "y:"), units_in(badge, "height:"));
+        assert!(title_y + title_h <= badge_y + 1e-6, "the badge starts under the title");
+        assert!(badge_y + badge_h <= TILE_TEXT_UNITS + 1e-6 && badge_y + badge_h >= TILE_TEXT_UNITS - 0.1, "the text block is used and not overrun");
+    }
+
+    /// Greedy word wrap with a plain average glyph width (bold, 0.58 of the text size, measured from a Deck-sized shot).
+    fn wrap_estimate(text: &str, width_px: f32, text_px: f32) -> Vec<String> {
+        let per_line = (width_px / (text_px * 0.58)).floor() as usize;
+        let mut lines: Vec<String> = vec![String::new()];
+        for word in text.split_whitespace() {
+            let cur = lines.last_mut().unwrap();
+            if cur.is_empty() {
+                *cur = word.to_string();
+            } else if cur.chars().count() + 1 + word.chars().count() <= per_line {
+                cur.push(' ');
+                cur.push_str(word);
+            } else {
+                lines.push(word.to_string());
+            }
+        }
+        lines
+    }
+
+    #[test]
+    fn long_zelda_style_titles_show_most_of_their_name_in_two_lines_at_six_columns() {
+        let (w, h, font, gap) = DECK;
+        let l = tile_layout(w, h, 8, font, gap);
+        assert_eq!(l.columns, 6);
+        let room = l.tile_w - 2.0 * TILE_PAD_UNITS * font;
+        for (name, at_least) in [
+            ("The Legend of Dragoon", 1.0),
+            ("The Legend of Zelda: Majora's Mask", 0.8),
+            ("The Legend of Zelda: The Wind Waker HD", 0.6),
+            ("The Legend of Zelda: Twilight Princess", 0.6),
+        ] {
+            let lines = wrap_estimate(name, room, font * 0.85);
+            let shown: usize = lines.iter().take(2).map(|s| s.chars().count()).sum::<usize>() + lines.len().min(2) - 1;
+            let share = shown as f32 / name.chars().count() as f32;
+            assert!(share >= at_least, "{name}: {lines:?} shows {share:.2}");
+        }
     }
 
 
