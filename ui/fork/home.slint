@@ -17,6 +17,10 @@ export struct HomeTile {
     // The List view's second line (system, version, last played, play time), and the letter for a row with no cover.
     detail: string,
     initial: string,
+    // The part before the last ": " of a port's name, drawn small above the title on a poster tile ("" when the name has none).
+    series: string,
+    // The name without the series (what the poster tile shows bold under a series line); the whole name when there is no series.
+    poster-title: string,
 }
 
 // How the poster tiles sit in the room Home has (src/fork/home.rs `tile_layout`): whole rows only.
@@ -156,7 +160,7 @@ component Tile inherits Rectangle {
         }
     }
     // Title: at most two lines (word-wrap, the second elided), a little smaller than the badge-free tile text.
-    Text {
+    if root.tile.series == "": Text {
         x: root.pad;
         y: cover.y + cover.height + root.font-px * 0.05;
         width: root.width - root.pad * 2;
@@ -166,6 +170,35 @@ component Tile inherits Rectangle {
         font-size: root.font-px * 0.85;
         font-weight: 700;
         wrap: word-wrap;
+        overflow: elide;
+        vertical-alignment: top;
+    }
+    // Series title: "Series: Subtitle" (src/fork/home.rs `poster_title`) is two lines of its own, so what tells the games of
+    // a series apart is not the part that gets cut off. Together they take the same room as the two title lines above.
+    // Series line: the series, small and muted.
+    if root.tile.series != "": Text {
+        x: root.pad;
+        y: cover.y + cover.height + root.font-px * 0.05;
+        width: root.width - root.pad * 2;
+        height: root.font-px * 0.95;
+        text: root.tile.series;
+        color: Theme.search-text;
+        font-size: root.font-px * 0.75;
+        wrap: no-wrap;
+        overflow: elide;
+        vertical-alignment: top;
+    }
+    // Subtitle line: the game, bold.
+    if root.tile.series != "": Text {
+        x: root.pad;
+        y: cover.y + cover.height + root.font-px * 1.0;
+        width: root.width - root.pad * 2;
+        height: root.font-px * 1.1;
+        text: root.tile.poster-title;
+        color: Theme.list-text;
+        font-size: root.font-px * 0.85;
+        font-weight: 700;
+        wrap: no-wrap;
         overflow: elide;
         vertical-alignment: top;
     }

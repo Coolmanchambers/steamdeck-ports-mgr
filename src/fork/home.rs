@@ -308,6 +308,20 @@ pub fn initial_of(title: &str) -> String {
     title.chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".to_string())
 }
 
+/// A port's name for a poster tile: "Series: Subtitle" splits at the LAST ": " into the series (drawn small and muted above)
+/// and the subtitle (bold), so the part that tells the games of a series apart is the part that stays whole; any other name
+/// is returned as it is (`None` series). Both parts must be non-empty. The List view and the Port page keep the full name.
+pub fn poster_title(name: &str) -> (Option<String>, String) {
+    let name = name.trim();
+    if let Some(i) = name.rfind(": ") {
+        let (series, subtitle) = (name[..i].trim_end(), name[i + 2..].trim());
+        if !series.is_empty() && !subtitle.is_empty() {
+            return (Some(series.to_string()), subtitle.to_string());
+        }
+    }
+    (None, name.to_string())
+}
+
 /// How the poster tiles are laid out in the room Home gives them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TileLayout {
@@ -892,7 +906,7 @@ mod tests {
         assert_eq!(text_h, TILE_TEXT_UNITS);
         assert!((TEXT_UNITS - (2.0 * pad + text_h)).abs() < 1e-6);
         // The title: word-wrapped, room for two lines (not one, not three), then the badge line, all inside the text block.
-        let title = &tile[tile.find("// Title:").expect("the Tile's title is marked")..tile.find("// The badge:").expect("the badge is marked")];
+        let title = &tile[tile.find("// Title:").expect("the Tile's title is marked")..tile.find("// Series title:").expect("the series title is marked")];
         let badge = &tile[tile.find("// The badge:").unwrap()..tile.find("if root.selected: FocusRing").unwrap()];
         assert!(title.contains("wrap: word-wrap;") && title.contains("overflow: elide;"), "two lines, the second elided");
         let (title_y, title_h, title_font) = (units_in(title, "y:"), units_in(title, "height:"), units_in(title, "font-size:"));
@@ -901,6 +915,38 @@ mod tests {
         let (badge_y, badge_h) = (units_in(badge, "y:"), units_in(badge, "height:"));
         assert!(title_y + title_h <= badge_y + 1e-6, "the badge starts under the title");
         assert!(badge_y + badge_h <= TILE_TEXT_UNITS + 1e-6 && badge_y + badge_h >= TILE_TEXT_UNITS - 0.1, "the text block is used and not overrun");
+        // "Series: Subtitle" titles: a muted series line (about 0.75 of the tile text) and a bold subtitle line, one line each,
+        // together no taller than the two title lines, so the text block is the same.
+        let series_block = &tile[tile.find("// Series title:").unwrap()..tile.find("// The badge:").unwrap()];
+        let series = &series_block[series_block.find("// Series line:").expect("series line marked")..series_block.find("// Subtitle line:").expect("subtitle line marked")];
+        let sub = &series_block[series_block.find("// Subtitle line:").unwrap()..];
+        for part in [series, sub] {
+            assert!(part.contains("wrap: no-wrap;") && part.contains("overflow: elide;"), "one line each, elided");
+        }
+        let (s_y, s_h, s_font) = (units_in(series, "y:"), units_in(series, "height:"), units_in(series, "font-size:"));
+        let (t_y, t_h, t_font) = (units_in(sub, "y:"), units_in(sub, "height:"), units_in(sub, "font-size:"));
+        assert!(s_font < t_font && (s_font - 0.75).abs() < 1e-6, "the series is smaller than the subtitle, about 0.75 of the tile text");
+        assert!(s_h >= s_font * 1.17 - 0.05 && t_h >= t_font * 1.17 - 0.05, "each line has room for its text");
+        assert!(s_y + s_h <= t_y + 1e-4, "the subtitle starts under the series");
+        assert!(t_y + t_h <= title_y + title_h + 1e-4 && s_y >= title_y - 1e-4, "inside the room the two title lines take");
+    }
+
+    #[test]
+    fn a_series_name_is_split_at_its_last_colon_for_the_poster() {
+        let pt = |s: &str| poster_title(s);
+        assert_eq!(pt("The Legend of Zelda: Majora's Mask"), (Some("The Legend of Zelda".to_string()), "Majora's Mask".to_string()));
+        assert_eq!(pt("The Legend of Zelda: The Wind Waker HD"), (Some("The Legend of Zelda".to_string()), "The Wind Waker HD".to_string()));
+        assert_eq!(pt("3D Pinball for Windows: Space Cadet"), (Some("3D Pinball for Windows".to_string()), "Space Cadet".to_string()));
+        assert_eq!(pt("007: Nightfire"), (Some("007".to_string()), "Nightfire".to_string()));
+        assert_eq!(pt("The Legend of Zelda : Tears of the Kingdom"), (Some("The Legend of Zelda".to_string()), "Tears of the Kingdom".to_string()), "a space before the colon");
+        assert_eq!(pt("A: B: C"), (Some("A: B".to_string()), "C".to_string()), "the last colon splits");
+        assert_eq!(pt("Fix 2 problems"), (None, "Fix 2 problems".to_string()));
+        assert_eq!(pt("Banjo-Kazooie"), (None, "Banjo-Kazooie".to_string()));
+        assert_eq!(pt("Trailing colon:"), (None, "Trailing colon:".to_string()), "nothing after the colon: no split");
+        assert_eq!(pt("Trailing: "), (None, "Trailing:".to_string()));
+        assert_eq!(pt(": Leading"), (None, ": Leading".to_string()), "nothing before it: no split");
+        assert_eq!(pt("Ratio 16:9 mode"), (None, "Ratio 16:9 mode".to_string()), "a colon with no space after is part of the name");
+        assert_eq!(pt(""), (None, String::new()));
     }
 
     /// Greedy word wrap with a plain average glyph width (bold, 0.58 of the text size, measured from a Deck-sized shot).

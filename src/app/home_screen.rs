@@ -383,8 +383,12 @@ pub(crate) fn rebuild(app: &AppState) -> bool {
                         TileKind::Port | TileKind::Continue => by_key.get(t.key.as_str()).map(|p| home::detail_line(&row_facts(app, p))).unwrap_or_default(),
                         kind => home::action_detail(kind).to_string(),
                     };
+                    // Fork (home view): "Series: Subtitle" ports get a small series line and the subtitle on their poster tile.
+                    let poster = if matches!(t.kind, TileKind::Port | TileKind::Continue) { home::poster_title(&t.title) } else { (None, t.title.clone()) };
                     HomeTile {
                         title: t.title.clone().into(),
+                        series: poster.0.unwrap_or_default().into(),
+                        poster_title: poster.1.into(),
                         image,
                         badge: badge.into(),
                         detail: detail.into(),
