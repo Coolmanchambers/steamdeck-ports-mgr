@@ -24,6 +24,7 @@ pub mod folder_picker;
 pub mod custom_repo;
 pub mod import;
 pub mod install_wizard;
+pub mod list_back; // B on a picker list with a Back row goes up one level
 pub mod page;
 pub mod play_pages; // Play: "Could not start" and "Which program starts"
 pub mod port_page;

@@ -60,7 +60,7 @@ fn leave(app: &Rc<AppState>, router: &Router, ctx: &Ctx) {
 }
 
 /// A page's handlers: `act` says what each item does; B goes `back`; the X leaves.
-fn handlers<A>(ctx: &Ctx, act: impl Fn(&Rc<AppState>, &Router, A) + 'static, back: impl Fn(&Rc<AppState>, &Router) + 'static) -> Handlers<A> {
+pub(super) fn handlers<A>(ctx: &Ctx, act: impl Fn(&Rc<AppState>, &Router, A) + 'static, back: impl Fn(&Rc<AppState>, &Router) + 'static) -> Handlers<A> {
     let ctx = ctx.clone();
     // The title bar X ends Import ports, and in the setup wizard the whole wizard, as the X on its own pages does.
     let on_exit: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(move |app, router| if ctx.from_wizard { super::setup_wizard_screen::exit_wizard(app, router) } else { leave(app, router, &ctx) });
@@ -68,7 +68,7 @@ fn handlers<A>(ctx: &Ctx, act: impl Fn(&Rc<AppState>, &Router, A) + 'static, bac
 }
 
 /// If the page cannot be built nothing is lost: the flow ends as if the user had left.
-fn show_or_end<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, ctx: &Ctx, page: Page<A>, handlers: Handlers<A>) {
+pub(super) fn show_or_end<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, ctx: &Ctx, page: Page<A>, handlers: Handlers<A>) {
     // In the setup wizard these pages are its second step.
     let page = if ctx.from_wizard { page.in_wizard(2, crate::fork::setup_wizard::flow::Step::COUNTED) } else { page };
     if !show_page(app, router, page, handlers) {

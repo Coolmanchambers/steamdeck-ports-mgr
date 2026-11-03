@@ -1,12 +1,19 @@
 //! The game files result for one port as card pages (the Port page's Game files card, the search after an install,
-//! Info > Game files..., Settings > Game files > Find game files for a port). Replaces the old picker list whose sentences
+//! Settings > Ports > Game files and the ports under it, the after-import tiles). Replaces the old picker list whose sentences
 //! read like menu rows. One question per page, plain words, every place the human way ("SD card > Emulation > roms").
 //! The flow that shows them is `src/app/rom_screens/find_flow.rs`; what was found is `find::FindOutcome`.
+//!
+//! Fork (game files settings): also the question of how a file reaches the port ([`how_page`]: point to it, copy it,
+//! or read it where it is; never "link" or "method"), the words for one candidate file ([`file_detail`]: "Checked: it
+//! is the right file" or "Not checked: the name matches"; never "checksum"), and the after-import page with one tile
+//! per port ([`batch_page`]).
 
-use super::find::Need;
-use super::util::ellipsize;
-use crate::fork::page::{Focus, Mark, Page, PageButton, PageOption, LEFT};
+use super::find::{FindOutcome, Need};
+use super::util::{ellipsize, human_bytes};
+use crate::fork::art::thumbs::ArtRef;
+use crate::fork::page::{Focus, Mark, Page, PageButton, PageOption, Tile, LEFT, RIGHT};
 use crate::fork::rom_library::requirements::SlotKind;
+use crate::fork::rom_library::Method;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GfAct {
@@ -33,6 +40,8 @@ pub enum GfAct {
     /// A hand-picked file that does not match: use it for the `n`th thing it could be, or choose another.
     UseAnyway(usize),
     OtherFile,
+    /// How the file reaches the port (the how question).
+    Way(Method),
 }
 
 /// The window title of every page of the flow.
@@ -98,7 +107,7 @@ pub fn found_page(name: &str, files: &[(String, String)], checked_by_name: bool)
         p.paragraphs.push("It was matched by its name only; if the game does not start, choose the file yourself.".into());
     }
     p.paragraphs.push("Your game files are only read, never moved or deleted.".into());
-    let mut use_it = option(if files.len() == 1 { "Use it" } else { "Use them" }, "Connects it to the port (a link, or a copy if you say yes)", GfAct::UseIt);
+    let mut use_it = option(if files.len() == 1 { "Use it" } else { "Use them" }, "Connects it to the port; a copy is made only if you say yes", GfAct::UseIt);
     use_it.recommended = true;
     p.options = vec![use_it, option("Choose the file myself", "Pick another file from a list", GfAct::ChooseFile), later()];
     p
@@ -272,6 +281,99 @@ pub fn none_needed_page(name: &str) -> Page<GfAct> {
     result_page(name, "No game files needed", &format!("{name} does not name any game files it needs, so there is nothing to connect."))
 }
 
+/// "Checked: it is the right file" when the file's contents were checked against the catalog, else "Not checked: the
+/// name matches".
+pub fn checked_words(checked: bool) -> &'static str {
+    if checked { "Checked: it is the right file" } else { "Not checked: the name matches" }
+}
+
+/// The line under one candidate file: "Checked: it is the right file, in SD card > Emulation > roms > n64" (the place
+/// shortened from the middle to fit one line), or with no place its size: "Checked: it is the right file (8.4 MB)".
+pub fn file_detail(checked: bool, size: u64, place: &str) -> String {
+    let head = checked_words(checked);
+    if place.is_empty() {
+        return format!("{head} ({})", human_bytes(size));
+    }
+    let room = 66usize.saturating_sub(head.chars().count() + 5);
+    format!("{head}, in {}", ellipsize(place, room))
+}
+
+/// The how question (Settings > Game files): the ways the port allows for the files about to be connected, the one it
+/// suggests first and marked Recommended. `files` are (name, checked); `copy_bytes` what a copy of them takes. A copy is
+/// still asked about once more with the drive's free space (`copy_page`) before anything is written.
+pub fn how_page(name: &str, files: &[(String, bool)], ways: &[Method], suggested: Method, copy_bytes: u64) -> Page<GfAct> {
+    let many = files.len() > 1;
+    let (it, them) = if many { ("them", "your files") } else { ("it", "your file") };
+    let mut p = base(name, &format!("How should the port get {it}?"));
+    match files {
+        [(file, checked)] => p.paragraphs.push(format!("{file}. {}.", checked_words(*checked))),
+        _ => {
+            for (file, checked) in files.iter().take(6) {
+                p.fact(if *checked { Mark::Done } else { Mark::None }, format!("{file} ({})", checked_words(*checked).to_lowercase()));
+            }
+        }
+    }
+    p.paragraphs.push("Your game files are only read, never moved or deleted.".into());
+    let mut order: Vec<Method> = ways.iter().copied().filter(|w| *w == suggested).collect();
+    order.extend(ways.iter().copied().filter(|w| *w != suggested));
+    p.options = order
+        .iter()
+        .map(|w| {
+            let mut o = match w {
+                Method::Symlink => option(&format!("Point to {it}"), &format!("No extra space; the port's folder points to {them}"), GfAct::Way(*w)),
+                Method::Copy => option(&format!("Copy {it} into the port's folder"), &format!("Uses {}; the original stays where it is", human_bytes(copy_bytes)), GfAct::Way(*w)),
+                Method::UseInPlace => option(&format!("Read {it} where {}", if many { "they are" } else { "it is" }), "Nothing is added to the port's folder", GfAct::Way(*w)),
+            };
+            o.recommended = *w == suggested;
+            o
+        })
+        .collect();
+    p.options.push(later());
+    p
+}
+
+/// A few words for a port's tile on the after-import page.
+pub fn outcome_note(o: &FindOutcome) -> &'static str {
+    match o {
+        FindOutcome::NoFilesNeeded => "Needs none",
+        FindOutcome::NoRomFolder { .. } => "No folder chosen",
+        FindOutcome::FolderUnreadable { .. } => "Folder not read",
+        FindOutcome::FolderLooksEmpty { .. } => "Card or drive out?",
+        FindOutcome::Found { row, .. } if row.connected => "Connected",
+        FindOutcome::Found { .. } => "Found",
+        FindOutcome::Ambiguous { .. } => "Choose a file",
+        FindOutcome::NotFound { .. } => "Not found",
+    }
+}
+
+const BATCH_WINDOW: &str = "Game files: after the import";
+
+/// After an import, "Find their game files": one tile per port with what was found as its note; choosing one shows
+/// that port's pages. `ports` are (name, cover, note). Done (and B) leaves.
+pub fn batch_page(ports: &[(String, Option<ArtRef>, String)], has_folder: bool) -> Page<GfAct> {
+    let mut p = Page { window_title: BATCH_WINDOW.to_string(), large: true, header: "Import ports".to_string(), title: "Game files for your ports".to_string(), ..Page::default() };
+    p.paragraphs.push("Choose a port to see what was found for it and connect it. Your game files are only read, never moved or deleted.".into());
+    p.tiles = ports.iter().enumerate().map(|(i, (name, art, note))| Tile::choice(art.clone(), name.clone(), GfAct::Pick(i)).with_note(note.clone())).collect();
+    p.options = vec![if has_folder {
+        option("Look in another folder", "Then these ports are looked for again", GfAct::ChooseFolder)
+    } else {
+        option("Choose the game files folder", "Where you keep them; then these ports are looked for", GfAct::ChooseFolder)
+    }];
+    p.buttons[RIGHT] = Some(PageButton { label: "Done".into(), action: GfAct::Done });
+    p.primary = Some(RIGHT);
+    p.initial = if ports.is_empty() { Focus::Button(RIGHT) } else { Focus::Tile(0) };
+    p.b_does(&GfAct::Done)
+}
+
+/// The after-import search stopped or could not run: what happened, and one button.
+pub fn batch_notice_page(title: &str, text: &str) -> Page<GfAct> {
+    let mut p = Page { window_title: BATCH_WINDOW.to_string(), large: true, header: "Import ports".to_string(), title: title.to_string(), ..Page::default() };
+    p.paragraphs = text.split("\n\n").map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect();
+    p.buttons[RIGHT] = Some(PageButton { label: "OK".into(), action: GfAct::Done });
+    p.primary = Some(RIGHT);
+    p.b_does(&GfAct::Done)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,14 +486,69 @@ mod tests {
             browse_page(name, &folder),
             no_match_page(name, file, true, &needs, &["Ocarina of Time Master Quest (Europe)".into(), "Ocarina of Time".into()]),
             none_needed_page(name),
+            how_page(name, &[(file.to_string(), false)], &[Method::UseInPlace, Method::Symlink, Method::Copy], Method::Symlink, 6_200_000_000),
+            how_page(name, &[(file.to_string(), true), ("fake-track-2.bin".into(), false)], &[Method::Symlink, Method::Copy], Method::Copy, 900_000_000_000),
+            pick_page(name, "oot.z64", &[(file.to_string(), file_detail(true, 64_000_000, place)), ("b.z64".into(), file_detail(false, 1, ""))]),
+            batch_page(&[(name.to_string(), None, "Card or drive out?".into()), ("SoH".into(), None, "Choose a file".into())], true),
+            batch_page(&[], false),
+            batch_notice_page("The search was stopped", "Nothing was changed."),
         ];
         for p in &pages {
+            crate::fork::rom_screens::settings_pages::tests::assert_fits(p);
+            crate::fork::rom_screens::settings_pages::tests::assert_plain(p, &[]);
+            for t in &p.tiles {
+                assert!(t.note.chars().count() <= 20, "a tile's note is a few words: {}", t.note);
+            }
             assert!(p.title.chars().count() <= 40, "title too long: {}", p.title);
             for o in &p.options {
                 assert!(o.title.chars().count() <= 40, "{:?}: option title too long: {}", p.title, o.title);
                 assert!(o.detail.chars().count() <= 66, "{:?}: detail too long ({}): {}", p.title, o.detail.chars().count(), o.detail);
             }
         }
+    }
+
+    #[test]
+    fn the_how_question_offers_plain_ways_with_the_suggested_one_first() {
+        let p = how_page("SoH", &[("fake-game.z64".into(), true)], &[Method::Symlink, Method::Copy], Method::Symlink, 64_000_000);
+        assert_eq!(p.title, "How should the port get it?");
+        assert_eq!(p.paragraphs[0], "fake-game.z64. Checked: it is the right file.");
+        let opts: Vec<(&str, &str, GfAct)> = p.options.iter().map(|o| (o.title.as_str(), o.detail.as_str(), o.action)).collect();
+        assert_eq!(
+            opts,
+            [
+                ("Point to it", "No extra space; the port's folder points to your file", GfAct::Way(Method::Symlink)),
+                ("Copy it into the port's folder", "Uses 64.0 MB; the original stays where it is", GfAct::Way(Method::Copy)),
+                ("Add it later", LATER_DETAIL, GfAct::Later),
+            ]
+        );
+        assert!(p.options[0].recommended && !p.options[1].recommended);
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(GfAct::Way(Method::Symlink)));
+        let copy_first = how_page("SoH", &[("a".into(), false), ("b".into(), true)], &[Method::UseInPlace, Method::Symlink, Method::Copy], Method::Copy, 1);
+        assert_eq!(copy_first.options[0].title, "Copy them into the port's folder");
+        assert_eq!(copy_first.options[1].title, "Read them where they are");
+        assert_eq!(copy_first.facts, ["a (not checked: the name matches)", "b (checked: it is the right file)"]);
+    }
+
+    #[test]
+    fn a_candidate_file_says_whether_it_was_checked_and_where_it_is() {
+        assert_eq!(file_detail(true, 8_400_000, "SD card > Emulation > roms > n64"), "Checked: it is the right file, in SD card > Emulation > roms > n64");
+        assert_eq!(file_detail(false, 8_400_000, ""), "Not checked: the name matches (8.4 MB)");
+        let long = file_detail(true, 8_400_000, "SD card (SD512) > Emulation > roms > wiiu > A Very Long Folder Name [USA]");
+        assert!(long.chars().count() <= 66 && long.ends_with("[USA]"), "{long}");
+    }
+
+    #[test]
+    fn after_an_import_each_port_is_a_tile_with_its_outcome_and_done_leaves() {
+        let p = batch_page(&[("Dusklight".into(), None, "Found".into()), ("SoH".into(), None, "Not found".into())], true);
+        assert_eq!(p.title, "Game files for your ports");
+        assert_eq!(p.tiles.iter().map(|t| (t.label.as_str(), t.note.as_str(), t.action)).collect::<Vec<_>>(), [("Dusklight", "Found", Some(GfAct::Pick(0))), ("SoH", "Not found", Some(GfAct::Pick(1)))]);
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(GfAct::Pick(0)));
+        assert_eq!(p.options[0].action, GfAct::ChooseFolder);
+        assert_eq!(p.back_hint, "Done");
+        let n = batch_notice_page("The search was stopped", "One.\n\nTwo.");
+        assert_eq!(n.paragraphs, ["One.", "Two."]);
+        assert_eq!(n.buttons.iter().flatten().count(), 1, "one button");
+        assert_eq!(action_at(&n, initial_focus(&n)), Some(GfAct::Done));
     }
 
     #[test]

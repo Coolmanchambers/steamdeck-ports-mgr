@@ -22,4 +22,5 @@ pub mod offer;
 pub mod pages;
 pub mod report;
 pub mod scan_work;
+pub mod settings_pages;
 pub mod util;

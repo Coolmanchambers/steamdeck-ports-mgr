@@ -10,6 +10,8 @@ use super::plan::{Block, PortPlan};
 use super::scan::{Found, ImportScan};
 use crate::core::models::Port;
 use crate::fork::adopt::{shared_words, WELL_KNOWN};
+use crate::fork::page::{Focus, Mark, Page, PageButton, PageOption};
+use crate::fork::port_page::paths::{human_path, Places};
 use crate::fork::rom_screens::util::ellipsize;
 use crate::fork::screens::{listed, short_path};
 use std::path::{Path, PathBuf};
@@ -209,77 +211,113 @@ pub fn plan_text(plan: &PortPlan, home: &Path) -> String {
 // Scan folders
 // ---------------------------------------------------------------------------------------------
 
+/// A card of the "Where to look for ports" page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FolderLine {
-    /// What happened to the last change ("already in the list", "could not save").
-    Note,
     Add,
-    /// A well-known folder, by index into `WELL_KNOWN`.
+    /// A well-known folder, by index into `WELL_KNOWN`: a switch.
     Default(usize),
-    /// A removable drive that is plugged in, by index into `ScanFolders::drives`.
+    /// A removable drive that is plugged in, by index into `ScanFolders::drives`: a switch.
     Drive(usize),
-    /// One the user added, by index into `ScanFolders::user`.
+    /// One the user added, by index into `ScanFolders::user`: choosing it asks whether to stop looking there.
     User(usize),
+    /// Look one folder deeper: a switch.
     Deeper,
     Back,
+}
+
+/// The answer to "Stop looking in this folder?".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopLooking {
+    Yes,
+    No,
 }
 
 pub struct FoldersScreen {
     pub home: PathBuf,
     pub folders: ScanFolders,
+    /// What happened to the last change ("already in the list", "could not save").
     pub note: Option<String>,
 }
+
+/// Fork (game files settings): the window title of the scan folders page.
+pub const FOLDERS_WINDOW: &str = "Import ports: where to look";
 
 impl FoldersScreen {
     pub fn new(home: &Path, folders: ScanFolders) -> FoldersScreen {
         FoldersScreen { home: home.to_path_buf(), folders, note: None }
     }
 
-    /// The row the cursor starts on: the first real row, not the note.
-    pub fn first_row(&self) -> usize {
-        usize::from(self.note.is_some())
+    /// `places` with this screen's home folder: "Internal storage > Games", never "~/Games".
+    fn places(&self, places: &Places) -> Places {
+        Places { home: Some(self.home.clone()), ..places.clone() }
     }
 
-    pub fn lines(&self) -> Vec<FolderLine> {
-        let mut lines = Vec::new();
-        if self.note.is_some() {
-            lines.push(FolderLine::Note);
+    fn user_place(&self, i: usize, places: &Places) -> (String, bool) {
+        let path = crate::fork::adopt::expand_home(&self.folders.user[i], &self.home);
+        (human_path(&path, &self.places(places)), path.is_dir())
+    }
+
+    /// Fork (game files settings): the scan folders as a page of cards (was a list of "[x] ~/Games (standard, not there)"
+    /// rows). The standard places, the plugged-in drives and "Look one folder deeper" are On / Off switches; a folder the
+    /// user added is a card that asks whether to stop looking there. Places are named the human way.
+    pub fn folders_page(&self, places: &Places) -> Page<FolderLine> {
+        let places = self.places(places);
+        let option = |title: &str, detail: &str, action: FolderLine| PageOption { title: ellipsize(title, 40), detail: ellipsize(detail, 66), choice: None, enabled: true, recommended: false, action };
+        let mut p = Page::<FolderLine> {
+            window_title: FOLDERS_WINDOW.to_string(),
+            large: true,
+            header: "Import ports".to_string(),
+            title: "Where to look for ports".to_string(),
+            paragraphs: vec!["Switch a place off to stop looking there. Nothing in these folders is changed.".to_string()],
+            buttons: [Some(PageButton { label: "Back".to_string(), action: FolderLine::Back }), None, None, None],
+            initial: Focus::Option(0),
+            ..Page::default()
+        };
+        if let Some(note) = &self.note {
+            p.fact(Mark::Problem, note.clone());
         }
-        lines.push(FolderLine::Add);
-        lines.extend((0..WELL_KNOWN.len()).map(FolderLine::Default));
-        lines.extend((0..self.folders.drives.len()).map(FolderLine::Drive));
-        lines.extend((0..self.folders.user.len()).map(FolderLine::User));
-        lines.extend([FolderLine::Deeper, FolderLine::Back]);
-        lines
+        p.options.push(option("Add a folder to look in", "Pick a folder that has ports in it", FolderLine::Add));
+        let mut switches = Vec::new();
+        for (i, name) in WELL_KNOWN.iter().enumerate() {
+            let there = self.home.join(name).is_dir();
+            let detail = if there { "A standard place" } else { "A standard place, not on this Deck yet" };
+            switches.push((p.options.len(), self.folders.default_is_on(name)));
+            p.options.push(option(&human_path(&self.home.join(name), &places), detail, FolderLine::Default(i)));
+        }
+        for (i, drive) in self.folders.drives.iter().enumerate() {
+            switches.push((p.options.len(), self.folders.drive_is_on(i)));
+            p.options.push(option(&drive.title, "The whole drive, while it is plugged in", FolderLine::Drive(i)));
+        }
+        for i in 0..self.folders.user.len() {
+            let (place, there) = self.user_place(i, &places);
+            let detail = if there { "Added by you. Choose it to stop looking there" } else { "Added by you, not there now. Choose it to stop looking there" };
+            p.options.push(option(&place, detail, FolderLine::User(i)));
+        }
+        switches.push((p.options.len(), self.folders.look_deeper));
+        p.options.push(option("Look one folder deeper", "Finds ports kept in folders inside folders; takes longer", FolderLine::Deeper));
+        for (index, on) in switches {
+            p = p.toggle(index, on);
+        }
+        p.b_means("Back")
     }
 
-    pub fn labels(&self) -> Vec<String> {
-        self.lines()
-            .into_iter()
-            .map(|line| match line {
-                FolderLine::Note => self.note.clone().unwrap_or_default(),
-                FolderLine::Add => "Add a folder to scan...".to_string(),
-                FolderLine::Default(i) => {
-                    let name = WELL_KNOWN[i];
-                    let missing = if self.home.join(name).is_dir() { "" } else { ", not there" };
-                    format!("{}~/{name} (standard{missing})", if self.folders.default_is_on(name) { "[x] " } else { "[ ] " })
-                }
-                FolderLine::Drive(i) => format!("{}{} (standard)", if self.folders.drive_is_on(i) { "[x] " } else { "[ ] " }, self.folders.drives[i].title),
-                FolderLine::User(i) => {
-                    let shown = ellipsize(&short_path(&crate::fork::adopt::expand_home(&self.folders.user[i], &self.home), &self.home), 56);
-                    let missing = if crate::fork::adopt::expand_home(&self.folders.user[i], &self.home).is_dir() { "" } else { " (not there)" };
-                    format!("{shown}{missing}: choose to remove")
-                }
-                FolderLine::Deeper => format!("{}Also look one folder deeper (slower)", if self.folders.look_deeper { "[x] " } else { "[ ] " }),
-                FolderLine::Back => "Back to Import ports".to_string(),
-            })
-            .collect()
-    }
-
-    /// The text of the "remove this folder?" confirm.
-    pub fn remove_text(&self, user_index: usize) -> String {
-        let path = crate::fork::adopt::expand_home(&self.folders.user[user_index], &self.home);
-        format!("Stop scanning {}?\n\nOnly the entry in this list goes. The folder and what is in it are not touched.", short_path(&path, &self.home))
+    /// "Stop looking in this folder?" for a folder the user added: only the list changes. No is where the cursor starts.
+    pub fn stop_page(&self, user_index: usize, places: &Places) -> Page<StopLooking> {
+        let (place, _) = self.user_place(user_index, places);
+        let option = |title: &str, detail: &str, action: StopLooking| PageOption { title: title.to_string(), detail: detail.to_string(), choice: None, enabled: true, recommended: false, action };
+        let mut p = Page::<StopLooking> {
+            window_title: format!("{FOLDERS_WINDOW}: stop looking"),
+            large: true,
+            header: "Import ports".to_string(),
+            title: "Stop looking in this folder?".to_string(),
+            paragraphs: vec![format!("{place}."), "Only this list changes. The folder and what is in it are not touched.".to_string()],
+            options: vec![option("Yes, stop looking there", "It comes off the list", StopLooking::Yes), option("No, keep it", "Nothing changes", StopLooking::No)],
+            initial: Focus::Option(1),
+            ..Page::default()
+        };
+        p.options[1].recommended = true;
+        p.b_does(&StopLooking::No)
     }
 }
 
@@ -376,23 +414,26 @@ mod tests {
         folders.user.push("/no/such/dir".into());
         folders.toggle_default("Games");
         let mut fs_screen = FoldersScreen::new(&h.home, folders);
-        let labels = fs_screen.labels();
-        assert_eq!(labels[0], "Add a folder to scan...");
-        assert_eq!(labels[1], "[x] ~/Applications (standard)");
-        assert_eq!(labels[2], "[ ] ~/Games (standard)");
-        assert_eq!(labels[3], "[x] ~/Ports (standard, not there)");
-        assert_eq!(labels[4], "~/sd/Ports: choose to remove");
-        assert_eq!(labels[5], "/no/such/dir (not there): choose to remove");
-        assert_eq!(labels[6], "[ ] Also look one folder deeper (slower)");
-        assert_eq!(labels[7], "Back to Import ports");
-        assert_eq!(fs_screen.lines()[4], FolderLine::User(0));
-        assert!(fs_screen.remove_text(0).starts_with("Stop scanning ~/sd/Ports?"));
-        assert!(fs_screen.remove_text(0).contains("not touched"));
-        assert!(!labels.join("\n").contains("json"), "no JSON anywhere in the UI");
+        let places = Places::default();
+        let p = fs_screen.folders_page(&places);
+        let cards: Vec<(&str, &str, Option<bool>)> = p.options.iter().enumerate().map(|(i, o)| (o.title.as_str(), o.detail.as_str(), p.toggle_of(i))).collect();
+        assert_eq!(cards[0].0, "Add a folder to look in");
+        assert_eq!(cards[1].2, Some(true));
+        assert!(cards[1].0.ends_with("> Applications"), "{}", cards[1].0);
+        assert_eq!(cards[2].2, Some(false), "Games is switched off");
+        assert_eq!((cards[3].1, cards[3].2), ("A standard place, not on this Deck yet", Some(true)));
+        assert_eq!((cards[4].0, cards[4].1, cards[4].2), ("Internal storage > sd > Ports", "Added by you. Choose it to stop looking there", None));
+        assert_eq!((cards[5].0, cards[5].1), ("/no/such/dir", "Added by you, not there now. Choose it to stop looking there"));
+        assert_eq!((cards[6].0, cards[6].2), ("Look one folder deeper", Some(false)));
+        assert_eq!(p.options[4].action, FolderLine::User(0));
+        let stop = fs_screen.stop_page(0, &places);
+        assert_eq!(stop.paragraphs[0], "Internal storage > sd > Ports.");
+        assert!(stop.paragraphs[1].contains("not touched"));
+        assert!(p.options.iter().all(|o| !o.title.contains("json") && !o.detail.contains("json")), "no JSON anywhere in the UI");
         fs_screen.note = Some("Already in the list".into());
-        assert_eq!(fs_screen.labels()[0], "Already in the list");
-        assert_eq!(fs_screen.lines()[0], FolderLine::Note);
-        assert_eq!(fs_screen.first_row(), 1, "the cursor skips the note");
+        let noted = fs_screen.folders_page(&places);
+        assert_eq!(noted.facts, ["Already in the list"]);
+        assert_eq!(noted.options[0].action, FolderLine::Add, "the note is text, never a card the cursor lands on");
     }
 
     #[test]
@@ -471,12 +512,15 @@ mod tests {
     #[test]
     fn a_plugged_in_drive_has_a_row_that_can_be_switched_off() {
         let mut folders = ScanFolders::default().with_drives(vec![crate::fork::import::folders::DriveRoot { mount: "/run/media/deck/SD512".into(), title: "SD card (SD512)".into() }]);
-        let s = FoldersScreen::new(Path::new("/home/deck"), folders.clone());
-        assert!(s.labels().contains(&"[x] SD card (SD512) (standard)".to_string()), "{:?}", s.labels());
-        assert!(s.lines().contains(&FolderLine::Drive(0)));
+        let switch_of = |s: &FoldersScreen| {
+            let p = s.folders_page(&Places::default());
+            let i = p.options.iter().position(|o| o.action == FolderLine::Drive(0)).expect("a card for the drive");
+            assert_eq!(p.options[i].title, "SD card (SD512)");
+            p.toggle_of(i)
+        };
+        assert_eq!(switch_of(&FoldersScreen::new(Path::new("/home/deck"), folders.clone())), Some(true));
         folders.toggle_drive(0);
-        let s = FoldersScreen::new(Path::new("/home/deck"), folders);
-        assert!(s.labels().contains(&"[ ] SD card (SD512) (standard)".to_string()));
+        assert_eq!(switch_of(&FoldersScreen::new(Path::new("/home/deck"), folders)), Some(false));
     }
 
     #[test]
@@ -497,5 +541,63 @@ mod tests {
         }
         assert!(!seen.is_empty());
         let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod folders_page_tests {
+    use super::super::folders::DriveRoot;
+    use super::*;
+    use crate::fork::page::{action_at, initial_focus};
+
+    fn screen(home: &Path) -> FoldersScreen {
+        let mut folders = ScanFolders { user: vec!["~/Emulation/ports".into(), "/run/media/deck/1234-ABCD/A Very Long Folder Name For Ports/And Another One Below It".into()], look_deeper: true, ..ScanFolders::default() };
+        folders.drives = vec![DriveRoot { mount: "/run/media/deck/1234-ABCD".into(), title: "SD card (SD512)".into() }];
+        folders.toggle_default("Applications");
+        FoldersScreen::new(home, folders)
+    }
+
+    fn places() -> Places {
+        Places { drives: vec![], home: None, media_roots: vec![PathBuf::from("/run/media/deck"), PathBuf::from("/run/media")] }
+    }
+
+    #[test]
+    fn the_scan_folders_are_switches_with_places_the_human_way() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("Games")).unwrap();
+        let p = screen(tmp.path()).folders_page(&places());
+        assert_eq!((p.window_title.as_str(), p.title.as_str()), ("Import ports: where to look", "Where to look for ports"));
+        let cards: Vec<(&str, FolderLine, Option<bool>)> = p.options.iter().enumerate().map(|(i, o)| (o.title.as_str(), o.action, p.toggle_of(i))).collect();
+        assert_eq!(cards[0], ("Add a folder to look in", FolderLine::Add, None));
+        assert_eq!(cards[1], ("Internal storage > Applications", FolderLine::Default(0), Some(false)), "switched off");
+        assert_eq!(cards[2], ("Internal storage > Games", FolderLine::Default(1), Some(true)));
+        assert_eq!(cards[4], ("SD card (SD512)", FolderLine::Drive(0), Some(true)));
+        assert_eq!(cards[5], ("Internal storage > Emulation > ports", FolderLine::User(0), None), "a folder of yours is not a switch");
+        assert_eq!(cards[6].1, FolderLine::User(1));
+        assert!(cards[6].0.starts_with("SD card > "), "{}", cards[6].0);
+        assert_eq!(cards[7], ("Look one folder deeper", FolderLine::Deeper, Some(true)));
+        assert_eq!(p.options[2].detail, "A standard place");
+        assert_eq!(p.options[3].detail, "A standard place, not on this Deck yet");
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(FolderLine::Add));
+        assert_eq!(p.buttons[0].as_ref().map(|b| b.action), Some(FolderLine::Back));
+        assert!(p.facts.is_empty());
+    }
+
+    #[test]
+    fn the_scan_folder_pages_fit_and_never_say_tilde() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = screen(tmp.path());
+        s.note = Some("That folder is already in the list.".into());
+        let p = s.folders_page(&places());
+        assert_eq!(p.facts, ["That folder is already in the list."]);
+        let stop = s.stop_page(1, &places());
+        assert_eq!(stop.title, "Stop looking in this folder?");
+        assert_eq!(action_at(&stop, initial_focus(&stop)), Some(StopLooking::No));
+        assert_eq!(stop.back_hint, "No, keep it");
+        crate::fork::rom_screens::settings_pages::tests::assert_fits(&p);
+        crate::fork::rom_screens::settings_pages::tests::assert_fits(&stop);
+        crate::fork::rom_screens::settings_pages::tests::assert_plain(&p, &[]);
+        crate::fork::rom_screens::settings_pages::tests::assert_plain(&stop, &[]);
+        assert!(stop.paragraphs[0].starts_with("SD card > "), "{}", stop.paragraphs[0]);
     }
 }

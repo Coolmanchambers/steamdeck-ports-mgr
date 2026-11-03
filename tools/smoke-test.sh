@@ -17,7 +17,9 @@
 #     button goes Home from Deck-ready opened via Add a port; B twice from a search in All ports clears it, then goes Home;
 #   - Ports > Add a port opens the page and B returns to the Ports page; Updates > Check for Updates flips in place and keeps
 #     the cursor on it;
-#   - Ports > Game files opens without a crash; Ports > Kept files opens its page and B returns to the Ports page;
+#   - Ports > Game files opens its page; "Where your game files are" opens the folder picker and closing it comes back; B on
+#     "Ports that need game files" goes back one level to the Game files page, and B there to the Ports page; Ports > Kept
+#     files opens its page and B returns to the Ports page;
 #   - Ports > Ports folder opens, its "Choose another folder..." opens the folder picker, and
 #     closing the picker returns to the Ports folder list; then, end to end, it moves the two seeded
 #     ports into ~/Games/Ports (New folder here, Use this folder, Move, Keep for now twice) and checks the
@@ -533,19 +535,46 @@ if [ "$alive" = yes ]; then
                 check "the Updates page opens" 'false'
             fi
             close_settings
-            # Settings > Ports > Game files opens without a crash.
-            open_settings_page && settings_entry Ports GameFiles; sleep 2
-            import -window root "$OUT/game-files.png" 2>/dev/null
-            gf_alive=no; kill -0 "$APP" 2>/dev/null && gf_alive=yes
-            check "Game files screen opens and the app keeps running" '[ "$gf_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$(xdotool search --name "^Deck Ports Manager: Game files$" 2>/dev/null)" ]'
-            # Settings > Ports > Ports folder, then its "Choose another folder..." row (third) opens the picker;
-            # the picker's close button cancels back to the Ports folder list.
             # A dialog's own close button (top right), since keys need focus and there is no window manager.
             close_named() {
                 local w; w=$(xdotool search --name "$1" 2>/dev/null | head -1); [ -n "$w" ] || return 0
                 eval "$(xdotool getwindowgeometry --shell "$w")"; xdotool mousemove $((X + WIDTH - 16)) $((Y + 16)) click 1; sleep 1
             }
-            close_named "^Deck Ports Manager: Game files$"
+            # Settings > Ports > Game files is a page of cards. With no game files folder chosen yet the cursor starts on
+            # "Where your game files are" and Down skips the two cards that wait for a folder, to "Ports that need game
+            # files". B on that page goes up one level to the Game files page, and B there up to the Ports page.
+            open_settings_page && settings_entry Ports GameFiles; sleep 2
+            import -window root "$OUT/game-files.png" 2>/dev/null
+            gf=$(find_window '^Deck Ports Manager: Settings: Ports: Game files$') || gf=""
+            check "Game files page opens and the app keeps running" '[ -n "$gf" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+            if [ -n "$gf" ]; then
+                # "Where your game files are" opens the folder picker; its close button comes back to the Game files page.
+                press_keys "$gf" Return; sleep 2
+                gpick=$(find_window '^Deck Ports Manager: Where are your game files\?$') || gpick=""
+                import -window root "$OUT/game-files-picker.png" 2>/dev/null
+                check "Where your game files are opens the folder picker" '[ -n "$gpick" ] && kill -0 "$APP" 2>/dev/null'
+                if [ -n "$gpick" ]; then
+                    close_named '^Deck Ports Manager: Where are your game files\?$'; sleep 1
+                    check "closing the picker returns to the Game files page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Where are your game files" 2>/dev/null)" ] && wait_for "[ -n \"\$(xdotool search --onlyvisible --name \"^Deck Ports Manager: Settings: Ports: Game files\$\" 2>/dev/null)\" ]"'
+                fi
+                gf=$(find_window '^Deck Ports Manager: Settings: Ports: Game files$') || gf=""
+                [ -n "$gf" ] && press_keys "$gf" Up Up Up Down Return; sleep 1.5
+                need=$(find_window '^Deck Ports Manager: Game files: ports that need them$') || need=""
+                import -window root "$OUT/game-files-need.png" 2>/dev/null
+                check "Ports that need game files opens its page" '[ -n "$need" ] && kill -0 "$APP" 2>/dev/null'
+                if [ -n "$need" ]; then
+                    press_keys "$need" Escape; sleep 1.5
+                    check "B on a Game files page goes back one level, to the Game files page" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Game files: ports that need them$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Ports: Game files$" 2>/dev/null)" ]'
+                fi
+                gf=$(find_window '^Deck Ports Manager: Settings: Ports: Game files$') || gf=""
+                if [ -n "$gf" ]; then
+                    press_keys "$gf" Escape; sleep 1.5
+                    check "B on the Game files page goes up to the Ports page of Settings" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Ports: Game files$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Settings: Ports$" 2>/dev/null)" ]'
+                fi
+            fi
+            close_settings
+            # Settings > Ports > Ports folder, then its "Choose another folder..." row (third) opens the picker;
+            # the picker's close button cancels back to the Ports folder list.
             eval "$(xdotool getwindowgeometry --shell "$win")"
             open_settings_page && settings_entry Ports PortsFolder; sleep 2
             pf=$(xdotool search --name "^Deck Ports Manager: Ports folder$" 2>/dev/null | head -1)

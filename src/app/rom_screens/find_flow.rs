@@ -5,23 +5,26 @@
 //!   that names files it cannot run without and is not connected yet, it looks in the game files folder
 //!   on a worker thread (with progress and Cancel) and shows what it found.
 //! - [`search_ports_now`]: "Find their game files" on the import's card page. One walk of the folder for
-//!   several ports, then a list with each port's result and Pick another folder...
-//! - [`find_for_port`]: the same search for one port from anywhere (the setup wizard, the port's Info
-//!   dialog, Settings > Game files). `back` runs when the user leaves (Later, Cancel, Back).
-//! - [`show_ports_needing_files`]: Settings > Game files > Find game files for a port.
+//!   several ports, then a page with one tile per port (its outcome as the tile's note) and "Look in another folder".
+//! - [`find_for_port`]: the same search for one port from anywhere (the setup wizard, the Port page, the install
+//!   wizard). `back` runs when the user leaves (Later, Cancel, Back). [`find_for_port_asking`] is the same from Settings
+//!   > Ports > Game files, which also asks how the file reaches the port (point to it, copy it, read it where it is).
+//! - [`show_ports_needing_files`]: Settings > Ports > Game files > Ports that need game files.
 //!
-//! What the user sees: the Connect step when the file is there (a pick list first when several files
-//! match), or a prompt that names the port, the files it needs (with CRC when the catalog gives one) and
-//! where it looked, with Search again, Connect by hand... and Later. Nothing is copied without the
-//! user's yes (the Connect step asks), and game files are only read.
+//! What the user sees: the found page when the file is there (a "Which one is your copy?" page first when several
+//! files match), or a page that names the port, the files it needs and where it looked, with Choose the file myself,
+//! Look again and Add it later. Nothing is copied without the user's yes (the copy page asks, with the size), and game
+//! files are only read.
 
-use super::{choose_folder, load_store, message, open_list, run_job, store_path, Back, JobUi, Router, Then, JOB_RUNNING, TITLE};
-use crate::app::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog_or, DialogSlot};
+use super::{choose_folder, load_store, message, run_job, store_path, Back, JobUi, Router, Then, JOB_RUNNING, TITLE};
+use crate::app::dialogs::{close_current_dialog, dialog_is_open};
 use crate::app::page_dialog::{show_page, Handlers};
+use crate::fork::art::thumbs::ArtRef;
 use crate::fork::page::Page;
 use crate::fork::port_page::paths::{human_path, Places};
 use crate::fork::rom_library::{Approval, SlotStatus};
 use crate::fork::rom_screens::pages::{self, GfAct};
+use crate::fork::rom_screens::settings_pages::{self, GsAct};
 use crate::fork::rom_screens::util::file_name;
 use crate::app::folder_picker_screen::open_folder_picker;
 use crate::app::state::AppState;
@@ -39,7 +42,6 @@ use crate::fork::rom_screens::offer::{self, AutoSearch};
 use crate::fork::rom_screens::report::PortRow;
 use crate::fork::rom_screens::util::ellipsize;
 use crate::fork::settings::{ForkSettings, FILE_NAME};
-use slint::ComponentHandle;
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -48,7 +50,6 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 
 const SEARCH_TITLE: &str = "Looking for game files";
-const ROW_WIDTH: usize = 110;
 
 fn close_back() -> Back {
     Rc::new(|app, router| close_current_dialog(app, router))
@@ -82,7 +83,7 @@ pub(crate) fn port_files_state(app: &AppState, port: &Port) -> Option<FilesState
     Some(crate::fork::setup_wizard::files_state::files_state(port, &dir, &app.paths.config_dir))
 }
 
-/// For the Info dialog: is the port installed and does it name files it needs.
+/// For the Port page: is the port installed and does it name files it needs.
 pub(crate) fn port_needs_game_files(app: &AppState, port: &Port) -> bool {
     !port.is_android_only() && app.is_installed(port) && request_for(app, &local_entries(app), port, Vec::new()).needs_files()
 }
@@ -104,24 +105,10 @@ fn ports_folder_busy(app: &AppState) -> bool {
     crate::app::ports_folder_screen::startup_dialog_pending() || crate::app::ports_folder_screen::blocked_reason(app).is_some()
 }
 
-/// A list whose cursor starts on `start` (the first action row) instead of the first text row.
-fn open_list_at(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, start: usize, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) {
-    let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
-    let start = start.min(labels.len().saturating_sub(1)) as i32;
-    dialog.set_selected_index(start);
-    app.dialog_nav.picker_index.set(start);
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| on_select(&app, &router, index as usize));
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
-}
-
 // -- Entry points ---------------------------------------------------------------------------------
 
 /// Right after a port finished installing. Once per port; quiet when there is nothing to do or a
-/// dialog or another game files task is already up (the port stays reachable from Info and Settings).
+/// dialog or another game files task is already up (the port stays reachable from its Port page and Settings).
 pub(crate) fn after_install(app: &Rc<AppState>, router: &Router, key: &str) {
     if dialog_is_open(app) || JOB_RUNNING.with(Cell::get) || ports_folder_busy(app) {
         return;
@@ -134,11 +121,21 @@ pub(crate) fn after_install(app: &Rc<AppState>, router: &Router, key: &str) {
         AutoSearch::Search => {}
         AutoSearch::Skip(_) => return,
     }
-    search(app, router, req, store, close_back(), Some(key.to_string()));
+    search(app, router, req, store, close_back(), Some(key.to_string()), false);
 }
 
 /// Look for one port's game files and show the result. `back` runs when the user leaves.
 pub(crate) fn find_for_port(app: &Rc<AppState>, router: &Router, key: &str, back: Back) {
+    find_one(app, router, key, back, false);
+}
+
+/// [`find_for_port`] from Settings > Ports > Game files: connecting also asks how the file reaches the port when the port
+/// allows more than one way.
+pub(crate) fn find_for_port_asking(app: &Rc<AppState>, router: &Router, key: &str, back: Back) {
+    find_one(app, router, key, back, true);
+}
+
+fn find_one(app: &Rc<AppState>, router: &Router, key: &str, back: Back, ask_how: bool) {
     let Some(port) = app.find_port(key) else {
         return message(app, router, TITLE, "That port is no longer in the list.");
     };
@@ -148,10 +145,10 @@ pub(crate) fn find_for_port(app: &Rc<AppState>, router: &Router, key: &str, back
         let name = port.display_name().to_string();
         return gf_result(app, router, &name, "No game files needed", &format!("{name} does not name any game files it needs, so there is nothing to look for."), back);
     }
-    search(app, router, req, store, back, None);
+    search(app, router, req, store, back, None, ask_how);
 }
 
-/// The Info dialog's "Game files..." button.
+/// The Port page's "Game files" (kept under its old name for the callers).
 pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
     find_for_port(app, router, port.key(), close_back());
 }
@@ -159,14 +156,14 @@ pub(crate) fn open_from_info(app: &Rc<AppState>, router: &Router, port: Port) {
 /// "Find their game files" (the import's card page): every port among `keys` that needs a game file, whether or not
 /// it was searched before. False only when it cannot start (another task runs).
 pub(crate) fn search_ports_now(app: &Rc<AppState>, router: &Router, keys: &[String], then: Option<Back>) -> bool {
-    search_ports(app, router, keys, "", then, true)
+    search_ports(app, router, keys, then, true)
 }
 
-/// Searches several ports with one walk of the folder and lists the outcomes. `intro` lines go at the top of the list.
-/// `then` runs when the user is done with what it shows: the Done row, B on the list, Continue on its notices, or B
-/// on the search's progress list (not when it returns false: nothing was shown). `force`: search every port that
-/// needs files; otherwise only the ones not searched after their install yet.
-fn search_ports(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &str, then: Option<Back>, force: bool) -> bool {
+/// Searches several ports with one walk of the folder and shows the outcomes as tiles. `then` runs when the user is done
+/// with what it shows: Done, B on the page, OK on its notices, or B on the search's waiting page (not when it returns
+/// false: nothing was shown). `force`: search every port that needs files; otherwise only the ones not searched after
+/// their install yet.
+fn search_ports(app: &Rc<AppState>, router: &Router, keys: &[String], then: Option<Back>, force: bool) -> bool {
     if JOB_RUNNING.with(Cell::get) || ports_folder_busy(app) {
         return false;
     }
@@ -183,11 +180,10 @@ fn search_ports(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &st
         return false;
     }
     let searched: Vec<String> = reqs.iter().map(|r| r.port.key().to_string()).collect();
-    let intro: Rc<Vec<String>> = Rc::new(intro.lines().filter(|l| !l.trim().is_empty()).map(|l| ellipsize(l, ROW_WIDTH)).collect());
     if store.rom_dir().is_none() {
         let outcomes = find_game_files_for_ports(&store, &reqs, &AtomicBool::new(false), &mut |_| {}).unwrap_or_default();
         mark_searched(app, &searched);
-        show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()), then);
+        show_batch(app, router, Rc::new(reqs.into_iter().zip(outcomes).collect()), then);
         return true;
     }
     let worker_reqs = reqs.clone();
@@ -197,62 +193,73 @@ fn search_ports(app: &Rc<AppState>, router: &Router, keys: &[String], intro: &st
     run_job(
         app,
         router,
-        JobUi::Cancellable { title: SEARCH_TITLE },
+        // Fork (game files settings): a waiting page with a Cancel card, not a list.
+        JobUi::Page { title: SEARCH_TITLE, cancellable: true },
         move |ctl| find_game_files_for_ports(&store, &worker_reqs, ctl.flag(), &mut |t| ctl.set_progress(t)),
         move |app, router, result| match result {
             Ok(Some(outcomes)) => {
                 mark_searched(app, &searched);
-                show_batch(app, router, intro, Rc::new(reqs.into_iter().zip(outcomes).collect()), then);
+                show_batch(app, router, Rc::new(reqs.into_iter().zip(outcomes).collect()), then);
             }
-            Ok(None) => notice_then(app, router, &format!("{}\n\nThe search for game files was cancelled. {LATER_HINT}", intro.join("\n")), &then),
-            Err(e) => notice_then(app, router, &format!("{}\n\nCould not look for game files: {e}", intro.join("\n")), &then),
+            Ok(None) => notice_then(app, router, "The search was stopped", &format!("Nothing was changed.\n\n{LATER_HINT}"), &then),
+            Err(e) => notice_then(app, router, "Could not look for game files", &format!("{e}\n\nNothing was changed. {LATER_HINT}"), &then),
         },
     );
     true
 }
 
-/// Settings > Game files > Find game files for a port: every installed port that names files.
-pub(crate) fn show_ports_needing_files(app: &Rc<AppState>, router: &Router) {
-    let Some(store) = load_store(app, router) else { return };
+/// The installed ports that name game files they need, the ones not connected yet first.
+pub(super) struct NeedRow {
+    pub name: String,
+    pub key: String,
+    pub connected: bool,
+}
+
+pub(super) fn need_rows(app: &AppState, store: &RomLibraryStore) -> Vec<NeedRow> {
     let catalog = app.catalog.borrow().clone();
     let local = local_entries(app);
-    let mut rows: Vec<(bool, String, String)> = catalog
+    let mut rows: Vec<NeedRow> = catalog
         .iter()
         .filter(|p| !p.is_android_only() && app.is_installed(p))
         .map(|p| request_for(app, &local, p, store.mappings().to_vec()))
         .filter(FindRequest::needs_files)
-        .map(|r| {
-            let connected = r.already_connected();
-            let name = r.port.display_name().to_string();
-            let label = format!("{} - {}", ellipsize(&name, 60), if connected { "connected" } else { "not connected yet" });
-            (connected, label, r.port.key().to_string())
-        })
+        .map(|r| NeedRow { name: r.port.display_name().to_string(), key: r.port.key().to_string(), connected: r.already_connected() })
         .collect();
-    rows.sort_by(|a, b| (a.0, a.1.to_lowercase()).cmp(&(b.0, b.1.to_lowercase())));
-    let mut labels: Vec<String> = rows.iter().map(|r| r.1.clone()).collect();
-    if rows.is_empty() {
-        labels.push("No installed port names game files it needs.".into());
-    }
-    let back_index = labels.len();
-    labels.push("Back".into());
-    open_list(app, router, "Find game files for a port", labels, move |app, router, index| {
-        if let Some((_, _, key)) = rows.get(index) {
-            let back: Back = Rc::new(|app, router| show_ports_needing_files(app, router));
-            find_for_port(app, router, key, back);
-        } else if index == back_index {
-            super::open_game_files(app, router);
-        }
-    });
+    rows.sort_by(|a, b| (a.connected, a.name.to_lowercase()).cmp(&(b.connected, b.name.to_lowercase())));
+    rows
+}
+
+/// Settings > Ports > Game files > Ports that need game files: one card per installed port that names files; choosing
+/// one looks for its files.
+pub(crate) fn show_ports_needing_files(app: &Rc<AppState>, router: &Router) {
+    let Some(store) = load_store(app, router) else { return };
+    let rows = need_rows(app, &store);
+    let shown: Vec<(String, bool)> = rows.iter().map(|r| (r.name.clone(), r.connected)).collect();
+    let page = settings_pages::need_page(&shown);
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            GsAct::Port(i) => {
+                if let Some(row) = rows.get(i) {
+                    find_for_port_asking(app, router, &row.key, Rc::new(show_ports_needing_files));
+                }
+            }
+            _ => super::menu(app, router),
+        }),
+        on_back: Rc::new(super::menu),
+        on_exit: Rc::new(|app, router| close_current_dialog(app, router)),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }
 
 // -- The search -----------------------------------------------------------------------------------
 
 /// `mark`: the port whose automatic search this is; it is marked as searched when the result shows.
-fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibraryStore, back: Back, mark: Option<String>) {
+fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibraryStore, back: Back, mark: Option<String>, ask_how: bool) {
     if store.rom_dir().is_none() {
         // Nothing to walk: answer right away.
         if let Some(outcome) = find_game_files_for_port(&store, &req, &AtomicBool::new(false), &mut |_| {}) {
-            show_outcome(app, router, req, outcome, back, mark);
+            show_outcome(app, router, req, outcome, back, mark, ask_how);
         }
         return;
     }
@@ -269,7 +276,7 @@ fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibra
         JobUi::Page { title: SEARCH_TITLE, cancellable: true },
         move |ctl| find_game_files_for_port(&store, &worker_req, ctl.flag(), &mut |t| ctl.set_progress(t)),
         move |app, router, result| match result {
-            Ok(Some(outcome)) => show_outcome(app, router, req, outcome, back, mark),
+            Ok(Some(outcome)) => show_outcome(app, router, req, outcome, back, mark, ask_how),
             Ok(None) => back(app, router),
             Err(e) => message(app, router, TITLE, &e),
         },
@@ -277,19 +284,19 @@ fn search(app: &Rc<AppState>, router: &Router, req: FindRequest, store: RomLibra
 }
 
 /// Search again for the same port, with the connections as they are now.
-fn search_key(app: &Rc<AppState>, router: &Router, key: &str, back: Back) {
+fn search_key(app: &Rc<AppState>, router: &Router, key: &str, back: Back, ask_how: bool) {
     let Some(port) = app.find_port(key) else { return back(app, router) };
     let Some(store) = load_store(app, router) else { return };
     let req = request_for(app, &local_entries(app), &port, store.mappings().to_vec());
-    search(app, router, req, store, back, None);
+    search(app, router, req, store, back, None, ask_how);
 }
 
 /// Where "Choose ROM folder..." returns to: after a folder is chosen (search again there) and on Back.
-pub(super) fn resume(app: &Rc<AppState>, router: &Router, key: &str, back: &Back) {
-    search_key(app, router, key, back.clone());
+pub(super) fn resume(app: &Rc<AppState>, router: &Router, key: &str, back: &Back, ask_how: bool) {
+    search_key(app, router, key, back.clone(), ask_how);
 }
 
-fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: FindOutcome, back: Back, mark: Option<String>) {
+fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: FindOutcome, back: Back, mark: Option<String>, ask_how: bool) {
     let name = req.port.display_name().to_string();
     if let Some(key) = mark {
         mark_searched(app, &[key]);
@@ -297,7 +304,7 @@ fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: 
     // Fork (port page): the result is a card page (`fork::rom_screens::pages`), every place named the human way.
     let places = Places::system();
     let place = |p: &Path| human_path(p, &places);
-    let ctx = Rc::new(Ctx { req, back });
+    let ctx = Rc::new(Ctx { req, back, ask_how });
     match outcome {
         FindOutcome::NoFilesNeeded => (ctx.back)(app, router),
         FindOutcome::Found { row, .. } if row.connected => {
@@ -315,7 +322,7 @@ fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: 
             let page = pages::found_page(&name, &files, row.low_confidence);
             gf_page(app, router, page, ctx, Some(Rc::new(row)));
         }
-        FindOutcome::Ambiguous { row, slots, .. } => pick_then_connect(app, router, row, slots, ctx.back.clone()),
+        FindOutcome::Ambiguous { row, slots, .. } => pick_then_connect(app, router, row, slots, ctx.back.clone(), ask_how),
         FindOutcome::NotFound { needs, looked_in, notes } => {
             let page = pages::not_found_page(&name, &needs, &place(&looked_in.folder), &notes, looked_in.problems);
             gf_page(app, router, page, ctx, None);
@@ -334,10 +341,12 @@ fn show_outcome(app: &Rc<AppState>, router: &Router, req: FindRequest, outcome: 
 
 // -- The result pages -------------------------------------------------------------------------------------
 
-/// The one port the pages are about, and where they lead when the user is done (Later, Done, B).
+/// The one port the pages are about, where they lead when the user is done (Later, Done, B), and whether connecting
+/// asks how the file reaches the port.
 struct Ctx {
     req: FindRequest,
     back: Back,
+    ask_how: bool,
 }
 
 /// The connected files of the port: (file name, its place).
@@ -352,21 +361,24 @@ fn gf_page(app: &Rc<AppState>, router: &Router, page: Page<GfAct>, ctx: Rc<Ctx>,
     let handlers = Handlers {
         on_action: Rc::new(move |app, router, act| {
             let key = c_act.req.port.key().to_string();
+            let ask_how = c_act.ask_how;
             match act {
                 GfAct::UseIt => match &row {
-                    Some(row) => connect_row(app, router, row, c_act.back.clone()),
+                    Some(row) => connect_row(app, router, row, c_act.back.clone(), ask_how),
                     None => (c_act.back)(app, router),
                 },
-                GfAct::LookAgain => search_key(app, router, &key, c_act.back.clone()),
-                GfAct::ChooseFolder => choose_folder(app, router, Then::Find { key, back: c_act.back.clone() }),
+                GfAct::LookAgain => search_key(app, router, &key, c_act.back.clone(), ask_how),
+                GfAct::ChooseFolder => choose_folder(app, router, Then::Find { key, back: c_act.back.clone(), ask_how }),
                 GfAct::ChooseFile => {
                     let again: Back = {
                         let (page, ctx, row) = (again_page.clone(), c_act.clone(), row.clone());
                         Rc::new(move |app, router| gf_page(app, router, page.clone(), ctx.clone(), row.clone()))
                     };
-                    connect_by_hand(app, router, c_act.req.clone(), c_act.back.clone(), again);
+                    connect_by_hand(app, router, c_act.req.clone(), c_act.back.clone(), again, ask_how);
                 }
-                GfAct::Later | GfAct::Done | GfAct::Copy | GfAct::Pick(_) | GfAct::Up | GfAct::Folder(_) | GfAct::File(_) | GfAct::UseAnyway(_) | GfAct::OtherFile => (c_act.back)(app, router),
+                GfAct::Later | GfAct::Done | GfAct::Copy | GfAct::Pick(_) | GfAct::Up | GfAct::Folder(_) | GfAct::File(_) | GfAct::UseAnyway(_) | GfAct::OtherFile | GfAct::Way(_) => {
+                    (c_act.back)(app, router)
+                }
             }
         }),
         on_back: Rc::new(move |app, router| (c_back.back)(app, router)),
@@ -376,31 +388,58 @@ fn gf_page(app: &Rc<AppState>, router: &Router, page: Page<GfAct>, ctx: Rc<Ctx>,
     show_page(app, router, page, handlers);
 }
 
-/// A page with only Done (a result), leading to `back`.
-fn gf_result(app: &Rc<AppState>, router: &Router, name: &str, title: &str, text: &str, back: Back) {
+/// Handlers of a page whose every choice but `on` leads `back`.
+fn simple_handlers(back: Back, on: impl Fn(&Rc<AppState>, &Router, GfAct) -> bool + 'static) -> Handlers<GfAct> {
     let (b1, b2, b3) = (back.clone(), back.clone(), back);
-    let handlers = Handlers {
-        on_action: Rc::new(move |app, router, _: GfAct| b1(app, router)),
+    Handlers {
+        on_action: Rc::new(move |app, router, act| {
+            if !on(app, router, act) {
+                b1(app, router)
+            }
+        }),
         on_back: Rc::new(move |app, router| b2(app, router)),
         on_exit: Rc::new(move |app, router| b3(app, router)),
         on_input: None,
-    };
-    show_page(app, router, pages::result_page(name, title, text), handlers);
+    }
 }
 
-/// "Use it": connect what was found, the way Settings > Game files does (its own rules: use in place, link, or a copy
-/// only after a yes with its size shown), on pages.
-fn connect_row(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back) {
+/// A page with only Done (a result), leading to `back`.
+fn gf_result(app: &Rc<AppState>, router: &Router, name: &str, title: &str, text: &str, back: Back) {
+    show_page(app, router, pages::result_page(name, title, text), simple_handlers(back, |_, _, _| false));
+}
+
+/// "Use it": connect what was found, the way the port allows (read in place, pointed to, or a copy only after a yes with
+/// its size shown), on pages. With `ask_how` the user chooses the way first.
+fn connect_row(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back, ask_how: bool) {
     if !row.installed {
         let name = row.port.display_name().to_string();
         return gf_result(app, router, &name, "Install it first", &format!("Install {name} first, then connect its game files."), back);
     }
     let Some(store) = load_store(app, router) else { return };
     let Ok(port_dir) = safe_join(&app.paths.library_dir(), &row.port.folder) else { return };
-    connect_screen_now(app, router, ConnectScreen::new(row, port_dir, store.mappings()), back);
+    connect_screen_now(app, router, ConnectScreen::new(row, port_dir, store.mappings()), back, ask_how);
 }
 
-fn connect_screen_now(app: &Rc<AppState>, router: &Router, screen: ConnectScreen, back: Back) {
+/// Fork (game files settings): "How should the port get it?" when asked for and the port allows more than one way, then
+/// connecting with the way chosen.
+fn connect_screen_now(app: &Rc<AppState>, router: &Router, screen: ConnectScreen, back: Back, ask_how: bool) {
+    let ways = screen.ways();
+    if !ask_how || ways.len() < 2 || screen.chosen_files().is_empty() {
+        return connect_planned(app, router, screen, back);
+    }
+    let page = pages::how_page(&screen.port_name, &screen.chosen_files(), &ways, screen.suggested_way(), screen.bytes_if_copied());
+    let go_back = back.clone();
+    let handlers = simple_handlers(back, move |app, router, act| {
+        let GfAct::Way(way) = act else { return false };
+        let mut chosen = screen.clone();
+        chosen.set_way(way);
+        connect_planned(app, router, chosen, go_back.clone());
+        true
+    });
+    show_page(app, router, page, handlers);
+}
+
+fn connect_planned(app: &Rc<AppState>, router: &Router, screen: ConnectScreen, back: Back) {
     let name = screen.port_name.clone();
     let requests = match screen.requests() {
         Ok(r) => r,
@@ -420,16 +459,14 @@ fn connect_screen_now(app: &Rc<AppState>, router: &Router, screen: ConnectScreen
             if !plan.needs_copy_approval() {
                 return apply_pages(app, router, &name, plan, Approval::None, unchecked.clone(), back.clone());
             }
-            let (name2, plan2, unchecked2, back2, back3, back4) = (name.clone(), plan.clone(), unchecked.clone(), back.clone(), back.clone(), back.clone());
-            let handlers = Handlers {
-                on_action: Rc::new(move |app, router, act| match act {
-                    GfAct::Copy => apply_pages(app, router, &name2, plan2.clone(), Approval::CopyAllowed, unchecked2.clone(), back2.clone()),
-                    _ => back2(app, router),
-                }),
-                on_back: Rc::new(move |app, router| back3(app, router)),
-                on_exit: Rc::new(move |app, router| back4(app, router)),
-                on_input: None,
-            };
+            let (name2, plan2, unchecked2, back2) = (name.clone(), plan.clone(), unchecked.clone(), back.clone());
+            let handlers = simple_handlers(back.clone(), move |app, router, act| {
+                if act != GfAct::Copy {
+                    return false;
+                }
+                apply_pages(app, router, &name2, plan2.clone(), Approval::CopyAllowed, unchecked2.clone(), back2.clone());
+                true
+            });
             show_page(app, router, pages::copy_page(&name, &plan.confirm_text(&name)), handlers);
         },
     );
@@ -451,7 +488,7 @@ fn apply_pages(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<crate::
                     text.push_str(&format!("\n\nNote: {w}"));
                 }
                 for file in unchecked.iter() {
-                    text.push_str(&format!("\n\n{file} was matched by its name only. If the game does not start, choose the file yourself."));
+                    text.push_str(&format!("\n\n{file}: not checked, the name matches. If the game does not start, choose the file yourself."));
                 }
                 gf_result(app, router, &name, "Game files connected", &text, back.clone());
             }
@@ -462,124 +499,114 @@ fn apply_pages(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<crate::
 
 // -- Several ports at once --------------------------------------------------------------------------
 
-/// A message; with a `then` it is a Continue dialog (also on B) that runs it.
-fn notice_then(app: &Rc<AppState>, router: &Router, text: &str, then: &Option<Back>) {
-    let Some(then) = then else { return message(app, router, TITLE, text) };
-    let (on_confirm, on_cancel) = (then.clone(), then.clone());
-    open_confirm_dialog_or(app, router, TITLE.into(), format!("{text}\n").into(), "Continue".into(), move |app, router| on_confirm(app, router), move |app, router| on_cancel(app, router));
-    if let DialogSlot::TwoButton(d) = &*app.dialog_nav.dialogs.borrow() {
-        let (app, router, then) = (app.clone(), router.clone(), then.clone());
-        d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
-            close_current_dialog(&app, &router);
-            then(&app, &router);
-        });
-    }
+/// Fork (game files settings): the search stopped or failed: a page with one OK, which runs `then` (as B does). Without
+/// a `then` it closes.
+fn notice_then(app: &Rc<AppState>, router: &Router, title: &str, text: &str, then: &Option<Back>) {
+    let then = then.clone().unwrap_or_else(close_back);
+    show_page(app, router, pages::batch_notice_page(title, text), simple_handlers(then, |_, _, _| false));
 }
 
-fn show_batch(app: &Rc<AppState>, router: &Router, intro: Rc<Vec<String>>, items: Rc<Vec<(FindRequest, FindOutcome)>>, then: Option<Back>) {
-    let mut labels: Vec<String> = intro.as_ref().clone();
-    let first = labels.len();
+/// Fork (game files settings): one tile per port with what was found as its note (was a list of "Game files for X: found"
+/// rows). A tile opens that port's pages, which come back here; Look in another folder searches the same ports again
+/// there; Done and B run `then`.
+fn show_batch(app: &Rc<AppState>, router: &Router, items: Rc<Vec<(FindRequest, FindOutcome)>>, then: Option<Back>) {
     let shown: Vec<usize> = (0..items.len()).filter(|i| !matches!(items[*i].1, FindOutcome::NoFilesNeeded)).collect();
-    labels.extend(shown.iter().map(|i| format!("Game files for {}: {}", ellipsize(items[*i].0.port.display_name(), 50), items[*i].1.short())));
-    // Another folder, then the same ports searched again.
-    let pick = labels.len();
+    let tiles: Vec<(String, Option<ArtRef>, String)> = shown
+        .iter()
+        .map(|i| {
+            let (req, outcome) = &items[*i];
+            (req.port.display_name().to_string(), Some(ArtRef::of_port(&req.port)), pages::outcome_note(outcome).to_string())
+        })
+        .collect();
     let has_folder = RomLibraryStore::load(&store_path(app)).ok().is_some_and(|s| s.rom_dir().is_some());
-    labels.push(if has_folder { "Pick another folder..." } else { "Pick a folder..." }.into());
-    let done = labels.len();
-    labels.push("Done".into());
+    let page = pages::batch_page(&tiles, has_folder);
     let keys: Vec<String> = items.iter().map(|(r, _)| r.port.key().to_string()).collect();
-    let on_done = then.clone();
-    let then_for_close = then.clone();
-    open_list_at(app, router, TITLE, labels, first, move |app, router, index| {
-        if index == pick {
-            let (keys, then, again) = (keys.clone(), then.clone(), {
-                let (intro, items, then) = (intro.clone(), items.clone(), then.clone());
-                move |app: &Rc<AppState>, router: &Router| show_batch(app, router, intro.clone(), items.clone(), then.clone())
-            });
-            return open_folder_picker(
-                app,
-                router,
-                super::game_files_picker(),
-                move |app, router, path| {
-                    let Some(mut store) = load_store(app, router) else { return };
-                    match store.set_rom_dir(Some(path)) {
-                        Ok(()) => {
-                            if !search_ports_now(app, router, &keys, then.clone()) {
-                                message(app, router, TITLE, "Another game files task is still running. Try again in a moment.");
-                            }
-                        }
-                        Err(e) => message(app, router, TITLE, &format!("Could not use that folder: {e}")),
-                    }
-                },
-                move |app, router| again(app, router),
-            );
-        }
-        if index == done {
-            close_current_dialog(app, router);
-            if let Some(then) = &on_done {
-                then(app, router);
+    let done: Back = then.clone().unwrap_or_else(close_back);
+    let again: Back = {
+        let (items, then) = (items.clone(), then.clone());
+        Rc::new(move |app, router| show_batch(app, router, items.clone(), then.clone()))
+    };
+    let handlers = simple_handlers(done, move |app, router, act| {
+        match act {
+            GfAct::Pick(n) => {
+                let Some(&i) = shown.get(n) else { return true };
+                let (req, outcome) = items[i].clone();
+                show_outcome(app, router, req, outcome, again.clone(), None, false);
             }
-            return;
+            GfAct::ChooseFolder => {
+                let (keys, then, again) = (keys.clone(), then.clone(), again.clone());
+                open_folder_picker(
+                    app,
+                    router,
+                    super::game_files_picker(),
+                    move |app, router, path| {
+                        let Some(mut store) = load_store(app, router) else { return };
+                        match store.set_rom_dir(Some(path)) {
+                            Ok(()) => {
+                                if !search_ports_now(app, router, &keys, then.clone()) {
+                                    message(app, router, TITLE, "Another game files task is still running. Try again in a moment.");
+                                }
+                            }
+                            Err(e) => message(app, router, TITLE, &format!("Could not use that folder: {e}")),
+                        }
+                    },
+                    move |app, router| again(app, router),
+                );
+            }
+            _ => return false,
         }
-        let Some(&i) = index.checked_sub(first).and_then(|n| shown.get(n)) else { return };
-        let back: Back = {
-            let (intro, items, then) = (intro.clone(), items.clone(), then.clone());
-            Rc::new(move |app, router| show_batch(app, router, intro.clone(), items.clone(), then.clone()))
-        };
-        let (req, outcome) = items[i].clone();
-        show_outcome(app, router, req, outcome, back, None);
+        true
     });
-    // B on the list is Done too.
-    if let (Some(then), DialogSlot::Picker(d)) = (then_for_close, &*app.dialog_nav.dialogs.borrow()) {
-        let (app, router) = (app.clone(), router.clone());
-        d.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
-            close_current_dialog(&app, &router);
-            then(&app, &router);
-        });
-    }
+    show_page(app, router, page, handlers);
 }
 
 // -- Connect ----------------------------------------------------------------------------------------
 
-fn open_row(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back) {
+fn open_row(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back, ask_how: bool) {
     // Fork (port page): a file the user picked or said to use goes straight to connecting it, on pages.
-    connect_row(app, router, row, back);
+    connect_row(app, router, row, back, ask_how);
 }
 
-fn pick_then_connect(app: &Rc<AppState>, router: &Router, row: PortRow, slots: Vec<usize>, back: Back) {
+fn pick_then_connect(app: &Rc<AppState>, router: &Router, row: PortRow, slots: Vec<usize>, back: Back, ask_how: bool) {
     if !row.installed {
-        return open_row(app, router, &row, back);
+        return open_row(app, router, &row, back, ask_how);
     }
     let Some(store) = load_store(app, router) else { return };
     let Ok(port_dir) = safe_join(&app.paths.library_dir(), &row.port.folder) else { return };
     let screen = Rc::new(RefCell::new(ConnectScreen::new(&row, port_dir, store.mappings())));
     let slots: Rc<Vec<(usize, String)>> = Rc::new(slots.into_iter().map(|i| (i, row.matched.slots[i].label.clone())).collect());
-    pick_next(app, router, screen, slots, 0, back);
+    pick_next(app, router, screen, slots, 0, back, ask_how);
 }
 
 /// One page per thing with several matching files ("Which one is your copy?"), then connecting with the choices made.
-fn pick_next(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectScreen>>, slots: Rc<Vec<(usize, String)>>, n: usize, back: Back) {
+fn pick_next(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectScreen>>, slots: Rc<Vec<(usize, String)>>, n: usize, back: Back, ask_how: bool) {
     let Some((slot, label)) = slots.get(n).cloned() else {
         let screen = screen.borrow().clone();
-        return connect_screen_now(app, router, screen, back);
+        return connect_screen_now(app, router, screen, back, ask_how);
     };
     if !screen.borrow().is_editable(slot) {
-        return pick_next(app, router, screen, slots, n + 1, back);
+        return pick_next(app, router, screen, slots, n + 1, back, ask_how);
     }
-    let (picks, pick_labels) = (screen.borrow().picks(slot), screen.borrow().pick_labels(slot));
-    let files: Vec<(Pick, String)> =
-        picks.into_iter().zip(pick_labels).filter(|(p, _)| matches!(p, Pick::File(_))).map(|(p, l)| (p, l.trim_start_matches("File: ").to_string())).collect();
+    // Fork (game files settings): each file with whether it was checked, its size and its place the human way (was
+    // "(chosen) oot.z64 (8 MB)  in n64").
+    let files: Vec<Pick> = screen.borrow().picks(slot).into_iter().filter(|p| matches!(p, Pick::File(_))).collect();
+    let candidates = screen.borrow().candidates(slot);
+    let places = Places::system();
+    let shown: Vec<(String, String)> = files
+        .iter()
+        .filter_map(|p| if let Pick::File(c) = p { candidates.get(*c) } else { None })
+        .map(|c| (c.name.clone(), pages::file_detail(c.checked, c.size, &human_path(&c.folder, &places))))
+        .collect();
     let name = screen.borrow().port_name.clone();
-    let shown: Vec<(String, String)> = files.iter().map(|(_, l)| (l.clone(), String::new())).collect();
     let page = pages::pick_page(&name, &ellipsize(&label, 50), &shown);
     let (b1, b2) = (back.clone(), back.clone());
     let handlers = Handlers {
         on_action: Rc::new(move |app, router, act| match act {
             GfAct::Pick(i) => {
-                if let Some((pick, _)) = files.get(i) {
+                if let Some(pick) = files.get(i) {
                     screen.borrow_mut().choose(slot, *pick);
                 }
-                pick_next(app, router, screen.clone(), slots.clone(), n + 1, back.clone());
+                pick_next(app, router, screen.clone(), slots.clone(), n + 1, back.clone(), ask_how);
             }
             _ => back(app, router),
         }),
@@ -592,17 +619,17 @@ fn pick_next(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectScre
 
 // -- Connect by hand --------------------------------------------------------------------------------
 
-fn connect_by_hand(app: &Rc<AppState>, router: &Router, req: FindRequest, back: Back, cancel: Back) {
+fn connect_by_hand(app: &Rc<AppState>, router: &Router, req: FindRequest, back: Back, cancel: Back, ask_how: bool) {
     let start = RomLibraryStore::load(&store_path(app)).ok().and_then(|s| s.rom_dir().map(Path::to_path_buf)).filter(|d| d.is_dir());
     let start = start.or_else(super::home_dir).unwrap_or_else(|| PathBuf::from("/"));
     // Fork (install wizard): Up one level stops at Internal storage or the drive, never a raw "/home" or "/run/media".
     let browser = FileBrowser::open(&start).with_tops(Places::system().tops());
-    show_file_browser(app, router, Rc::new(RefCell::new(browser)), Rc::new(req), back, cancel);
+    show_file_browser(app, router, Rc::new(RefCell::new(browser)), Rc::new(req), back, cancel, ask_how);
 }
 
 /// Fork (install wizard): "Choose the file myself" as card pages (one folder a page, the place the human way), not a
 /// picker list showing the raw path.
-fn show_file_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrowser>>, req: Rc<FindRequest>, back: Back, cancel: Back) {
+fn show_file_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrowser>>, req: Rc<FindRequest>, back: Back, cancel: Back, ask_how: bool) {
     let folder = {
         let b = browser.borrow();
         pages::Folder { place: human_path(&b.current, &Places::system()), can_go_up: b.can_go_up(), folders: b.folder_names(), files: b.file_entries(), hidden: b.hidden_count, error: b.error.clone() }
@@ -616,11 +643,11 @@ fn show_file_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<Fi
                 GfAct::Folder(i) => browser.borrow_mut().enter(i),
                 GfAct::File(i) => {
                     let Some(path) = browser.borrow().file(i).map(Path::to_path_buf) else { return };
-                    return hand_picked(app, router, browser.clone(), req.clone(), path, back.clone(), cancel.clone());
+                    return hand_picked(app, router, browser.clone(), req.clone(), path, back.clone(), cancel.clone(), ask_how);
                 }
                 _ => return cancel(app, router),
             }
-            show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone());
+            show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone(), ask_how);
         }),
         on_back: Rc::new(move |app, router| c1(app, router)),
         on_exit: Rc::new(move |app, router| c2(app, router)),
@@ -629,12 +656,13 @@ fn show_file_browser(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<Fi
     show_page(app, router, page, handlers);
 }
 
-fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrowser>>, req: Rc<FindRequest>, path: PathBuf, back: Back, cancel: Back) {
+#[allow(clippy::too_many_arguments)]
+fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrowser>>, req: Rc<FindRequest>, path: PathBuf, back: Back, cancel: Back, ask_how: bool) {
     let worker_req = (*req).clone();
     // B on the progress list goes where Cancel does: back to the same folder to pick again.
     {
         let (browser, req, back, cancel) = (browser.clone(), req.clone(), back.clone(), cancel.clone());
-        let again: Back = Rc::new(move |app, router| show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone()));
+        let again: Back = Rc::new(move |app, router| show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone(), ask_how));
         super::ABANDON_HOOK.with(|h| *h.borrow_mut() = Some(again));
     }
     run_job(
@@ -645,8 +673,8 @@ fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrow
         move |app, router, result| match result.and_then(|r| r) {
             Err(e) => message(app, router, TITLE, &e),
             // Cancelled: back to the same folder to pick again.
-            Ok(None) => show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone()),
-            Ok(Some(HandPick::Matches { row })) => open_row(app, router, &row, back),
+            Ok(None) => show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone(), ask_how),
+            Ok(Some(HandPick::Matches { row })) => open_row(app, router, &row, back, ask_how),
             // Fork (install wizard): the answer as a card page (plain words, no checksums), not a picker list.
             Ok(Some(HandPick::NoMatch { row, file, slots, wrong_version })) => {
                 let name = req.port.display_name().to_string();
@@ -658,10 +686,10 @@ fn hand_picked(app: &Rc<AppState>, router: &Router, browser: Rc<RefCell<FileBrow
                     on_action: Rc::new(move |app, router, act| match act {
                         GfAct::UseAnyway(n) => {
                             if let Some(&slot) = slots.get(n) {
-                                open_row(app, router, &use_anyway(&row, slot, &file), back.clone());
+                                open_row(app, router, &use_anyway(&row, slot, &file), back.clone(), ask_how);
                             }
                         }
-                        GfAct::OtherFile => show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone()),
+                        GfAct::OtherFile => show_file_browser(app, router, browser.clone(), req.clone(), back.clone(), cancel.clone(), ask_how),
                         _ => cancel(app, router),
                     }),
                     on_back: Rc::new(move |app, router| c1(app, router)),

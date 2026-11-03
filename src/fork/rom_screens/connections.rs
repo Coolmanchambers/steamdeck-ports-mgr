@@ -1,4 +1,5 @@
-//! The list of recorded connections ("Connected ports"), with whether each still holds on disk.
+//! The recorded connections ("Connected ports"), with whether each still holds on disk. The words the page shows are
+//! `settings_pages::connection_words`.
 
 use super::util::file_name;
 use crate::fork::rom_library::{check_mapping, Health, Mapping, Method};
@@ -7,18 +8,13 @@ use crate::fork::rom_library::{check_mapping, Health, Mapping, Method};
 pub struct ConnGroup {
     pub port_key: String,
     pub slot: String,
-    pub label: String,
     pub health: Health,
-}
-
-fn health_words(h: Health) -> &'static str {
-    match h {
-        Health::Ok => "OK",
-        Health::SourceMissing => "game file missing (drive unplugged?)",
-        Health::SourceChanged => "game file changed since connecting",
-        Health::DestMissing => "link or copy is gone",
-        Health::DestChanged => "link or copy was changed",
-    }
+    /// The port's name (its key when it is no longer in the catalog).
+    pub name: String,
+    /// The first file's name, and how many more files the connection holds (a disc's tracks).
+    pub file: String,
+    pub more: usize,
+    pub method: Method,
 }
 
 /// One group per (port, file slot): a disc's several files read as one connection. `port_name` maps a
@@ -34,18 +30,14 @@ pub fn connection_groups(mappings: &[Mapping], port_name: &dyn Fn(&str) -> Optio
         seen.push(id);
         let members: Vec<&Mapping> = mappings.iter().filter(|o| o.port_key == m.port_key && o.slot == m.slot).collect();
         let health = members.iter().map(|o| check_mapping(o)).find(|h| *h != Health::Ok).unwrap_or(Health::Ok);
-        let name = port_name(&m.port_key).unwrap_or_else(|| m.port_key.clone());
-        let more = if members.len() > 1 { format!(" +{} more", members.len() - 1) } else { String::new() };
-        let how = match m.method {
-            Method::UseInPlace => "used in place",
-            Method::Symlink => "linked",
-            Method::Copy => "copied",
-        };
         groups.push(ConnGroup {
             port_key: m.port_key.clone(),
             slot: m.slot.clone(),
-            label: format!("{name}: {}{more} ({how}) - {}", file_name(&m.source), health_words(health)),
             health,
+            name: port_name(&m.port_key).unwrap_or_else(|| m.port_key.clone()),
+            file: file_name(&m.source),
+            more: members.len() - 1,
+            method: m.method,
         });
     }
     groups
@@ -75,7 +67,7 @@ mod tests {
     }
 
     #[test]
-    fn a_disc_reads_as_one_connection_and_health_shows_in_the_words() {
+    fn a_disc_reads_as_one_connection_and_its_health_is_kept() {
         let tmp = temp_dir();
         let cue = tmp.path().join("Game.cue");
         let bin = tmp.path().join("Game (Track 1).bin");
@@ -85,11 +77,12 @@ mod tests {
         let names = |k: &str| (k == "p").then(|| "Severed Chains".to_string());
         let groups = connection_groups(&ms, &names);
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].label, "Severed Chains: Game.cue +1 more (used in place) - OK");
+        assert_eq!((groups[0].name.as_str(), groups[0].file.as_str(), groups[0].more, groups[0].method, groups[0].health), ("Severed Chains", "Game.cue", 1, Method::UseInPlace, Health::Ok));
+        assert_eq!(super::super::settings_pages::connection_words(&groups[0]), "Game.cue and 1 more: read where it is");
         fs::remove_file(&bin).unwrap();
         let broken = connection_groups(&ms, &names);
         assert_eq!(broken[0].health, Health::SourceMissing);
-        assert!(broken[0].label.ends_with("game file missing (drive unplugged?)"));
+        assert!(super::super::settings_pages::connection_words(&broken[0]).ends_with("your file is gone (card or drive out?)"));
     }
 
     #[test]
@@ -98,6 +91,6 @@ mod tests {
         let f = tmp.path().join("a.z64");
         write(&f, b"x");
         let groups = connection_groups(&[mapping("gone/port", "s", f, Method::Symlink)], &|_| None);
-        assert!(groups[0].label.starts_with("gone/port: a.z64 (linked)"));
+        assert_eq!((groups[0].name.as_str(), groups[0].file.as_str()), ("gone/port", "a.z64"));
     }
 }

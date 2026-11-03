@@ -693,7 +693,24 @@ pub(crate) fn build_picker_dialog(app: &Rc<AppState>, router: &Router, title: &s
         });
     }
     wire_keyboard_nav!(dialog, app, vertical);
-    wire_dialog_close!(dialog, app, router);
+    // Fork: B on a list with a Back row does what that row does (up one level); without one it closes, as before
+    // (crate::fork::list_back). The rows are read when B comes, so a list relabelled later is still right.
+    {
+        let (app, router, weak) = (app.clone(), router.clone(), dialog.as_weak());
+        dialog.on_close_requested(move || {
+            if !crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
+                return;
+            }
+            let back = weak.upgrade().and_then(|d| {
+                let labels: Vec<String> = slint::Model::iter(&d.get_items()).map(|i| i.label.to_string()).collect();
+                crate::fork::list_back::back_row(&labels).map(|n| (d, n))
+            });
+            match back {
+                Some((d, n)) => d.invoke_item_selected(n as i32),
+                None => close_current_dialog(&app, &router),
+            }
+        });
+    }
     Some(dialog)
 }
 

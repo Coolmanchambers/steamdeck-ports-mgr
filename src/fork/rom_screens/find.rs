@@ -455,7 +455,7 @@ pub fn looks_empty_lines(port_name: &str, needs: &[Need], folder: &Path, saved: 
 }
 
 /// Under every prompt, so "Later" is not a dead end.
-pub const LATER_HINT: &str = "Later: use Game files... in the port's Info, or Settings > Game files > Find game files for a port.";
+pub const LATER_HINT: &str = "You can look for them later on each port's page, or in Settings > Ports > Game files.";
 
 // -- Connect by hand ------------------------------------------------------------------------------
 

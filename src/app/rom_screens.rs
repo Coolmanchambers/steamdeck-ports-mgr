@@ -1,34 +1,33 @@
-//! The "Game files" screens (Settings menu) and the search for a port's game files after it installs.
+
+//! The "Game files" pages (Settings > Ports > Game files) and the search for a port's game files after it installs.
 //!
-//! Every screen is a list built from the picker dialog the app already has, so it works with the
-//! controller, keyboard and mouse, in a window or fullscreen. What the lists say and do is decided in
-//! `crate::fork::rom_screens` (tested without any UI); this file draws it, runs the slow parts on a
-//! worker thread (a scan can read thousands of files, a copy gigabytes) and opens the next list. The
-//! text is English only; it is not part of upstream's translation tables.
+//! Fork (game files settings): every page is a guided page (`page_dialog::show_page`), no picker lists. What the pages
+//! say is decided in `crate::fork::rom_screens` (`settings_pages` for the Game files page and the pages under it, `pages`
+//! for one port's pages; tested without any UI); this file shows them, runs the slow parts on a worker thread (a look
+//! through the folder can read thousands of files, a copy gigabytes) and opens the next page. The text is English only;
+//! it is not part of upstream's translation tables.
 //!
 //! Hard rules, kept: the game folder is only read, a copy is made only after the user confirms it
 //! with its size shown, and forgetting a connection removes the record and no files.
 
-use super::dialogs::{
-    build_picker_dialog, close_current_dialog, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, open_progress_dialog,
-    set_picker_items, update_progress_dialog, DialogSlot,
-};
-use super::page_dialog::{show_page_handle, Handlers};
+use super::dialogs::{close_current_dialog, open_message_dialog, open_progress_dialog, update_progress_dialog, DialogSlot};
+use super::page_dialog::{show_page, show_page_handle, Handlers};
 use super::state::AppState;
 use crate::fork::setup_wizard::progress::{progress_page, ProgressAction};
 use crate::core::path_safety::safe_join;
-use crate::fork::rom_library::{Approval, RomLibraryStore};
+use crate::fork::rom_library::{Approval, RomLibraryStore, System};
 use crate::fork::folder_picker::{PickerRequest, Purpose};
+use crate::fork::port_page::paths::{human_path, Places};
 use crate::fork::rom_screens::browse;
 use super::folder_picker_screen::open_folder_picker;
-use crate::fork::rom_screens::connect_screen::{self, ConnectScreen, Line as ConnectLine, PlanOutput};
-use crate::fork::rom_screens::connections::connection_groups;
+use crate::fork::rom_screens::connect_screen::{self, ConnectScreen, PlanOutput};
+use crate::fork::rom_screens::connections::{connection_groups, ConnGroup};
 use crate::fork::rom_screens::job::{Background, Ctl};
-use crate::fork::rom_screens::report::{scan_time, PortRow, Report, ReportInput};
+use crate::fork::rom_screens::pages::GfAct;
+use crate::fork::rom_screens::report::{scan_time, Report, ReportInput};
 use crate::fork::rom_screens::scan_work::{self, ScanOutput};
-use crate::fork::rom_screens::util::ellipsize;
+use crate::fork::rom_screens::settings_pages::{self, GsAct};
 use crate::ui::gamepad_router::GamepadRouter;
-use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -39,9 +38,8 @@ type Back = Rc<dyn Fn(&Rc<AppState>, &Router)>;
 
 const TITLE: &str = "Game files";
 const STORE_FILE: &str = "rom_library.json";
-const NOTE_READ_ONLY: &str = "Your game files are only read, never moved or deleted.";
 
-// The "find this port's game files" flow (after an install, Info, Settings, and for other screens).
+// The "find this port's game files" flow (after an install, the Port page, Settings, and for other screens).
 mod find_flow;
 #[allow(unused_imports)]
 pub(crate) use find_flow::{after_install, find_for_port, open_from_info, port_files_state, port_missing_game_files, port_needs_game_files, search_ports_now};
@@ -50,17 +48,18 @@ pub(crate) use find_flow::{after_install, find_for_port, open_from_info, port_fi
 #[derive(Clone)]
 enum Then {
     Results,
-    /// From the setup wizard: the scan's result goes back to the wizard's page, not to the results lists.
+    /// From the setup wizard: the scan's result goes back to the wizard's page, not to the results pages.
     Wizard,
-    /// Look for this port's game files (`Port::key()`); `back` is where its flow returns.
-    Find { key: String, back: Back },
+    /// Look for this port's game files (`Port::key()`); `back` is where its flow returns; `ask_how` asks how the file
+    /// reaches the port (Settings).
+    Find { key: String, back: Back, ask_how: bool },
 }
 
 /// Leave the folder chooser without choosing.
 fn leave(app: &Rc<AppState>, router: &Router, then: &Then) {
     match then {
-        Then::Results | Then::Wizard => open_game_files(app, router),
-        Then::Find { key, back } => find_flow::resume(app, router, key, back),
+        Then::Results | Then::Wizard => menu(app, router),
+        Then::Find { key, back, ask_how } => find_flow::resume(app, router, key, back, *ask_how),
     }
 }
 
@@ -72,19 +71,6 @@ fn padded(text: &str) -> String {
 
 fn message(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
     open_message_dialog(app, router, title, &padded(text));
-}
-
-/// A list that stays open (cursor where it was) when an information row is chosen. Rows that lead
-/// somewhere replace it by opening the next dialog, which closes this one.
-/// Every action row must open a dialog (which closes this one) or close it explicitly.
-fn open_list(app: &Rc<AppState>, router: &Router, title: &str, labels: Vec<String>, on_select: impl Fn(&Rc<AppState>, &Router, usize) + 'static) {
-    let Some(dialog) = build_picker_dialog(app, router, title, &labels) else { return };
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| on_select(&app, &router, index as usize));
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -125,20 +111,12 @@ thread_local! {
 enum JobUi {
     /// A dialog with a fixed status line; the job cannot be cancelled.
     Progress { title: &'static str, status: String },
-    /// A list showing how far the job got, with a Cancel row. Closing it (B) cancels too.
+    /// The setup wizard's scan page (one line, and Cancel; B cancels too). Outside the wizard it is a [`JobUi::Page`] with
+    /// a Cancel card.
     Cancellable { title: &'static str },
-    /// Fork (port page): a guided page showing how far the job got, for the one-port game files pages. With `cancellable`
-    /// it has a Cancel card (B cancels too); without, it only waits.
+    /// Fork (port page): a guided page showing how far the job got, for the game files pages. With `cancellable` it has a
+    /// Cancel card (B cancels too); without, it only waits.
     Page { title: &'static str, cancellable: bool },
-}
-
-fn cancel_labels(progress: &str, cancelling: bool) -> Vec<String> {
-    let (line1, line2) = progress.split_once('\n').unwrap_or((progress, ""));
-    vec![
-        if line1.is_empty() { "Starting...".to_string() } else { line1.to_string() },
-        if line2.is_empty() { " ".to_string() } else { ellipsize(line2, 60) },
-        if cancelling { "Cancelling...".to_string() } else { "Cancel (nothing is changed)".to_string() },
-    ]
 }
 
 thread_local! {
@@ -189,10 +167,15 @@ fn run_job<T: Send + 'static>(
         ABANDON_HOOK.with(|h| h.borrow_mut().take());
         return message(app, router, TITLE, "Another game files task is still running. Wait for it to finish, then try again.");
     }
+    // Fork (game files settings): outside the setup wizard a job that can be cancelled waits on a page with a Cancel card,
+    // never on the old list with a "Cancel (nothing is changed)" row.
+    let ui = match ui {
+        JobUi::Cancellable { title } if !super::setup_wizard_screen::active() => JobUi::Page { title, cancellable: true },
+        other => other,
+    };
     let job = Rc::new(Background::spawn(work));
     JOB_RUNNING.with(|r| r.set(true));
     let cancelling = Rc::new(Cell::new(false));
-    let mut picker = None;
     // In the setup wizard the scan's progress is a page (one line, and Cancel) instead of a list.
     let mut page_handle = None;
     let page_closed = Rc::new(Cell::new(false));
@@ -223,7 +206,7 @@ fn run_job<T: Send + 'static>(
             open_progress_dialog(app, router, title, status);
             true
         }
-        JobUi::Cancellable { title } if super::setup_wizard_screen::active() => {
+        JobUi::Cancellable { title } => {
             let (cancel_job, closed_job) = (job.clone(), job.clone());
             let (cancelling_now, closed) = (cancelling.clone(), page_closed.clone());
             let handlers = Handlers {
@@ -247,26 +230,6 @@ fn run_job<T: Send + 'static>(
             page_handle = show_page_handle(app, router, scan_progress_page(title, "", false).with_progress(None), handlers);
             false
         }
-        JobUi::Cancellable { title } => {
-            if let Some(dialog)
- = build_picker_dialog(app, router, title, &cancel_labels("Checked 99999 files, 999.9 GB read\nA long game file name that keeps going and going.iso", false)) {
-                let (job, cancelling) = (job.clone(), cancelling.clone());
-                let weak = dialog.as_weak();
-                dialog.on_item_selected(move |index| {
-                    if index == 2 {
-                        job.cancel();
-                        cancelling.set(true);
-                        if let Some(d) = weak.upgrade() {
-                            set_picker_items(&d, &cancel_labels(&job.progress(), true));
-                        }
-                    }
-                });
-                picker = Some(dialog.as_weak());
-                let _ = dialog.show();
-                finish_dialog_open(app, router, DialogSlot::Picker(dialog));
-            }
-            false
-        }
     };
 
     let title_text = match &ui {
@@ -279,18 +242,11 @@ fn run_job<T: Send + 'static>(
     let abandoned = Cell::new(false);
     JOB_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
+            // The user left the page with B: stop the work and drop its result. The timer keeps running until the worker
+            // has really stopped, so a new job cannot overlap it.
             if page_closed.get() && !abandoned.get() {
                 job.cancel();
                 abandoned.set(true);
-            }
-            if let Some(weak) = &picker {
-
-                // The user closed the list with B: stop the work and drop its result. The timer keeps
-                // running until the worker has really stopped, so a new job cannot overlap it.
-                if !abandoned.get() && !weak.upgrade().is_some_and(|d| d.window().is_visible()) {
-                    job.cancel();
-                    abandoned.set(true);
-                }
             }
             if let Some(result) = job.take() {
                 stop_job_timer();
@@ -335,26 +291,58 @@ fn run_job<T: Send + 'static>(
                 handle.update(work_page(title_text, &text, *cancellable, cancelling.get()).with_progress(job.fraction()));
             } else if let Some(handle) = &page_handle {
                 handle.update(scan_progress_page(title_text, &text, cancelling.get()).with_progress(job.fraction()));
-            } else if let Some(d) = picker.as_ref().and_then(slint::Weak::upgrade) {
-                set_picker_items(&d, &cancel_labels(&text, cancelling.get()));
             }
-
         });
     });
 }
 
 // -- Menu -----------------------------------------------------------------------------------------
 
-/// Settings > Game files...
+thread_local! {
+    /// Where B (and Back) on the Game files page goes: the Ports page of Settings, or closing the page (Fix problems, the
+    /// ports folder screens and Import ports, which come back by themselves when it closes).
+    static MENU_BACK: RefCell<Option<Back>> = const { RefCell::new(None) };
+}
+
+/// The Game files page, from Fix problems, the ports folder screens and Import ports: B on it closes it.
 pub(crate) fn open_game_files(app: &Rc<AppState>, router: &Router) {
-    // No "dialog already open" guard: the Back and Cancel rows of the deeper lists call this while their
-    // own list is still up, and showing the menu replaces whatever is open.
+    open_game_files_with(app, router, Rc::new(|app, router| close_current_dialog(app, router)));
+}
+
+/// Settings > Ports > Game files: B on the page runs `back` (up to the Ports page).
+pub(crate) fn open_game_files_with(app: &Rc<AppState>, router: &Router, back: Back) {
+    MENU_BACK.with(|b| *b.borrow_mut() = Some(back));
+    menu(app, router);
+}
+
+/// The Game files page again (Back and B on the pages under it, a cancelled look, a folder not chosen).
+fn menu(app: &Rc<AppState>, router: &Router) {
+    // No "dialog already open" guard: the pages under it come back here while they are still up, and showing the page
+    // replaces whatever is open.
     // Fork (setup wizard): backing out of a screen the wizard opened lands here; go back to the wizard.
     if super::setup_wizard_screen::resume_instead_of_menu(app, router, crate::fork::setup_wizard::flow::Menu::GameFiles) {
         return;
     }
     let Some(store) = load_store(app, router) else { return };
     show_menu(app, router, store);
+}
+
+fn menu_back(app: &Rc<AppState>, router: &Router) {
+    match MENU_BACK.with(|b| b.borrow().clone()) {
+        Some(back) => back(app, router),
+        None => close_current_dialog(app, router),
+    }
+}
+
+/// Handlers for a page of Settings > Game files: `act` says what each choice does, B goes `back`, the title bar's X
+/// closes the page.
+fn gs_handlers(act: impl Fn(&Rc<AppState>, &Router, GsAct) + 'static, back: impl Fn(&Rc<AppState>, &Router) + 'static) -> Handlers<GsAct> {
+    Handlers { on_action: Rc::new(act), on_back: Rc::new(back), on_exit: Rc::new(|app, router| close_current_dialog(app, router)), on_input: None }
+}
+
+/// Something to say on a page of its own, then back to the Game files page.
+fn notice(app: &Rc<AppState>, router: &Router, title: &str, text: &str) {
+    show_page(app, router, settings_pages::notice_page(title, text), gs_handlers(|app, router, _| menu(app, router), menu));
 }
 
 /// Fork (setup wizard): the folder choice of this screen with no menu in front of it. After the scan
@@ -488,36 +476,28 @@ pub(crate) fn take_wizard_result() -> Option<crate::fork::setup_wizard::game_fil
     WIZARD_RESULT.with(|r| r.borrow_mut().take())
 }
 
+/// Fork (game files settings): the Game files page as cards (`fork::rom_screens::settings_pages::menu_page`), every place
+/// named the human way, the "only read" note as text instead of a row.
 fn show_menu(app: &Rc<AppState>, router: &Router, store: RomLibraryStore) {
-    let folder = match store.rom_dir() {
-        // By place ("SD card > Emulation > roms"), never by a card's ID.
-        Some(dir) => format!("Game files folder: {}", ellipsize(&crate::fork::folder_picker::mounts::folder_label(dir, &browse::system_drives(), home_dir().as_deref()), 56)),
-        None => "Game files folder: not set yet (choose one)".to_string(),
+    let need = find_flow::need_rows(app, &store);
+    let connected: std::collections::BTreeSet<&str> = store.mappings().iter().map(|m| m.port_key.as_str()).collect();
+    let facts = settings_pages::MenuFacts {
+        folder: store.rom_dir().map(|d| human_path(d, &Places::system())),
+        looked: scan_time(&store).map(local_date),
+        need_total: need.len(),
+        need_missing: need.iter().filter(|r| !r.connected).count(),
+        connected: connected.len(),
     };
-    let scanned = scan_time(&store).map(|t| format!("scanned {}", local_date(t))).unwrap_or_else(|| "not scanned yet".into());
-    let labels = vec![
-        NOTE_READ_ONLY.to_string(),
-        folder,
-        "Scan the folder now".to_string(),
-        format!("Results by system ({scanned})"),
-        format!("Connected ports ({})", connection_count(&store)),
-        "Find game files for a port...".to_string(),
-    ];
-    open_list(app, router, TITLE, labels, move |app, router, index| match index {
-        1 => choose_folder(app, router, Then::Results),
-        2 => match store.rom_dir() {
-            Some(_) => start_scan(app, router, Then::Results),
-            None => choose_folder(app, router, Then::Results),
-        },
-        3 => show_saved_results(app, router),
-        4 => show_connections(app, router),
-        5 => find_flow::show_ports_needing_files(app, router),
-        _ => {}
-    });
-}
-
-fn connection_count(store: &RomLibraryStore) -> usize {
-    connection_groups(store.mappings(), &|_| None).len()
+    let page = settings_pages::menu_page(&facts);
+    let act = move |app: &Rc<AppState>, router: &Router, act: GsAct| match act {
+        GsAct::ChooseFolder => choose_folder(app, router, Then::Results),
+        GsAct::LookAgain => start_scan(app, router, Then::Results),
+        GsAct::WhatWasFound => show_saved_results(app, router),
+        GsAct::NeedFiles => find_flow::show_ports_needing_files(app, router),
+        GsAct::Connected => show_connections(app, router),
+        _ => menu_back(app, router),
+    };
+    show_page(app, router, page, gs_handlers(act, menu_back));
 }
 
 // -- Choosing the folder --------------------------------------------------------------------------
@@ -547,34 +527,41 @@ fn choose_folder(app: &Rc<AppState>, router: &Router, then: Then) {
             match store.set_rom_dir(Some(path)) {
                 // `Then::Find` goes back to the find flow through `start_scan`.
                 Ok(()) => start_scan(app, router, then.clone()),
+                Err(e) if matches!(then, Then::Results) => notice(app, router, "Could not use that folder", &format!("{e}\n\nNothing was changed.")),
                 Err(e) => message(app, router, TITLE, &format!("Could not use that folder: {e}")),
             }
         },
-        // Cancel returns to where the picker was opened from: the Game files menu or the find prompt.
+        // Cancel returns to where the picker was opened from: the Game files page or the find prompt.
         move |app, router| leave(app, router, &on_cancel),
     );
 }
 
-// -- Scanning -------------------------------------------------------------------------------------
+// -- Looking through the folder -------------------------------------------------------------------
 
 fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
-    if let Then::Find { key, back } = &then {
-        return find_flow::resume(app, router, key, back);
+    if let Then::Find { key, back, ask_how } = &then {
+        return find_flow::resume(app, router, key, back, *ask_how);
     }
     let Some(store) = load_store(app, router) else { return };
     let Some(root) = store.rom_dir().map(Path::to_path_buf) else { return choose_folder(app, router, then) };
     let input = report_input(app, &store);
     let for_wizard = matches!(then, Then::Wizard);
+    if !for_wizard {
+        // B on the waiting page goes back to the Game files page, as Cancel does.
+        ABANDON_HOOK.with(|h| *h.borrow_mut() = Some(Rc::new(menu)));
+    }
     run_job(
         app,
         router,
-        JobUi::Cancellable { title: "Scanning game files" },
-        // The wizard reads only what the installed ports could need; Settings reads everything (its lists show it all).
+        // The wizard's page; outside it a page with a Cancel card (`run_job`).
+        JobUi::Cancellable { title: if for_wizard { "Scanning game files" } else { "Looking through your game files" } },
+        // The wizard reads only what the installed ports could need; Settings reads everything (its pages show it all).
         move |ctl| scan_work::run_scan(ctl, &store, &root, &input, for_wizard),
         move |app, router, result| match result.and_then(|r| r) {
-            Err(e) => message(app, router, TITLE, &e),
-            Ok(None) => open_game_files(app, router),
-            // The wizard reports what the scan found for the ports that need files; no lists.
+            Err(e) if for_wizard => message(app, router, TITLE, &e),
+            Err(e) => notice(app, router, "Could not look through the folder", &e),
+            Ok(None) => menu(app, router),
+            // The wizard reports what the scan found for the ports that need files; no pages of its own.
             Ok(Some(out)) if for_wizard => {
                 wizard_scan_done(app, out.report);
                 super::setup_wizard_screen::resume_after_scan(app, router);
@@ -586,24 +573,26 @@ fn start_scan(app: &Rc<AppState>, router: &Router, then: Then) {
 
 fn after_scan(app: &Rc<AppState>, router: &Router, out: ScanOutput) {
     if out.scan.files.is_empty() {
-        message(
-            app,
-            router,
-            TITLE,
-            &format!(
-                "No game files were found in {}.\n\n{} other files were ignored. Game files are looked for up to 6 folders deep, with folder names like n64, snes or gc helping to tell the console.",
-                crate::fork::port_page::paths::human_path_here(&out.report.root),
-                out.report.ignored_files
-            ),
+        let text = format!(
+            "Nothing in {} looks like a game file.\n\n{} other files were left alone. Game files are looked for up to 6 folders deep; folder names like n64, snes or gc help tell the console.",
+            human_path(&out.report.root, &Places::system()),
+            out.report.ignored_files
         );
-        return;
+        return notice(app, router, "No game files were found", &text);
     }
     let mut report = out.report;
-    report.note = out.cache_error.map(|err| format!("This scan could not be saved ({}), so it will run again next time.", ellipsize(&err, 50)));
+    report.note = out.cache_error.map(|_| "This look could not be saved, so it runs again next time.".to_string());
     show_systems(app, router, Rc::new(report));
 }
 
+/// What the last look found, without looking again: the saved look matched to the ports as they are now.
 fn show_saved_results(app: &Rc<AppState>, router: &Router) {
+    reread(app, router, None);
+}
+
+/// Reads the saved look again (connections may have changed since) and shows what was found: by console, or the ports
+/// of `system` when it is still there.
+fn reread(app: &Rc<AppState>, router: &Router, system: Option<System>) {
     let Some(store) = load_store(app, router) else { return };
     let Some(root) = store.rom_dir().map(Path::to_path_buf) else { return choose_folder(app, router, Then::Results) };
     if !store.load_scan_cache().is_some_and(|c| c.root == root) {
@@ -613,191 +602,80 @@ fn show_saved_results(app: &Rc<AppState>, router: &Router) {
     run_job(
         app,
         router,
-        JobUi::Progress { title: TITLE, status: "Matching saved scan to ports...".into() },
+        JobUi::Page { title: "Reading the last look", cancellable: false },
         move |_| scan_work::run_report(&store, &root, &input),
         move |app, router, result| match result.and_then(|r| r) {
-            Ok(out) => show_systems(app, router, Rc::new(out.report)),
-            Err(e) => message(app, router, TITLE, &e),
+            Ok(out) => {
+                let report = Rc::new(out.report);
+                match system.and_then(|s| report.groups.iter().position(|g| g.system == s && !g.ports.is_empty())) {
+                    Some(group) => show_system(app, router, report, group),
+                    None => show_systems(app, router, report),
+                }
+            }
+            Err(e) => notice(app, router, "Could not read the last look", &e),
         },
     );
 }
 
-// -- Results --------------------------------------------------------------------------------------
+// -- What was found -------------------------------------------------------------------------------
 
 fn show_systems(app: &Rc<AppState>, router: &Router, report: Rc<Report>) {
-    // Systems with ports first, then the ones that only have files nobody uses.
+    // Consoles with ports first, then the ones that only have files nobody uses.
     let mut order: Vec<usize> = (0..report.groups.len()).collect();
     order.sort_by_key(|i| report.groups[*i].ports.is_empty());
-    let mut labels = vec![
-        // Fork (port page): the folder by place, never by a card's ID.
-        format!("{} game files in {}", report.total_files, ellipsize(&crate::fork::port_page::paths::human_path_here(&report.root), 40)),
-        format!("{} not used by any port, {} other files ignored", report.unused_files, report.ignored_files),
-    ];
-    if report.problems > 0 {
-        labels.push(format!("{} folders could not be read and were skipped.", report.problems));
-    }
-    if let Some(note) = &report.note {
-        labels.push(note.clone());
-    }
-    let first_group = labels.len();
-    labels.extend(order.iter().map(|i| format!("{}: {}", report.groups[*i].system.label(), report.groups[*i].summary())));
-    let (rescan, connected) = (labels.len(), labels.len() + 1);
-    labels.push("Scan the folder again".into());
-    labels.push("Connected ports".into());
-    labels.push("Back".into());
-    open_list(app, router, "What's in your game folders", labels, move |app, router, index| {
-        if index >= first_group && index < rescan {
-            show_system(app, router, report.clone(), order[index - first_group]);
-        } else if index == rescan {
-            start_scan(app, router, Then::Results);
-        } else if index == connected {
-            show_connections(app, router);
-        } else if index == connected + 1 {
-            open_game_files(app, router);
+    let facts = settings_pages::FoundFacts {
+        place: human_path(&report.root, &Places::system()),
+        total: report.total_files,
+        unused: report.unused_files,
+        ignored: report.ignored_files,
+        problems: report.problems,
+        note: report.note.clone(),
+        systems: order.iter().map(|i| settings_pages::SystemLine::of(&report.groups[*i])).collect(),
+    };
+    let act = move |app: &Rc<AppState>, router: &Router, act: GsAct| match act {
+        GsAct::System(i) => {
+            if let Some(&group) = order.get(i) {
+                show_system(app, router, report.clone(), group);
+            }
         }
-    });
+        GsAct::LookAgain => start_scan(app, router, Then::Results),
+        _ => menu(app, router),
+    };
+    show_page(app, router, settings_pages::found_page(&facts), gs_handlers(act, menu));
 }
 
 fn show_system(app: &Rc<AppState>, router: &Router, report: Rc<Report>, group: usize) {
     let g = &report.groups[group];
-    let mut labels = vec![format!("{}: {}", g.system.label(), g.summary())];
-    labels.extend(g.ports.iter().map(|r| {
-        let installed = if r.installed { "" } else { " (not installed)" };
-        format!("{} - {}{installed}", r.port.display_name(), r.chip())
-    }));
-    let back_index = labels.len();
-    labels.push("Back".into());
-    open_list(app, router, g.system.label(), labels, move |app, router, index| {
-        if index >= 1 && index < back_index {
-            show_port(app, router, report.clone(), group, index - 1);
-        } else if index == back_index {
-            show_systems(app, router, report.clone());
-        }
-    });
-}
-
-fn show_port(app: &Rc<AppState>, router: &Router, report: Rc<Report>, group: usize, port: usize) {
-    let row = &report.groups[group].ports[port];
-    let mut labels = vec![format!("{} - {}", row.port.display_name(), row.chip())];
-    labels.extend(row.detail_lines());
-    let connect_index = labels.len();
-    labels.push(if row.can_connect() {
-        "Connect game files...".to_string()
-    } else if !row.installed {
-        format!("Install {} first, then connect its game files", row.port.display_name())
-    } else {
-        "Nothing to connect yet (no matching file was found)".to_string()
-    });
-    let back_index = labels.len();
-    labels.push("Back".into());
-    let can_connect = row.can_connect();
-    let title = row.port.display_name().to_string();
-    open_list(app, router, &title, labels, move |app, router, index| {
-        if index == connect_index && can_connect {
-            let back: Back = {
-                let report = report.clone();
-                Rc::new(move |app, router| show_port(app, router, report.clone(), group, port))
-            };
-            open_connect(app, router, &report.groups[group].ports[port], back);
-        } else if index == back_index {
-            show_system(app, router, report.clone(), group);
-        }
-    });
-}
-
-// -- Connect --------------------------------------------------------------------------------------
-
-fn open_connect(app: &Rc<AppState>, router: &Router, row: &PortRow, back: Back) {
-    let Some(store) = load_store(app, router) else { return };
-    let Ok(port_dir) = safe_join(&app.paths.library_dir(), &row.port.folder) else { return };
-    let screen = Rc::new(RefCell::new(ConnectScreen::new(row, port_dir, store.mappings())));
-    show_connect(app, router, screen, back);
-}
-
-fn show_connect(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectScreen>>, back: Back) {
-    let title = format!("Connect game files: {}", screen.borrow().port_name);
-    let labels = screen.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, &title, &labels) else { return };
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| {
-            let line = screen.borrow().lines().get(index as usize).copied();
-            match line {
-                Some(ConnectLine::Slot(i)) if screen.borrow().is_editable(i) => {
-                    let (mut labels, picks) = (screen.borrow().pick_labels(i), screen.borrow().picks(i));
-                    labels.push("Keep as it is".into());
-                    let (screen, back) = (screen.clone(), back.clone());
-                    open_picker_dialog(&app, &router, "Change this file", labels, move |app, router, choice| {
-                        if let Some(pick) = picks.get(choice) {
-                            screen.borrow_mut().choose(i, *pick);
-                        }
-                        show_connect(app, router, screen.clone(), back.clone());
-                    });
-                    return;
-                }
-                Some(ConnectLine::Connect) => return connect_now(&app, &router, screen.clone()),
-                Some(ConnectLine::Back) => return back(&app, &router),
-                _ => {}
-            }
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
-}
-
-fn connect_now(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<ConnectScreen>>) {
-    let requests = match screen.borrow().requests() {
-        Ok(r) => r,
-        Err(text) => return message(app, router, TITLE, &text),
+    let lines: Vec<settings_pages::PortLine> = g.ports.iter().map(|r| settings_pages::PortLine { name: r.port.display_name().to_string(), words: settings_pages::port_words(r) }).collect();
+    let page = settings_pages::system_page(g.system.label(), g.files, &lines);
+    let up = {
+        let report = report.clone();
+        move |app: &Rc<AppState>, router: &Router| show_systems(app, router, report.clone())
     };
-    let name = screen.borrow().port_name.clone();
-    let unchecked = Rc::new(screen.borrow().unchecked_files());
-    run_job(
-        app,
-        router,
-        JobUi::Progress { title: TITLE, status: "Checking the files...".into() },
-        move |_| connect_screen::make_plan(requests),
-        move |app, router, result| {
-            let plan = match result.and_then(|r| r) {
-                Ok(plan) => Rc::new(plan),
-                Err(e) => return message(app, router, TITLE, &format!("Nothing was connected: {e}")),
-            };
-            if plan.needs_copy_approval() {
-                let (name2, plan2, unchecked2) = (name.clone(), plan.clone(), unchecked.clone());
-                open_confirm_dialog(app, router, "Copy game files".into(), padded(&plan.confirm_text(&name)).into(), "Copy".into(), move |app, router| {
-                    apply_now(app, router, &name2, plan2.clone(), Approval::CopyAllowed, unchecked2.clone());
-                });
-            } else {
-                apply_now(app, router, &name, plan, Approval::None, unchecked);
-            }
-        },
-    );
+    let up_too = up.clone();
+    let act = move |app: &Rc<AppState>, router: &Router, act: GsAct| match act {
+        GsAct::Port(i) => open_port(app, router, &report, group, i),
+        _ => up(app, router),
+    };
+    show_page(app, router, page, gs_handlers(act, up_too));
 }
 
-/// `unchecked`: files matched by name only or used anyway; the message says they were not checksum-checked.
-fn apply_now(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<PlanOutput>, approval: Approval, unchecked: Rc<Vec<String>>) {
-    let status = if approval == Approval::CopyAllowed { "Copying game files. This can take a while and cannot be cancelled." } else { "Connecting game files..." };
-    let (path, plans) = (store_path(app), plan.plans.clone());
-    let name = name.to_string();
-    run_job(
-        app,
-        router,
-        JobUi::Progress { title: TITLE, status: status.into() },
-        move |_| connect_screen::apply_plans(&path, &plans, approval),
-        move |app, router, result| match result.and_then(|r| r) {
-            Ok(mappings) => {
-                let mut text = connect_screen::done_text(&name, &plan.plans, &mappings);
-                for w in plan.warnings() {
-                    text.push_str(&format!("\n\nNote: {w}"));
-                }
-                for file in unchecked.iter() {
-                    text.push_str(&format!("\n\n{file} was not checked against the catalog's checksum."));
-                }
-                message(app, router, "Game files connected", &text);
-            }
-            Err(e) => message(app, router, TITLE, &format!("Nothing was connected: {e}")),
-        },
-    );
+/// One port of a console: its own game files pages (found, which one, how, connected), the same ones its Port page
+/// shows. A port that is not installed only says so.
+fn open_port(app: &Rc<AppState>, router: &Router, report: &Rc<Report>, group: usize, port: usize) {
+    let Some(row) = report.groups.get(group).and_then(|g| g.ports.get(port)) else { return };
+    let system = report.groups[group].system;
+    // Back comes to this console's ports again, read anew (a port may have been connected meanwhile).
+    let back: Back = Rc::new(move |app, router| reread(app, router, Some(system)));
+    let name = row.port.display_name().to_string();
+    if !row.installed {
+        let text = format!("Your copy for {name} is here, but {name} is not installed.\n\nInstall it first, then connect its game files.");
+        let (b1, b2, b3) = (back.clone(), back.clone(), back);
+        let handlers = Handlers { on_action: Rc::new(move |app, router, _: GfAct| b1(app, router)), on_back: Rc::new(move |app, router| b2(app, router)), on_exit: Rc::new(move |app, router| b3(app, router)), on_input: None };
+        show_page(app, router, crate::fork::rom_screens::pages::result_page(&name, "Install it first", &text), handlers);
+        return;
+    }
+    find_flow::find_for_port_asking(app, router, row.port.key(), back);
 }
 
 // -- Connected ports ------------------------------------------------------------------------------
@@ -805,31 +683,31 @@ fn apply_now(app: &Rc<AppState>, router: &Router, name: &str, plan: Rc<PlanOutpu
 fn show_connections(app: &Rc<AppState>, router: &Router) {
     let Some(store) = load_store(app, router) else { return };
     let names = |key: &str| app.find_port(key).map(|p| p.display_name().to_string());
-    let groups = connection_groups(store.mappings(), &names);
-    let mut labels: Vec<String> = groups.iter().map(|g| g.label.clone()).collect();
-    if groups.is_empty() {
-        labels.push("No ports are connected yet.".into());
-    }
-    let back_index = labels.len();
-    labels.push("Back".into());
-    open_list(app, router, "Connected ports", labels, move |app, router, index| {
-        if let Some(group) = groups.get(index) {
-            let (key, slot) = (group.port_key.clone(), group.slot.clone());
-            let text = format!(
-                "{}\n\nForget this connection? Only the record is removed. The game files, links and copies stay where they are; this app never deletes game files.",
-                group.label
-            );
-            open_confirm_dialog(app, router, "Forget connection".into(), padded(&text).into(), "Forget".into(), move |app, router| {
-                if let Some(mut store) = load_store(app, router) {
-                    if let Err(e) = store.forget(&key, &slot) {
-                        return message(app, router, TITLE, &format!("Could not update the record: {e}"));
-                    }
-                }
-                show_connections(app, router);
-            });
-        } else if index == back_index {
-            open_game_files(app, router);
+    let groups = Rc::new(connection_groups(store.mappings(), &names));
+    let page = settings_pages::connected_page(&groups);
+    let act = move |app: &Rc<AppState>, router: &Router, act: GsAct| match act {
+        GsAct::Connection(i) => {
+            if let Some(group) = groups.get(i) {
+                ask_forget(app, router, group.clone());
+            }
         }
-    });
+        _ => menu(app, router),
+    };
+    show_page(app, router, page, gs_handlers(act, menu));
+}
+
+/// "Forget this connection?": only the record goes; the game files and what is in the port's folder stay.
+fn ask_forget(app: &Rc<AppState>, router: &Router, group: ConnGroup) {
+    let page = settings_pages::forget_page(&group);
+    let act = move |app: &Rc<AppState>, router: &Router, act: GsAct| {
+        if act == GsAct::Forget {
+            let Some(mut store) = load_store(app, router) else { return };
+            if let Err(e) = store.forget(&group.port_key, &group.slot) {
+                return notice(app, router, "Could not forget it", &format!("{e}\n\nNothing was changed."));
+            }
+        }
+        show_connections(app, router);
+    };
+    show_page(app, router, page, gs_handlers(act, show_connections));
 }
 

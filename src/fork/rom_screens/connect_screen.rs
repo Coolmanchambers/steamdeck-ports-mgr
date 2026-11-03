@@ -1,12 +1,13 @@
 //! The "Connect game files" step for one port: which found file feeds which slot, and how.
 //!
-//! Decisions and text only. The screen starts from the matcher's result, offers use-in-place, link or
-//! copy as far as the port's access level allows, shows the extra space a copy costs, and builds the
-//! requests the connect planner takes. Nothing here writes anything; `make_plan` only reads, and
-//! `apply_plans` goes through the store, which refuses a copy without approval.
+//! Decisions only. The screen starts from the matcher's result, offers reading the file where it is, pointing to it
+//! from the port's folder, or a copy, as far as the port's access level allows; tells the extra space a copy costs;
+//! and builds the requests the connect planner takes. Nothing here writes anything; `make_plan` only reads, and
+//! `apply_plans` goes through the store, which refuses a copy without approval. The pages that ask are
+//! `super::pages` (`pick_page`, `how_page`, `copy_page`).
 
 use super::report::PortRow;
-use super::util::{ellipsize, file_name, free_bytes, human_bytes};
+use super::util::{file_name, free_bytes, human_bytes};
 use crate::fork::rom_library::{
     check_mapping, plan_connect_set, Approval, ConnectPlan, ConnectRequest, FileMatch, Health, Mapping, Method, PlanAction, RomLibraryStore, RomSpec,
     SlotResult, SlotStatus,
@@ -24,20 +25,20 @@ struct SlotChoice {
     method: Method,
     /// Recorded earlier and still true on disk.
     connected: Option<Method>,
-    /// Recorded earlier but no longer true on disk.
-    broken: Option<Health>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Line {
-    Intro,
-    Slot(usize),
-    Space,
-    Connect,
-    Back,
+/// One file that could be the one a slot needs, as the "Which one is your copy?" page shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    pub name: String,
+    pub size: u64,
+    /// The folder it is in.
+    pub folder: PathBuf,
+    /// Its contents were checked against the catalog (false: only its name matches).
+    pub checked: bool,
 }
 
-/// One entry in the "change this slot" list.
+/// One entry in the "change this slot" choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pick {
     File(usize),
@@ -51,16 +52,6 @@ pub struct ConnectScreen {
     port_dir: PathBuf,
     spec: RomSpec,
     slots: Vec<SlotChoice>,
-}
-
-fn health_text(h: Health) -> &'static str {
-    match h {
-        Health::Ok => "fine",
-        Health::SourceMissing => "the game file is gone (drive unplugged?)",
-        Health::SourceChanged => "the game file changed",
-        Health::DestMissing => "the link or copy is gone",
-        Health::DestChanged => "the link or copy changed",
-    }
 }
 
 impl ConnectScreen {
@@ -79,7 +70,7 @@ impl ConnectScreen {
                 let ours: Vec<&Mapping> = mappings.iter().filter(|m| m.port_key == row.matched.port_key && m.slot == result.slot_id).collect();
                 let worst = ours.iter().map(|m| check_mapping(m)).find(|h| *h != Health::Ok);
                 let connected = (!ours.is_empty() && worst.is_none()).then(|| ours[0].method);
-                SlotChoice { result: result.clone(), candidates, chosen, method: row.spec.access.recommended(), connected, broken: worst }
+                SlotChoice { result: result.clone(), candidates, chosen, method: row.spec.access.recommended(), connected }
             })
             .collect();
         ConnectScreen { port_name: row.port.display_name().to_string(), port_key: row.matched.port_key.clone(), port_dir, spec: row.spec.clone(), slots }
@@ -89,15 +80,55 @@ impl ConnectScreen {
         !self.slots[i].candidates.is_empty() && self.slots[i].connected.is_none()
     }
 
-    pub fn lines(&self) -> Vec<Line> {
-        let mut lines = vec![Line::Intro];
-        lines.extend((0..self.slots.len()).map(Line::Slot));
-        lines.extend([Line::Space, Line::Connect, Line::Back]);
-        lines
-    }
-
     fn methods(&self) -> Vec<Method> {
         [Method::UseInPlace, Method::Symlink, Method::Copy].into_iter().filter(|m| self.spec.access.allows(*m)).collect()
+    }
+
+    /// The ways a file may reach this port (read where it is, pointed to, copied), as its access level allows.
+    pub fn ways(&self) -> Vec<Method> {
+        self.methods()
+    }
+
+    /// The way the files to connect would go now (the port's suggested way until one is set).
+    pub fn way(&self) -> Method {
+        (0..self.slots.len()).find(|i| self.connectable(*i)).map_or(self.spec.access.recommended(), |i| self.slots[i].method)
+    }
+
+    /// The way the port suggests.
+    pub fn suggested_way(&self) -> Method {
+        self.spec.access.recommended()
+    }
+
+    /// Sets how every file still to connect reaches the port (a way the port does not allow is ignored).
+    pub fn set_way(&mut self, m: Method) {
+        for i in 0..self.slots.len() {
+            if self.connectable(i) {
+                self.choose(i, Pick::Method(m));
+            }
+        }
+    }
+
+    /// The space a copy of every chosen file still to connect would take, whatever way is set now.
+    pub fn bytes_if_copied(&self) -> u64 {
+        (0..self.slots.len()).filter(|i| self.connectable(*i)).map(|i| self.slot_bytes(i)).sum()
+    }
+
+    /// The files about to be connected: (name, checked against the catalog).
+    pub fn chosen_files(&self) -> Vec<(String, bool)> {
+        (0..self.slots.len())
+            .filter(|i| self.connectable(*i))
+            .filter_map(|i| self.slots[i].chosen.and_then(|c| self.slots[i].candidates.get(c)))
+            .map(|f| (file_name(&f.path), !f.is_low_confidence()))
+            .collect()
+    }
+
+    /// The files that could be the one slot `i` needs, in the order of [`Self::picks`]' files.
+    pub fn candidates(&self, i: usize) -> Vec<Candidate> {
+        self.slots[i]
+            .candidates
+            .iter()
+            .map(|f| Candidate { name: file_name(&f.path), size: f.size, folder: f.path.parent().map(Path::to_path_buf).unwrap_or_default(), checked: !f.is_low_confidence() })
+            .collect()
     }
 
     /// The size a copy of this slot's chosen file(s) would take.
@@ -107,67 +138,7 @@ impl ConnectScreen {
         f.all_paths().iter().map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(f.size)).sum()
     }
 
-    pub fn copy_bytes(&self) -> u64 {
-        (0..self.slots.len()).filter(|i| self.connectable(*i) && self.slots[*i].method == Method::Copy).map(|i| self.slot_bytes(i)).sum()
-    }
-
-    fn pending(&self) -> usize {
-        (0..self.slots.len()).filter(|i| self.connectable(*i) && self.slots[*i].chosen.is_some()).count()
-    }
-
-    pub fn labels(&self) -> Vec<String> {
-        self.lines()
-            .into_iter()
-            .map(|line| match line {
-                Line::Intro => format!("Pick how each file reaches {}. Nothing is written yet.", self.port_name),
-                Line::Slot(i) => self.slot_label(i),
-                Line::Space => match self.copy_bytes() {
-                    0 => "Extra disk space: none".to_string(),
-                    n => format!("Extra disk space: {} for copies", human_bytes(n)),
-                },
-                Line::Connect if self.pending() == 0 => "Connect now (nothing to connect yet)".to_string(),
-                Line::Connect => "Connect now".to_string(),
-                Line::Back => "Back".to_string(),
-            })
-            .collect()
-    }
-
-    fn slot_label(&self, i: usize) -> String {
-        let slot = &self.slots[i];
-        let name = ellipsize(&slot.result.label, 40);
-        let optional = if slot.result.optional { " (optional)" } else { "" };
-        if let Some(method) = slot.connected {
-            let file = slot.candidates.first().map(|f| ellipsize(&file_name(&f.path), 40)).unwrap_or_default();
-            return format!("{name}{optional}: {file} - already connected ({})", method.label());
-        }
-        if slot.candidates.is_empty() {
-            let why = match slot.result.status {
-                SlotStatus::WrongVersion(_) => "only the wrong version was found",
-                _ => "not found in your game folder",
-            };
-            return format!("{name}{optional}: {why}");
-        }
-        let Some(c) = slot.chosen else {
-            return format!("{name}{optional}: {} files match, choose one", slot.candidates.len());
-        };
-        let f = &slot.candidates[c];
-        let mut text = format!("{name}{optional}: {} - {}", ellipsize(&file_name(&f.path), 40), slot.method.label());
-        if slot.method == Method::Copy {
-            text.push_str(&format!(" (+{})", human_bytes(self.slot_bytes(i))));
-        }
-        if let Some(h) = slot.broken {
-            text.push_str(&format!(" [earlier connection: {}]", health_text(h)));
-        }
-        if f.is_low_confidence() {
-            text.push_str(" [matched by name, check this]");
-        }
-        if f.needs_byte_order_conversion() {
-            text.push_str(" [N64 byte order differs]");
-        }
-        text
-    }
-
-    /// What the "change this slot" list offers: the candidate files (when there are several) and the
+    /// What the "change this slot" choice offers: the candidate files (when there are several) and the
     /// methods this port allows.
     pub fn picks(&self, i: usize) -> Vec<Pick> {
         let mut picks = Vec::new();
@@ -176,30 +147,6 @@ impl ConnectScreen {
         }
         picks.extend(self.methods().into_iter().map(Pick::Method));
         picks
-    }
-
-    pub fn pick_labels(&self, i: usize) -> Vec<String> {
-        let slot = &self.slots[i];
-        self.picks(i)
-            .into_iter()
-            .map(|pick| match pick {
-                Pick::File(c) => {
-                    let f = &slot.candidates[c];
-                    let mark = if slot.chosen == Some(c) { "(chosen) " } else { "" };
-                    let dir = f.path.parent().and_then(Path::file_name).map(|n| format!("  in {}", n.to_string_lossy())).unwrap_or_default();
-                    format!("File: {mark}{} ({}){dir}", file_name(&f.path), human_bytes(f.size))
-                }
-                Pick::Method(m) => {
-                    let mark = if slot.method == m { "(chosen) " } else { "" };
-                    let what = match m {
-                        Method::UseInPlace => "the port reads it from your folder, nothing is written",
-                        Method::Symlink => "a pointer in the port's folder, no extra space",
-                        Method::Copy => "a second copy, uses extra space and asks first",
-                    };
-                    format!("Method: {mark}{} - {what}", m.label())
-                }
-            })
-            .collect()
     }
 
     /// Whether choosing a slot's row opens the list (an already connected slot has nothing to change).
@@ -216,7 +163,7 @@ impl ConnectScreen {
     }
 
     /// File names about to be connected that were matched by name only (or picked by hand and used
-    /// anyway): the done message says they were not checked against the catalog's checksum.
+    /// anyway): the done page says they were not checked.
     pub fn unchecked_files(&self) -> Vec<String> {
         (0..self.slots.len())
             .filter(|i| self.connectable(*i))
@@ -315,7 +262,7 @@ pub fn make_plan(requests: Vec<ConnectRequest>) -> Result<PlanOutput, String> {
 pub fn check_space(extra_bytes: u64, free: Option<u64>) -> Result<(), String> {
     match free {
         Some(free) if extra_bytes > 0 && free < extra_bytes.saturating_add(FREE_SPACE_MARGIN) => Err(format!(
-            "Not enough free space for the copy: it needs {} and the drive has {} free (the app keeps {} spare). Choose Link or Use original, or free some space.",
+            "Not enough free space for the copy: it needs {} and the drive has {} free (the app keeps {} spare). Choose to point to the file or read it where it is, or free some space.",
             human_bytes(extra_bytes),
             human_bytes(free),
             human_bytes(FREE_SPACE_MARGIN)
@@ -344,7 +291,7 @@ pub fn done_text_with(port_name: &str, plans: &[ConnectPlan], mappings: &[Mappin
         let how = match (m.method, was_there) {
             (_, true) => "was already in place".to_string(),
             (Method::UseInPlace, _) => format!("stays where it is, in {}", m.source.parent().map_or_else(|| place(&m.source), place)),
-            (Method::Symlink, _) => "linked into the port's folder".to_string(),
+            (Method::Symlink, _) => "the port's folder points to it".to_string(),
             (Method::Copy, _) => "copied into the port's folder".to_string(),
         };
         parts.push(format!("{name}: {how}"));
@@ -404,7 +351,7 @@ mod tests {
             let reqs = screen.requests().unwrap();
             assert_eq!(reqs.len(), 1);
             assert_eq!(reqs[0].method, expect, "{access}");
-            assert!(screen.labels().iter().any(|l| l.contains(expect.label())));
+            assert_eq!((screen.way(), screen.suggested_way()), (expect, expect));
         }
     }
 
@@ -419,17 +366,19 @@ mod tests {
         let (f3, open_row) = fixture("in_place");
         let screen = ConnectScreen::new(&open_row, f3.port_dir.clone(), &[]);
         assert_eq!(screen.picks(0).len(), 3);
+        assert_eq!(screen.ways(), [Method::UseInPlace, Method::Symlink, Method::Copy]);
     }
 
     #[test]
     fn copy_shows_its_cost_and_needs_approval() {
         let (f, row) = fixture("link");
         let mut screen = ConnectScreen::new(&row, f.port_dir.clone(), &[]);
-        assert_eq!(screen.copy_bytes(), 0);
-        assert!(screen.labels().contains(&"Extra disk space: none".to_string()));
-        screen.choose(0, Pick::Method(Method::Copy));
-        assert_eq!(screen.copy_bytes(), f.zelda.len() as u64);
-        assert!(screen.labels().iter().any(|l| l.starts_with("Extra disk space: 40 KB")), "{:?}", screen.labels());
+        assert_eq!(screen.bytes_if_copied(), f.zelda.len() as u64, "the copy's cost is known before it is chosen");
+        assert_eq!(screen.chosen_files(), [("Zelda renamed.z64".to_string(), true)]);
+        screen.set_way(Method::UseInPlace);
+        assert_eq!(screen.way(), Method::Symlink, "a way the port does not allow is ignored");
+        screen.set_way(Method::Copy);
+        assert_eq!(screen.way(), Method::Copy);
         let plan = make_plan(screen.requests().unwrap()).unwrap();
         assert!(plan.needs_copy_approval());
         assert!(plan.confirm_text("Zelda Port").contains("uses 40 KB"));
@@ -453,10 +402,10 @@ mod tests {
         // After a restart the record is still there and the screen shows the slot as connected.
         let store = RomLibraryStore::load(&f.store_path).unwrap();
         let again = ConnectScreen::new(&row, f.port_dir.clone(), store.mappings());
-        assert!(again.labels().iter().any(|l| l.contains("already connected (Link)")), "{:?}", again.labels());
+        assert!(again.chosen_files().is_empty(), "a connected file is not offered again");
         assert!(again.requests().is_err());
         assert!(!again.is_editable(0));
-        assert!(done_text("Zelda Port", &plan.plans, &mappings).contains("linked into the port's folder"));
+        assert!(done_text("Zelda Port", &plan.plans, &mappings).contains("the port's folder points to it"));
     }
 
     #[test]
@@ -499,7 +448,10 @@ mod tests {
         assert_eq!(row.status, crate::fork::rom_library::PortStatus::Ambiguous);
         let mut screen = ConnectScreen::new(&row, port_dir, &[]);
         assert!(screen.requests().unwrap_err().contains("Choose a file"));
-        assert!(screen.labels().iter().any(|l| l.contains("2 files match, choose one")));
+        let names: Vec<String> = screen.candidates(0).into_iter().map(|c| c.name).collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"pd_usa.z64".to_string()) && names.contains(&"pd_eur.z64".to_string()));
+        assert!(screen.candidates(0).iter().all(|c| c.checked && c.folder.ends_with("n64") && c.size == 9_000));
         assert!(matches!(screen.picks(0)[0], Pick::File(0)));
         screen.choose(0, Pick::File(1));
         assert_eq!(screen.requests().unwrap().len(), 1);
@@ -516,7 +468,7 @@ mod tests {
         fs::remove_file(f.port_dir.join("Zelda renamed.z64")).unwrap();
         let again = ConnectScreen::new(&row, f.port_dir.clone(), &mappings);
         assert!(again.is_editable(0));
-        assert!(again.labels().iter().any(|l| l.contains("earlier connection: the link or copy is gone")), "{:?}", again.labels());
+        assert_eq!(again.chosen_files().len(), 1, "the broken one is offered again");
         assert!(again.requests().is_ok());
     }
 

@@ -36,11 +36,10 @@ use crate::fork::import::{ports_folder, Once};
 use crate::fork::import::real_engine::engine_for_import;
 use crate::fork::import::cards::{Cards};
 use crate::fork::import::scan::{read_shortcuts, run_scan, Choices, ScanInput};
-use crate::fork::import::screen::{blocked_text, space_blocked, FolderLine, FoldersScreen, ImportScreen};
+use crate::fork::import::screen::{blocked_text, space_blocked, FolderLine, FoldersScreen, ImportScreen, StopLooking};
 use crate::fork::import::targets;
 use crate::fork::port_mover::game_files::Issue;
 use crate::fork::port_mover::old_copies;
-use crate::fork::ports_folder_view::{game_file_issues, Act};
 use crate::fork::rom_screens::job::{Background, Ctl};
 use crate::fork::rom_screens::util::{ellipsize, free_bytes};
 use crate::fork::screens::short_path;
@@ -460,65 +459,32 @@ fn show_prompt(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc
         let view = view.clone();
         Rc::new(move |choice: GameFileChoice| view.answer_prompt(choice))
     };
-    if super::setup_wizard_screen::active() {
-        return show_prompt_page(app, router, view, port, issues, answer);
-    }
-    let named: Vec<(String, Issue)> = issues.iter().map(|i| (port.as_ref().clone(), i.clone())).collect();
-    let model = game_file_issues(&named);
-
-    let labels: Vec<String> = model
-        .labels
-        .iter()
-        .enumerate()
-        .map(|(i, label)| match model.act(i) {
-            Act::Detail(n) => format!("  {}", ellipsize(&issues[n].line(), 90)),
-            Act::FixInGameFiles => "Fix in Game files (then import again)".to_string(),
-            Act::Cancel => "Cancel (stops the whole import here)".to_string(),
-            _ => label.clone(),
-        })
-        .collect();
-    let Some(dialog) = build_picker_dialog(app, router, "Check the game files", &labels) else {
-        // The list could not be built: nothing is copied for this port and the import stops, rather
-        // than the worker waiting for an answer nobody can give.
-        answer(GameFileChoice::Cancel);
-        return;
-    };
-    dialog.set_selected_index(model.select as i32);
-    app.dialog_nav.picker_index.set(model.select as i32);
-    {
-        let (answer, app, router, view, port, issues) = (answer.clone(), app.clone(), router.clone(), view.clone(), port.clone(), issues.clone());
-        dialog.on_item_selected(move |index| match model.act(index as usize) {
-            Act::FixInGameFiles => answer(GameFileChoice::FixInGameFiles),
-            Act::MoveAnyway => answer(GameFileChoice::MoveAnyway),
-            Act::Cancel => answer(GameFileChoice::Cancel),
-            Act::Detail(n) => {
-                view.in_detail.set(true);
-                let again: Step = {
-                    let (view, port, issues) = (view.clone(), port.clone(), issues.clone());
-                    Rc::new(move |app, router| show_prompt(app, router, &view, port.clone(), issues.clone(), None))
-                };
-                let text = format!("{}\n\n{}", port, issues[n].line());
-                let on_ok = again.clone();
-                confirm_back(&app, &router, "Check the game files", &text, "Back to the question", false, move |app, router| on_ok(app, router), again);
-            }
-            _ => {}
-        });
-    }
-    {
-        let answer = answer.clone();
-        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) { answer(GameFileChoice::Cancel) });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+    // Fork (game files settings): a page in and outside the setup wizard (was a list titled "Check the game files" with
+    // indented problem rows outside it).
+    show_prompt_page(app, router, view, port, issues, answer);
 }
 
-/// The game file question inside the wizard: Skip this port (it stays, to be fixed in Settings > Game files and
-/// imported again), Move anyway, or B to stop the whole import. Several problems of one port are one question.
+/// The game file question: Skip this port (it stays, to be fixed in Settings > Ports > Game files and imported again),
+/// Move anyway, or B (and "Stop the import") to stop the whole import. Several problems of one port are one question;
+/// the ones after the first are listed under it.
 fn show_prompt_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, port: Rc<String>, issues: Rc<Vec<Issue>>, answer: Rc<dyn Fn(GameFileChoice)>) {
+    let in_wizard = super::setup_wizard_screen::active();
+    let file_of = |issue: &Issue| std::path::Path::new(&issue.file).file_name().map_or(issue.file.clone(), |n| n.to_string_lossy().into_owned());
     let first = &issues[0];
-    let file = std::path::Path::new(&first.file).file_name().map_or(first.file.clone(), |n| n.to_string_lossy().into_owned());
-    let problem = format!("{file}: {}.", first.problem.trim_end_matches('.'));
-    let page = ports_pages::game_file_page(&port, &problem, 0).b_means("Stop the import").in_wizard(2, crate::fork::setup_wizard::flow::Step::COUNTED);
+    let problem = format!("{}: {}.", file_of(first), first.problem.trim_end_matches('.'));
+    let mut page = ports_pages::game_file_page(&port, &problem, 0).b_means("Stop the import");
+    if let Some(stop) = page.buttons[crate::fork::page::LEFT].as_mut() {
+        stop.label = "Stop the import".to_string();
+    }
+    for issue in issues.iter().skip(1).take(3) {
+        page.fact(crate::fork::page::Mark::Problem, format!("{}: {}", file_of(issue), issue.problem.trim_end_matches('.')));
+    }
+    let page = if in_wizard {
+        page.in_wizard(2, crate::fork::setup_wizard::flow::Step::COUNTED)
+    } else {
+        // Outside the wizard it is a page of Import ports, not a step of setup.
+        crate::fork::page::Page { window_title: "Import ports: game files".to_string(), header: "Import ports".to_string(), step_text: String::new(), step_number: 0, step_count: 0, ..page }
+    };
     let (on_action, on_back, on_exit) = (answer.clone(), answer.clone(), answer);
     let handlers = Handlers {
         on_action: Rc::new(move |_, _, action: FolderAction| match action {
@@ -529,7 +495,9 @@ fn show_prompt_page(app: &Rc<AppState>, router: &Router, view: &Rc<JobView>, por
         on_back: Rc::new(move |_, _| on_back(GameFileChoice::Cancel)),
         on_exit: Rc::new(move |app, router| {
             on_exit(GameFileChoice::Cancel);
-            super::setup_wizard_screen::exit_wizard(app, router);
+            if in_wizard {
+                super::setup_wizard_screen::exit_wizard(app, router);
+            }
         }),
         on_input: None,
     };
@@ -826,70 +794,59 @@ fn folders_back(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: &Rc<Folde
     super::import_cards_screen::show_found(app, router, ctx, state.main.clone());
 }
 
+/// Fork (game files settings): "Where to look for ports" as a page of cards with On / Off switches (was the "Scan
+/// folders" list of "[x] ~/Games (standard)" rows). A switch flips in place; B and Back go back (a new look when the list
+/// changed).
 pub(super) fn show_folders(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersState>) {
-    let labels = state.screen.borrow().labels();
-    let Some(dialog) = build_picker_dialog(app, router, "Scan folders", &labels) else { return ctx.finish_quiet(app, router) };
-    // The cursor starts on the first real row, not on the note.
-    let first = state.screen.borrow().first_row() as i32;
-    dialog.set_selected_index(first);
-    app.dialog_nav.picker_index.set(first);
-    {
-        let (app, router, ctx, state) = (app.clone(), router.clone(), ctx.clone(), state.clone());
-        dialog.on_close_requested(move || if crate::fork::press_echo::key(crate::fork::press_echo::Press::Back) {
-            close_current_dialog(&app, &router);
-            folders_back(&app, &router, &ctx, &state);
-        });
-    }
-    {
-        let (app, router, ctx) = (app.clone(), router.clone(), ctx.clone());
-        dialog.on_item_selected(move |index| {
-            let line = state.screen.borrow().lines().get(index as usize).copied();
-            let mut changed = false;
+    let page = state.screen.borrow().folders_page(&crate::fork::port_page::paths::Places::system());
+    let act = {
+        let (ctx, state) = (ctx.clone(), state.clone());
+        move |app: &Rc<AppState>, router: &Router, line: FolderLine| {
             match line {
-                Some(FolderLine::Note) | None => {}
-                Some(FolderLine::Add) => return add_folder(&app, &router, &ctx, state.clone()),
-                Some(FolderLine::Default(i)) => {
-                    state.screen.borrow_mut().folders.toggle_default(crate::fork::adopt::WELL_KNOWN[i]);
-                    changed = true;
-                }
-                Some(FolderLine::Drive(i)) => {
-                    state.screen.borrow_mut().folders.toggle_drive(i);
-                    changed = true;
-                }
-                Some(FolderLine::User(i)) => {
-                    let text = state.screen.borrow().remove_text(i);
-                    let (on_state, on_ctx) = (state.clone(), ctx.clone());
-                    let cancel: Step = {
-                        let (state, ctx) = (state.clone(), ctx.clone());
-                        Rc::new(move |app, router| show_folders(app, router, &ctx, state.clone()))
-                    };
-                    return confirm_back(&app, &router, "Scan folder", &text, "Remove", false, move |app, router| {
-                        {
-                            let mut screen = on_state.screen.borrow_mut();
-                            screen.folders.remove_user(i);
-                            screen.note = save_folders(app, &screen.folders);
-                        }
-                        on_state.changed.set(true);
-                        show_folders(app, router, &on_ctx, on_state.clone());
-                    }, cancel);
-                }
-                Some(FolderLine::Deeper) => {
-                    state.screen.borrow_mut().folders.toggle_deeper();
-                    changed = true;
-                }
-                Some(FolderLine::Back) => return folders_back(&app, &router, &ctx, &state),
+                FolderLine::Add => return add_folder(app, router, &ctx, state.clone()),
+                FolderLine::Back => return folders_back(app, router, &ctx, &state),
+                FolderLine::User(i) => return ask_stop_looking(app, router, &ctx, state.clone(), i),
+                FolderLine::Default(i) => state.screen.borrow_mut().folders.toggle_default(crate::fork::adopt::WELL_KNOWN[i]),
+                FolderLine::Drive(i) => state.screen.borrow_mut().folders.toggle_drive(i),
+                FolderLine::Deeper => state.screen.borrow_mut().folders.toggle_deeper(),
             }
-            if changed {
-                state.changed.set(true);
+            state.changed.set(true);
+            {
                 let mut screen = state.screen.borrow_mut();
-                screen.note = save_folders(&app, &screen.folders);
+                screen.note = save_folders(app, &screen.folders);
             }
-            // The note row comes and goes, so the list is rebuilt, not just relabelled.
-            show_folders(&app, &router, &ctx, state.clone());
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+            show_folders(app, router, &ctx, state.clone());
+        }
+    };
+    let back = {
+        let (ctx, state) = (ctx.clone(), state.clone());
+        move |app: &Rc<AppState>, router: &Router| folders_back(app, router, &ctx, &state)
+    };
+    super::import_cards_screen::show_or_end(app, router, ctx, page, super::import_cards_screen::handlers(ctx, act, back));
+}
+
+/// "Stop looking in this folder?" for a folder the user added: Yes takes it off the list (the folder is not touched).
+fn ask_stop_looking(app: &Rc<AppState>, router: &Router, ctx: &Ctx, state: Rc<FoldersState>, i: usize) {
+    let page = state.screen.borrow().stop_page(i, &crate::fork::port_page::paths::Places::system());
+    let act = {
+        let (ctx, state) = (ctx.clone(), state.clone());
+        move |app: &Rc<AppState>, router: &Router, answer: StopLooking| {
+            if answer == StopLooking::Yes {
+                {
+                    let mut screen = state.screen.borrow_mut();
+                    screen.folders.remove_user(i);
+                    screen.note = save_folders(app, &screen.folders);
+                }
+                state.changed.set(true);
+            }
+            show_folders(app, router, &ctx, state.clone());
+        }
+    };
+    let back = {
+        let (ctx, state) = (ctx.clone(), state.clone());
+        move |app: &Rc<AppState>, router: &Router| show_folders(app, router, &ctx, state.clone())
+    };
+    super::import_cards_screen::show_or_end(app, router, ctx, page, super::import_cards_screen::handlers(ctx, act, back));
 }
 
 /// "Add a folder to scan...": the in-app folder picker (`folder_picker_screen`), then back to the list.
