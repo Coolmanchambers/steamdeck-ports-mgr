@@ -344,9 +344,9 @@ const COVER_RATIO: f32 = 1.4;
 pub const TILE_PAD_UNITS: f32 = 0.4;
 pub const TILE_TEXT_UNITS: f32 = 3.4;
 const TEXT_UNITS: f32 = TILE_PAD_UNITS * 2.0 + TILE_TEXT_UNITS;
-/// The smallest cover frame width worth showing everything at once, and the biggest (in font heights; a handful of ports do
-/// not become giant posters).
-const MIN_COVER_UNITS: f32 = 6.8;
+/// The smallest cover frame width worth showing everything at once (in font heights; 6.0 is about 120 px at the Deck's text, which
+/// leaves room for a Deck screen a few dozen pixels shorter than measured), and the biggest (a few ports do not become giant posters).
+const MIN_COVER_UNITS: f32 = 6.0;
 const MAX_COVER_UNITS: f32 = 9.5;
 const MAX_COLUMNS: usize = 12;
 /// Arrangements whose covers are within this (8%) of the biggest count as equal; of those the one with the fewest columns that still run
@@ -376,7 +376,7 @@ pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -
         .collect();
     let biggest = options.iter().map(|o| o.4).fold(f32::MIN, f32::max);
     if biggest >= min_cover {
-        let ties: Vec<&(usize, usize, f32, f32, f32)> = options.iter().filter(|o| o.4 >= biggest * TIE).collect();
+        let ties: Vec<&(usize, usize, f32, f32, f32)> = options.iter().filter(|o| o.4 >= biggest * TIE && o.4 >= min_cover).collect();
         // The fewest columns whose tiles still run the width (a wider title, the same cover); with too few tiles for that, the fullest.
         let pick = ties.iter().filter(|o| o.2 <= o.4 + margin + gap * SLACK_GAPS + 0.01).min_by_key(|o| o.0).or_else(|| ties.iter().max_by_key(|o| (o.1, o.0)));
         if let Some(&&(columns, rows, tile_max, per_row, cover)) = pick {
@@ -396,7 +396,7 @@ pub fn tile_layout(width: f32, height: f32, count: usize, font: f32, gap: f32) -
     let natural = cover + margin;
     let columns = (((width + gap) / (natural + gap)).floor() as usize).clamp(1, MAX_COLUMNS);
     let tile_w = ((width - gap * (columns - 1) as f32) / columns as f32).min(natural + gap * SLACK_GAPS);
-    let tile_h = per_row.max(text + min_cover).min(height);
+    let tile_h = (cover * COVER_RATIO + text).min(per_row).max(text + min_cover).min(height);
     TileLayout { columns, tile_w, tile_h, visible_rows: visible, cover_w: tile_w - margin, cover_h: tile_h - text }
 }
 
@@ -829,7 +829,7 @@ mod tests {
     const DECK: (f32, f32, f32, f32) = (1256.0, 575.0, 20.0, 18.0);
 
     #[test]
-    fn the_decks_screen_shows_up_to_fourteen_tiles_in_two_whole_rows_with_covers_at_least_as_big_as_before() {
+    fn the_decks_screen_shows_up_to_fourteen_tiles_in_two_whole_rows() {
         let (w, h, font, gap) = DECK;
         for n in 7usize..=14 {
             let l = tile_layout(w, h, n, font, gap);
@@ -837,11 +837,43 @@ mod tests {
             assert_eq!(l.visible_rows, 2, "{n} tiles: two whole rows, nothing cut: {l:?}");
             let expected = if n <= 12 { 6 } else { 7 };
             assert_eq!(l.columns, expected, "{n} tiles: the fewest columns that run the width (a wider title, the same cover): {l:?}");
-            assert!(l.cover_w >= 136.0 && l.cover_h >= 193.0, "{n} tiles: covers about 137 x 193 or better (the old ones were 136 x 204 with one title line fewer): {l:?}");
+            assert!(l.cover_w >= 136.0 && l.cover_h >= 193.0, "{n} tiles: a cover frame of about 178 x 195 (a 2:3 poster about 131 x 196), no smaller: {l:?}");
             assert!(used_width(&l, gap) >= w - 1.0, "{n} tiles: no side bands, the tiles run the width: {l:?}");
         }
     }
 
+
+    #[test]
+    fn a_shorter_room_or_bigger_text_still_gives_two_whole_rows_and_no_tall_empty_frames() {
+        // If the real Deck room is a few dozen pixels shorter than the 575 measured, or its text a pixel or two bigger, 8 to 12
+        // tiles must not fall back to scrolling with one giant row.
+        let w = DECK.0;
+        for (h, font) in [(560.0f32, 20.0f32), (545.0, 20.0), (535.0, 20.0), (575.0, 21.0), (575.0, 22.0)] {
+            let gap = font * 0.9;
+            for n in 7usize..=12 {
+                let l = tile_layout(w, h, n, font, gap);
+                let ctx = format!("room {h}, text {font}, {n} tiles: {l:?}");
+                assert!(fits(&l, n, h, gap), "{ctx}");
+                assert!(l.visible_rows == 2 || (n == 7 && l.visible_rows == 1), "{ctx}");
+                assert!(l.cover_w >= font * MIN_COVER_UNITS - 0.01, "covers stay readable: {ctx}");
+                assert!(l.cover_h <= l.cover_w * COVER_RATIO + 0.01, "no frame taller than its cover needs: {ctx}");
+                assert!(used_width(&l, gap) >= w - 1.0, "the tiles run the width: {ctx}");
+            }
+            for n in 8usize..=12 {
+                assert_eq!(tile_layout(w, h, n, font, gap).visible_rows, 2, "room {h}, text {font}, {n} tiles");
+            }
+        }
+    }
+
+    #[test]
+    fn the_scrolling_layout_never_makes_a_tile_taller_than_its_cover_needs() {
+        let font = 20.0;
+        for (h, n) in [(575.0f32, 40usize), (400.0, 30), (300.0, 30), (900.0, 50)] {
+            let l = tile_layout(1256.0, h, n, font, 18.0);
+            assert!(l.cover_h <= l.cover_w * COVER_RATIO + 0.01, "room {h}, {n} tiles: {l:?}");
+            assert!(l.tile_h <= h + 0.01, "{l:?}");
+        }
+    }
     #[test]
     fn six_tiles_and_a_few_ports_get_one_row_of_ordinary_covers_and_never_giant_ones() {
         let (w, h, font, gap) = DECK;
@@ -860,7 +892,7 @@ mod tests {
     #[test]
     fn too_many_tiles_scroll_in_whole_rows() {
         let (w, h, font, gap) = DECK;
-        for n in [15usize, 20, 33, 60] {
+        for n in [20usize, 33, 60] {
             let l = tile_layout(w, h, n, font, gap);
             assert!(l.visible_rows >= 1 && l.columns >= 1, "{l:?}");
             let shown = l.visible_rows as f32 * l.tile_h + gap * (l.visible_rows as f32 - 1.0);
