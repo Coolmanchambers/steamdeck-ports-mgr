@@ -131,7 +131,15 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
         // Leaving Import ports (B, the end of an import, a notice) comes back to the Ports page.
         Entry::ImportPorts => super::import_screen::open_back_to(app, router, Rc::new(|app, router| open_group(app, router, Group::Ports))),
         // B on the Game files page comes back to the Ports page, one level up.
-        Entry::GameFiles => super::rom_screens::open_game_files_with(app, router, Rc::new(|app, router| open_group(app, router, Group::Ports))),
+        // (The Game files page is closed first: `open_group` gives way to any dialog still open.)
+        Entry::GameFiles => super::rom_screens::open_game_files_with(
+            app,
+            router,
+            Rc::new(|app, router| {
+                close_current_dialog(app, router);
+                open_group(app, router, Group::Ports)
+            }),
+        ),
         Entry::KeptFiles => open_kept_files(app, router),
         Entry::ArtSources => super::art_screens::open_art_sources(app, router),
         Entry::BackupSaves => start_save_backup(app, router),
