@@ -15,6 +15,8 @@ pub mod import_screen;
 pub mod install_launch;
 pub mod install_wizard_screen; // Fork: installing a port as one guided flow
 pub mod page_dialog;
+pub mod play_screen; // Fork: "Could not start" and "Which program starts"
+pub mod port_actions_screen; // Fork: Select version, Install extras and Reset play time as pages
 pub mod port_page_screen;
 pub mod cheats;
 pub mod playtime;

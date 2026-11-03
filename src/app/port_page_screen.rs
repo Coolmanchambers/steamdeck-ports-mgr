@@ -13,10 +13,10 @@
 //! the caller says), `open_link` (the project page with its QR code) and `rom_screens::find_for_port` (the game files
 //! pages) are the reusable pieces. Each takes a `Back` that runs when the user leaves.
 
-use super::dialogs::{close_current_dialog, dialog_is_open, open_extra_install_confirm_dialog, open_info_dialog, open_reset_playtime_dialog};
-use super::install_launch::{activate_port, mark_uninstalled, may_uninstall, open_version_picker};
+use super::dialogs::{close_current_dialog, dialog_is_open};
+use super::install_launch::{activate_port, mark_uninstalled, may_uninstall};
 use super::page_dialog::{show_page, show_page_handle, Handlers, PageHandle};
-use super::playtime::{format_last_played, format_playtime, is_port_running, LastPlayed};
+use super::playtime::{format_last_played, is_port_running, LastPlayed};
 use super::state::AppState;
 use crate::core::models::{Port, SourceType};
 use crate::core::path_safety::{is_within, safe_join};
@@ -24,6 +24,7 @@ use crate::fork::art::thumbs::ArtRef;
 use crate::fork::page::{Mark, Page};
 use crate::fork::port_page::paths::Places;
 use crate::fork::port_page::settings_files::{self, SettingsFile};
+use crate::fork::port_page::details::DetailsExtra;
 use crate::fork::port_page::{self as model, Act, Card, DiskFacts, LinkAct, PortFacts, SaveFolder, SaveSource, SteamFacts, SteamState, UpdateCheck};
 use crate::fork::rom_screens::job::Background;
 use crate::fork::settings::ForkSettings;
@@ -96,6 +97,8 @@ enum Screen {
     Working(Card),
     /// The port is gone (uninstalled): the result page's button closes the Port page.
     Done(Card),
+    /// All details, under More.
+    Details,
 }
 
 struct Session {
@@ -162,6 +165,61 @@ pub(crate) fn open_options_for(app: &Rc<AppState>, router: &Router, port: &Port)
     }
 }
 
+/// Info (X or the Info button on a row, the launch error, Fix problems): an installed port's Port page, where every option
+/// of the old Info dialog is a card; a port that is not installed has only its details (instructions, version, links).
+pub(crate) fn open_info(app: &Rc<AppState>, router: &Router, port: &Port) {
+    if app.is_installed(port) && !port.is_android_only() && port_of(app, port.key()).is_some() {
+        return open(app, router, port.key(), Rc::new(|app, router| close_current_dialog(app, router)));
+    }
+    open_details(app, router, port, Rc::new(|app, router| close_current_dialog(app, router)));
+}
+
+/// The orange "Updates off" button of a list row: the port's Updates page (its switch, the update, the version list).
+pub(crate) fn open_updates(app: &Rc<AppState>, router: &Router, port: &Port) {
+    if app.is_installed(port) && !port.is_android_only() {
+        open_card(app, router, port.key(), Card::Updates, Rc::new(|app, router| close_current_dialog(app, router)));
+    }
+}
+
+/// "All details" by itself, for a port with no Port page (it is not installed, or has nothing to install): its facts,
+/// instructions and links, with no look at the disk. Back runs `back`.
+pub(crate) fn open_details(app: &Rc<AppState>, router: &Router, port: &Port, back: Back) {
+    let installed = app.is_installed(port);
+    let page = model::details::details_page(&facts_with(app, UpdateCheck::NotAsked, port), &details_extra(port, installed), None, &Places::system());
+    let on_port = port.clone();
+    let on_back = back.clone();
+    let again: Back = {
+        let (port, back) = (port.clone(), back.clone());
+        Rc::new(move |app, router| open_details(app, router, &port, back.clone()))
+    };
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match link_of(&on_port, act) {
+            Some(url) => open_link(app, router, on_port.display_name(), &url, Some(again.clone())),
+            None => on_back(app, router),
+        }),
+        on_back: back.clone(),
+        on_exit: back,
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
+}
+
+/// What All details adds to the Port page's own facts.
+fn details_extra(port: &Port, installed: bool) -> DetailsExtra {
+    let web = |u: &str| crate::core::launch::is_web_url(u).then(|| u.to_string());
+    DetailsExtra { installed, instructions: port.instructions.clone(), instructions_link: port.instructions_link().and_then(web), mods_link: port.mods.as_deref().and_then(web) }
+}
+
+/// The address behind an All details option.
+fn link_of(port: &Port, act: Act) -> Option<String> {
+    match act {
+        Act::ProjectPage => model::project_url(port),
+        Act::InstructionsLink => port.instructions_link().filter(|u| crate::core::launch::is_web_url(u)).map(str::to_string),
+        Act::ModsLink => port.mods.clone().filter(|u| crate::core::launch::is_web_url(u)),
+        _ => None,
+    }
+}
+
 /// One card's page by itself (the install wizard's steps reuse them): B leaves through `back`. Play, Fix problems and
 /// Game files do what their cards do.
 pub(crate) fn open_card(app: &Rc<AppState>, router: &Router, key: &str, card: Card, back: Back) {
@@ -195,6 +253,10 @@ fn start(app: &Rc<AppState>, key: &str, back: Back, direct: bool) -> Option<Rc<S
 // -- Facts ----------------------------------------------------------------------------------------------------
 
 fn port_facts(app: &AppState, s: &Session, port: &Port) -> PortFacts {
+    facts_with(app, s.update_check.borrow().clone(), port)
+}
+
+fn facts_with(app: &AppState, update_check: UpdateCheck, port: &Port) -> PortFacts {
     let info = app.state.borrow().get(port.key()).cloned();
     let (badge, badge_mark) = super::home_screen::badge_of(app, port.key()).unwrap_or_else(|| ("Installed".to_string(), Mark::Done));
     let last_played = info.as_ref().and_then(|i| match format_last_played(&i.last_played_at) {
@@ -210,7 +272,7 @@ fn port_facts(app: &AppState, s: &Session, port: &Port) -> PortFacts {
         badge,
         badge_mark,
         last_played,
-        playtime: (seconds > 0).then(|| format_playtime(seconds)),
+        playtime: model::play_time_words(seconds),
         running: is_port_running(app, port.key()),
         busy: app.install_runtime.installing.borrow().contains(port.key()),
         user_managed: port.user_managed,
@@ -221,7 +283,7 @@ fn port_facts(app: &AppState, s: &Session, port: &Port) -> PortFacts {
         update_ready: super::home_screen::update_ready(app, port.key()),
         version: info.and_then(|i| i.installed_tag),
         game_mode: crate::fork::steam_queue::game_mode_from_env(),
-        update_check: s.update_check.borrow().clone(),
+        update_check,
         project_url: model::project_url(port),
     }
 }
@@ -303,7 +365,7 @@ fn disk_arrived(app: &Rc<AppState>, s: &Rc<Session>) {
     }
     match s.screen.get() {
         Screen::Wait(card) => show(app, &router, s, Screen::Card(card)),
-        screen @ (Screen::First | Screen::Card(_)) => redraw(app, s, screen),
+        screen @ (Screen::First | Screen::Card(_) | Screen::Details) => redraw(app, s, screen),
         _ => {}
     }
 }
@@ -506,6 +568,7 @@ fn page_for(app: &AppState, s: &Session, screen: Screen) -> Option<Page<Act>> {
             let text = settings_files::view_text(&f.path);
             model::view_page(&p, i, &f, &text, places)
         }
+        Screen::Details => model::details::details_page(&p, &details_extra(&port, app.is_installed(&port)), d, places),
         Screen::Notice(_) | Screen::Working(_) | Screen::Done(_) => return None,
     })
 }
@@ -621,6 +684,7 @@ fn on_act(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             Screen::Card(_) | Screen::Wait(_) if s.direct => (s.back)(app, router),
             Screen::Card(_) | Screen::Wait(_) => show(app, router, s, Screen::First),
             Screen::View(_) => show(app, router, s, Screen::Card(Card::Settings)),
+            Screen::Details => show(app, router, s, Screen::Card(Card::More)),
             Screen::Notice(card) => show(app, router, s, Screen::Card(card)),
             // A backup or an uninstall runs: B waits for its answer.
             Screen::Working(_) => {}
@@ -701,17 +765,18 @@ fn on_act(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, act: Act) {
             app.refresh_current_view();
             redraw(app, s, Screen::Card(Card::Updates));
         }
-        Act::SelectVersion => {
-            close_current_dialog(app, router);
-            open_version_picker(app, router, port);
-        }
-        Act::InstallExtras => open_extra_install_confirm_dialog(app, router, port),
+        // Fork (port dialogs): the version list, the extras question and the play time question are pages that lead back
+        // here (`port_actions_screen`); All details is a page under More.
+        Act::SelectVersion => super::port_actions_screen::versions(app, router, port, Card::Updates, back_to(s, Screen::Card(Card::Updates))),
+        Act::InstallExtras => super::port_actions_screen::extras(app, router, port, Card::Updates, back_to(s, Screen::Card(Card::Updates))),
         Act::UninstallYes => uninstall(app, router, s, &port),
-        Act::ResetPlaytime => open_reset_playtime_dialog(app, router, port),
-        Act::AllDetails => open_info_dialog(app, router, &port),
-        Act::ProjectPage => {
-            if let Some(url) = model::project_url(&port) {
-                open_link(app, router, port.display_name(), &url, Some(back_to(s, Screen::Card(Card::More))));
+        Act::ResetPlaytime => super::port_actions_screen::reset_play_time(app, router, port, back_to(s, Screen::Card(Card::More))),
+        Act::AllDetails => show(app, router, s, Screen::Details),
+        Act::ProjectPage | Act::InstructionsLink | Act::ModsLink => {
+            // The link page's Back returns to the page the link was chosen on: More, or All details.
+            let from = if s.screen.get() == Screen::Details { Screen::Details } else { Screen::Card(Card::More) };
+            if let Some(url) = link_of(&port, act) {
+                open_link(app, router, port.display_name(), &url, Some(back_to(s, from)));
             }
         }
     }

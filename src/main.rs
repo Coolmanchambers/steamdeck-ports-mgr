@@ -8,7 +8,7 @@ mod ui;
 use app::dialogs::{apply_theme, dialog_is_open, open_info_dialog, open_settings_dialog, open_uninstall_confirm_dialog, DialogSlot};
 use app::events::{lock, poll_app_events, AppEvent};
 use app::gamepad_target::AppGamepadTarget;
-use app::install_launch::{activate_selection, install_row, open_port_folder, play_port, open_update_toggle_dialog_row, reveal_selected_folder, with_indexed_port};
+use app::install_launch::{activate_selection, install_row, open_port_folder, play_port, open_updates_row, reveal_selected_folder, with_indexed_port};
 use app::state::{AppPaths, AppState, DialogNav, GridNav, InstallRuntime, ThemeState, WindowGeometry, WindowedNav};
 use app::sync::{launch_self_update, start_catalog_sync, start_self_update_check, start_themes_sync};
 use std::cell::{Cell, RefCell};
@@ -398,7 +398,7 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
         }
     }));
     window.on_list_row_install_requested(with!(app, router => move |index| install_row(&app, &router, index)));
-    window.on_list_row_update_requested(with!(app, router => move |index| open_update_toggle_dialog_row(&app, &router, index)));
+    window.on_list_row_update_requested(with!(app, router => move |index| open_updates_row(&app, &router, index)));
     window.on_list_row_uninstall_requested(with!(app, router => move |index| {
         if !dialog_is_open(&app) {
             with_indexed_port(&app, index, |port| open_uninstall_confirm_dialog(&app, &router, port));

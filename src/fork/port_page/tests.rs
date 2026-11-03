@@ -406,3 +406,21 @@ fn the_page_after_an_uninstall_says_close_because_it_leaves_the_port_page() {
     assert_eq!(page.back_hint, "Close");
     assert_eq!(notice_page(&port(), Card::Uninstall, "Nothing was removed", vec![]).buttons[LEFT].as_ref().map(|b| b.label.as_str()), Some("Back"));
 }
+
+#[test]
+fn more_says_play_time_the_same_way_everywhere() {
+    let p = PortFacts { playtime: play_time_words(7560), has_playtime: true, ..port() };
+    let page = more_page(&p);
+    let titles: Vec<&str> = page.options.iter().map(|o| o.title.as_str()).collect();
+    assert_eq!(titles, ["Open the project page", "All details", "Reset play time"]);
+    assert_eq!(page.options[2].detail, "Play time is 2.1 hours; asks first");
+    assert_eq!(page.options[1].detail, "Version, program, play time, instructions and links");
+    let never = more_page(&PortFacts { project_url: None, ..port() });
+    assert_eq!((never.options[2].detail.as_str(), never.options[2].enabled), ("No play time yet", false));
+    assert_eq!(summary(Card::More, &p, None, &deck_places()), "Project page, all details, reset play time");
+    let first = first_page(&p, None, &deck_places());
+    assert_eq!(first.card.as_ref().unwrap().lines, ["Ready", "Play time: 2.1 hours"]);
+    for text in first.options.iter().map(|o| o.detail.as_str()).chain(page.options.iter().map(|o| o.detail.as_str())) {
+        assert!(!text.to_lowercase().contains("game time"), "{text}");
+    }
+}

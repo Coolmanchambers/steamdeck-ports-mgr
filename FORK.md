@@ -317,6 +317,12 @@ Files added by this fork:
 | 2026-11-02 | `src/fork/steam_add.rs`, `src/app/steam_add_screen.rs`, `src/fork/mod.rs` | "Add to Steam with artwork?" for a few named ports (see that section): the page, its working page, whether to ask and the notes (moved from the install wizard: `steam_account_note`, `steam_added_note`, with their tests), the result title; the screen's `open` / `ask` / `add`. Tests: one port, several, Desktop Mode with Steam running, Game Mode, each skip note, and a fit test with long real names and one or three ports |
 | 2026-11-02 | `src/app/checkup_screen.rs`, `src/app/port_page_screen.rs`, `src/app/install_wizard_screen.rs`, `src/app/steam_screens.rs`, `src/fork/install_wizard.rs`, `src/fork/port_page/mod.rs` | Steam add page: `Fix::AddToSteam` and the Port page's Add to Steam ask on the new page (were the full Add to Steam list with one port selected); the install wizard's Steam step calls the shared `ask` and `add`; `Act::SteamChange` keeps the list for an out-of-date shortcut or one with its name; 1 test |
 | 2026-11-02 | `src/fork/steam_add.rs`, `src/app/steam_add_screen.rs`, `src/app/port_page_screen.rs`, `src/app/checkup_screen.rs`, `src/fork/install_wizard.rs`, `src/fork/setup_wizard/steam.rs`, `src/fork/checkup.rs`, `src/fork/steam_close.rs`, `src/app/steam_close_screen.rs` | Steam add page review fixes: the Close Steam flow without a second question; `Act::SteamChange` asks on `change_page` (was the full list); `add_selected` (`add_all` for the rows already selected, queued behind changes already waiting); a port uninstalled meanwhile, a failed Steam check and other waiting changes handled; `steam_shortcuts` is `Queued` when the missing ports only wait for Steam; `result_page_for` says "Steam shows these ports" after adds; the Stop waiting detail fits one line; the Port page's own words, Game Mode details. Tests for each |
+| 2026-11-03 | `src/app/dialogs.rs` | Port dialogs: `open_info_dialog` is now a redirect to the Port page (`port_page_screen::open_info`: an installed port's Port page, else its All details page); upstream's body is kept as `open_legacy_info_dialog` (`#[allow(dead_code)]`, unreachable) so upstream merges stay clean. `open_error_dialog` (the "Error - X" two-button dialog) is removed: Play calls `play_screen::could_not_start`. `open_extra_install_confirm_dialog` and `open_reset_playtime_dialog` keep their names and open the pages of `port_actions_screen`. `open_update_toggle_dialog` (the "Update - X" picker) is untouched and reached only from the legacy Info dialog. Import of `start_extra_install` dropped |
+| 2026-11-03 | `src/app/install_launch.rs` | Port dialogs: `open_version_picker` and `open_favorite_exe_picker` open pages (`port_actions_screen::versions`, `play_screen::choose_program`); `start_extra_install`, `option_label` and `CHOOSE_PROGRAM_TITLE` removed (their work moved to `port_actions_screen`); the three launch failures (folder gone, program gone, no program) and a folder name that is not valid open "Could not start <name>", and a program the system will not start (log only before) does too; `launch_installed`'s program question is "Which program starts <name>?"; a port with nothing to download shows All details; `open_update_toggle_dialog_row` is `open_updates_row` and opens the port's Updates page |
+| 2026-11-03 | `src/app/events.rs` | Port dialogs: `VersionsFetched`, `VersionsFetchError` and `ExtraInstallDone` go to `port_actions_screen::{versions_fetched, extras_done}` (pages) instead of the "Choose a version" picker and the "Error" and "Extras" message dialogs; `json_field_labels` removed |
+| 2026-11-03 | `src/main.rs`, `src/app/mod.rs`, `src/fork/mod.rs` | Port dialogs: the list row's update button calls `open_updates_row`; module lines for `play_screen`, `port_actions_screen` and `play_pages` |
+| 2026-11-03 | `ui/app-window.slint` | Port dialogs: the orange list-row button that stood for "updates are off" says "Updates off" (it was a struck-through "Update") and opens the Updates page, so the row's button and the Port page's "Update now" can never mean different things |
+| 2026-11-03 | `tools/smoke-test.sh` | Port dialogs: the Port page check goes on from Program to start to More > All details (opens, B returns), the page that replaced the Info dialog |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -1551,6 +1557,37 @@ write or queue for that one shortcut. The install wizard's Steam step shares the
 the notes (its own page; its Steam-running line now "Steam closes for a moment to add it; you can start it again
 after."). Settings > Add to Steam keeps the full list. Page titles, option titles and details are checked to fit with
 long real names and one or three ports.
+
+## Port dialogs as pages (`src/fork/port_page/{details,actions}.rs`, `src/fork/play_pages.rs`, `src/app/play_screen.rs`, `src/app/port_actions_screen.rs`)
+
+A read-only sweep of every screen (`docs/reviews/menu-sweep-2026-11-02.md` in the project folder) listed the screens that
+were still upstream's dialogs. Since 2026-11-03 these port actions are pages in the guided-page window, in plain words:
+
+- **Info is the Port page.** X or the Info button on a row, the launch error and Fix problems all land on an installed
+  port's Port page (`dialogs::open_info_dialog` redirects; the old dialog body is kept, unreachable). Each of the old
+  dialog's buttons is a card there. "All details" (More) is a page of summary lines: Version, Program it starts,
+  Updates (on or off), Last played, Play time, Folder, then the instructions and the instruction, project and mods
+  links (each shows its address and a QR code first, as the project page does). A port that is not installed has the same
+  page without the disk lines. No "tag", "favorite executable" or "--" any more.
+- **Updates.** The "Update - X" Enable/Disable picker is gone; "Check for updates" on the Updates page is the one switch.
+  The list row's orange button (shown while updates are off) says "Updates off" and opens that page.
+- **Play.** "Could not start <name>" (title "Could not start this port" when the name does not fit) says what is wrong
+  (folder gone, program gone, no program, a folder name that is not valid, the system refused) and offers Reinstall (the
+  install wizard's page; saves are backed up first, as always), Game files (the one-port game files page, only for a port
+  that names some) and Back. "Which program starts <name>?" lists one option per program (file name, then its folder the
+  human way), Recommended on the only program in the shallowest folder or the one named like the port, plus "Ask every time"
+  where Fix problems or Port options may leave it open. A pick from Play is remembered when it starts, as before.
+- **Select version** is "Getting the versions" (Cancel gives up), "Which version?" (each version with its date, and
+  "newest", "installed" or "early version" as details; the page says the one chosen turns update checks off, which the
+  install has always done) and, when it fails, "Could not get the versions" with the reason in plain words and Try again.
+  A chosen version goes through the same-game question (a port that is not installed) and `start_install` as before.
+- **Install extras** is a yes/no page ("Extras are optional add-ons ... They replace any copies of the same files that are
+  already there."; the cursor starts on No), "Getting the extras", then "Extras installed" or "Could not install the
+  extras" (never the raw error, which goes to the log).
+- **Play time** is one name: "Reset the play time for <name>?" with "This cannot be undone." (the cursor starts on No), and
+  the Port page shows "Play time: 2.1 hours" (it showed "Played 2.1").
+
+Page titles, option titles and details are checked to fit with the longest real names (`every_page_fits_*` tests).
 
 ## Fixes to upstream behavior
 

@@ -1,5 +1,5 @@
-use super::dialogs::{apply_theme, close_current_dialog, open_message_dialog, open_picker_dialog, tr, update_progress_dialog, DialogSlot};
-use super::install_launch::{finish_play_update_check, play_port, start_install};
+use super::dialogs::{apply_theme, close_current_dialog, open_message_dialog, update_progress_dialog, DialogSlot};
+use super::install_launch::{finish_play_update_check, play_port};
 use super::playtime::{any_process_running, checkpoint_playtime, refresh_live_playtime_display};
 use super::state::AppState;
 use crate::core::models::Port;
@@ -42,10 +42,6 @@ pub(crate) enum AppEvent {
     SaveBackupDone { copied: usize, skipped: usize, failed: usize, no_linux_folder: Vec<String> },
     // Fork: the Deck-ready list finished a background check.
     DeckReadyFetched(Box<crate::fork::deck_ready::sync::Outcome>),
-}
-
-fn json_field_labels(items: &[Value], field: &str) -> Vec<String> {
-    items.iter().map(|v| v.get(field).and_then(Value::as_str).unwrap_or("?").to_string()).collect()
 }
 
 // Fork (install wizard): true when the install had been sent to the background (whatever is on screen now is left alone).
@@ -121,21 +117,10 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 // picker); Not now drops the flow, and for Play (O2) starts the installed game, like a failed update.
                 super::install_wizard_screen::choose_asset(app, router, &key, assets, release_override, was_play);
             }
-            AppEvent::VersionsFetched { key, releases } => {
-                finish_operation(app, router, &key);
-                if let Some(port) = app.find_port(&key) {
-                    let labels = json_field_labels(&releases, "tag_name");
-                    open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_version(), labels, move |app, router, idx| {
-                        if let Some(release) = releases.get(idx) {
-                            start_install(app, router, port.clone(), None, Some(release.clone()));
-                        }
-                    });
-                }
-            }
-            AppEvent::VersionsFetchError { key, message } => {
-                finish_operation(app, router, &key);
-                open_message_dialog(app, router, &tr!(app).invoke_dialog_title_error(), &message);
-            }
+            // Fork (port dialogs): the version list, its error and the extras' result are pages (`port_actions_screen`), not
+            // upstream's "Choose a version" picker and "Error" message.
+            AppEvent::VersionsFetched { key, releases } => super::port_actions_screen::versions_fetched(app, router, &key, Ok(releases)),
+            AppEvent::VersionsFetchError { key, message } => super::port_actions_screen::versions_fetched(app, router, &key, Err(message)),
             AppEvent::InstallError { key, message } => {
                 let background = finish_operation(app, router, &key);
                 super::cloud_screen::trigger(app, crate::fork::cloud::hooks::Why::UpdateBackup); // Fork: a backup may have been made before it failed
@@ -146,16 +131,7 @@ pub(crate) fn poll_app_events(app: &Rc<AppState>, router: &Rc<RefCell<GamepadRou
                 // background.
                 super::install_wizard_screen::install_failed(app, router, &key, &message, background, launch);
             }
-            AppEvent::ExtraInstallDone { key, result } => {
-                finish_operation(app, router, &key);
-                let window = app.window();
-                let tr = window.global::<Tr>();
-                let message = match result {
-                    Ok(()) => tr.invoke_message_extras_installed(),
-                    Err(e) => tr.invoke_message_extras_failed(e.into()),
-                };
-                open_message_dialog(app, router, &tr.invoke_dialog_title_extras(), &message);
-            }
+            AppEvent::ExtraInstallDone { key, result } => super::port_actions_screen::extras_done(app, router, &key, result),
             AppEvent::PlayUpdateChecked { port, available, answered } => finish_play_update_check(app, router, *port, available, answered),
             AppEvent::SelfUpdateChecked { offer } => {
                 if let Some(offer) = &offer {

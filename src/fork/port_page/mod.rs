@@ -9,6 +9,8 @@
 //! The install wizard (part 3 of `docs/design/port-page-and-one-window.md`) reuses the card pages: see
 //! `port_page_screen::open_card`.
 
+pub mod actions;
+pub mod details;
 pub mod paths;
 pub mod settings_files;
 
@@ -302,6 +304,22 @@ fn count(n: usize, one: &str, many: &str) -> String {
     if n == 1 { format!("1 {one}") } else { format!("{n} {many}") }
 }
 
+/// The play time in words: "12 minutes", "1 hour", "2.1 hours"; `None` for none at all. One wording everywhere the play
+/// time is shown (the Port page, All details, the reset question).
+pub fn play_time_words(seconds: u64) -> Option<String> {
+    match seconds {
+        0 => None,
+        s if s < 3600 => {
+            let minutes = (s / 60).max(1);
+            Some(if minutes == 1 { "1 minute".to_string() } else { format!("{minutes} minutes") })
+        }
+        s => {
+            let hours = format!("{:.1}", s as f64 / 3600.0);
+            Some(if hours == "1.0" { "1 hour".to_string() } else { format!("{hours} hours") })
+        }
+    }
+}
+
 /// "backed up today", "backed up 3 days ago", "no backup yet".
 pub fn backup_words(days: Option<u64>) -> String {
     match days {
@@ -459,7 +477,7 @@ pub fn summary(card: Card, p: &PortFacts, disk: Option<&DiskFacts>, places: &Pla
         Card::Updates => updates_summary(p),
         Card::Files => disk.map_or_else(|| p.version.clone().unwrap_or_else(looking), |d| files_summary(&d.files, p.version.as_deref(), places)),
         Card::Uninstall => uninstall_summary(p),
-        Card::More => "Project page, all details, reset game time".into(),
+        Card::More => "Project page, all details, reset play time".into(),
     }
 }
 
@@ -502,6 +520,9 @@ pub enum Act {
     AllDetails,
     /// The project page: the link page (`link_page`).
     ProjectPage,
+    /// All details: the first address in the port's instructions, and its mods page (both the link page).
+    InstructionsLink,
+    ModsLink,
 }
 
 fn option(title: &str, detail: impl Into<String>, action: Act) -> PageOption<Act> {
@@ -537,7 +558,7 @@ pub fn first_page(p: &PortFacts, disk: Option<&DiskFacts>, places: &Places) -> P
     let mut page = Page::<Act> { window_title: window_title(&p.name, None), large: true, header: String::new(), title: "Port options".to_string(), buttons: back_buttons(), initial: Focus::Option(0), ..Page::default() };
     let mut lines = vec![p.badge.clone()];
     if let Some(t) = &p.playtime {
-        lines.push(format!("Played {t}"));
+        lines.push(format!("Play time: {t}"));
     }
     page.card = Some(PageCard { art: p.art.clone(), qr: None, title: p.name.clone(), lines });
     for (i, card) in Card::ALL.into_iter().enumerate() {
@@ -831,8 +852,8 @@ pub fn more_page(p: &PortFacts) -> Page<Act> {
     let mut page = card_page(p, Card::More);
     let project = option("Open the project page", p.project_url.clone().unwrap_or_else(|| "No project page is known for this port".into()), Act::ProjectPage);
     page.options.push(if p.project_url.is_some() { project } else { disabled(project) });
-    page.options.push(option("All details", "Instructions and every option, as Info shows them", Act::AllDetails));
-    let reset = option("Reset game time", p.playtime.clone().map_or_else(|| "Not played yet".to_string(), |t| format!("Played {t}; asks first")), Act::ResetPlaytime);
+    page.options.push(option("All details", "Version, program, play time, instructions and links", Act::AllDetails));
+    let reset = option("Reset play time", p.playtime.clone().map_or_else(|| "No play time yet".to_string(), |t| format!("Play time is {t}; asks first")), Act::ResetPlaytime);
     page.options.push(if p.has_playtime { reset } else { disabled(reset) });
     page
 }

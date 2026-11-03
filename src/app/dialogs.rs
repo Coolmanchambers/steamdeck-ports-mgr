@@ -1,6 +1,6 @@
 use super::events::{lock, AppEvent};
 use super::gamepad_target::{dialog_activate, dialog_move_selection, info_buttons_enabled, DialogGamepadTarget};
-use super::install_launch::{open_favorite_exe_picker, open_version_picker, start_extra_install};
+use super::install_launch::{open_favorite_exe_picker, open_version_picker};
 use super::playtime::{format_last_played, format_playtime, LastPlayed};
 use super::save_finder_screen::open_from_info as open_find_saves;
 use super::save_restore_screen::open_from_info as open_restore_saves;
@@ -393,21 +393,8 @@ fn open_two_button_dialog(
     finish_dialog_open(app, router, DialogSlot::TwoButton(dialog));
 }
 
-pub(crate) fn open_error_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    let reinstall_port = port.clone();
-    open_two_button_dialog(
-        app,
-        router,
-        tr.invoke_dialog_title_error_port(port.name.clone().into()),
-        tr.invoke_message_launch_failed(port.name.clone().into()),
-        // Fork (install wizard): Reinstall goes through the wizard ("Update this port?" and the pages after the download).
-        DialogChoice { label: tr.invoke_label_reinstall(), action: move |app, router| super::install_wizard_screen::open_from_list(app, router, reinstall_port.clone()) },
-        DialogChoice { label: tr.invoke_label_open_info(), action: move |app, router| open_info_dialog(app, router, &port) },
-        true,
-    );
-}
+// Fork (port dialogs): upstream's launch error dialog ("Error - X": Reinstall, Open info) is the "Could not start <name>"
+// page now (`play_screen::could_not_start`, called from `install_launch`).
 
 pub(crate) fn open_confirm_dialog(
     app: &Rc<AppState>,
@@ -444,33 +431,14 @@ pub(crate) fn open_uninstall_confirm_dialog(app: &Rc<AppState>, router: &Router,
     super::port_page_screen::open_card(app, router, port.key(), crate::fork::port_page::Card::Uninstall, back);
 }
 
+// Fork (port dialogs): "Install the extra files?" and "Reset the play time for <name>?" are pages now
+// (`port_actions_screen`); these two keep their names for upstream's Info dialog and close on Back.
 pub(crate) fn open_extra_install_confirm_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    let name: slint::SharedString = port.name.clone().into();
-    open_confirm_dialog(
-        app,
-        router,
-        tr.invoke_dialog_title_install_extras(name.clone()),
-        tr.invoke_message_install_extras_confirm(name),
-        tr.invoke_confirm_install(),
-        move |app, router| start_extra_install(app, router, port.clone()),
-    );
+    super::port_actions_screen::extras(app, router, port, crate::fork::port_page::Card::Updates, Rc::new(|app, router| close_current_dialog(app, router)));
 }
 
 pub(crate) fn open_reset_playtime_dialog(app: &Rc<AppState>, router: &Router, port: Port) {
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    let name: slint::SharedString = port.name.clone().into();
-    let key = port.key().to_string();
-    open_confirm_dialog(
-        app,
-        router,
-        tr.invoke_dialog_title_reset_playtime(name.clone()),
-        tr.invoke_message_reset_playtime_confirm(name),
-        tr.invoke_confirm_reset(),
-        move |app, _| app.state.borrow_mut().reset_playtime(&key),
-    );
+    super::port_actions_screen::reset_play_time(app, router, port, Rc::new(|app, router| close_current_dialog(app, router)));
 }
 
 fn existing_save_folder(save: Option<&Value>, game_dir: &Path) -> Option<PathBuf> {
@@ -487,7 +455,14 @@ fn wire_open<T: 'static>(target: Option<T>, open: fn(&T), register: impl FnOnce(
     }
 }
 
+// Fork (port dialogs): Info is the port's Port page now (and "All details" under More): X or Info on a list row, the launch
+// error and Fix problems all land there. Upstream's Info dialog below is kept, unreachable, so upstream merges stay clean.
 pub(crate) fn open_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port) {
+    super::port_page_screen::open_info(app, router, port);
+}
+
+#[allow(dead_code)]
+pub(crate) fn open_legacy_info_dialog(app: &Rc<AppState>, router: &Router, port: &Port) {
     close_current_dialog(app, router);
     app.dialog_nav.info_dialog_port_key.replace(Some(port.key().to_string()));
     let ctx = dialog_context(app);

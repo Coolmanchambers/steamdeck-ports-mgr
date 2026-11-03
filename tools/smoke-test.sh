@@ -319,6 +319,19 @@ if [ "$alive" = yes ]; then
             check "a card of the Port page opens its own page (Program to start)" '[ -n "$pc" ]'
             press_keys "$(find_window '^Deck Ports Manager: Port: ')" Escape; sleep 1.2
             check "B on a card page returns to the Port page" '[ -z "$(xdotool search --onlyvisible --name ": Program to start$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Port: " 2>/dev/null)" ]'
+            # More (the last card; the cursor is back on Program to start) > All details (the second option) is a page of plain
+            # summary lines, and B goes back to More. It replaced upstream's Info dialog.
+            press_keys "$(find_window '^Deck Ports Manager: Port: ')" Down Down Down Down Down Down Down Down Return; sleep 1.5
+            check "More opens its page" '[ -n "$(xdotool search --onlyvisible --name ": More$" 2>/dev/null)" ]'
+            press_keys "$(find_window ': More$')" Down Return; sleep 1.5
+            ad=$(find_window ': More: All details$') || ad=""
+            import -window root "$OUT/all-details.png" 2>/dev/null
+            check "More > All details opens the details page (it replaced the Info dialog)" '[ -n "$ad" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+            if [ -n "$ad" ]; then
+                press_keys "$ad" Escape; sleep 1.2
+                check "B on All details returns to More" '[ -z "$(xdotool search --onlyvisible --name ": All details$" 2>/dev/null)" ] && [ -n "$(xdotool search --onlyvisible --name ": More$" 2>/dev/null)" ]'
+            fi
+            press_keys "$(find_window ': More$')" Escape; sleep 1.2
             press_keys "$(find_window '^Deck Ports Manager: Port: ')" Escape; sleep 1.5
             check "B on the Port page returns to Home" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Port: " 2>/dev/null)" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
         fi

@@ -700,7 +700,9 @@ export component AppWindow inherits Window {
 
                                     update-btn := ActionButton {
                                         visible: item.installed && item.auto-update-off;
-                                        text: @tr("Update");
+                                        // Fork (port dialogs): says what it is (update checks are off) and opens the port's Updates page,
+                                        // where the one switch is; the strike-through that stood for "off" is gone with the word.
+                                        text: @tr("Updates off");
                                         fill-color: SemanticColors.warning;
                                         fill-hover-color: SemanticColors.warning-hover;
                                         font-size: item-font-px;
@@ -709,14 +711,6 @@ export component AppWindow inherits Window {
                                         width: row.update-w;
                                         height: action-button-height;
                                         clicked => { root.list-row-update-requested(index); }
-
-                                        Rectangle {
-                                            background: SemanticColors.text-on-accent;
-                                            x: 4px / Theme.scale-factor;
-                                            width: parent.width - 8px / Theme.scale-factor;
-                                            y: parent.height / 2 - 1px / Theme.scale-factor;
-                                            height: 1px / Theme.scale-factor;
-                                        }
                                     }
 
                                     play-btn := ActionButton {

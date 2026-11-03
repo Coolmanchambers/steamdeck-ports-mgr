@@ -1,14 +1,13 @@
-use super::dialogs::{dialog_is_open, open_error_dialog, open_info_dialog, open_message_dialog, open_picker_dialog, open_progress_dialog, open_update_toggle_dialog, tr};
+use super::dialogs::{dialog_is_open, open_info_dialog, open_message_dialog};
 use super::events::{lock, AppEvent};
 use super::playtime::is_port_running;
 use super::state::AppState;
 use crate::core::executable_detect::ExecutableSelectionError;
-use crate::core::forge::Forge;
 use crate::core::installer::{InstallOverrides, InstallPaths};
 use crate::core::jobs::InstallOutcome;
 use crate::core::models::{Port, SourceType};
+use crate::fork::play_pages::Problem;
 use crate::ui::gamepad_router::GamepadRouter;
-use crate::Tr;
 use serde_json::Value;
 use slint::ComponentHandle;
 use std::cell::RefCell;
@@ -17,8 +16,6 @@ use std::rc::Rc;
 use std::time::Instant;
 
 type Router = Rc<RefCell<GamepadRouter>>;
-
-const VERSION_CHOICES: usize = 3;
 
 fn game_dir(app: &AppState, port: &Port) -> Option<PathBuf> {
     crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder).ok()
@@ -51,7 +48,8 @@ pub(crate) fn start_install(app: &Rc<AppState>, router: &Router, port: Port, ass
                 app.refresh_current_view();
             }
         }
-        open_info_dialog(app, router, &port);
+        // Fork: a port with nothing to download is shown the way "All details" shows it (its instructions are the point).
+        super::port_page_screen::open_details(app, router, &port, Rc::new(|app, router| super::dialogs::close_current_dialog(app, router)));
         return;
     }
     let Some(key) = try_claim_op_slot(app, &port) else { return };
@@ -84,73 +82,35 @@ pub(crate) fn start_install(app: &Rc<AppState>, router: &Router, port: Port, ass
     });
 }
 
+// Fork: the version list is a page ("Getting the versions", then "Which version?"; `port_actions_screen`). Info's Select
+// version (kept for upstream's sake, no longer shown) and anything else that asks lands there, closing on Back.
 pub(crate) fn open_version_picker(app: &Rc<AppState>, router: &Router, port: Port) {
-    let Some(key) = try_claim_op_slot(app, &port) else { return };
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    open_progress_dialog(app, router, &tr.invoke_dialog_title_loading(), &tr.invoke_progress_fetching_versions(port.name.clone().into()));
-
-    let (github_token, gitlab_token) = app.api_tokens();
-    let events = app.events.clone();
-    let repo = port.repo.clone().unwrap_or_default();
-    let forge = Forge::of(port.source_type);
-    std::thread::spawn(move || {
-        let result = match forge {
-            Some(forge) => forge.list_releases(&repo, forge.token(github_token.as_deref(), gitlab_token.as_deref()), VERSION_CHOICES),
-            None => Ok(Vec::new()),
-        };
-        let event = match result {
-            Ok(releases) if !releases.is_empty() => AppEvent::VersionsFetched { key, releases },
-            Ok(_) => AppEvent::VersionsFetchError { key, message: "This source has no version history.".to_string() },
-            Err(e) => AppEvent::VersionsFetchError { key, message: e.message().to_string() },
-        };
-        lock(&events).push(event);
-    });
+    super::port_actions_screen::versions(app, router, port, crate::fork::port_page::Card::Updates, Rc::new(|app, router| super::dialogs::close_current_dialog(app, router)));
 }
-
-pub(crate) fn start_extra_install(app: &Rc<AppState>, router: &Router, port: Port) {
-    let Some(key) = try_claim_op_slot(app, &port) else { return };
-    let window = app.window();
-    let tr = window.global::<Tr>();
-    open_progress_dialog(app, router, &tr.invoke_dialog_title_extras(), &tr.invoke_progress_installing_extras(port.name.clone().into()));
-
-    let library_dir = app.paths.library_dir();
-    let events = app.events.clone();
-    let mut on_progress = progress_sender(&events);
-    std::thread::spawn(move || {
-        let result = crate::core::jobs::run_extra_install(&port, &library_dir, &mut on_progress);
-        lock(&events).push(AppEvent::ExtraInstallDone { key, result });
-    });
-}
-
-const CHOOSE_PROGRAM_TITLE: &str = "Choose the program to start (remembered; change it in Info)";
 
 fn file_label(path: &Path) -> String {
     path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string()
 }
 
+// Fork: "Which program starts <name>?" (`play_screen`), one option per program with its folder and "Ask every time" last;
+// the pick is remembered as before. A port with no program says so on "Could not start".
 pub(crate) fn open_favorite_exe_picker(app: &Rc<AppState>, router: &Router, port: Port) {
-    let Some(game_dir) = game_dir(app, &port).filter(|dir| dir.is_dir()) else { return };
+    let Some(game_dir) = game_dir(app, &port) else { return super::play_screen::could_not_start(app, router, &port, Problem::BadFolderName) };
+    if !game_dir.is_dir() {
+        return super::play_screen::could_not_start(app, router, &port, Problem::FolderGone);
+    }
     // Fork: the full list of programs, shallowest folder first (the launch list shows only the shallowest).
     let candidates = crate::core::executable_detect::list_candidates(&game_dir);
     if candidates.is_empty() {
-        return open_info_dialog(app, router, &port);
+        return super::play_screen::could_not_start(app, router, &port, Problem::NoProgram);
     }
-    let mut labels = vec![tr!(app).invoke_picker_ask_every_time().to_string()];
-    labels.extend(candidates.iter().map(|p| option_label(&game_dir, p)));
     let key = port.key().to_string();
-    open_picker_dialog(app, router, &tr!(app).invoke_dialog_title_choose_favorite_executable(), labels, move |app, _, idx| {
-        let exe = idx.checked_sub(1).and_then(|i| candidates.get(i)).and_then(|p| crate::fork::program_detect::relative_pick(&game_dir, p));
+    let dir = game_dir.clone();
+    let picked: super::play_screen::Picked = Rc::new(move |app, _, exe| {
+        let exe = exe.and_then(|p| crate::fork::program_detect::relative_pick(&dir, &p));
         app.state.borrow_mut().set_favorite_exe(&key, exe);
     });
-}
-
-// Fork: a program below the top folder is named with its folder, so two `java` files can be told apart.
-fn option_label(game_dir: &Path, path: &Path) -> String {
-    match crate::fork::program_detect::relative_pick(game_dir, path) {
-        Some(rel) if crate::fork::program_detect::depth_in(game_dir, path) > 0 => rel.replace('\\', "/"),
-        _ => file_label(path),
-    }
+    super::play_screen::choose_program(app, router, &port, &game_dir, candidates, true, picked);
 }
 
 /// True when the program was started.
@@ -158,14 +118,18 @@ fn launch_executable(app: &Rc<AppState>, router: &Router, port: &Port, exe: &Pat
     if is_port_running(app, port.key()) {
         return false;
     }
+    // Fork: "Could not start <name>" (a page) instead of upstream's "Error - X" dialog, and for a program the system would
+    // not start (which only reached the log before).
     if !exe.exists() {
-        open_error_dialog(app, router, port.clone());
+        super::play_screen::could_not_start(app, router, port, Problem::ProgramGone(file_label(exe)));
         return false;
     }
     let child = match crate::core::launch::launch(exe) {
         Ok(child) => child,
         Err(e) => {
             eprintln!("launch: could not start {}: {e}", exe.display());
+            let why = crate::fork::play_pages::wont_start_reason(e.kind(), e.raw_os_error());
+            super::play_screen::could_not_start(app, router, port, Problem::WontStart { file: file_label(exe), why });
             return false;
         }
     };
@@ -203,12 +167,10 @@ pub(crate) fn launch_installed(app: &Rc<AppState>, router: &Router, port: &Port)
         return;
     }
     let Some(game_dir) = game_dir(app, port) else {
-        let window = app.window();
-        let tr = window.global::<Tr>();
-        return open_message_dialog(app, router, &tr.invoke_dialog_title_invalid_port(), &tr.invoke_message_invalid_folder_name());
+        return super::play_screen::could_not_start(app, router, port, Problem::BadFolderName);
     };
     if !game_dir.exists() {
-        return open_error_dialog(app, router, port.clone());
+        return super::play_screen::could_not_start(app, router, port, Problem::FolderGone);
     }
     let favorite = app.state.borrow().get(port.key()).and_then(|i| i.favorite_exe.clone());
     let favorite_path = favorite.and_then(|f| crate::core::path_safety::safe_join(&game_dir, &f).ok()).filter(|p| p.exists());
@@ -221,23 +183,21 @@ pub(crate) fn launch_installed(app: &Rc<AppState>, router: &Router, port: &Port)
             launch_executable(app, router, port, &exe);
         }
         Err(ExecutableSelectionError::Ambiguous(candidates)) => {
-            let labels = candidates.iter().map(|p| file_label(p)).collect();
-            let port = port.clone();
-            let game_dir = game_dir.clone();
-            // Fork: the title says the choice is remembered (upstream's text is just "Choose an executable").
-            open_picker_dialog(app, router, CHOOSE_PROGRAM_TITLE, labels, move |app, router, idx| {
-                if let Some(exe) = candidates.get(idx) {
-                    // Fork: a pick that starts is remembered, so the next start does not ask again (Info can set it
-                    // back to "Ask every time"); one that fails to start is not.
-                    if launch_executable(app, router, &port, exe) {
-                        if let Some(rel) = crate::fork::program_detect::relative_pick(&game_dir, exe) {
-                            app.state.borrow_mut().set_favorite_exe(port.key(), Some(rel));
-                        }
+            let (port2, dir) = (port.clone(), game_dir.clone());
+            // Fork: "Which program starts <name>?" (a page: each program with its folder, the likely one recommended).
+            let picked: super::play_screen::Picked = Rc::new(move |app, router, exe| {
+                let Some(exe) = exe else { return };
+                // Fork: a pick that starts is remembered, so the next start does not ask again (the Port page's Program to
+                // start can set it back to "Ask every time"); one that fails to start is not.
+                if launch_executable(app, router, &port2, &exe) {
+                    if let Some(rel) = crate::fork::program_detect::relative_pick(&dir, &exe) {
+                        app.state.borrow_mut().set_favorite_exe(port2.key(), Some(rel));
                     }
                 }
             });
+            super::play_screen::choose_program(app, router, port, &game_dir, candidates, false, picked);
         }
-        Err(ExecutableSelectionError::NotFound) => open_info_dialog(app, router, port),
+        Err(ExecutableSelectionError::NotFound) => super::play_screen::could_not_start(app, router, port, Problem::NoProgram),
     }
 }
 
@@ -255,9 +215,11 @@ pub(crate) fn install_row(app: &Rc<AppState>, router: &Router, index: i32) {
     }
 }
 
-pub(crate) fn open_update_toggle_dialog_row(app: &Rc<AppState>, router: &Router, index: i32) {
+// Fork: the orange "Updates off" button of a list row opens the port's Updates page, where "Check for updates" is the one
+// switch (it was upstream's "Update - X" Enable/Disable picker).
+pub(crate) fn open_updates_row(app: &Rc<AppState>, router: &Router, index: i32) {
     if !dialog_is_open(app) {
-        with_indexed_port(app, index, |port| open_update_toggle_dialog(app, router, port));
+        with_indexed_port(app, index, |port| super::port_page_screen::open_updates(app, router, &port));
     }
 }
 

@@ -25,6 +25,7 @@ pub mod custom_repo;
 pub mod import;
 pub mod install_wizard;
 pub mod page;
+pub mod play_pages; // Play: "Could not start" and "Which program starts"
 pub mod port_page;
 pub mod rom_library;
 pub mod rom_screens;
