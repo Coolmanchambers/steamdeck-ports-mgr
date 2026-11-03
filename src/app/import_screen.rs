@@ -781,7 +781,7 @@ impl FoldersState {
 
 pub(super) fn save_folders(app: &AppState, folders: &ScanFolders) -> Option<String> {
     let mut settings = ForkSettings::load(&settings_path(app));
-    folders.save(&mut settings).err().map(|e| format!("Could not save the folder list: {e}"))
+    folders.save(&mut settings).err().map(|e| format!("{}: {e}", crate::fork::import::screen::SAVE_FAILED))
 }
 
 /// Back from the scan folders: a new scan when the list changed, else the found page as it was.

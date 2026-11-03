@@ -233,6 +233,9 @@ pub enum StopLooking {
     No,
 }
 
+/// How a failed save of the folder list starts (`import_screen::save_folders`), so the note shows as a problem.
+pub const SAVE_FAILED: &str = "Could not save the folder list";
+
 pub struct FoldersScreen {
     pub home: PathBuf,
     pub folders: ScanFolders,
@@ -287,8 +290,9 @@ impl FoldersScreen {
             ..Page::default()
         };
         if let Some(note) = &self.note {
-            // What the last change did ("Added ...", "already in the list", a save that failed): plain, no mark.
-            p.fact(Mark::None, note.clone());
+            // What the last change did ("Added ...", "already in the list"): plain, no mark; a save that failed is a problem.
+            let mark = if note.starts_with(SAVE_FAILED) { Mark::Problem } else { Mark::None };
+            p.fact(mark, note.clone());
         }
         p.options.push(option("Add a folder to look in", "Pick a folder that has ports in it", FolderLine::Add));
         let mut switches = Vec::new();
@@ -572,6 +576,16 @@ mod folders_page_tests {
 
     fn places() -> Places {
         Places { drives: vec![], home: None, media_roots: vec![PathBuf::from("/run/media/deck"), PathBuf::from("/run/media")] }
+    }
+
+    #[test]
+    fn a_failed_save_note_is_a_problem_and_other_notes_are_plain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = screen(tmp.path());
+        s.note = Some(format!("{SAVE_FAILED}: disk full"));
+        assert_eq!(s.folders_page(&places()).mark_of(0), Mark::Problem);
+        s.note = Some("Added Internal storage > Games".into());
+        assert_eq!(s.folders_page(&places()).mark_of(0), Mark::None);
     }
 
     #[test]

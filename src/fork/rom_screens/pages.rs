@@ -321,7 +321,7 @@ pub fn how_page(name: &str, files: &[(String, bool)], ways: &[Method], suggested
         .map(|w| {
             let mut o = match w {
                 Method::Symlink => option("Put a shortcut in the port's folder", &format!("No extra space; the shortcut leads to {them}"), GfAct::Way(*w)),
-                Method::Copy => option(&format!("Copy {it} into the port's folder"), &format!("Uses {}; the original stays where it is", human_bytes(copy_bytes)), GfAct::Way(*w)),
+                Method::Copy => option(&format!("Copy {it} into the port's folder"), &format!("Uses {}; it cannot be stopped once it starts", human_bytes(copy_bytes)), GfAct::Way(*w)),
                 Method::UseInPlace => option(&format!("Read {it} where {}", if many { "they are" } else { "it is" }), "Nothing is added to the port's folder", GfAct::Way(*w)),
             };
             o.recommended = *w == suggested;
@@ -558,7 +558,7 @@ mod tests {
             opts,
             [
                 ("Put a shortcut in the port's folder", "No extra space; the shortcut leads to your file", GfAct::Way(Method::Symlink)),
-                ("Copy it into the port's folder", "Uses 64.0 MB; the original stays where it is", GfAct::Way(Method::Copy)),
+                ("Copy it into the port's folder", "Uses 64.0 MB; it cannot be stopped once it starts", GfAct::Way(Method::Copy)),
                 ("Add it later", LATER_DETAIL, GfAct::Later),
             ]
         );
