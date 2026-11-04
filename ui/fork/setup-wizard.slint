@@ -108,7 +108,7 @@ export component StatusIcon inherits Rectangle {
     height: 20px;
     border-radius: self.width / 2;
     background: root.mark == 1 ? SemanticColors.success
-        : root.mark == 2 ? SemanticColors.info
+        : root.mark == 2 ? Theme.selected-background
         : root.mark == 3 ? SemanticColors.warning
         : root.mark == 5 ? SemanticColors.danger
         : Theme.border-color;

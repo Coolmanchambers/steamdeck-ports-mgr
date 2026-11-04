@@ -366,9 +366,10 @@ downloads that file from upstream about every 12 hours, so an edit there would n
 3. The selected button on the old dialogs (Confirm, pickers, messages) gets a clear 3 px outline.
 4. Darker filled action colours (success, warning, info and their hovers) so white labels read at 4.5:1 or better
    (danger was already 4.6:1 and is unchanged; its hover is the one fill under 4.5:1, a transient state). The guided
-   pages' accent is now `info` itself (was `info.darker(0.6)`, about the same shade as the new `info`), the "working"
-   status disc is `info` (was darkened) and the "skipped" disc is the border colour (white on the new, brighter
-   `search-text` would not read). Progress (the step bar's done segments, the working pages' bar) is drawn in the
+   pages' accent is now `info` itself (was `info.darker(0.6)`, about the same shade as the new `info`), the "to do"
+   status disc is the theme's `selected-background` (the same blue as Home's "to do" marks: light blue = a marker,
+   dark blue = a button) and the "skipped" disc is the border colour (white on the new, brighter `search-text`
+   would not read). Progress (the step bar's done segments, the working pages' bar) is drawn in the
    theme's `selected-background` over a bordered `search-background` track: the darker `info` and the border colour
    had become too close to tell apart (Codex, 1.2:1).
 5. Option descriptions on the guided pages are no longer faded (opacity 0.75 removed).
@@ -376,7 +377,7 @@ downloads that file from upstream about every 12 hours, so an edit there would n
 7. The hint bar at the bottom of a guided page uses the full item font (was 0.95x).
 8. The Deck-ready list's small text (chips, subtitle, counts) is 0.95x the item font (was 0.85x) and the subtitle is
    no longer faded.
-   Home's tile icons (the checklist, the plus, the "to do" exclamation) are stroked in the theme's
+9. (Fable review) Home's tile icons (the checklist, the plus, the "to do" exclamation) are stroked in the theme's
    `selected-background` instead of `info` (the darker `info` was 2.6:1 on the tile), and the focused "< Home"
    button is `info-hover`, not a darkened `info`.
 A test in `src/ui/theme.rs` fails if the Rust and Slint palettes drift apart, if white on any fill (danger's hover
