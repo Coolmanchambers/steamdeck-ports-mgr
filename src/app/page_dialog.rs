@@ -704,6 +704,7 @@ pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &
     fill(&dialog, &first);
     dialog.set_input_placeholder(first.input.as_ref().map(|i| i.placeholder.clone()).unwrap_or_default().into());
     dialog.set_input_text(first.input.as_ref().map(|i| i.text.clone()).unwrap_or_default().into());
+    dialog.set_input_password(first.input.as_ref().is_some_and(|i| i.password));
     load_art(app, &dialog, &cur);
     select(&dialog, &first, &focus, starting_focus(&first));
     // A new page: the body scrolls back to the top, a resting pointer cannot take the highlight, and the

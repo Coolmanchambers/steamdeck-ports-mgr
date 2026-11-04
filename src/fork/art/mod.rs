@@ -47,6 +47,7 @@ pub mod catalog;
 pub mod fit;
 pub mod grid;
 pub mod net;
+pub mod pages;
 pub mod resolve;
 #[cfg(test)]
 mod resolve_tests;

@@ -191,6 +191,8 @@ impl Progress {
 pub struct InputBox {
     pub placeholder: String,
     pub text: String,
+    /// Typed text shows as dots (a password).
+    pub password: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -655,7 +657,7 @@ mod tests {
 
     fn input_page() -> Page<Act> {
         let mut p = card_page();
-        p.input = Some(InputBox { placeholder: "github.com/owner/project".into(), text: String::new() });
+        p.input = Some(InputBox { placeholder: "github.com/owner/project".into(), text: String::new(), password: false });
         p.initial = Focus::Input;
         p
     }

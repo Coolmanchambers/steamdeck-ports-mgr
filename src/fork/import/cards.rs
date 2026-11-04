@@ -633,7 +633,7 @@ pub const MAX_LIST_ROWS: usize = 40;
 pub fn port_list_page(rows: &[(usize, String)], matching: usize, filter: &str, game_mode: bool) -> Page<CardAction> {
     let mut p = base("pick another port", "", "Pick another port");
     p.paragraphs = vec!["Choose the port this folder is. Type part of its name to narrow the list.".to_string()];
-    p.input = Some(InputBox { placeholder: if game_mode { "Press Steam + X to type".to_string() } else { "Type to filter the list".to_string() }, text: filter.to_string() });
+    p.input = Some(InputBox { placeholder: if game_mode { "Press Steam + X to type".to_string() } else { "Type to filter the list".to_string() }, text: filter.to_string(), password: false });
     p.options = rows.iter().take(MAX_LIST_ROWS).map(|(i, label)| option(label, "", CardAction::ListPort(*i), false)).collect();
     p.footnote = if rows.is_empty() && filter.trim().is_empty() {
         "There are no ports to pick from. Use a GitHub link, or go back.".to_string()

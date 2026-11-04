@@ -46,7 +46,7 @@ pub fn entry_page(text: &str, game_mode: bool) -> Page<LinkRow> {
         ..Page::default()
     };
     let placeholder = if game_mode { "Press Steam + X to type" } else { PLACEHOLDER };
-    p.input = Some(InputBox { placeholder: placeholder.to_string(), text: text.to_string() });
+    p.input = Some(InputBox { placeholder: placeholder.to_string(), text: text.to_string(), password: false });
     let option = |title: &str, detail: &str, action: LinkRow, recommended: bool| PageOption { title: title.to_string(), detail: detail.to_string(), choice: None, enabled: true, recommended, action };
     p.options.push(option("Check this link", "Asks GitHub. Nothing is downloaded yet", LinkRow::Check, true));
     if game_mode {

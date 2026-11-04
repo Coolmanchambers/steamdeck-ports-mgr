@@ -335,6 +335,7 @@ Files added by this fork:
 | 2026-11-03 | `src/app/mod.rs`, `src/fork/mod.rs`, `src/fork/save_restore/mod.rs` | Ports folder and saves pages: module lines for `save_backup_screen`, `ports_folder_pages`, `backup_pages` and `save_restore::pages`; the "all ports" backup kind reads "From Back up saves" |
 | 2026-11-03 | `tools/smoke-test.sh` | Ports folder and saves pages: Settings > Ports > Ports folder is checked by its page title (`Settings: Ports: Ports folder`) and driven by keys; the end-to-end move goes through the pages (`Ports folder: move your ports`, `Ports folder: old copies`, `Ports folder: done`); B on the old copies page and on the Ports folder page each go back one level; Saves > Back up saves ends on its done page and OK returns to the Saves page; Saves > Restore saves opens and B returns |
 | 2026-11-03 | `tools/smoke-test.sh` | Game files settings: Settings > Ports > Game files is checked by its page title (`Settings: Ports: Game files`), its folder card opens and closes the folder picker, B on "Ports that need game files" goes back one level, B on the Game files page goes to the Ports page |
+| 2026-11-04 | `tools/smoke-test.sh` | Steam, art and settings pages: Settings > Steam > Artwork sources is driven by keys instead of a click on its old Back row: A on the first card opens `Artwork sources: SteamGridDB`, B goes back one level to `Artwork sources`, B again to `Settings: Steam` |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 

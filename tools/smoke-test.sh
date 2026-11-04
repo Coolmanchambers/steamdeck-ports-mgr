@@ -6,8 +6,9 @@
 #   - its window is mapped and the screenshot is not blank;
 #   - it opens on Home; Tab goes to All ports, then the Deck-ready list without a crash (whether it downloads is only
 #     reported), then Home again;
-#   - Settings is a page of groups (Settings, Settings: Ports ...): Steam > Artwork sources opens and its Back row returns to
-#     the Steam page, B goes up to Settings, Saves > Cloud backup opens its first page and B returns to the Saves page;
+#   - Settings is a page of groups (Settings, Settings: Ports ...): Steam > Artwork sources opens its page, A on its first
+#     card opens the SteamGridDB page, B goes back one level to Artwork sources and B again to the Steam page, B goes up to
+#     Settings, Saves > Cloud backup opens its first page and B returns to the Saves page;
 #   - the background checkup finds the seeded setup's problems and Home shows its "Fix N problems" tile; A on the tile and
 #     Settings > Fix problems open the checkup, B leaves it;
 #   - while Settings is open the main window shows its dim layer; Return, a click and Escape on it ask for the Settings window
@@ -474,16 +475,21 @@ if [ "$alive" = yes ]; then
                 close_settings
                 xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
             fi
-            # Settings > Steam > Artwork sources opens and shows its rows, and its Back row returns to the Steam page.
+            # Settings > Steam > Artwork sources opens its page; A on the first card (SteamGridDB) opens that source's page,
+            # and B goes back one level at a time: to Artwork sources, then to the Steam page.
             open_settings_page && settings_entry Steam ArtSources; sleep 2
             import -window root "$OUT/art-sources.png" 2>/dev/null
             art=$(xdotool search --name "^Deck Ports Manager: Artwork sources$" 2>/dev/null | head -1)
             art_alive=no; kill -0 "$APP" 2>/dev/null && art_alive=yes
             check "Artwork sources screen opens and the app keeps running" '[ "$art_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && [ -n "$art" ]'
             if [ -n "$art" ]; then
-                eval "$(xdotool getwindowgeometry --shell "$art")"; AX=$X; AY=$Y
-                xdotool mousemove $((AX + 100)) $((AY + 63 + 42 * 9)) click 1; sleep 1.5
-                check "Back leaves Artwork sources for the Steam settings page" '[ -z "$(xdotool search --name "^Deck Ports Manager: Artwork sources$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings: Steam$" 2>/dev/null)" ]'
+                press_keys "$art" Return; sleep 1.5
+                import -window root "$OUT/art-source-page.png" 2>/dev/null
+                check "A on the first Artwork sources card opens the SteamGridDB page" '[ -n "$(xdotool search --name "^Deck Ports Manager: Artwork sources: SteamGridDB$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null'
+                press_keys "$art" Escape; sleep 1.5
+                check "B on the SteamGridDB page goes back one level to Artwork sources" '[ -n "$(xdotool search --name "^Deck Ports Manager: Artwork sources$" 2>/dev/null)" ] && [ -z "$(xdotool search --name "^Deck Ports Manager: Artwork sources: " 2>/dev/null)" ]'
+                press_keys "$art" Escape; sleep 1.5
+                check "B leaves Artwork sources for the Steam settings page" '[ -z "$(xdotool search --name "^Deck Ports Manager: Artwork sources$" 2>/dev/null)" ] && [ -n "$(xdotool search --name "^Deck Ports Manager: Settings: Steam$" 2>/dev/null)" ]'
                 # B on the Steam page goes up to Settings (one level). Then Settings > Saves > Cloud backup opens a page titled
                 # "Cloud backup" (the intro, or "isn't set up in this build" when the build has no Google client), and B
                 # returns to the Saves page.

@@ -1,20 +1,6 @@
-//! What the "Artwork sources" screen says and does, decided here and tested without any UI. The screen
-//! itself is `src/app/art_screens.rs`; it only draws these lines and runs the slow calls on a worker.
-//!
-//! Rows (a row that is only information does nothing when chosen):
-//!
-//! ```text
-//! SteamGridDB: key ****1234, test OK          (choose: paste a key)
-//!    Test the SteamGridDB key
-//! TheGamesDB: not set (optional)              (choose: paste a key)
-//!    Test the TheGamesDB key
-//! ScreenScraper: login tim, password set      (choose: enter a login)
-//!    ScreenScraper is not configured in this build, so it is not used.
-//!    Test the ScreenScraper login
-//! Fetch artwork for installed ports now
-//! Credits and what each source does
-//! Back
-//! ```
+//! What the "Artwork sources" screen knows and does, decided here and tested without any UI: each source's status,
+//! saving a key, the key test, the look-alikes waiting, fetching artwork for the installed ports. What the pages say is
+//! `crate::fork::art::pages`; `src/app/art_screens.rs` shows them and runs the slow calls on a worker.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,24 +11,9 @@ use super::net::{self, Fetch};
 use super::resolve::{PortRef, Session};
 use super::screenscraper::{DevCreds, ScreenScraper};
 use super::sgdb::SteamGridDb;
-use super::source::{human_wait, KeyCheck, SourceId, SourceStates};
+use super::source::{KeyCheck, SourceId, SourceStates};
 use super::tgdb::TheGamesDb;
 use crate::fork::secrets::{mask, BuildCreds, Field, Secrets, FILE_NAME as SECRETS_FILE};
-
-pub const TITLE: &str = "Artwork sources";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Line {
-    /// Choosing it asks for the key or login.
-    Edit(SourceId),
-    Test(SourceId),
-    /// Not clickable: says something about the source above.
-    Info,
-    Fetch,
-    Pending,
-    Credits,
-    Back,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Readiness {
@@ -66,8 +37,8 @@ pub struct SourceStatus {
     pub waiting: Option<(u64, String)>,
 }
 
-/// One waiting look-alike: the port, which source suggested what, and the folder to name in
-/// `ports.local.json` if the user would rather choose by hand.
+/// One waiting look-alike: the port, which source suggested what. (Choosing by hand in `ports.local.json`, with
+/// `sgdb_id` or `tgdb_id`, still works; the screen no longer teaches it.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingChoice {
     pub port_key: String,
@@ -79,37 +50,6 @@ pub struct PendingChoice {
 }
 
 impl PendingChoice {
-    /// The row that confirms this match.
-    pub fn label(&self) -> String {
-        format!("Use \"{}\" ({}) for {}", short(&self.name, 30), self.id, short(&self.port_name, 28))
-    }
-
-    /// The `ports.local.json` field for this source.
-    fn field(&self) -> &'static str {
-        if self.source == SourceId::TheGamesDb {
-            "tgdb_id"
-        } else {
-            "sgdb_id"
-        }
-    }
-
-    /// The entry to add to `ports.local.json` to choose by hand. Only these two fields: an entry with a
-    /// name or a source would replace the port's catalog entry.
-    pub fn json_entry(&self) -> String {
-        let folder = if self.folder.is_empty() { "<folder>" } else { self.folder.as_str() };
-        format!("{{\"folder\": \"{folder}\", \"{}\": {}}}", self.field(), self.id)
-    }
-
-    /// Text for the list under the "Use this match" rows.
-    pub fn hint(&self) -> String {
-        format!(
-            "Or choose by hand: add this entry to the ports list in ports.local.json (this port is {}, folder {}), with no name and no source, because an entry with either replaces the port's catalog entry:\n{}",
-            self.port_name,
-            if self.folder.is_empty() { "unknown" } else { self.folder.as_str() },
-            self.json_entry()
-        )
-    }
-
     /// Confirms this match in the saved id table; the waiting row clears.
     pub fn confirm(&self, cache_dir: &Path) -> std::io::Result<()> {
         confirm_in_file(cache_dir, &self.port_key, self.source, self.id, &self.name)
@@ -186,47 +126,9 @@ impl ArtScreen {
         self.statuses().iter().any(|s| s.readiness == Readiness::Configured)
     }
 
-    /// The rows, each with the label to draw.
-    pub fn rows(&self) -> Vec<(Line, String)> {
-        let mut rows = Vec::new();
-        if let Some(problem) = &self.secrets.problem {
-            rows.push((Line::Info, short(problem, 70)));
-        }
-        if let Some(note) = self.secrets.drive_note() {
-            rows.push((Line::Info, short(note, 70)));
-        }
-        for src in SourceId::ALL {
-            let st = self.status(src);
-            let mut label = format!("{}: {}", src.label(), st.summary);
-            if let (Some(test), true) = (&st.last_test, st.readiness == Readiness::Configured) {
-                label.push_str(&format!(", test {}", if test.starts_with("OK") { "OK" } else { "failed" }));
-            }
-            rows.push((Line::Edit(src), short(&label, 70)));
-            if st.readiness == Readiness::NotInThisBuild {
-                rows.push((Line::Info, "   ScreenScraper is not configured in this build, so it is not used.".to_string()));
-            }
-            rows.push((Line::Test(src), format!("   Test the {} {}", src.label(), if src == SourceId::ScreenScraper { "login" } else { "key" })));
-            if let Some((secs, reason)) = &st.waiting {
-                rows.push((Line::Info, short(&format!("   Waiting {}: {reason}", human_wait(*secs)), 70)));
-            } else if let Some(err) = &st.last_error {
-                rows.push((Line::Info, short(&format!("   Last problem: {err}"), 70)));
-            }
-        }
-        rows.push((Line::Fetch, if self.any_ready() { "Fetch artwork for installed ports now".to_string() } else { "Fetch artwork for installed ports (set a key first)".to_string() }));
-        if self.pending > 0 {
-            rows.push((Line::Pending, format!("Look-alike matches waiting for you ({})", self.pending)));
-        }
-        rows.push((Line::Credits, "Credits and what each source does".to_string()));
-        rows.push((Line::Back, "Back".to_string()));
-        rows
-    }
-
-    pub fn labels(&self) -> Vec<String> {
-        self.rows().into_iter().map(|(_, l)| l).collect()
-    }
-
-    pub fn lines(&self) -> Vec<Line> {
-        self.rows().into_iter().map(|(l, _)| l).collect()
+    /// How many ports have look-alike matches waiting for a choice.
+    pub fn pending_count(&self) -> usize {
+        self.pending
     }
 
     /// Saves a key or login part and forgets what was known about the source (a new key deserves a
@@ -254,21 +156,7 @@ impl ArtScreen {
     }
 
     pub fn cache_line(&self) -> String {
-        format!("{:.1} MB of downloaded artwork is kept for reuse", self.cache_bytes as f64 / 1_048_576.0)
-    }
-
-    #[cfg(test)]
-    fn credits_text_for_tests() -> String {
-        ArtScreen { secrets: Secrets::in_memory(), states: SourceStates::in_memory(), build: BuildCreds::none(), pending: 0, cache_bytes: 0, now: 0 }.credits_text()
-    }
-
-    pub fn credits_text(&self) -> String {
-        "Artwork comes from these sites. It is fetched on your device, saved in your Steam folder and in this app's cache folder, and never uploaded or shared.\n\n\
-         SteamGridDB (steamgriddb.com): community capsules, heroes, logos and icons. Your own free API key; get it under Profile > Preferences > API.\n\n\
-         TheGamesDB (thegamesdb.net): community box art, banners, fan art and clear logos. A key of your own is optional.\n\n\
-         ScreenScraper (screenscraper.fr): box art, fan art and logos matched by the hash of your own game file. Needs a build that carries the app's credentials; your own login only raises the limits.\n\n\
-         The images belong to their authors and the games' publishers. Thank you to the volunteers who make these sites."
-            .to_string()
+        format!("{:.1} MB of downloaded artwork is kept to use again", self.cache_bytes as f64 / 1_048_576.0)
     }
 
     /// Look-alike matches waiting for a decision, one per candidate, for the "Use this match" rows.
@@ -293,39 +181,6 @@ impl ArtScreen {
 
 }
 
-/// Breaks `text` into lines of at most `width` characters at word boundaries (paragraph breaks kept as
-/// blank lines), for the picker lists that show a message as rows. A word longer than the line is cut.
-pub fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-        for word in paragraph.split_whitespace() {
-            let mut word = word.to_string();
-            while word.chars().count() > width {
-                if !line.is_empty() {
-                    lines.push(std::mem::take(&mut line));
-                }
-                let head: String = word.chars().take(width).collect();
-                word = word.chars().skip(width).collect();
-                lines.push(head);
-            }
-            if line.is_empty() {
-                line = word;
-            } else if line.chars().count() + 1 + word.chars().count() <= width {
-                line.push(' ');
-                line.push_str(&word);
-            } else {
-                lines.push(std::mem::replace(&mut line, word));
-            }
-        }
-        lines.push(line);
-    }
-    while lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
-    }
-    lines
-}
-
 // ---- the background jobs ------------------------------------------------------------------------------
 
 /// What a running job tells the screen's list: a progress text (first line, second line) and whether
@@ -345,35 +200,9 @@ impl JobCtl for crate::fork::rom_screens::job::Ctl {
     }
 }
 
-/// The rows of a job's list. A job with a Stop row (the batch fetch) has three; a one-request job (Test
-/// key) has two and no Stop row: it ends by itself in seconds, and B abandons it.
-pub fn job_labels(progress: &str, stoppable: bool, stopping: bool) -> Vec<String> {
-    let (line1, line2) = progress.split_once('\n').unwrap_or((progress, ""));
-    let mut rows = vec![if line1.is_empty() { "Working...".to_string() } else { line1.to_string() }, if line2.is_empty() { " ".to_string() } else { short(line2, 60) }];
-    if stoppable {
-        rows.push(if stopping { "Stopping...".to_string() } else { "Stop (what is done is kept)".to_string() });
-    }
-    rows
-}
-
-/// What the Test key list says while its one request runs.
-pub fn test_progress(source: SourceId) -> String {
-    let (what, host) = match source {
-        SourceId::SteamGridDb => ("key", "steamgriddb.com"),
-        SourceId::TheGamesDb => ("key", "api.thegamesdb.net"),
-        SourceId::ScreenScraper => ("login", "api.screenscraper.fr"),
-    };
-    format!("Testing the {} {what}...\nOne request to {host}", source.label())
-}
-
+/// What the fetching page reads back ("Port 2 of 5" and the port's name; `pages::fetching_page`).
 pub fn fetch_progress(index: usize, total: usize, name: &str) -> String {
     format!("Port {index} of {total}\n{name}")
-}
-
-/// The labels the Fetch list is sized from: its widest possible progress text, from the real port names.
-pub fn fetch_sizing_labels(ports: &[PortJob]) -> Vec<String> {
-    let longest = ports.iter().map(|p| p.name.as_str()).max_by_key(|n| n.chars().count().min(60)).unwrap_or("");
-    job_labels(&fetch_progress(ports.len(), ports.len(), longest), true, true)
 }
 
 /// An installed port to fetch art for.
@@ -433,20 +262,6 @@ pub fn fetch_all(session: &Session, config_dir: &Path, ports: &[PortJob], ctl: &
     summary
 }
 
-pub fn summary_text(s: &FetchSummary) -> String {
-    let mut text = format!("Looked up {} of {} installed ports{}.", s.looked_up, s.total, if s.stopped { " (stopped early)" } else { "" });
-    let found: Vec<String> = ["portrait", "wide", "hero", "logo", "icon"].iter().map(|slot| format!("{slot} {}", s.found.get(slot).copied().unwrap_or(0))).collect();
-    text.push_str(&format!("\nArtwork ready to place, by slot: {}.", found.join(", ")));
-    if !s.problems.is_empty() {
-        text.push_str(&format!("\nProblems: {}", s.problems.join("; ")));
-        if s.problems.iter().any(|p| p.contains("offline")) {
-            text.push_str("\nRun Fetch again when the Deck is back online; nothing that was fetched is lost.");
-        }
-    }
-    text.push_str("\n\nAdd to Steam places this artwork for the ports it adds. Art you chose yourself is never replaced.");
-    text
-}
-
 /// One cheap authenticated call for the source, as the screen's Test rows run it. With nothing to
 /// test (no key, no developer credentials) the answer says so without any network call.
 pub fn check_source(source: SourceId, secrets: &Secrets, build: &BuildCreds, fetch: &dyn Fetch, sleep: &dyn Fn(Duration)) -> KeyCheck {
@@ -470,22 +285,16 @@ pub fn check_source(source: SourceId, secrets: &Secrets, build: &BuildCreds, fet
     }
 }
 
-/// Text for the dialog after a test; nothing in it can carry a key.
-pub fn check_message(source: SourceId, check: &KeyCheck, secrets: &[String]) -> String {
+/// The test's answer for the log (the page says it in plain words); nothing in it can carry a key.
+pub fn check_log_text(source: SourceId, check: &KeyCheck, secrets: &[String]) -> String {
     let text = net::cap(&net::redact(&net::strip_query(&check.text()), secrets), net::MAX_SERVER_TEXT);
-    let hint = match check {
-        KeyCheck::Invalid(_) if source == SourceId::ScreenScraper => "\n\nCheck the user name and password for typing mistakes and enter them again.",
-        KeyCheck::Invalid(_) => "\n\nCheck the key for typing mistakes and paste it again.",
-        KeyCheck::Offline(_) => "\n\nThe key was not checked. Try again when the Deck is online.",
-        KeyCheck::Unknown(_) => "\n\nThe key may be fine; the service is limiting or failing right now.",
-        _ => "",
-    };
-    format!("{}: {text}{hint}", source.label())
+    format!("{}: {text}", source.label())
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::net::fake::Fake;
+    use super::super::source::human_wait;
     use super::*;
     use std::rc::Rc;
 
@@ -508,12 +317,8 @@ mod tests {
         let st = screen.statuses();
         assert_eq!(st.iter().map(|s| s.readiness).collect::<Vec<_>>(), vec![Readiness::NotConfigured, Readiness::NotConfigured, Readiness::NotInThisBuild]);
         assert!(!screen.any_ready());
-        let labels = screen.labels();
-        assert!(labels[0].starts_with("SteamGridDB: not set"), "{labels:?}");
-        assert!(labels.iter().any(|l| l.contains("not configured in this build")), "{labels:?}");
-        assert!(labels.iter().any(|l| l.contains("set a key first")));
-        assert_eq!(labels.last().map(String::as_str), Some("Back"));
-        assert_eq!(screen.lines().len(), labels.len());
+        assert!(st[0].summary.starts_with("not set"), "{st:?}");
+        assert_eq!(screen.pending_count(), 0);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -525,7 +330,7 @@ mod tests {
         screen.set(Field::TheGamesDbKey, Some("fedcba9876543210")).unwrap();
         screen.set(Field::ScreenScraperUser, Some("tim")).unwrap();
         screen.set(Field::ScreenScraperPassword, Some("hunter22hunter")).unwrap();
-        let text = screen.labels().join("\n") + &screen.credits_text() + &screen.cache_line();
+        let text = screen.statuses().iter().map(|s| s.summary.clone()).collect::<Vec<_>>().join("\n") + &screen.cache_line();
         for secret in ["0123456789abcdef0123456789abcdef", "89abcdef0123", "fedcba98", "hunter22"] {
             assert!(!text.contains(secret), "{secret} leaked into the screen text");
         }
@@ -545,7 +350,6 @@ mod tests {
         assert_eq!(screen.status(SourceId::ScreenScraper).readiness, Readiness::NotInThisBuild);
         let screen = ArtScreen::load(&config, &cache, build_with_ss(), 1_000);
         assert_eq!(screen.status(SourceId::ScreenScraper).readiness, Readiness::Configured);
-        assert!(!screen.labels().iter().any(|l| l.contains("not configured in this build")));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -556,7 +360,7 @@ mod tests {
         let screen = ArtScreen::load(&config, &cache, build, 1_000);
         let st = screen.status(SourceId::TheGamesDb);
         assert_eq!((st.readiness, st.summary.as_str()), (Readiness::Configured, "built-in key"));
-        assert!(!screen.labels().join("\n").contains("buildkey"));
+        assert!(!screen.statuses().iter().any(|s| s.summary.contains("buildkey")));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -566,16 +370,16 @@ mod tests {
         let mut screen = ArtScreen::load(&config, &cache, BuildCreds::none(), 5_000);
         screen.set(Field::SteamGridDbKey, Some("0123456789abcdef")).unwrap();
         screen.states.record_check(SourceId::SteamGridDb, &KeyCheck::Invalid("SteamGridDB did not accept the API key".into()), 4_000, &[]);
-        let labels = screen.labels();
-        assert!(labels[0].ends_with("test failed"), "{labels:?}");
-        assert!(labels.iter().any(|l| l.contains("Last problem: Invalid: SteamGridDB did not accept")), "{labels:?}");
+        let st = screen.status(SourceId::SteamGridDb);
+        assert!(st.last_test.as_deref().is_some_and(|t| !t.starts_with("OK")), "{st:?}");
+        assert!(st.last_error.as_deref().is_some_and(|e| e.contains("Invalid: SteamGridDB did not accept")), "{st:?}");
         screen.states.record_error(SourceId::SteamGridDb, &super::super::source::SourceError::BackedOff { secs: 600, reason: "busy".into() }, 4_900, &[]);
-        let labels = screen.labels();
-        assert!(labels.iter().any(|l| l.contains("Waiting 9 min") || l.contains("Waiting 8 min") || l.contains("Waiting 10 min")), "{labels:?}");
+        let waiting = screen.status(SourceId::SteamGridDb).waiting.map(|(secs, _)| human_wait(secs)).unwrap_or_default();
+        assert!(["9 min", "8 min", "10 min"].contains(&waiting.as_str()), "{waiting:?}");
         screen.states.record_check(SourceId::SteamGridDb, &KeyCheck::Ok(String::new()), 5_000, &[]);
-        let labels = screen.labels();
-        assert!(labels[0].ends_with("test OK"), "{labels:?}");
-        assert!(!labels.iter().any(|l| l.contains("Last problem") || l.contains("Waiting")));
+        let st = screen.status(SourceId::SteamGridDb);
+        assert!(st.last_test.as_deref().is_some_and(|t| t.starts_with("OK")), "{st:?}");
+        assert!(st.last_error.is_none() && st.waiting.is_none(), "{st:?}");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -620,11 +424,10 @@ mod tests {
     fn the_message_after_a_test_cannot_carry_a_key() {
         let secrets = vec!["SECRETKEY-123456".to_string()];
         let check = KeyCheck::Offline("failed for https://x.example/y?apikey=SECRETKEY-123456".into());
-        let text = check_message(SourceId::TheGamesDb, &check, &secrets);
+        let text = check_log_text(SourceId::TheGamesDb, &check, &secrets);
         assert!(!text.contains("SECRETKEY") && !text.contains("apikey"), "{text}");
         assert!(text.starts_with("TheGamesDB: Offline"));
-        assert!(check_message(SourceId::SteamGridDb, &KeyCheck::Invalid("no".into()), &[]).contains("typing mistakes"));
-        assert!(check_message(SourceId::SteamGridDb, &KeyCheck::Ok(String::new()), &[]).ends_with("OK"));
+        assert!(check_log_text(SourceId::SteamGridDb, &KeyCheck::Ok(String::new()), &[]).ends_with("OK"));
     }
 
     #[test]
@@ -637,23 +440,13 @@ mod tests {
         table.save().unwrap();
         let choices = ArtScreen::pending_choices(&cache);
         assert_eq!(choices.len(), 1);
-        assert_eq!(choices[0].label(), "Use \"Doom II\" (42) for Doom");
-        assert_eq!(choices[0].json_entry(), r#"{"folder": "doom-port", "sgdb_id": 42}"#);
-        let hint = choices[0].hint();
-        assert!(hint.contains("no name and no source") && hint.contains("doom-port") && hint.contains(&choices[0].json_entry()), "{hint}");
+        assert_eq!((choices[0].port_name.as_str(), choices[0].name.as_str(), choices[0].id), ("Doom", "Doom II", 42));
         let screen = ArtScreen::load(&config, &cache, BuildCreds::none(), 1);
-        assert!(screen.lines().contains(&Line::Pending));
+        assert_eq!(screen.pending_count(), 1);
         choices[0].confirm(&cache).unwrap();
         assert!(ArtScreen::pending_choices(&cache).is_empty());
-        assert!(!ArtScreen::load(&config, &cache, BuildCreds::none(), 1).lines().contains(&Line::Pending), "the row clears");
+        assert_eq!(ArtScreen::load(&config, &cache, BuildCreds::none(), 1).pending_count(), 0, "the card clears");
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn the_hand_written_entry_names_the_right_field_for_each_source() {
-        let c = PendingChoice { port_key: "k".into(), port_name: "P".into(), folder: String::new(), source: SourceId::TheGamesDb, id: 7, name: "N".into() };
-        assert_eq!(c.json_entry(), r#"{"folder": "<folder>", "tgdb_id": 7}"#);
-        assert!(c.hint().contains("folder unknown"));
     }
 
     struct Shared(Rc<Fake>);
@@ -711,7 +504,6 @@ mod tests {
         let table = IdTable::load(&dir.path().join("cache/art/ids.json"));
         assert_eq!(table.identity("owner/port0"), (Some("Ship of Harkinian 0"), Some("port0")));
         assert_eq!(table.usable("owner/port0", SourceId::SteamGridDb).map(|e| e.id), Some(900001), "the id found before Stop is saved");
-        assert!(summary_text(&summary).contains("stopped early"));
     }
 
     #[test]
@@ -754,50 +546,4 @@ mod tests {
         assert_eq!(unique.len(), MAX_PROBLEMS);
     }
 
-    #[test]
-    fn an_offline_summary_tells_the_user_to_run_fetch_again() {
-        let mut s = FetchSummary { looked_up: 1, total: 1, ..FetchSummary::default() };
-        s.problems.push("SteamGridDB: offline (could not connect)".into());
-        let text = summary_text(&s);
-        assert!(text.contains("Run Fetch again when the Deck is back online; nothing that was fetched is lost."), "{text}");
-        assert!(text.contains("portrait 0, wide 0, hero 0, logo 0, icon 0"));
-    }
-
-    #[test]
-    fn job_rows_have_a_stop_row_only_for_a_batch_and_are_sized_from_real_text() {
-        assert_eq!(job_labels("Port 1 of 3\nShip of Harkinian", true, false), vec!["Port 1 of 3", "Ship of Harkinian", "Stop (what is done is kept)"]);
-        assert_eq!(job_labels("", true, true), vec!["Working...", " ", "Stopping..."]);
-        let test = test_progress(SourceId::SteamGridDb);
-        assert_eq!(job_labels(&test, false, false), vec!["Testing the SteamGridDB key...", "One request to steamgriddb.com"]);
-        assert_eq!(job_labels(&test_progress(SourceId::ScreenScraper), false, false)[0], "Testing the ScreenScraper login...");
-        let mut ports = jobs(3);
-        ports[1].name = "A rather long port name that decides the width of the list".into();
-        let sizing = fetch_sizing_labels(&ports);
-        assert_eq!(sizing.len(), 3);
-        assert!(sizing[1].starts_with("A rather long port name"), "{sizing:?}");
-        assert!(!sizing.iter().any(|l| l.contains("keeps going")), "no made-up filler line");
-        assert_eq!(fetch_sizing_labels(&[]).len(), 3);
-    }
-
-    #[test]
-    fn wrap_breaks_at_words_keeps_paragraphs_and_cuts_long_words() {
-        assert_eq!(wrap("one two three four", 9), vec!["one two", "three", "four"]);
-        assert_eq!(wrap("a b\n\nc", 10), vec!["a b", "", "c"]);
-        assert_eq!(wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
-        assert!(wrap("", 10).is_empty());
-        assert!(wrap("word  \n", 10) == vec!["word"]);
-        for line in wrap(&ArtScreen::credits_text_for_tests(), 58) {
-            assert!(line.chars().count() <= 58, "{line}");
-        }
-    }
-
-    #[test]
-    fn credits_name_all_three_sources() {
-        let (root, config, cache) = temp_dirs("credits");
-        let text = ArtScreen::load(&config, &cache, BuildCreds::none(), 1).credits_text();
-        for name in ["SteamGridDB", "TheGamesDB", "ScreenScraper", "steamgriddb.com", "thegamesdb.net", "screenscraper.fr"] {
-            assert!(text.contains(name), "{name}");
-        }
-        let _ = std::fs::remove_dir_all(root);
-    }
 }

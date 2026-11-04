@@ -565,6 +565,8 @@ export component SetupWizardDialog inherits Window {
     // owner is told of every edit; Down, Up, A and Return leave the box through move-requested.
     in property <bool> has-input: false;
     in property <string> input-placeholder: "";
+    /// The text box shows dots (a password).
+    in property <bool> input-password: false;
     in-out property <string> input-text: "";
     in property <int> input-focus: -1;
     in property <[WizardOption]> options: [];
@@ -887,6 +889,7 @@ export component SetupWizardDialog inherits Window {
                             height: parent.height;
                             vertical-alignment: center;
                             single-line: true;
+                            input-type: root.input-password ? InputType.password : InputType.text;
                             font-size: root.body-font;
                             color: Theme.list-text;
                             text <=> root.input-text;
