@@ -338,6 +338,8 @@ Files added by this fork:
 | 2026-11-04 | `tools/smoke-test.sh` | Steam, art and settings pages: Settings > Steam > Artwork sources is driven by keys instead of a click on its old Back row: A on the first card opens `Artwork sources: SteamGridDB`, B goes back one level to `Artwork sources`, B again to `Settings: Steam` |
 | 2026-11-04 | `src/app/dialogs.rs` | Steam, art and settings pages: `open_confirm_dialog` gets `#[allow(dead_code)]`; Add to Steam asks its questions on pages now (`fork::steam_pages`), so nothing calls it. Kept for merge ease |
 | 2026-11-04 | `src/fork/mod.rs` | Steam, art and settings pages: module line for `steam_pages` |
+| 2026-11-04 | `src/app/dialogs.rs` | Steam, art and settings pages: Settings > App > Themes, Language, Tools and Files are pages (`settings_choices_screen`); `LANGUAGES` made `pub(crate)` for the Language page; new `choose_theme` (applies the theme to the main window and the page on screen, then saves it, as the list's hover and select did) and `choose_language` (the same two calls the list made); `open_theme_picker`, `open_language_picker`, `open_tools_picker` and `open_files_picker` get `#[allow(dead_code)]`, kept for merge ease |
+| 2026-11-04 | `src/app/mod.rs`, `src/fork/mod.rs` | Steam, art and settings pages: module lines for `settings_choices_screen` and `settings_choices` |
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 

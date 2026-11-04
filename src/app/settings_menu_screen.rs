@@ -9,7 +9,7 @@
 //! The lines are read when a page is drawn and none of them waits on slow input or output: the mount table, the queue
 //! file, one look at the backup folder.
 
-use super::dialogs::{close_current_dialog, dialog_is_open, open_files_picker, open_language_picker, open_theme_picker, open_tools_picker};
+use super::dialogs::{close_current_dialog, dialog_is_open};
 use super::page_dialog::{show_page, Handlers};
 use super::state::AppState;
 use crate::fork::folder_picker::mounts::{default_media_roots, removable_drives, system_mounts};
@@ -121,10 +121,11 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
     close_current_dialog(app, router);
     match entry {
         Entry::SetupWizard => super::setup_wizard_screen::open_from_settings(app, router),
-        Entry::Themes => open_theme_picker(app, router),
-        Entry::Language => open_language_picker(app, router),
-        Entry::Files => open_files_picker(app, router),
-        Entry::Tools => open_tools_picker(app, router),
+        // Fork (steam, art and settings pages): choice pages instead of the type-to-search lists.
+        Entry::Themes => super::settings_choices_screen::open_themes(app, router),
+        Entry::Language => super::settings_choices_screen::open_language(app, router),
+        Entry::Files => super::settings_choices_screen::open_files(app, router),
+        Entry::Tools => super::settings_choices_screen::open_tools(app, router),
         Entry::OpenPortsFolder => crate::core::launch::open_folder(&app.paths.library_dir()),
         Entry::PortsFolder => super::ports_folder_screen::open_menu(app, router),
         Entry::AddToSteam => super::steam_screens::open_steam_screen(app, router),
@@ -145,7 +146,16 @@ pub(crate) fn run_entry(app: &Rc<AppState>, router: &Router, entry: menu::Entry)
         Entry::BackupSaves => super::save_backup_screen::start(app, router),
         Entry::RestoreSaves => super::save_restore_screen::open_from_settings(app, router),
         Entry::CloudBackup => super::cloud_screen::open_from_settings(app, router),
-        Entry::Version => crate::core::launch::open_url(&format!("{}/releases", crate::core::version::PROJECT_URL)),
+        // The address and a QR code first (Game Mode has no browser), then the browser from there in Desktop Mode.
+        Entry::Version => super::port_page_screen::open_link_with(
+            app,
+            router,
+            "Deck Ports Manager",
+            &format!("{}/releases", crate::core::version::PROJECT_URL),
+            "What is new",
+            "Each version of this app and what changed in it.",
+            Some(Rc::new(|app, router| show_group(app, router, Group::Updates))),
+        ),
         Entry::ForceUpdate => super::sync::launch_self_update(app, router),
         Entry::AddPort => super::add_port_screen::open(app, router, true),
         Entry::CheckUpdates | Entry::DiscordRpc | Entry::CustomRpc => {}
@@ -201,6 +211,7 @@ fn facts(app: &AppState) -> Facts {
         custom_presence: state.custom_presence_enabled,
         version: version(),
         checkup: super::checkup_screen::summary(),
+        game_mode: crate::fork::steam_queue::game_mode_from_env(),
     }
 }
 

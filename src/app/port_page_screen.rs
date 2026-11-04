@@ -935,14 +935,26 @@ pub(crate) fn open_link(app: &Rc<AppState>, router: &Router, name: &str, url: &s
     if !crate::core::launch::is_web_url(url) {
         return;
     }
-    let page = model::link_page(name, url, crate::fork::steam_queue::game_mode_from_env());
+    show_link(app, router, model::link_page(name, url, crate::fork::steam_queue::game_mode_from_env()), url, back);
+}
+
+/// Fork (steam, art and settings pages): [`open_link`] for any web page: `title` names it ("What is new", "Tool
+/// page"), `about` says what it is.
+pub(crate) fn open_link_with(app: &Rc<AppState>, router: &Router, name: &str, url: &str, title: &str, about: &str, back: Option<Back>) {
+    if !crate::core::launch::is_web_url(url) {
+        return;
+    }
+    show_link(app, router, model::link_page_with(name, url, title, about, crate::fork::steam_queue::game_mode_from_env()), url, back);
+}
+
+fn show_link(app: &Rc<AppState>, router: &Router, page: crate::fork::page::Page<LinkAct>, url: &str, back: Option<Back>) {
     let url = url.to_string();
     let leave: Back = back.unwrap_or_else(|| Rc::new(|app, router| close_current_dialog(app, router)));
     let (l1, l2, l3) = (leave.clone(), leave.clone(), leave);
     let handlers = Handlers {
         on_action: Rc::new(move |app, router, act| match act {
             LinkAct::OpenInBrowser => {
-                eprintln!("port page: opening the project page {url}");
+                eprintln!("link page: opening {url}");
                 crate::core::launch::open_url(&url);
             }
             LinkAct::Back => l1(app, router),

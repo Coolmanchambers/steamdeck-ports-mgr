@@ -46,6 +46,7 @@ pub mod screens;
 pub mod self_update;
 pub mod secrets;
 pub mod settings;
+pub mod settings_choices;
 pub mod settings_menu;
 pub mod setup_wizard;
 pub mod shortcuts;

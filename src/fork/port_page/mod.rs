@@ -900,21 +900,29 @@ pub enum LinkAct {
     Back,
 }
 
-/// The window title of the link page.
-pub fn link_window_title(name: &str) -> String {
-    format!("Project page: {name}")
-}
-
 /// The link page: the address as text (so it is seen before anything opens) and a QR code to scan with a phone. In
 /// Desktop Mode one card opens it in the browser; Game Mode has no browser, so the code and the text are the way.
 pub fn link_page(name: &str, url: &str, game_mode: bool) -> Page<LinkAct> {
-    let mut page = Page::<LinkAct> { window_title: link_window_title(name), large: true, header: name.to_string(), title: "Project page".to_string(), ..Page::default() };
+    let about = "This is where the port is made: its source code, its releases and what people say about it.";
+    let mut page = link_page_with(name, url, "Project page", about, game_mode);
+    if game_mode {
+        if let Some(last) = page.paragraphs.last_mut() {
+            *last = "Game Mode has no web browser: scan the code with your phone, or open it from the port's page in Desktop Mode.".to_string();
+        }
+    }
+    page
+}
+
+/// Fork (steam, art and settings pages): any web page shown the same way (Settings > Updates "See what is new", the
+/// Tools links): `title` names the page, `about` says what it is. In Game Mode the code and the address only.
+pub fn link_page_with(name: &str, url: &str, title: &str, about: &str, game_mode: bool) -> Page<LinkAct> {
+    let mut page = Page::<LinkAct> { window_title: format!("{title}: {name}"), large: true, header: name.to_string(), title: title.to_string(), ..Page::default() };
     page.card = Some(PageCard { art: None, qr: crate::fork::cloud::qr::QrMatrix::encode(url), title: name.to_string(), lines: vec!["Scan with your phone to open it there".to_string()] });
     page.paragraphs.push(url.to_string());
-    page.paragraphs.push("This is where the port is made: its source code, its releases and what people say about it.".to_string());
+    page.paragraphs.push(about.to_string());
     page.buttons = [Some(PageButton { label: "Back".to_string(), action: LinkAct::Back }), None, None, None];
     if game_mode {
-        page.paragraphs.push("Game Mode has no web browser: scan the code with your phone, or open it from the port's page in Desktop Mode.".to_string());
+        page.paragraphs.push("Game Mode has no web browser: scan the code with your phone, or open it here in Desktop Mode.".to_string());
         page.initial = Focus::Button(LEFT);
     } else {
         page.options.push(PageOption { title: "Open in the browser".to_string(), detail: "Opens the page above in your web browser".to_string(), choice: None, enabled: true, recommended: true, action: LinkAct::OpenInBrowser });

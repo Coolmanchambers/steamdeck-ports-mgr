@@ -925,6 +925,9 @@ fn open_search_list_dialog(
     finish_dialog_open(app, router, DialogSlot::SearchList(dialog));
 }
 
+// Fork (steam, art and settings pages): Settings > App > Themes, Language, Tools and Files are pages now
+// (`settings_choices_screen`); these four lists are kept for merge ease.
+#[allow(dead_code)]
 pub(crate) fn open_theme_picker(app: &Rc<AppState>, router: &Router) {
     let names = crate::ui::theme::list_theme_names(&app.theme.theme_config.borrow());
     if names.is_empty() {
@@ -947,6 +950,7 @@ pub(crate) fn open_theme_picker(app: &Rc<AppState>, router: &Router) {
 
 // Upstream (2026-10-30): the catalog's "tools" section (7-Zip, launchers...) as a searchable list of links; the fork
 // lists it under Settings > App (src/app/settings_menu_screen.rs).
+#[allow(dead_code)]
 pub(crate) fn open_tools_picker(app: &Rc<AppState>, router: &Router) {
     let items: Vec<SearchListItem> = crate::core::config::load_tools(&app.paths.config_dir.join("ports.json"))
         .into_iter()
@@ -960,6 +964,7 @@ pub(crate) fn open_tools_picker(app: &Rc<AppState>, router: &Router) {
     open_search_list_dialog(app, router, tr!(app).invoke_label_tools(), items, "", None, |_, url| open_url(url));
 }
 
+#[allow(dead_code)]
 pub(crate) fn open_files_picker(app: &Rc<AppState>, router: &Router) {
     const FILES: [&str; 4] = ["ports.json", "ports.local.json", "state.json", "themes.json"];
     let labels = FILES.iter().map(|name| name.to_string()).collect();
@@ -970,7 +975,7 @@ pub(crate) fn open_files_picker(app: &Rc<AppState>, router: &Router) {
     });
 }
 
-const LANGUAGES: &[(&str, &str)] = &[
+pub(crate) const LANGUAGES: &[(&str, &str)] = &[
     ("en", "English"),
     ("fr", "Français"),
     ("ja", "日本語"),
@@ -993,6 +998,7 @@ const LANGUAGES: &[(&str, &str)] = &[
     ("ro", "Română"),
 ];
 
+#[allow(dead_code)]
 pub(crate) fn open_language_picker(app: &Rc<AppState>, router: &Router) {
     let items = std::iter::once(SearchListItem::new(String::new(), tr!(app).invoke_language_default_system().to_string()))
         .chain(LANGUAGES.iter().map(|(code, name)| SearchListItem::new(code.to_string(), name.to_string())))
@@ -1002,6 +1008,25 @@ pub(crate) fn open_language_picker(app: &Rc<AppState>, router: &Router) {
         let _ = slint::select_bundled_translation(code);
         app.state.borrow_mut().set_language(code.to_string());
     });
+}
+
+/// Fork (steam, art and settings pages): the Themes page's choice, as the list's hover and select did: the theme is
+/// applied to the main window and to the page on screen, and saved.
+pub(crate) fn choose_theme(app: &Rc<AppState>, name: &str) {
+    crate::ui::theme::preview_theme(&mut app.theme.theme_config.borrow_mut(), name);
+    apply_theme(&app.window(), &app.theme.theme_config.borrow(), app.window_geometry.border_width.get());
+    if let Ok(slot) = app.dialog_nav.dialogs.try_borrow() {
+        if let DialogSlot::SetupWizard(page) = &*slot {
+            apply_dialog_theme!(page, app);
+        }
+    }
+    app.state.borrow_mut().set_active_theme(name.to_string());
+}
+
+/// Fork (steam, art and settings pages): the Language page's choice, saved as the list saved it (empty: the system's).
+pub(crate) fn choose_language(app: &Rc<AppState>, code: &str) {
+    let _ = slint::select_bundled_translation(code);
+    app.state.borrow_mut().set_language(code.to_string());
 }
 
 // Fork (ports folder and saves pages): `start_save_backup` (the "Saves Backup" progress dialog) is gone; Back up saves

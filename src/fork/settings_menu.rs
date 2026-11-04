@@ -178,6 +178,16 @@ pub struct Facts {
     pub version: String,
     /// What the checkup found last ("2 problems", "Everything looks fine"); `None` before its first look finished.
     pub checkup: Option<String>,
+    /// Running in Game Mode: the cards that open a file manager or a text editor are left out (nothing could show
+    /// them there; they work in Desktop Mode). Links are not: they show their address and a QR code.
+    pub game_mode: bool,
+}
+
+impl Entry {
+    /// Opens a file manager or a text editor, which Game Mode cannot show.
+    pub fn desktop_only(self) -> bool {
+        matches!(self, Entry::OpenPortsFolder | Entry::Files)
+    }
 }
 
 /// The first page's last card: the checkup (`fork::checkup`, `src/app/checkup_screen.rs`).
@@ -350,10 +360,14 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::SetupWizard => plain("Setup wizard", "Go through setup again"),
         Entry::Themes => plain(&l.themes, "Change how the app looks"),
         Entry::Language => plain(&l.language, "Choose the app's language"),
-        Entry::Files => plain(&l.files, "Open the app's own data files"),
-        Entry::Tools => plain(&l.tools, "Links to tools the catalog recommends"),
-        Entry::DiscordRpc => Card { title: l.discord.clone(), detail: "Show what you are playing on Discord".into(), switch: Some(f.discord) },
-        Entry::CustomRpc => Card { title: l.custom_rpc.clone(), detail: "Show your own Discord status instead (text set in state.json)".into(), switch: Some(f.custom_presence) },
+        Entry::Files => plain(&l.files, "Open the app's own files in a text editor"),
+        Entry::Tools => plain(&l.tools, "Links to tools the app's port list recommends"),
+        Entry::DiscordRpc => Card { title: plain_or_translated(&l.discord, "Discord Rich Presence", "Discord status"), detail: "Show what you are playing on Discord".into(), switch: Some(f.discord) },
+        Entry::CustomRpc => Card {
+            title: plain_or_translated(&l.custom_rpc, "Custom Rich Presence", "Custom Discord status"),
+            detail: "Your own text instead (set in Files > Your app settings)".into(),
+            switch: Some(f.custom_presence),
+        },
         Entry::CheckUpdates => Card { title: l.check_updates.clone(), detail: "Look for new versions of your ports and this app".into(), switch: Some(f.check_updates) },
         Entry::ForceUpdate => plain("Update the app now", "Install the newest version of this app"),
         Entry::Version => plain(&l.version, "See what is new on GitHub"),
@@ -393,12 +407,16 @@ pub fn top_page(l: &Labels, f: &Facts) -> Page<Act> {
 /// A group's page: its actions as cards; switches show On or Off.
 pub fn group_page(group: Group, l: &Labels, f: &Facts) -> Page<Act> {
     let mut p = Page::<Act> { window_title: group.window_title(), large: true, header: l.settings.clone(), title: group.title().to_string(), initial: Focus::Option(0), buttons: back_button(), ..Page::default() };
-    for (i, entry) in group.entries().iter().enumerate() {
+    for entry in group.entries().iter().filter(|e| !(f.game_mode && e.desktop_only())) {
         let c = entry_card(*entry, l, f);
+        let i = p.options.len();
         p.options.push(PageOption { title: c.title, detail: c.detail, choice: None, enabled: true, recommended: false, action: Act::Do(*entry) });
         if let Some(on) = c.switch {
             p = p.toggle(i, on);
         }
+    }
+    if f.game_mode && group.entries().iter().any(|e| e.desktop_only()) {
+        p.footnote = "Opening folders and files works in Desktop Mode.".to_string();
     }
     p
 }
@@ -409,7 +427,7 @@ mod tests {
     use crate::fork::page::{action_at, focus_number, hints, Focus, HINT_GAP, LEFT};
 
     fn facts() -> Facts {
-        Facts { ports_place: Some("SD card".into()), installed: 5, steam_waiting: 0, last_backup_days: Some(2), cloud: Cloud::On, check_updates: true, discord: false, custom_presence: false, version: "1.2.3".into(), checkup: None }
+        Facts { ports_place: Some("SD card".into()), installed: 5, steam_waiting: 0, last_backup_days: Some(2), cloud: Cloud::On, check_updates: true, discord: false, custom_presence: false, version: "1.2.3".into(), checkup: None, game_mode: false }
     }
 
     #[test]
@@ -629,6 +647,39 @@ mod tests {
         assert_eq!(summary(Group::Ports, &f), "5 ports");
         f.ports_place = Some("SD card".into());
         assert_eq!(entry_card(Entry::PortsFolder, &Labels::english("1"), &f).detail, "SD card");
+    }
+
+    #[test]
+    fn in_game_mode_the_folder_and_file_cards_are_left_out_with_a_note_and_the_switches_stay_in_place() {
+        let l = Labels::english("1");
+        let mut f = facts();
+        f.game_mode = true;
+        let app = group_page(Group::App, &l, &f);
+        let acts: Vec<Act> = app.options.iter().map(|o| o.action).collect();
+        assert_eq!(acts, [Act::Do(Entry::SetupWizard), Act::Do(Entry::Themes), Act::Do(Entry::Language), Act::Do(Entry::Tools), Act::Do(Entry::DiscordRpc), Act::Do(Entry::CustomRpc)]);
+        assert_eq!((app.toggle_of(3), app.toggle_of(4), app.toggle_of(5)), (None, Some(false), Some(false)), "the switches follow their cards");
+        assert_eq!(app.footnote, "Opening folders and files works in Desktop Mode.");
+        let ports = group_page(Group::Ports, &l, &f);
+        assert!(!ports.options.iter().any(|o| o.action == Act::Do(Entry::OpenPortsFolder)));
+        assert!(group_page(Group::Saves, &l, &f).footnote.is_empty(), "nothing left out there");
+        f.game_mode = false;
+        assert!(group_page(Group::App, &l, &f).footnote.is_empty());
+        assert_eq!(group_page(Group::App, &l, &f).options.len(), 7);
+    }
+
+    #[test]
+    fn both_discord_cards_say_discord_status_and_no_card_names_a_file() {
+        let l = Labels::english("1");
+        let p = group_page(Group::App, &l, &facts());
+        let titles: Vec<&str> = p.options.iter().map(|o| o.title.as_str()).collect();
+        assert!(titles.contains(&"Discord status") && titles.contains(&"Custom Discord status"), "{titles:?}");
+        for g in Group::ALL {
+            for o in group_page(g, &l, &facts()).options {
+                for word in ["state.json", ".json", "Rich Presence", "catalog"] {
+                    assert!(!o.title.contains(word) && !o.detail.contains(word), "{word} in {o:?}");
+                }
+            }
+        }
     }
 
     #[test]

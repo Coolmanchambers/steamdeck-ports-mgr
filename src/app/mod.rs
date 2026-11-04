@@ -26,6 +26,7 @@ pub mod same_game_screen; // Fork: same game, another project
 pub mod save_backup_screen; // Fork: Back up saves as pages
 pub mod save_finder_screen;
 pub mod save_restore_screen;
+pub mod settings_choices_screen; // Fork: Themes, Language, Tools and Files as pages
 pub mod settings_menu_screen;
 pub mod setup_wizard_screen;
 pub mod state;
