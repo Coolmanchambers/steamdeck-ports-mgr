@@ -514,14 +514,14 @@ pub fn removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
     }
     let queue = super::super::steam_queue::load(&super::super::steam_queue::queue_path(ctx.config_dir));
     if queue.unreadable {
-        return Err("The queue of Steam changes cannot be read, so the old copy is kept until it is fixed.".into());
+        return Err("The list of Steam changes waiting cannot be read, so the old copy is kept until it is fixed.".into());
     }
     let queued = queue.queue.entries.iter().any(|e| {
         e.kind == super::super::steam_queue::QueuedKind::Repoint
             && (e.port_key == entry.port_key || e.repoint.as_ref().is_some_and(|(from, _)| is_within(Path::new(from), old)))
     });
     if queued {
-        return Err("A Steam shortcut change for this port is still queued (it applies once Steam is closed in Desktop Mode). Until then Steam still starts the old copy, so it is kept.".into());
+        return Err("A Steam shortcut change for this port is still waiting (it is made once Steam is closed in Desktop Mode). Until then Steam still starts the old copy, so it is kept.".into());
     }
     let pointing = super::steam::shortcuts_pointing_into_detailed(ctx.home, old)?;
     if let Some((name, _)) = pointing.iter().find(|(_, has_id)| !has_id) {
@@ -532,7 +532,7 @@ pub fn removal_check(entry: &OldCopy, ctx: &RemovalCtx) -> Result<u64, String> {
     let pointing: Vec<String> = pointing.into_iter().map(|(name, _)| name).collect();
     if !pointing.is_empty() {
         return Err(format!(
-            "Steam shortcuts still point into it ({}). If the change is queued, it applies once Steam is closed in Desktop Mode; remove the old copy after that.",
+            "Steam shortcuts still point into it ({}). If the change is waiting, it is made once Steam is closed in Desktop Mode; remove the old copy after that.",
             pointing.join(", ")
         ));
     }

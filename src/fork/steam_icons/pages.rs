@@ -80,9 +80,9 @@ pub fn overview_page(findings: &[IconFinding], plan: &Plan, steam_running: bool,
         p.initial = Focus::Option(0);
         return p;
     }
-    p.paragraphs.push("Only the icon of each shortcut changes (not its program, folder, launch options or name). The shortcut list is backed up first.".to_string());
+    p.paragraphs.push("Only the icon of each shortcut changes (not its program, folder, launch options or name). Your Steam shortcuts list is backed up first.".to_string());
     let detail = if game_mode {
-        "Queued now; Steam can't be closed in Game Mode, so finish in Desktop Mode"
+        "Waiting now; Steam cannot be closed in Game Mode, so finish in Desktop Mode"
     } else if steam_running {
         "Steam is running, so this asks to close Steam next"
     } else {
@@ -115,7 +115,7 @@ pub fn result_page(report: &ApplyReport, resolved: &Resolved) -> IconPage {
         lines.push(format!("{} fixed. Steam shows them the next time it starts.", count(written, "icon", "icons")));
     }
     if queued > 0 {
-        lines.push(format!("{} queued: they are made once Steam is closed (Close Steam and update shortcuts).", count(queued, "icon", "icons")));
+        lines.push(format!("{} waiting: they are made once Steam is closed (Close Steam and update shortcuts).", count(queued, "icon", "icons")));
     }
     if lines.is_empty() {
         lines.push("No icon was changed.".to_string());
@@ -211,7 +211,7 @@ mod tests {
         let page = result_page(&report, &resolved);
         assert_eq!(page.facts.len(), 5);
         assert_eq!((page.mark_of(0), page.mark_of(1), page.mark_of(2), page.mark_of(4)), (Mark::Done, Mark::Waiting, Mark::Problem, Mark::Problem));
-        assert!(page.paragraphs.iter().any(|t| t.contains("1 icon fixed")) && page.paragraphs.iter().any(|t| t.contains("1 icon queued")));
+        assert!(page.paragraphs.iter().any(|t| t.contains("1 icon fixed")) && page.paragraphs.iter().any(|t| t.contains("1 icon waiting")));
         assert_eq!(result_page(&ApplyReport::default(), &Resolved::default()).paragraphs, ["No icon was changed."]);
     }
 }

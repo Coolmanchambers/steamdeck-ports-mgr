@@ -469,6 +469,9 @@ fn recalled(key: &str) -> Option<Focus> {
 /// Where the cursor starts on `page`: where it was when the page was shown before in these guided pages (B, a footer
 /// Back button, a page drawn again after a hand-off), when that place still exists; else the page's own start.
 fn starting_focus<A>(page: &Page<A>) -> usize {
+    if page.fresh_focus {
+        return page::initial_focus(page);
+    }
     match recalled(&page_key(page)) {
         Some(f) if page::focusables(page).contains(&f) => page::focus_number(page, f),
         _ => page::initial_focus(page),
@@ -855,6 +858,20 @@ mod tests {
         remember((page_key(&before), Focus::Option(3)));
         let now = page("Your ports", 1);
         assert_eq!(starting_focus(&now), page::initial_focus(&now));
+    }
+
+    #[test]
+    fn a_question_with_its_safe_answer_first_starts_on_it_every_time() {
+        clear();
+        // "Drop this waiting change?": No first. Yes was chosen the first time; the next one opens on No again.
+        let mut q = page("Drop this waiting change?", 2);
+        q.initial = Focus::Option(0);
+        q.fresh_focus = true;
+        remember((page_key(&q), Focus::Option(1)));
+        assert_eq!(page::focus_at(&q, starting_focus(&q)), Some(Focus::Option(0)));
+        let mut plain = q.clone();
+        plain.fresh_focus = false;
+        assert_eq!(page::focus_at(&plain, starting_focus(&plain)), Some(Focus::Option(1)), "other pages still come back to where they were");
     }
 
     #[test]

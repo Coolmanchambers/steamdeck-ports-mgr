@@ -87,8 +87,8 @@ msgstr "Varsayılan (Sistem)"
 msgid "Ask every time (default)"
 msgstr "Her seferinde sor (varsayılan)"
 
-msgid "Exit Ports Launcher"
-msgstr "Ports Launcher'dan Çık"
+msgid "Exit Deck Ports Manager"
+msgstr "Deck Ports Manager'dan Çık"
 
 msgid "Settings"
 msgstr "Ayarlar"

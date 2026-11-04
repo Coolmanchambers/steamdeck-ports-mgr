@@ -419,33 +419,6 @@ pub fn info_text(entry: &Entry, standing: Standing, list_changed: &str, checked:
     lines.join("\n")
 }
 
-/// The body of the "Add ... ?" dialog for an entry that becomes the user's own.
-pub fn confirm_text(entry: &Entry, folder: &str) -> String {
-    let file = match (entry.rating, entry.deck_assets.as_slice(), entry.linux_assets.as_slice()) {
-        (Rating::DeckBuild, [one], _) => format!("{one} (Deck build)"),
-        (Rating::DeckBuild, many, _) => format!("a Deck build file (you choose from {})", many.len()),
-        (Rating::LinuxBuild, _, [one]) => format!("{one} (Linux build)"),
-        (Rating::LinuxBuild, _, _) => "a Linux file (if the installer can't tell which, you choose)".to_string(),
-    };
-    let from = match &entry.release {
-        Some(r) => format!("{}, {}  ·  {}", r.tag, date_long(&r.date).unwrap_or_default(), source_label(entry)),
-        None => source_label(entry),
-    };
-    let mut lines = vec![
-        format!("Download: {file}"),
-        format!("From: {from}"),
-        format!("Goes into: your ports folder, as {folder}"),
-        "Your entry: saved in ports.local.json (the old file is backed up). Its button says Open folder, not Uninstall.".to_string(),
-        "Game files: not included. Info shows the project page, which says what it needs.".to_string(),
-        "Saves: adding and installing never touch saves. The app doesn't know where this port keeps them, so its updates are not backed up first: copy its save folder yourself before an update.".to_string(),
-    ];
-    if entry.catalog_disabled {
-        lines.push(String::new());
-        lines.push("The catalog has this entry turned off. This adds your own entry and leaves the catalog alone.".to_string());
-    }
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,21 +564,6 @@ mod tests {
         ] {
             assert!(text.contains(want), "missing {want:?} in\n{text}");
         }
-    }
-
-    #[test]
-    fn confirm_text_names_the_file_and_the_folder() {
-        let mut deck = project("d", "deck_build", "game");
-        deck["evidence"]["deck_assets"] = json!(["d-SteamDeck.tar.gz"]);
-        deck["catalog_disabled"] = json!(true);
-        let index = index_of(vec![deck, project("l", "linux_build", "game")]);
-        let deck_text = confirm_text(&index.entries[0], "d");
-        assert!(deck_text.contains("Download: d-SteamDeck.tar.gz (Deck build)"));
-        assert!(deck_text.contains("Goes into: your ports folder, as d"));
-        assert!(deck_text.contains("turned off"));
-        let linux_text = confirm_text(&index.entries[1], "l");
-        assert!(linux_text.contains("Download: l-linux-x86_64.tar.gz (Linux build)"));
-        assert!(!linux_text.contains("turned off"));
     }
 
     #[test]

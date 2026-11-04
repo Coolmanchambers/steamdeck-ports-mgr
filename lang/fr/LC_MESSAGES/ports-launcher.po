@@ -90,8 +90,8 @@ msgid "Ask every time (default)"
 msgstr "Demander à chaque fois (défaut)"
 
 # -- Menu du tray --
-msgid "Exit Ports Launcher"
-msgstr "Quitter Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "Quitter Deck Ports Manager"
 
 # -- Titres de dialogue statiques --
 msgid "Settings"

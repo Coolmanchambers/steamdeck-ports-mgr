@@ -199,10 +199,10 @@ fn ports_whose_add_only_waits_for_steam_are_queued_not_fixed() {
     f.queue = Ok(vec![queued("dusk", QueuedKind::Add), queued("abuse", QueuedKind::Add)]);
     let o = check(Check::SteamShortcuts, &f);
     let Outcome::Queued { summary, fix_label, desktop_only } = &o else { panic!("every missing port is queued: {o:?}") };
-    assert_eq!(summary, "Queued: finishes when Steam closes (DUSK and ABUSE)");
+    assert_eq!(summary, "Waiting: finishes when Steam closes (DUSK and ABUSE)");
     assert_eq!((fix_label.as_str(), *desktop_only), ("Close Steam and update shortcuts", false));
     let page = crate::fork::checkup::pages::after_page(Check::SteamShortcuts, &o, 1, 1, true, false);
-    assert_eq!(page.title, "Queued, not finished", "never \"That is fixed\" while it only waits");
+    assert_eq!(page.title, "Waiting for Steam to close", "never \"That is fixed\" while it only waits");
     f.game_mode = true;
     assert!(matches!(check(Check::SteamShortcuts, &f), Outcome::Queued { desktop_only: true, .. }));
     f.game_mode = false;
@@ -570,13 +570,13 @@ fn an_icon_repair_waiting_for_steam_is_queued_not_fixed_and_the_page_says_so() {
     f.queue = Ok(vec![queued("soh", QueuedKind::Icon)]);
     let o = check(Check::SteamIcons, &f);
     let Outcome::Queued { summary, fix_label, desktop_only } = &o else { panic!("{o:?}") };
-    assert_eq!((summary.as_str(), fix_label.as_str(), *desktop_only), ("Queued: finishes when Steam closes (SOH)", "Close Steam and update shortcuts", false));
+    assert_eq!((summary.as_str(), fix_label.as_str(), *desktop_only), ("Waiting: finishes when Steam closes (SOH)", "Close Steam and update shortcuts", false));
     assert_eq!(o.mark(), Mark::Waiting);
     assert!(!o.is_problem() && o.is_not_fine());
     let page = pages::after_page(Check::SteamIcons, &o, 1, 1, true, false);
-    assert_eq!(page.title, "Queued, not finished", "never 'That is fixed'");
+    assert_eq!(page.title, "Waiting for Steam to close", "never 'That is fixed'");
     assert_eq!((page.options[0].title.as_str(), page.options[0].action, page.options[0].recommended), ("Close Steam and update shortcuts", Act::TryAgain, true));
-    assert_eq!(pages::line(Check::SteamIcons, &o), "Steam icons: queued: finishes when Steam closes (SOH)");
+    assert_eq!(pages::line(Check::SteamIcons, &o), "Steam icons: waiting: finishes when Steam closes (SOH)");
     // The Steam changes line counts it once; the icons line is not a second problem.
     let r = run(&f);
     assert_eq!(r.problem_count(), 1);
@@ -621,7 +621,7 @@ fn the_last_page_counts_what_is_left_whatever_kind() {
     let mut f = fine();
     f.updates = vec![named("soh")];
     let problem = check(Check::Updates, &f);
-    let queued_o = Outcome::Queued { summary: "Queued: finishes when Steam closes (SOH)".into(), fix_label: "x".into(), desktop_only: false };
+    let queued_o = Outcome::Queued { summary: "Waiting: finishes when Steam closes (SOH)".into(), fix_label: "x".into(), desktop_only: false };
     let items = [
         (Check::SteamWaiting, Outcome::Unknown("Steam's change list cannot be read".into())),
         (Check::SteamIcons, queued_o),
@@ -673,7 +673,7 @@ fn a_shortcut_that_still_starts_an_old_copy_is_in_steam_but_wrong_and_never_offe
         h.installed.push(named("abuse"));
         h.queue = Ok(vec![queued("abuse", kind)]);
         let o = check(Check::SteamShortcuts, &h);
-        assert!(matches!(&o, Outcome::Queued { summary, .. } if summary == "Queued: finishes when Steam closes (ABUSE)"), "{kind:?}: {o:?}");
+        assert!(matches!(&o, Outcome::Queued { summary, .. } if summary == "Waiting: finishes when Steam closes (ABUSE)"), "{kind:?}: {o:?}");
     }
     // A Deck with no shortcuts yet and nothing queued is not nagged.
     let mut k = fine();

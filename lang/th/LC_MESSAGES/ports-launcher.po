@@ -87,8 +87,8 @@ msgstr "ค่าเริ่มต้น (ระบบ)"
 msgid "Ask every time (default)"
 msgstr "ถามทุกครั้ง (ค่าเริ่มต้น)"
 
-msgid "Exit Ports Launcher"
-msgstr "ออกจาก Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "ออกจาก Deck Ports Manager"
 
 msgid "Settings"
 msgstr "การตั้งค่า"

@@ -87,8 +87,8 @@ msgstr "기본값(시스템)"
 msgid "Ask every time (default)"
 msgstr "매번 묻기(기본값)"
 
-msgid "Exit Ports Launcher"
-msgstr "Ports Launcher 종료"
+msgid "Exit Deck Ports Manager"
+msgstr "Deck Ports Manager 종료"
 
 msgid "Settings"
 msgstr "설정"

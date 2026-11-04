@@ -87,8 +87,8 @@ msgstr "デフォルト（システム）"
 msgid "Ask every time (default)"
 msgstr "毎回確認する（デフォルト）"
 
-msgid "Exit Ports Launcher"
-msgstr "Ports Launcher を終了"
+msgid "Exit Deck Ports Manager"
+msgstr "Deck Ports Manager を終了"
 
 msgid "Settings"
 msgstr "設定"

@@ -87,8 +87,8 @@ msgstr "За замовчуванням (система)"
 msgid "Ask every time (default)"
 msgstr "Питати щоразу (за замовчуванням)"
 
-msgid "Exit Ports Launcher"
-msgstr "Вийти з Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "Вийти з Deck Ports Manager"
 
 msgid "Settings"
 msgstr "Налаштування"

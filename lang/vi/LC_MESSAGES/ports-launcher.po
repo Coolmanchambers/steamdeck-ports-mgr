@@ -87,8 +87,8 @@ msgstr "Mặc định (Hệ thống)"
 msgid "Ask every time (default)"
 msgstr "Luôn hỏi (mặc định)"
 
-msgid "Exit Ports Launcher"
-msgstr "Thoát Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "Thoát Deck Ports Manager"
 
 msgid "Settings"
 msgstr "Cài đặt"

@@ -236,6 +236,9 @@ pub struct Page<A> {
     pub back_hint: String,
     /// B does nothing here (a short check that cannot be stopped): the hint bar leaves B out.
     pub no_back: bool,
+    /// The cursor always starts where the page says, never where it was the last time this page was shown: a question
+    /// whose safe answer is first ("No, keep it") must start on it every time, or two A presses answer two questions.
+    pub fresh_focus: bool,
     /// One window: a "Show the app" button in the footer (left of the primary button), and Y does the same. Set by the
     /// page window itself (`page_dialog`) on full-screen pages in Desktop Mode, never by a page's owner.
     pub show_app: bool,
@@ -267,6 +270,7 @@ impl<A> Default for Page<A> {
             initial: Focus::Button(RIGHT),
             back_hint: String::new(),
             no_back: false,
+            fresh_focus: false,
             show_app: false,
         }
     }

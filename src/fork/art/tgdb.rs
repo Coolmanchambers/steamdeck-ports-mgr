@@ -36,6 +36,8 @@ pub struct GameInfo {
     pub id: u64,
     pub title: String,
     pub platform: u32,
+    /// The year of `release_date`, when the site gives one.
+    pub year: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +158,7 @@ impl<'a> TheGamesDb<'a> {
                             id: number(g.get("id"))?,
                             title: g.get("game_title")?.as_str()?.to_string(),
                             platform: number(g.get("platform")).and_then(|p| u32::try_from(p).ok()).unwrap_or(0),
+                            year: g.get("release_date").and_then(Value::as_str).and_then(|d| d.get(..4)).and_then(|y| y.parse().ok()),
                         })
                     })
                     .collect()
@@ -306,7 +309,7 @@ mod tests {
         let tgdb = TheGamesDb::new(&fake, "tgdb-test-key-1");
         assert_eq!(tgdb.allowance(), None);
         let game = tgdb.by_game_id(900100).unwrap();
-        assert_eq!(game, GameInfo { id: 900100, title: "Ship of Harkinian".into(), platform: 1 });
+        assert_eq!(game, GameInfo { id: 900100, title: "Ship of Harkinian".into(), platform: 1, year: Some(2022) });
         assert_eq!(tgdb.allowance(), Some(Allowance { remaining: 987, extra: 0 }));
         assert!(fake.requests()[0].contains("apikey=tgdb-test-key-1") && fake.requests()[0].contains("id=900100"));
     }

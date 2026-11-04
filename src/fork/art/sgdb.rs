@@ -30,6 +30,14 @@ pub struct Game {
     pub id: u64,
     pub name: String,
     pub verified: bool,
+    /// The year of `release_date` (Unix seconds), when the site gives one.
+    pub year: Option<i32>,
+}
+
+/// The year of a Unix time in seconds, for a release date.
+pub fn year_of_unix(secs: i64) -> Option<i32> {
+    use chrono::Datelike;
+    chrono::DateTime::from_timestamp(secs, 0).map(|d| d.year()).filter(|y| (1950..=2100).contains(y))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +128,12 @@ impl<'a> SteamGridDb<'a> {
         Ok(games
             .iter()
             .filter_map(|g| {
-                Some(Game { id: g.get("id")?.as_u64()?, name: g.get("name")?.as_str()?.to_string(), verified: g.get("verified").and_then(Value::as_bool).unwrap_or(false) })
+                Some(Game {
+                    id: g.get("id")?.as_u64()?,
+                    name: g.get("name")?.as_str()?.to_string(),
+                    verified: g.get("verified").and_then(Value::as_bool).unwrap_or(false),
+                    year: g.get("release_date").and_then(Value::as_i64).and_then(year_of_unix),
+                })
             })
             .collect())
     }
@@ -220,7 +233,7 @@ mod tests {
         let fake = Fake::new().on_json("/search/autocomplete/", 200, SEARCH);
         let games = SteamGridDb::new(&fake, "TESTKEY-0000").search("Ship of Harkinian").unwrap();
         assert_eq!(games.len(), 3);
-        assert_eq!(games[0], Game { id: 900001, name: "Ship of Harkinian".into(), verified: true });
+        assert_eq!(games[0], Game { id: 900001, name: "Ship of Harkinian".into(), verified: true, year: None });
         assert_eq!(fake.header_of("/search/autocomplete/Ship%20of%20Harkinian", "Authorization").as_deref(), Some("Bearer TESTKEY-0000"));
         assert!(fake.requests()[0].starts_with("https://www.steamgriddb.com/api/v2/search/autocomplete/"));
     }
@@ -325,9 +338,9 @@ mod tests {
     #[test]
     fn best_match_prefers_the_same_title_then_a_verified_one() {
         let games = vec![
-            Game { id: 1, name: "Ship of Harkinian: Remastered".into(), verified: true },
-            Game { id: 2, name: "Ship of Harkinian".into(), verified: false },
-            Game { id: 3, name: "Ship of Harkinian (Unofficial)".into(), verified: true },
+            Game { id: 1, name: "Ship of Harkinian: Remastered".into(), verified: true, year: None },
+            Game { id: 2, name: "Ship of Harkinian".into(), verified: false, year: None },
+            Game { id: 3, name: "Ship of Harkinian (Unofficial)".into(), verified: true, year: None },
         ];
         let (game, conf) = best_match("Ship of Harkinian", &games).unwrap();
         assert_eq!((game.id, conf), (3, Confidence::High));

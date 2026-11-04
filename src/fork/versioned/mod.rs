@@ -679,7 +679,7 @@ pub fn finish_with(input: &FinishInput, pending: &Pending) -> Outcome {
         // A change queued by an earlier update may still end at this old entry: it ends at the new one now.
         let queue = crate::fork::steam_queue::queue_path(ctx.config_dir);
         if let Err(e) = crate::fork::steam_queue::retarget_repoints(&queue, &from, &to) {
-            out.kept.push((m.old.clone(), format!("the queue of Steam changes could not be updated ({e})")));
+            out.kept.push((m.old.clone(), format!("the list of Steam changes waiting could not be updated ({e})")));
             continue;
         }
         let holds_target = target_move.as_ref().is_some_and(|(t, _)| t.old == m.old);

@@ -227,12 +227,13 @@ fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<
         let screen = screen.borrow();
         screen.can_queue(&steam).then(|| {
             let changes = steam_queue::changes_from_screen(&screen, &backup_stamp());
-            let show_accounts = screen.accounts.len() > 1;
-            (changes, screen.game_mode, show_accounts)
+            // The account is named only when the Deck has more than one.
+            let account = (screen.accounts.len() > 1).then(|| screen.active_account().map(SteamAccount::label)).flatten();
+            (changes, screen.game_mode, account)
         })
     };
-    if let Some((changes, game_mode, show_accounts)) = queued {
-        return confirm_queue(app, router, changes, game_mode, show_accounts, back);
+    if let Some((changes, game_mode, account)) = queued {
+        return confirm_queue(app, router, changes, game_mode, account, back);
     }
     // Steam is closed but changes still wait (a moved port's shortcut that still points at its old copy): writing
     // adds now could add a second shortcut for that port, so the waiting ones go first (the first row).
@@ -260,8 +261,8 @@ fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<
 
 // -- Changes that wait while Steam runs -----------------------------------------------------
 
-fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::QueuedChange>, game_mode: bool, show_accounts: bool, back: Back) {
-    let page = steam_pages::wait_page(&changes, game_mode, show_accounts);
+fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::QueuedChange>, game_mode: bool, account: Option<String>, back: Back) {
+    let page = steam_pages::wait_page(&changes, game_mode, account.as_deref());
     let yes: Back = Rc::new(move |app, router| match steam_queue::queue_changes(&queue_path(app), changes.clone(), game_mode) {
         // Desktop Mode: Steam can be closed from here, so the next question is whether to do that now.
         Ok(_) if !game_mode => {
@@ -308,6 +309,17 @@ fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessChec
     }
 }
 
+/// The Deck's Steam accounts, each with the name the account page shows (the folder `SteamScreen::load` would use).
+fn device_accounts() -> Vec<(u32, String)> {
+    let Some(home) = home_dir() else { return Vec::new() };
+    crate::fork::artwork::existing_steam_roots(&home)
+        .iter()
+        .filter_map(|root| crate::fork::steam_user::discover_accounts(root).ok())
+        .find(|accounts| !accounts.is_empty())
+        .map(|accounts| accounts.iter().map(|a| (a.account_id, a.label())).collect())
+        .unwrap_or_default()
+}
+
 /// The Steam changes waiting, one card each: choosing one asks to drop it; the last card asks to clear them all.
 fn show_waiting(app: &Rc<AppState>, router: &Router) {
     let loaded = steam_queue::load(&queue_path(app));
@@ -315,8 +327,7 @@ fn show_waiting(app: &Rc<AppState>, router: &Router) {
         return notice(app, router, WAITING, WAITING, problem, fresh_list());
     }
     let queue = loaded.queue;
-    let device_accounts = home_dir().map_or(0, |home| steam_queue::device_account_count(&home));
-    let page = steam_pages::waiting_page(&queue, device_accounts > 1, steam_queue::game_mode_from_env());
+    let page = steam_pages::waiting_page(&queue, &device_accounts(), steam_queue::game_mode_from_env());
     let again: Back = Rc::new(show_waiting);
     let handlers = Handlers {
         on_action: Rc::new(move |app, router, act| match act {

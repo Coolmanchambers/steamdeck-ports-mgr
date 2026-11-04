@@ -165,7 +165,7 @@ pub fn confirm_page(check: Check, question: &str, lines: Vec<String>, yes: &str,
 pub fn after_page(check: Check, outcome: &Outcome, n: usize, total: usize, last: bool, progress: bool) -> CheckupPage {
     let mut p = base(match outcome {
         Outcome::Ok(_) => "That is fixed",
-        Outcome::Queued { .. } => "Queued, not finished",
+        Outcome::Queued { .. } => "Waiting for Steam to close",
         Outcome::Problem(_) if progress => "One done, more to go",
         Outcome::Problem(_) => "Not fixed yet",
         Outcome::Skipped(_) => "Skipped",

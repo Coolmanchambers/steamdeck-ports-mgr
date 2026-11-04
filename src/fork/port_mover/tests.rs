@@ -323,7 +323,7 @@ fn while_steam_runs_the_repoint_is_queued_and_applied_later() {
     let active = vec![p.to.clone()];
     let old = &old_copies::load(&w.app).unwrap()[0];
     let refused = old_copies::removal_check(old, &w.removal_ctx(&active)).unwrap_err();
-    assert!(refused.contains("still queued"), "{refused}");
+    assert!(refused.contains("still waiting"), "{refused}");
 
     // Steam closed (Desktop Mode): applying the queue writes the repoint.
     let settings = ForkSettings::load(&w.app.join("fork-settings.json"));

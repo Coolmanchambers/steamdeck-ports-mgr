@@ -256,7 +256,7 @@ impl PortPlan {
             let what = if s.old_exe == s.new_exe { format!("start folder to {}", short_path(Path::new(&s.new_start_dir), home)) } else { format!("program to {}", short_path(Path::new(&s.new_exe), home)) };
             steps.push(match self.steam_write {
                 SteamWrite::Now => format!("Repoint Steam shortcut \"{}\" ({id}) {what}.", s.name),
-                SteamWrite::Queued => format!("Steam is running: queue the change of Steam shortcut \"{}\" ({id}) {what} for Desktop Mode.", s.name),
+                SteamWrite::Queued => format!("Steam is running: the change of Steam shortcut \"{}\" ({id}) {what} waits for Desktop Mode.", s.name),
             });
         }
         steps.push(format!("Keep the old folder {}; you are asked afterwards whether to remove it. Nothing is deleted automatically.", short_path(&r.from, home)));
@@ -337,7 +337,7 @@ mod tests {
         let reqs = requests(&h);
         let soh = reqs.iter().find(|r| r.port_name == "Ship of Harkinian").unwrap();
         let steps = plan_port(soh, None, SteamWrite::Queued).steps(&h.home);
-        assert!(steps.iter().any(|s| s.starts_with("Steam is running: queue the change of Steam shortcut \"Ship of Harkinian\"") && s.ends_with("for Desktop Mode.")), "{steps:#?}");
+        assert!(steps.iter().any(|s| s.starts_with("Steam is running: the change of Steam shortcut \"Ship of Harkinian\"") && s.ends_with("waits for Desktop Mode.")), "{steps:#?}");
     }
 
     #[test]

@@ -154,7 +154,7 @@ fn saved_of(screen: &ArtScreen, field: KeyField) -> Option<Option<String>> {
 /// The text box page. `text` is what the box holds (kept after a refusal or a No on the remove question).
 fn edit(app: &Rc<AppState>, router: &Router, screen: Screen, field: KeyField, text: String, problem: Option<String>) {
     let src = field.source();
-    let page = pages::key_page(field, saved_of(&screen.borrow(), field), &text, problem.as_deref());
+    let page = pages::key_page(field, saved_of(&screen.borrow(), field), &text, problem.as_deref(), crate::fork::steam_queue::game_mode_from_env());
     let typed = Rc::new(RefCell::new(text));
     let to_source: Then = {
         let screen = screen.clone();
@@ -235,26 +235,25 @@ fn stop_job_timer() {
 }
 
 /// Runs `work` on a thread while `handle`'s page is up. `on_progress` redraws the page when the progress text changes;
-/// `done` gets the result on the UI thread, only while the page is still the one on screen (B left it: the result is
-/// dropped). A job counts as running until its thread has really finished, whatever the user did.
+/// `done` gets the result on the UI thread, with whether the page is still the one on screen (B left it: what was
+/// learned is still kept, but no page is shown over whatever is up now). A job counts as running until its thread has
+/// really finished, whatever the user did.
 fn run_job<T: Send + 'static>(
     handle: Option<Rc<PageHandle<ArtAct>>>,
     job: Rc<Background<T>>,
     on_progress: impl Fn(&PageHandle<ArtAct>, &str) + 'static,
-    done: impl FnOnce(Result<T, String>) + 'static,
+    done: impl FnOnce(Result<T, String>, bool) + 'static,
 ) {
     JOB_RUNNING.with(|r| r.set(true));
-    let done: RefCell<Option<Box<dyn FnOnce(Result<T, String>)>>> = RefCell::new(Some(Box::new(done)));
+    let done: RefCell<Option<Box<dyn FnOnce(Result<T, String>, bool)>>> = RefCell::new(Some(Box::new(done)));
     let last = RefCell::new(String::new());
     JOB_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), move || {
             let open = handle.as_ref().is_some_and(|h| h.is_open());
             if let Some(result) = job.take() {
                 stop_job_timer();
-                if open {
-                    if let Some(done) = done.borrow_mut().take() {
-                        done(result);
-                    }
+                if let Some(done) = done.borrow_mut().take() {
+                    done(result, open);
                 }
                 return;
             }
@@ -286,7 +285,8 @@ fn start_test(app: &Rc<AppState>, router: &Router, screen: Screen, src: SourceId
         check_source(src, &secrets, &build, &Net::new(), &std::thread::sleep)
     }));
     let (app, router) = (app.clone(), router.clone());
-    run_job(handle, job, |_, _| {}, move |result| {
+    // B on the waiting page leaves it, but the answer is still recorded, so the card says how the test went.
+    run_job(handle, job, |_, _| {}, move |result, open| {
         let check = match result {
             Ok(check) => {
                 let secrets = screen.borrow().records_secrets_in();
@@ -300,7 +300,9 @@ fn start_test(app: &Rc<AppState>, router: &Router, screen: Screen, src: SourceId
                 KeyCheck::Unknown(why)
             }
         };
-        show_simple(&app, &router, pages::test_result_page(src, &check), back);
+        if open {
+            show_simple(&app, &router, pages::test_result_page(src, &check), back);
+        }
     });
 }
 
@@ -447,7 +449,7 @@ fn start_fetch(app: &Rc<AppState>, router: &Router, screen: Screen) {
         h.update(pages::fetching_page(now, total, stopping.get()));
     };
     let (app, router) = (app.clone(), router.clone());
-    run_job(handle, job, redraw, move |result: Result<FetchSummary, String>| {
+    run_job(handle, job, redraw, move |result: Result<FetchSummary, String>, open| {
         let summary = result.unwrap_or_else(|why| {
             eprintln!("artwork sources: fetching stopped: {why}");
             FetchSummary { total, problems: vec!["the app ran into an error and stopped".to_string()], stopped: true, ..FetchSummary::default() }
@@ -455,6 +457,8 @@ fn start_fetch(app: &Rc<AppState>, router: &Router, screen: Screen) {
         eprintln!("artwork sources: fetched {} of {} ports, {} problems", summary.looked_up, summary.total, summary.problems.len());
         // The statuses (last problem, a pause) and the look-alikes waiting may have changed.
         reload(&app, &screen);
-        show_simple(&app, &router, pages::fetched_page(&summary), to_menu);
+        if open {
+            show_simple(&app, &router, pages::fetched_page(&summary), to_menu);
+        }
     });
 }

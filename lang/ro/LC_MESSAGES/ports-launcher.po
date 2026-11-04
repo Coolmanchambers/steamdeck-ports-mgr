@@ -87,8 +87,8 @@ msgstr "Implicit (Sistem)"
 msgid "Ask every time (default)"
 msgstr "Întreabă de fiecare dată (implicit)"
 
-msgid "Exit Ports Launcher"
-msgstr "Ieșire din Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "Ieșire din Deck Ports Manager"
 
 msgid "Settings"
 msgstr "Setări"

@@ -209,7 +209,7 @@ impl SteamReport {
         }
         if !self.queued.is_empty() {
             lines.push(format!(
-                "Steam: the shortcut change is queued because Steam is running. Until it is applied (next time this app runs in Desktop Mode with Steam closed), starting {port_name} from Steam still runs the OLD copy, and anything you save there stays in the old copy."
+                "Steam: the shortcut change is waiting because Steam is running. Until it is made (next time this app runs in Desktop Mode with Steam closed), starting {port_name} from Steam still runs the OLD copy, and anything you save there stays in the old copy."
             ));
         }
         for (name, why) in &self.skipped {

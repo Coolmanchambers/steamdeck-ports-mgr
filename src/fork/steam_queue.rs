@@ -196,7 +196,7 @@ impl QueuedChange {
     }
 
     pub fn account_text(&self) -> String {
-        if self.account_label.is_empty() { format!("account {}", self.account_id) } else { self.account_label.clone() }
+        if self.account_label.is_empty() { format!("Steam account {}", self.account_id) } else { self.account_label.clone() }
     }
 
     /// `  Dusklight (add)`, or with the account when several are involved, for lists in dialogs.
@@ -756,7 +756,7 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
             continue;
         }
         let Some(index) = screen.accounts.iter().position(|a| a.account_id == account_id) else {
-            skipped.extend(entries.iter().map(|e| format!("  {}: Steam {} is not on this device any more", e.name, e.account_text())));
+            skipped.extend(entries.iter().map(|e| format!("  {}: {} is not on this device any more", e.name, e.account_text())));
             continue;
         };
         screen.set_account(index, inputs.library_dir, inputs.catalog, inputs.favorite_exe);
@@ -1154,7 +1154,7 @@ mod tests {
         let e = &loaded.queue.entries[0];
         assert_eq!((e.account_id, e.port_key.as_str(), e.kind, e.art), (1234, "example/testport", QueuedKind::Add, ArtChoice::Catalog));
         assert_eq!((e.account_label.as_str(), e.from_game_mode), ("", false));
-        assert_eq!(e.account_text(), "account 1234");
+        assert_eq!(e.account_text(), "Steam account 1234");
         assert!(offer_text(&loaded.queue, false, &[]).starts_with("1 Steam change waiting while Steam was running"));
         let _ = fs::remove_dir_all(dir);
     }
@@ -1454,7 +1454,7 @@ mod tests {
         fs::write(&f.vdf, b"\x00shortcuts\x00\x09bad\x00").unwrap();
         let out = f.apply(&catalog(), &no_steam);
         assert!(out.refused && !out.wrote);
-        assert!(out.text.contains("Could not read your Steam shortcuts list for account 1234"), "{}", out.text);
+        assert!(out.text.contains("Could not read your Steam shortcuts list for Steam account 1234"), "{}", out.text);
         assert_eq!(load(&f.queue).queue.len(), 2);
     }
 

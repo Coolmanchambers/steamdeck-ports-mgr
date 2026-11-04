@@ -273,7 +273,7 @@ mod tests {
         let summary = run(&engine(&h, true), plans_for(&h, &["Ship of Harkinian"], SteamWrite::Queued), &NoPrompts);
         let PortOutcome::Moved { steam, notes } = &summary.items[0].outcome else { panic!("{:?}", summary.items[0].outcome) };
         assert_eq!(*steam, SteamResult::Queued(1));
-        assert!(notes.iter().any(|n| n.contains("queued because Steam is running")), "{notes:?}");
+        assert!(notes.iter().any(|n| n.contains("waiting because Steam is running")), "{notes:?}");
         assert_eq!(fs::read(&h.shortcuts_path).unwrap(), before, "shortcuts.vdf is never written while Steam runs");
         let queue = fs::read_to_string(h.home.join("appdir/steam-queue.json")).unwrap();
         assert!(queue.contains("repoint") && queue.contains("Applications"), "{queue}");

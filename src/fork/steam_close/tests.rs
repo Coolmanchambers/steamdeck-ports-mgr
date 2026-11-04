@@ -308,7 +308,7 @@ fn running_then_asked_to_close_then_gone_then_the_queue_is_applied_after_a_backu
     assert!((chrono::Utc::now().timestamp() - noted).abs() < 60, "{noted}");
     let p = result_page(&out, true, false);
     assert_eq!(p.title, "Steam shortcuts updated");
-    assert_eq!(p.facts[..2], ["1 Steam change made.", "Your old shortcut list was backed up first."]);
+    assert_eq!(p.facts[..2], ["1 Steam change made.", "Your Steam shortcuts list was backed up first."]);
     assert_eq!(p.paragraphs, ["Steam will start these ports from their new place when it runs again."]);
     use steam_queue::QueuedKind;
     assert_eq!(result_page_for(&out, true, false, &[QueuedKind::Add, QueuedKind::Add]).paragraphs, ["Steam shows these ports when it runs again."], "an add is not a move");
@@ -453,7 +453,7 @@ fn the_ask_page_starts_on_close_unless_it_came_up_by_itself() {
     assert!(p.options[0].recommended);
     assert_eq!(p.initial, Focus::Option(0));
     assert!(p.paragraphs[0].starts_with("4 Steam changes are waiting"));
-    assert!(p.paragraphs[1].starts_with("Only Steam's shortcut list changes; your games, saves and play time are not touched."));
+    assert!(p.paragraphs[1].starts_with("Only your Steam shortcuts list changes; your games, saves and play time are not touched."));
     // Steam closed already: nothing to close, the choice says so.
     let c = ask_page(2, None, true, true);
     assert_eq!((c.options[0].title.as_str(), c.initial), (UPDATE_NOW_LABEL, Focus::Option(1)));

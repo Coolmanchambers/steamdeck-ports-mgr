@@ -184,6 +184,10 @@ pub struct Pending {
     pub id: u64,
     pub name: String,
     pub confidence: Confidence,
+    /// The year the site says it came out, when it says (shown on the look-alike page).
+    pub year: Option<i32>,
+    /// The site has checked this entry itself (SteamGridDB's "verified"); `None` when the site does not say.
+    pub verified: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -235,7 +239,15 @@ impl IdTable {
                     if let Some(list) = p.get("pending").and_then(|x| x.get(src.id())).and_then(Value::as_array) {
                         let items = list
                             .iter()
-                            .filter_map(|c| Some(Pending { id: c.get("id")?.as_u64()?, name: c.get("name")?.as_str()?.to_string(), confidence: Confidence::from_label(c.get("confidence")?.as_str()?) }))
+                            .filter_map(|c| {
+                                Some(Pending {
+                                    id: c.get("id")?.as_u64()?,
+                                    name: c.get("name")?.as_str()?.to_string(),
+                                    confidence: Confidence::from_label(c.get("confidence")?.as_str()?),
+                                    year: c.get("year").and_then(Value::as_i64).and_then(|y| i32::try_from(y).ok()),
+                                    verified: c.get("verified").and_then(Value::as_bool),
+                                })
+                            })
                             .collect();
                         ids.pending.insert(src, items);
                     }
@@ -282,7 +294,22 @@ impl IdTable {
                 .pending
                 .iter()
                 .filter(|(_, v)| !v.is_empty())
-                .map(|(src, v)| (src.id().to_string(), Value::Array(v.iter().map(|c| json!({ "id": c.id, "name": c.name, "confidence": c.confidence.label() })).collect())))
+                .map(|(src, v)| {
+                    let list = v
+                        .iter()
+                        .map(|c| {
+                            let mut item = json!({ "id": c.id, "name": c.name, "confidence": c.confidence.label() });
+                            if let Some(y) = c.year {
+                                item["year"] = json!(y);
+                            }
+                            if let Some(v) = c.verified {
+                                item["verified"] = json!(v);
+                            }
+                            item
+                        })
+                        .collect();
+                    (src.id().to_string(), Value::Array(list))
+                })
                 .collect();
             if !pending.is_empty() {
                 p.insert("pending".into(), Value::Object(pending));
@@ -471,7 +498,7 @@ mod tests {
         let (dir, cache) = temp_cache("ids");
         let mut t = IdTable::load(&cache.ids_path());
         t.set_found("owner/repo", SourceId::SteamGridDb, IdEntry { id: 77, name: "Ship of Harkinian".into(), origin: IdOrigin::Search, confidence: Confidence::High }, 500);
-        t.set_pending("other", SourceId::SteamGridDb, vec![Pending { id: 1, name: "Doom II".into(), confidence: Confidence::Medium }], 600);
+        t.set_pending("other", SourceId::SteamGridDb, vec![Pending { id: 1, name: "Doom II".into(), confidence: Confidence::Medium, year: Some(1994), verified: Some(true) }], 600);
         t.set_rom_game("14:abcd:100", 9001);
         t.save().unwrap();
         let again = IdTable::load(&cache.ids_path());
@@ -490,7 +517,7 @@ mod tests {
         let (dir, cache) = temp_cache("identity");
         let mut t = IdTable::load(&cache.ids_path());
         t.set_identity("owner/ship", "Ship of Harkinian", "shipwright");
-        t.set_pending("owner/ship", SourceId::SteamGridDb, vec![Pending { id: 9, name: "Ship Remastered".into(), confidence: Confidence::Medium }], 5);
+        t.set_pending("owner/ship", SourceId::SteamGridDb, vec![Pending { id: 9, name: "Ship Remastered".into(), confidence: Confidence::Medium, year: None, verified: None }], 5);
         t.save().unwrap();
         let loaded = IdTable::load(&cache.ids_path());
         assert_eq!(loaded.identity("owner/ship"), (Some("Ship of Harkinian"), Some("shipwright")));

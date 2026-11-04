@@ -309,7 +309,7 @@ pub const CLOSE_LABEL: &str = "Close Steam and update shortcuts";
 pub const GAME_MODE_TEXT: &str = "Switch to Desktop Mode and open Deck Ports Manager to finish updating Steam.";
 
 pub const UPDATE_NOW_LABEL: &str = "Update Steam shortcuts now";
-const ONLY_THE_LIST: &str = "Only Steam's shortcut list changes; your games, saves and play time are not touched. Steam has to be closed because it only reads that list when it starts.";
+const ONLY_THE_LIST: &str = "Only your Steam shortcuts list changes; your games, saves and play time are not touched. Steam has to be closed because it only reads that list when it starts.";
 
 /// "Update your Steam shortcuts?" `lead` comes first (what just happened, "Queued 2 changes."). `stray_safe`:
 /// the page came up by itself, so the cursor starts on Not now and a stray A does not close Steam.
@@ -323,7 +323,7 @@ pub fn ask_page(waiting: usize, lead: Option<&str>, stray_safe: bool, steam_clos
         p.paragraphs.push(format!("{} {} waiting. Steam has to be closed to make {}.", changes(waiting), are(waiting), if waiting == 1 { "it" } else { "them" }));
     }
     p.paragraphs.push(ONLY_THE_LIST.to_string());
-    let (label, detail) = if steam_closed { (UPDATE_NOW_LABEL, "Your shortcut list is backed up first") } else { (CLOSE_LABEL, "Takes a few seconds; Steam can start again after") };
+    let (label, detail) = if steam_closed { (UPDATE_NOW_LABEL, "Your Steam shortcuts list is backed up first") } else { (CLOSE_LABEL, "Takes a few seconds; Steam can start again after") };
     p.options = vec![
         option(label, detail, CloseAction::CloseSteam, true),
         option("Not now", "They keep waiting. Settings > Add to Steam has them.", CloseAction::NotNow, false),
@@ -429,7 +429,7 @@ pub fn result_page_for(outcome: &QueueApplyOutcome, closed_by_us: bool, steam_up
         let waiting = outcome.remaining.len();
         p.paragraphs = vec![
             if waiting > 0 { format!("{} {} still waiting: Details says why.", changes(waiting), are(waiting)) } else { "The Steam changes could not be read: Details says why.".to_string() },
-            "Your Steam shortcut list was not changed by this.".to_string(),
+            "Your Steam shortcuts list was not changed by this.".to_string(),
         ];
         if outcome.done > 0 {
             p.paragraphs[1] = format!("{} made before that.", if outcome.done == 1 { "1 change was".to_string() } else { format!("{} changes were", outcome.done) });
@@ -442,7 +442,7 @@ pub fn result_page_for(outcome: &QueueApplyOutcome, closed_by_us: bool, steam_up
             p.facts.push(format!("{} already up to date.", if outcome.already == 1 { "1 was".to_string() } else { format!("{} were", outcome.already) }));
         }
         if outcome.wrote {
-            p.facts.push("Your old shortcut list was backed up first.".to_string());
+            p.facts.push("Your Steam shortcuts list was backed up first.".to_string());
         }
         if outcome.done > 0 {
             p.paragraphs = vec![made_line(kinds).to_string()];

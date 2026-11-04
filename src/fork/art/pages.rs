@@ -85,6 +85,8 @@ pub fn plain_problem(raw: &str) -> String {
         "could not reach the site".to_string()
     } else if lower.contains("busy") || lower.contains("limit") || lower.contains("429") || lower.contains("quota") {
         "the site was too busy".to_string()
+    } else if lower.contains("download") {
+        "a picture could not be downloaded".to_string()
     } else {
         "the site sent an answer the app did not expect".to_string()
     }
@@ -238,10 +240,11 @@ impl KeyField {
 /// The text box page. `saved` says what is saved now ("ending in 0000", or just that there is one), never the value;
 /// `text` is what the box holds (kept after a refusal, so a long paste is not lost); `problem` is why the last Save was
 /// refused, in plain words.
-pub fn key_page(field: KeyField, saved: Option<Option<String>>, text: &str, problem: Option<&str>) -> Page<ArtAct> {
+pub fn key_page(field: KeyField, saved: Option<Option<String>>, text: &str, problem: Option<&str>, game_mode: bool) -> Page<ArtAct> {
     let (title, what) = field.words();
     let mut p = base(&format!("{}: enter", window_of(field.source())), &title);
-    p.paragraphs.push(format!("Paste or type {what}, then choose Save. Steam + X brings up the keyboard."));
+    let keyboard = if game_mode { " Steam + X brings up the keyboard." } else { "" };
+    p.paragraphs.push(format!("Paste or type {what}, then choose Save.{keyboard}"));
     match &saved {
         Some(Some(t)) => p.fact(Mark::Done, format!("One is saved now, ending in {t}")),
         Some(None) => p.fact(Mark::Done, "One is saved now"),
@@ -250,7 +253,7 @@ pub fn key_page(field: KeyField, saved: Option<Option<String>>, text: &str, prob
     if let Some(why) = problem {
         p.fact(Mark::Problem, format!("Not saved: {why}"));
     }
-    p.input = Some(InputBox { placeholder: format!("Type {what} here"), text: text.to_string(), password: field == KeyField::Password });
+    p.input = Some(InputBox { placeholder: format!("Type {what} here"), text: text.to_string(), password: field != KeyField::User });
     p.options.push(PageOption { recommended: true, ..option("Save", "", ArtAct::Save) });
     if saved.is_some() {
         let remove = match field {
@@ -262,6 +265,8 @@ pub fn key_page(field: KeyField, saved: Option<Option<String>>, text: &str, prob
     }
     p.options.push(option("Cancel", "Keep what is saved", ArtAct::Cancel));
     p.initial = Focus::Input;
+    // Back in the text box every time, never on Save.
+    p.fresh_focus = true;
     p.b_does(&ArtAct::Cancel)
 }
 
@@ -285,6 +290,7 @@ pub fn remove_page(field: KeyField) -> Page<ArtAct> {
     p.paragraphs.push(format!("The {} {thing} is removed from this Deck. Artwork already fetched stays.", field.source().label()));
     p.options = vec![option("No, keep it", "", ArtAct::RemoveNo), option("Yes, remove it", "", ArtAct::RemoveYes)];
     p.initial = Focus::Option(0);
+    p.fresh_focus = true;
     p.b_does(&ArtAct::RemoveNo)
 }
 
@@ -375,6 +381,16 @@ pub fn lookalike_list_page(groups: &[LookAlikes]) -> Page<ArtAct> {
     p
 }
 
+/// What the site says about a look-alike: the year it came out, and whether the site checked the entry itself.
+pub fn lookalike_detail(c: &PendingChoice) -> String {
+    match (c.year, c.verified) {
+        (Some(y), Some(true)) => format!("Released {y}, checked by the site"),
+        (Some(y), _) => format!("Released {y}"),
+        (None, Some(true)) => "Checked by the site".to_string(),
+        _ => "No more details from the site".to_string(),
+    }
+}
+
 /// One port's look-alikes: one option per match, "None of these" last.
 pub fn lookalike_page(group: &LookAlikes) -> Page<ArtAct> {
     let mut p = base(&format!("{TITLE}: look-alike"), &format!("Which one is {}?", ellipsize(&group.port_name, 26)));
@@ -384,7 +400,7 @@ pub fn lookalike_page(group: &LookAlikes) -> Page<ArtAct> {
         group.port_name
     ));
     for (i, c) in group.choices.iter().enumerate() {
-        p.options.push(option(ellipsize(&c.name, 40), format!("{} entry {}", group.source.label(), c.id), ArtAct::Pick(i)));
+        p.options.push(option(ellipsize(&c.name, 40), lookalike_detail(c), ArtAct::Pick(i)));
     }
     p.options.push(option("None of these", "Decide later; nothing is changed", ArtAct::NoneOfThese));
     p.initial = Focus::Option(0);
@@ -451,6 +467,15 @@ fn found_sentence(s: &FetchSummary) -> String {
     }
 }
 
+/// A fetch problem in plain words: "SteamGridDB: could not reach the site". One that names no source is the app's own
+/// sentence and is shown as it is.
+fn plain_fetch_problem(raw: &str) -> String {
+    match raw.split_once(": ") {
+        Some((site, rest)) if SourceId::ALL.iter().any(|s| s.label() == site) => format!("{site}: {}", plain_problem(rest)),
+        _ => raw.to_string(),
+    }
+}
+
 /// When it is over: what was looked at, what was found, the problems, and where the pictures go next.
 pub fn fetched_page(s: &FetchSummary) -> Page<ArtAct> {
     let title = if s.stopped {
@@ -466,13 +491,20 @@ pub fn fetched_page(s: &FetchSummary) -> Page<ArtAct> {
     let ports = many(s.total, "installed port", "installed ports");
     p.paragraphs.push(if s.stopped { format!("Stopped after {} of your {ports}. What was fetched is kept.", s.looked_up) } else { format!("Looked at {} of your {ports}.", s.looked_up) });
     p.paragraphs.push(found_sentence(s));
+    let mut shown: Vec<String> = Vec::new();
     for problem in s.problems.iter().take(MAX_PROBLEMS) {
-        p.fact(Mark::Problem, ellipsize(problem, 66));
+        let line = plain_fetch_problem(problem);
+        if !shown.contains(&line) {
+            p.fact(Mark::Problem, ellipsize(&line, 66));
+            shown.push(line);
+        }
     }
     if s.problems.iter().any(|p| p.contains("offline")) {
         p.paragraphs.push("Try again when the Deck is online; nothing that was fetched is lost.".to_string());
     }
-    p.paragraphs.push("Add to Steam puts this artwork on the ports it adds. Artwork you chose yourself is never replaced.".to_string());
+    if s.found.values().any(|n| *n > 0) {
+        p.paragraphs.push("Add to Steam puts this artwork on the ports it adds. Artwork you chose yourself is never replaced.".to_string());
+    }
     done_option(p, "Done")
 }
 
@@ -514,7 +546,7 @@ mod tests {
 
     fn group(n: usize) -> LookAlikes {
         let choices = (0..n)
-            .map(|i| PendingChoice { port_key: "k".into(), port_name: LONG.into(), folder: "z".into(), source: SourceId::SteamGridDb, id: 42 + i as u64, name: format!("{LONG} edition {i}") })
+            .map(|i| PendingChoice { port_key: "k".into(), port_name: LONG.into(), folder: "z".into(), source: SourceId::SteamGridDb, id: 42 + i as u64, name: format!("{LONG} edition {i}"), year: Some(1995 + i as i32), verified: Some(i == 0) })
             .collect();
         LookAlikes { port_key: "k".into(), port_name: LONG.into(), source: SourceId::SteamGridDb, choices }
     }
@@ -533,8 +565,8 @@ mod tests {
             }
         }
         for f in [KeyField::Key(SourceId::SteamGridDb), KeyField::Key(SourceId::TheGamesDb), KeyField::User, KeyField::Password] {
-            pages.push(key_page(f, Some(Some("0000".into())), "abc", Some(&refused_reason("that does not look like a key"))));
-            pages.push(key_page(f, None, "", None));
+            pages.push(key_page(f, Some(Some("0000".into())), "abc", Some(&refused_reason("that does not look like a key")), true));
+            pages.push(key_page(f, None, "", None, false));
             pages.push(remove_page(f));
         }
         pages.extend([lookalike_list_page(&[group(3), group(2)]), lookalike_page(&group(3)), chosen_page(LONG, LONG, None), chosen_page(LONG, LONG, Some("the drive is full"))]);
@@ -571,11 +603,12 @@ mod tests {
         assert_eq!(sgdb.facts[0], "A key is saved, ending in 0000");
         let short = tail("abcd1234");
         assert_eq!(short, None, "a short value gives nothing away");
-        let k = key_page(KeyField::Key(SourceId::SteamGridDb), Some(None), "", None);
+        let k = key_page(KeyField::Key(SourceId::SteamGridDb), Some(None), "", None, false);
         assert_eq!(k.facts, ["One is saved now"]);
         assert_eq!(k.input.as_ref().map(|i| i.text.as_str()), Some(""), "the box starts empty, never with the saved key");
-        assert!(key_page(KeyField::Password, None, "", None).input.unwrap().password, "a password is typed as dots");
-        assert!(!key_page(KeyField::User, None, "", None).input.unwrap().password);
+        assert!(key_page(KeyField::Password, None, "", None, false).input.unwrap().password, "a password is typed as dots");
+        assert!(key_page(KeyField::Key(SourceId::SteamGridDb), None, "", None, false).input.unwrap().password, "so is a key");
+        assert!(!key_page(KeyField::User, None, "", None, false).input.unwrap().password, "a user name is not");
     }
 
     #[test]
@@ -637,19 +670,22 @@ mod tests {
 
     #[test]
     fn the_key_page_has_save_remove_cancel_and_remove_asks_with_no_first() {
-        let k = key_page(KeyField::Key(SourceId::SteamGridDb), Some(Some("0000".into())), "", None);
+        let k = key_page(KeyField::Key(SourceId::SteamGridDb), Some(Some("0000".into())), "", None, false);
+        assert_eq!(k.paragraphs[0], "Paste or type the key, then choose Save.", "the keyboard is named only in Game Mode");
+        assert!(key_page(KeyField::User, None, "", None, true).paragraphs[0].ends_with("Steam + X brings up the keyboard."));
         let titles: Vec<&str> = k.options.iter().map(|o| o.title.as_str()).collect();
         assert_eq!(titles, ["Save", "Remove the saved key", "Cancel"]);
         assert_eq!(k.initial, Focus::Input);
         assert_eq!(k.back_hint, "Cancel");
-        let none = key_page(KeyField::Key(SourceId::SteamGridDb), None, "", None);
+        let none = key_page(KeyField::Key(SourceId::SteamGridDb), None, "", None, false);
         assert_eq!(none.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["Save", "Cancel"], "nothing saved: nothing to remove");
-        let kept = key_page(KeyField::Key(SourceId::SteamGridDb), None, "abc", Some("that does not look right"));
+        let kept = key_page(KeyField::Key(SourceId::SteamGridDb), None, "abc", Some("that does not look right"), false);
         assert_eq!(kept.input.unwrap().text, "abc", "the text survives a refusal");
         assert_eq!(kept.facts, ["Not saved: that does not look right"]);
         let r = remove_page(KeyField::Key(SourceId::SteamGridDb));
         assert_eq!(r.options.iter().map(|o| o.action).collect::<Vec<_>>(), [ArtAct::RemoveNo, ArtAct::RemoveYes]);
         assert_eq!(action_at(&r, initial_focus(&r)), Some(ArtAct::RemoveNo));
+        assert!(r.fresh_focus && k.fresh_focus, "No (and the text box) every time");
         assert_eq!(r.back_hint, "No, keep it");
     }
 
@@ -680,9 +716,9 @@ mod tests {
     #[test]
     fn look_alikes_are_a_choice_page_with_none_of_these_last_and_no_hand_editing() {
         let choices = vec![
-            PendingChoice { port_key: "a".into(), port_name: "Doom".into(), folder: "doom".into(), source: SourceId::SteamGridDb, id: 42, name: "Doom II".into() },
-            PendingChoice { port_key: "a".into(), port_name: "Doom".into(), folder: "doom".into(), source: SourceId::SteamGridDb, id: 43, name: "Doom 64".into() },
-            PendingChoice { port_key: "b".into(), port_name: "Quake".into(), folder: "q".into(), source: SourceId::TheGamesDb, id: 7, name: "Quake II".into() },
+            PendingChoice { port_key: "a".into(), port_name: "Doom".into(), folder: "doom".into(), source: SourceId::SteamGridDb, id: 42, name: "Doom II".into(), year: Some(1994), verified: Some(true) },
+            PendingChoice { port_key: "a".into(), port_name: "Doom".into(), folder: "doom".into(), source: SourceId::SteamGridDb, id: 43, name: "Doom 64".into(), year: Some(1997), verified: Some(false) },
+            PendingChoice { port_key: "b".into(), port_name: "Quake".into(), folder: "q".into(), source: SourceId::TheGamesDb, id: 7, name: "Quake II".into(), year: None, verified: None },
         ];
         let groups = group_lookalikes(&choices);
         assert_eq!(groups.len(), 2);
@@ -690,7 +726,10 @@ mod tests {
         let p = lookalike_page(&groups[0]);
         assert_eq!(p.title, "Which one is Doom?");
         let opts: Vec<(&str, &str)> = p.options.iter().map(|o| (o.title.as_str(), o.detail.as_str())).collect();
-        assert_eq!(opts, [("Doom II", "SteamGridDB entry 42"), ("Doom 64", "SteamGridDB entry 43"), ("None of these", "Decide later; nothing is changed")]);
+        assert_eq!(opts, [("Doom II", "Released 1994, checked by the site"), ("Doom 64", "Released 1997"), ("None of these", "Decide later; nothing is changed")]);
+        assert_eq!(lookalike_detail(&groups[1].choices[0]), "No more details from the site");
+        let all = shown(&p).join(" ");
+        assert!(!all.contains("entry") && !all.contains("42"), "no ids: {all}");
         assert_eq!(p.back_hint, "None of these");
         let list = lookalike_list_page(&groups);
         assert_eq!(list.options[0].detail, "2 close matches from SteamGridDB");
@@ -720,6 +759,9 @@ mod tests {
         off.problems.push("SteamGridDB: offline (could not connect)".into());
         let o = fetched_page(&off);
         assert_eq!(o.title, "No artwork could be fetched");
+        assert_eq!(o.facts, ["SteamGridDB: could not reach the site"], "plain words, not the raw error");
+        assert!(!o.paragraphs.iter().any(|t| t.starts_with("Add to Steam puts")), "nothing found: no word about placing it");
+        assert!(d.paragraphs.iter().any(|t| t.starts_with("Add to Steam puts")), "something found: where it goes next");
         assert!(o.paragraphs.iter().any(|t| t.contains("Try again when the Deck is online")));
         assert_eq!(o.mark_of(0), Mark::Problem);
         assert_eq!(fetched_page(&FetchSummary { looked_up: 2, total: 2, ..FetchSummary::default() }).paragraphs[1], "No new pictures were found.");

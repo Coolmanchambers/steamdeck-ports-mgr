@@ -395,26 +395,31 @@ impl Run<'_, '_> {
             return None;
         }
         let name = self.req.name;
-        let found: Vec<(u64, String, Confidence)> = match src {
+        // (id, name, confidence, release year, checked by the site)
+        let found: Vec<(u64, String, Confidence, Option<i32>, Option<bool>)> = match src {
             SourceId::SteamGridDb => {
                 let games = self.call(src, self.sgdb.as_ref()?.search(name))?;
-                sgdb::ranked(name, &games).into_iter().map(|(g, c)| (g.id, g.name.clone(), c)).collect()
+                sgdb::ranked(name, &games).into_iter().map(|(g, c)| (g.id, g.name.clone(), c, g.year, Some(g.verified))).collect()
             }
             SourceId::TheGamesDb => {
                 let games = self.call(src, self.tgdb.as_ref()?.search(name))?;
-                tgdb::ranked(name, &games).into_iter().map(|(g, c)| (g.id, g.title, c)).collect()
+                tgdb::ranked(name, &games).into_iter().map(|(g, c)| (g.id, g.title, c, g.year, None)).collect()
             }
             SourceId::ScreenScraper => return None,
         };
         let now = self.now();
         let mut ids = self.s.ids.borrow_mut();
         match found.first() {
-            Some((id, title, conf)) if conf.is_silent() => {
+            Some((id, title, conf, _, _)) if conf.is_silent() => {
                 ids.set_found(key, src, IdEntry { id: *id, name: title.clone(), origin: IdOrigin::Search, confidence: *conf }, now);
                 Some(*id)
             }
             Some(_) => {
-                let candidates: Vec<Pending> = found.iter().filter(|(_, _, c)| *c >= Confidence::Medium).map(|(id, n, c)| Pending { id: *id, name: n.clone(), confidence: *c }).collect();
+                let candidates: Vec<Pending> = found
+                    .iter()
+                    .filter(|(_, _, c, _, _)| *c >= Confidence::Medium)
+                    .map(|(id, n, c, year, verified)| Pending { id: *id, name: n.clone(), confidence: *c, year: *year, verified: *verified })
+                    .collect();
                 if let Some(first) = candidates.first() {
                     self.note(format!(
                         "{}: \"{}\" looks like \"{}\" but is not the same title, so it is not used. Set {} for this port in ports.local.json to choose it.",

@@ -87,8 +87,8 @@ msgstr "پیش‌فرض (سیستم)"
 msgid "Ask every time (default)"
 msgstr "هر بار بپرس (پیش‌فرض)"
 
-msgid "Exit Ports Launcher"
-msgstr "خروج از Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "خروج از Deck Ports Manager"
 
 msgid "Settings"
 msgstr "تنظیمات"

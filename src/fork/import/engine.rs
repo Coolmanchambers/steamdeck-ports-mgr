@@ -201,7 +201,7 @@ fn steam_clause(steam: &SteamResult) -> String {
     match steam {
         SteamResult::NoShortcut => String::new(),
         SteamResult::Repointed(c) => format!("; {} repointed", n(*c)),
-        SteamResult::Queued(c) => format!("; {} queued for Desktop Mode", n(*c)),
+        SteamResult::Queued(c) => format!("; {} waiting for Desktop Mode", n(*c)),
         SteamResult::Failed(e) => format!("; Steam shortcut problem: {e}"),
     }
 }
@@ -210,7 +210,7 @@ fn would_steam_clause(plan: &PortPlan) -> String {
     match (plan.steam.len(), plan.steam_write) {
         (0, _) => String::new(),
         (n, SteamWrite::Now) => format!("; {n} Steam shortcut{} would be repointed", if n == 1 { "" } else { "s" }),
-        (n, SteamWrite::Queued) => format!("; {n} Steam shortcut change{} would be queued", if n == 1 { "" } else { "s" }),
+        (n, SteamWrite::Queued) => format!("; {n} Steam shortcut change{} would wait for Desktop Mode", if n == 1 { "" } else { "s" }),
     }
 }
 
@@ -359,7 +359,7 @@ impl ImportSummary {
                 parts.push(format!("{repointed} repointed"));
             }
             if queued > 0 {
-                parts.push(format!("{queued} queued for Desktop Mode"));
+                parts.push(format!("{queued} waiting for Desktop Mode"));
             }
             if failed > 0 {
                 parts.push(format!("{failed} failed"));
@@ -561,9 +561,9 @@ mod tests {
         assert_eq!(summary.title(), "Import finished");
         assert!(text.starts_with("Moved 1 of 2 ports."), "{text}");
         assert!(text.contains("Old folder from this import: 1 (8 KB). Nothing is removed unless you choose to remove it;"), "{text}");
-        assert!(text.contains("Steam shortcuts: 1 queued for Desktop Mode."), "{text}");
+        assert!(text.contains("Steam shortcuts: 1 waiting for Desktop Mode."), "{text}");
         assert!(text.contains("1 port had a problem (listed below)."), "{text}");
-        assert!(text.contains("Ship of Harkinian: moved (from ~/Applications/SoH, 8 KB); 1 Steam shortcut queued for Desktop Mode"), "{text}");
+        assert!(text.contains("Ship of Harkinian: moved (from ~/Applications/SoH, 8 KB); 1 Steam shortcut waiting for Desktop Mode"), "{text}");
         assert!(text.contains("\nShip of Harkinian:\nSteam: queued until Desktop Mode."), "{text}");
         assert!(text.contains("Dusklight: problem, the copy failed a check"), "{text}");
     }

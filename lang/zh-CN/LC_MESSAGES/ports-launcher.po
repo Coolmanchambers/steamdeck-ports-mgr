@@ -87,8 +87,8 @@ msgstr "默认（系统）"
 msgid "Ask every time (default)"
 msgstr "每次询问（默认）"
 
-msgid "Exit Ports Launcher"
-msgstr "退出 Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "退出 Deck Ports Manager"
 
 msgid "Settings"
 msgstr "设置"

@@ -87,8 +87,8 @@ msgstr "افتراضي (النظام)"
 msgid "Ask every time (default)"
 msgstr "السؤال في كل مرة (افتراضي)"
 
-msgid "Exit Ports Launcher"
-msgstr "إنهاء Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "إنهاء Deck Ports Manager"
 
 msgid "Settings"
 msgstr "الإعدادات"

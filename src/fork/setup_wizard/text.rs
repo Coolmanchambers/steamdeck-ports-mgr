@@ -301,7 +301,7 @@ fn update_now_options(p: &mut Page, info: &super::steam::Info, waiting: usize) {
     p.title = "Update Steam now?".to_string();
     p.paragraphs = vec![
         if info.immediate { format!("{} waiting. Steam is closed, so they can be made now.", changes_word(waiting)) } else { format!("{} waiting for Steam to close.", changes_word(waiting)) },
-        "Only Steam's shortcut list changes; your games and saves are not touched.".to_string(),
+        "Only your Steam shortcuts list changes; your games and saves are not touched.".to_string(),
     ];
     let label = if info.immediate { "Update Steam shortcuts now" } else { crate::fork::steam_close::CLOSE_LABEL };
     p.options = vec![recommended(label, "Takes a few seconds", Action::CloseSteam), option("Continue", "They keep waiting until Steam is closed", Action::Next)];
@@ -319,11 +319,11 @@ fn add_all_options(p: &mut Page, info: &super::steam::Info) {
         p.paragraphs = vec![
             format!("{} can be added. They start from Game Mode, with cover art.", if n == 1 { "1 port".to_string() } else { format!("{n} ports") }),
             if info.immediate {
-                "Steam is closed, so they are added now. Your Steam shortcut list is backed up first.".to_string()
+                "Steam is closed, so they are added now. Your Steam shortcuts list is backed up first.".to_string()
             } else if info.game_mode {
-                "Steam is running, so they are queued and added next time you are in Desktop Mode with Steam closed.".to_string()
+                "Steam is running, so they wait and are added next time you are in Desktop Mode with Steam closed.".to_string()
             } else {
-                "Steam is running, so they are queued first; then this app can close Steam to add them.".to_string()
+                "Steam is running, so they wait first; then this app can close Steam to add them.".to_string()
             },
         ];
         p.options = vec![
@@ -339,8 +339,8 @@ fn steam_line(w: &Wizard, ctx: &Context) -> (Mark, String) {
     let s = &w.summary;
     let waiting = ctx.steam.as_ref().map_or(0, |i| i.waiting);
     match &s.steam {
-        Some(SteamOutcome::Queued { count, game_mode: true }) => (Mark::Waiting, format!("{} queued for Desktop Mode.", ports_word(*count))),
-        Some(SteamOutcome::Queued { count, game_mode: false }) => (Mark::Waiting, format!("{} queued until Steam is closed.", ports_word(*count))),
+        Some(SteamOutcome::Queued { count, game_mode: true }) => (Mark::Waiting, format!("{} waiting for Desktop Mode.", ports_word(*count))),
+        Some(SteamOutcome::Queued { count, game_mode: false }) => (Mark::Waiting, format!("{} waiting until Steam is closed.", ports_word(*count))),
         Some(SteamOutcome::Applied(n)) => (Mark::Done, format!("Steam: {} made.{}", if *n == 1 { "1 change".to_string() } else { format!("{n} changes") }, if s.steam_started { " Steam is starting again." } else { "" })),
         // Added now, while other changes still wait for Steam to close.
         Some(SteamOutcome::Added(n)) if waiting > 0 => (Mark::Waiting, format!("{} added to Steam; {} waiting for Steam to close.", ports_word(*n), waiting)),
@@ -845,7 +845,7 @@ mod tests {
     fn with_steam_running_the_page_says_the_ports_are_queued() {
         let p = page_for(&at(Step::Steam), &steam_ctx(crate::fork::setup_wizard::steam::Info { game_mode: true, ..info(3, false) }));
         let t = all_text(&p);
-        assert!(t.contains("Steam is running, so they are queued") && t.contains("Desktop Mode with Steam closed"), "{t}");
+        assert!(t.contains("Steam is running, so they wait") && t.contains("Desktop Mode with Steam closed"), "{t}");
         assert!(!t.contains("added now"));
     }
 
@@ -884,8 +884,8 @@ mod tests {
         };
         assert_eq!(say(Some(SteamOutcome::Added(4)), false, 4), "4 ports added to Steam.");
         assert_eq!(say(Some(SteamOutcome::Added(1)), false, 1), "1 port added to Steam.");
-        assert_eq!(say(Some(SteamOutcome::Queued { count: 3, game_mode: true }), false, 3), "3 ports queued for Desktop Mode.");
-        assert_eq!(say(Some(SteamOutcome::Queued { count: 2, game_mode: false }), false, 2), "2 ports queued until Steam is closed.");
+        assert_eq!(say(Some(SteamOutcome::Queued { count: 3, game_mode: true }), false, 3), "3 ports waiting for Desktop Mode.");
+        assert_eq!(say(Some(SteamOutcome::Queued { count: 2, game_mode: false }), false, 2), "2 ports waiting until Steam is closed.");
         assert_eq!(say(None, true, 2), "Steam: skipped.");
         assert_eq!(say(None, false, 0), "Steam: nothing to add.");
         assert_eq!(say(None, false, 2), "Steam: not set up yet.");
@@ -1163,7 +1163,7 @@ mod tests {
     fn with_steam_running_in_desktop_mode_add_all_says_steam_can_be_closed_next() {
         use crate::fork::setup_wizard::steam::Info;
         let t = all_text(&page_for(&at(Step::Steam), &steam_ctx(Info { to_add: 2, ..Default::default() })));
-        assert!(t.contains("queued first; then this app can close Steam"), "{t}");
+        assert!(t.contains("wait first; then this app can close Steam"), "{t}");
         let t = all_text(&page_for(&at(Step::Steam), &steam_ctx(Info { to_add: 2, game_mode: true, ..Default::default() })));
         assert!(t.contains("Desktop Mode with Steam closed"), "{t}");
     }

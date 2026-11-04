@@ -87,8 +87,8 @@ msgstr "Domyślny (systemowy)"
 msgid "Ask every time (default)"
 msgstr "Pytaj za każdym razem (domyślnie)"
 
-msgid "Exit Ports Launcher"
-msgstr "Zamknij Ports Launcher"
+msgid "Exit Deck Ports Manager"
+msgstr "Zamknij Deck Ports Manager"
 
 msgid "Settings"
 msgstr "Ustawienia"

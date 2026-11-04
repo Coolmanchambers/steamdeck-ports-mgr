@@ -47,6 +47,9 @@ pub struct PendingChoice {
     pub source: SourceId,
     pub id: u64,
     pub name: String,
+    /// The year the site says it came out, and whether the site checked the entry itself (when it says).
+    pub year: Option<i32>,
+    pub verified: Option<bool>,
 }
 
 impl PendingChoice {
@@ -173,6 +176,8 @@ impl ArtScreen {
                     source: src,
                     id: c.id,
                     name: c.name.clone(),
+                    year: c.year,
+                    verified: c.verified,
                 });
             }
         }
@@ -436,7 +441,7 @@ mod tests {
         assert!(ArtScreen::pending_choices(&cache).is_empty());
         let mut table = IdTable::load(&ArtCache::new(&cache).ids_path());
         table.set_identity("owner/port", "Doom", "doom-port");
-        table.set_pending("owner/port", SourceId::SteamGridDb, vec![super::super::cache::Pending { id: 42, name: "Doom II".into(), confidence: super::super::title::Confidence::Medium }], 1);
+        table.set_pending("owner/port", SourceId::SteamGridDb, vec![super::super::cache::Pending { id: 42, name: "Doom II".into(), confidence: super::super::title::Confidence::Medium, year: Some(1994), verified: Some(true) }], 1);
         table.save().unwrap();
         let choices = ArtScreen::pending_choices(&cache);
         assert_eq!(choices.len(), 1);

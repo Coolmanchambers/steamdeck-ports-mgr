@@ -661,7 +661,7 @@ fn steam_icons(f: &Facts) -> Outcome {
             }
         }
         return Outcome::Queued {
-            summary: format!("Queued: finishes when Steam closes ({})", names(&ports)),
+            summary: format!("Waiting: finishes when Steam closes ({})", names(&ports)),
             fix_label: if f.game_mode { "See how to finish this" } else { "Close Steam and update shortcuts" }.to_string(),
             desktop_only: f.game_mode,
         };
@@ -720,7 +720,7 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
         }
         if !waiting.is_empty() {
             return Outcome::Queued {
-                summary: format!("Queued: finishes when Steam closes ({})", names(&waiting)),
+                summary: format!("Waiting: finishes when Steam closes ({})", names(&waiting)),
                 fix_label: if f.game_mode { "See how to finish this" } else { "Close Steam and update shortcuts" }.to_string(),
                 desktop_only: f.game_mode,
             };
