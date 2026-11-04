@@ -18,8 +18,9 @@ export global FocusLook {
     out property <bool> light: (Theme.list-background.red + Theme.list-background.green + Theme.list-background.blue) > 3 * 150;
     out property <color> ring: FocusLook.light ? Theme.list-text : SemanticColors.selection-border;
     out property <color> fill: FocusLook.light ? Theme.list-background.darker(0.15) : Theme.list-background.brighter(0.5);
-    // The accent, dark enough for white text to read at 7 inches (about 5:1 on the default theme).
-    out property <color> accent: SemanticColors.info.darker(0.6);
+    // The accent is the info fill itself: since the theme quick wins it is dark enough for white text on its
+    // own (5.3:1 on the default theme, checked by a test in src/ui/theme.rs).
+    out property <color> accent: SemanticColors.info;
 }
 
 // The ring itself, laid over the item it marks.
@@ -107,10 +108,10 @@ export component StatusIcon inherits Rectangle {
     height: 20px;
     border-radius: self.width / 2;
     background: root.mark == 1 ? SemanticColors.success
-        : root.mark == 2 ? SemanticColors.info.darker(0.3)
+        : root.mark == 2 ? SemanticColors.info
         : root.mark == 3 ? SemanticColors.warning
         : root.mark == 5 ? SemanticColors.danger
-        : Theme.search-text;
+        : Theme.border-color;
     // Done: a check.
     if root.mark == 1: Path {
         width: 100%;
@@ -368,7 +369,8 @@ component OptionRow inherits Rectangle {
         text: root.title;
         color: root.text-color;
         font-size: root.font-size;
-        font-weight: root.kind == 1 && root.chosen ? 700 : 400;
+        // Bolder titles so the option name leads; the chosen choice is bolder still.
+        font-weight: root.kind == 1 && root.chosen ? 700 : 600;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -379,7 +381,6 @@ component OptionRow inherits Rectangle {
         height: root.height * 0.4;
         text: root.detail;
         color: root.text-color;
-        opacity: 0.75;
         font-size: root.font-size * 0.85;
         vertical-alignment: center;
         overflow: elide;
@@ -1088,7 +1089,7 @@ export component SetupWizardDialog inherits Window {
                     height: parent.height;
                     text: root.hint-text;
                     color: Theme.list-text;
-                    font-size: root.item-font-px * 0.95;
+                    font-size: root.item-font-px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     overflow: elide;

@@ -120,7 +120,7 @@ export component DeckReadyList inherits Rectangle {
     callback row-options(int);
     callback filters-requested();
 
-    property <length> small-font: root.item-font-px * 0.85;
+    property <length> small-font: root.item-font-px * 0.95;
     property <length> line-height: root.row-height * 1.3;
     property <length> chip-height: root.small-font * 1.7;
     property <length> button-height: root.line-height - root.spacing * 2;
@@ -270,7 +270,6 @@ export component DeckReadyList inherits Rectangle {
                         Text {
                             text: item.sub;
                             color: row.selected ? Theme.selected-text : Theme.list-text;
-                            opacity: 0.85;
                             font-size: root.small-font;
                             overflow: elide;
                         }

@@ -1,11 +1,14 @@
+// Fork: the defaults below are the fork's "arc-dark" (darker neutral surfaces, brighter secondary text) and its
+// darker filled action colours (white labels read at 4.5:1 or better). They mirror src/ui/theme.rs; a test keeps
+// the two in step.
 export global Theme {
-    in-out property <color> search-background: #404552;
-    in-out property <color> search-text: #7c818c;
-    in-out property <color> list-background: #383c4a;
-    in-out property <color> list-text: #d3dae3;
+    in-out property <color> search-background: #272e38;
+    in-out property <color> search-text: #b8c3d1;
+    in-out property <color> list-background: #191f27;
+    in-out property <color> list-text: #edf2f7;
     in-out property <color> selected-background: #5294e2;
     in-out property <color> selected-text: #ffffff;
-    in-out property <color> border-color: #4b5162;
+    in-out property <color> border-color: #566273;
     in-out property <int> border-width: 3;
     in-out property <float> scale-factor: 1.0;
     out property <length> title-button-padding: 10px / scale-factor;
@@ -14,15 +17,15 @@ export global Theme {
 export global SemanticColors {
     in-out property <color> selection-border: #ffffff;
     in-out property <color> fallback-text: #d3dae3;
-    in-out property <color> card-background: #383c4a;
-    in-out property <color> success: #78b159;
-    in-out property <color> success-hover: #93c17a;
-    in-out property <color> warning: #f4900c;
-    in-out property <color> warning-hover: #f6a63d;
+    in-out property <color> card-background: #191f27;
+    in-out property <color> success: #3a7a47;
+    in-out property <color> success-hover: #40834c;
+    in-out property <color> warning: #975300;
+    in-out property <color> warning-hover: #a45b00;
     in-out property <color> danger: #dd2e44;
     in-out property <color> danger-hover: #e45869;
-    in-out property <color> info: #55acee;
-    in-out property <color> info-hover: #77bdf1;
+    in-out property <color> info: #2470ab;
+    in-out property <color> info-hover: #2b7bb6;
     in-out property <color> text-on-accent: #ffffff;
     in-out property <color> brand-github: #24292f;
     in-out property <color> brand-github-hover: #32383f;

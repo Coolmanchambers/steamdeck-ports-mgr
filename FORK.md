@@ -349,6 +349,31 @@ Files added by this fork:
 | 2026-11-04 | `src/fork/deck_ready/mod.rs` | Steam, art and settings pages: module line for `pages` |
 | 2026-11-04 | `tools/smoke-test.sh`, `tools/test-app-update.sh` | App name: the main window is found by its new title `^Deck Ports Manager$`; the dialog sweep tells the main window by its id instead of its name. New check: Ctrl+Y in the Deck-ready list opens `Deck-ready: Filters` and B closes it |
 | 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Steam, art and settings review: `Page::fresh_focus`; such a page always starts where it says (`starting_focus` skips the remembered place), so a yes/no question with No first starts on No every time (after "Yes, drop it" the next one is the same page to the window) and the key page starts in its text box |
+| 2026-11-04 | `src/ui/theme.rs` | Theme quick wins: `ThemeColors::FALLBACK` is the fork's "arc-dark" (surfaces `#272e38` / `#191f27`, text `#edf2f7`, secondary `#b8c3d1`, border `#566273`) and `load` lays it over the file's "arc-dark" entry (`FORK_THEME`), since the app refreshes `themes.json` from upstream; `SemanticPalette::default()` fills are darker (success `#3a7a47` / `#40834c`, warning `#975300` / `#a45b00`, info `#2470ab` / `#2b7bb6`) so white labels read at 4.5:1 or better; `FALLBACK` is `pub`. Tests: Rust and `ui/shared.slint` in step, WCAG contrast, the override |
+| 2026-11-04 | `ui/shared.slint` | Theme quick wins: the `Theme` and `SemanticColors` defaults mirror `src/ui/theme.rs` (same values as the row above) |
+| 2026-11-04 | `ui/dialogs/chrome.slint` | Theme quick wins: `DialogButton` draws the selected, enabled button with a 3 px outline in `selected-text` (the fill is unchanged), so the cursor on the old dialogs' buttons reads on the Deck |
+
+## Theme quick wins (Codex review of 2026-11-02, section A)
+
+Eight small changes to the default look, from a read-only Codex review of Tim's Deck photos. The palette lives in
+code (`src/ui/theme.rs`, mirrored in `ui/shared.slint`); `themes.json` is left as upstream ships it because the app
+downloads that file from upstream about every 12 hours, so an edit there would not last on a device.
+1. Darker, neutral surfaces for "arc-dark" (the default theme): `#272e38` title and hint bars, `#191f27` lists and
+   pages, `#edf2f7` text, `#566273` borders. Every other theme in `themes.json` is as before.
+2. Brighter secondary text (`search-text` `#b8c3d1`, was `#7c818c`): placeholders, footnotes, muted lines read at
+   9:1 on the page and 7.7:1 on the bars.
+3. The selected button on the old dialogs (Confirm, pickers, messages) gets a clear 3 px outline.
+4. Darker filled action colours (success, warning, info and their hovers) so white labels read at 4.5:1 or better
+   (danger was already 4.6:1 and is unchanged). The guided pages' accent is now `info` itself (was `info.darker(0.6)`,
+   about the same shade as the new `info`), the "working" status disc is `info` (was darkened) and the "skipped" disc
+   is the border colour (white on the new, brighter `search-text` would not read).
+5. Option descriptions on the guided pages are no longer faded (opacity 0.75 removed).
+6. Option titles are semi-bold (600; the chosen choice stays 700), so the name leads the description.
+7. The hint bar at the bottom of a guided page uses the full item font (was 0.95x).
+8. The Deck-ready list's small text (chips, subtitle, counts) is 0.95x the item font (was 0.85x) and the subtitle is
+   no longer faded.
+A test in `src/ui/theme.rs` fails if the Rust and Slint palettes drift apart, if white on any fill drops under 4.5:1,
+if a fill drops under about 3:1 against the page, or if secondary text drops under 4.5:1.
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -410,7 +435,7 @@ page on screen never loses its A).
   box gets a 4 px ring (`selection-border`, white on the default theme; dark on light themes) and a slightly lighter
   fill; borders never change width, so nothing moves when focus moves. "Recommended" is a small tag at the right of
   the option's title plus an accent edge on its left, never a fill. The primary button and the tag use the accent
-  darkened (`info.darker(0.6)`) so white text reads at about 5:1.
+  (`info`, dark enough since the theme quick wins for white text to read at 5.3:1; before that `info.darker(0.6)`).
 - **Hint bar**: a strip along the bottom of every page, from `fork::page::hints`: "A Choose · B Back · D-pad Move".
   "D-pad Move" only when more than one thing can take focus, "A Choose" only when something can; pages with a text
   box add "Steam + X Keyboard". What B does comes from `Page.back_hint`: `Page::b_does(&action)` takes the label of

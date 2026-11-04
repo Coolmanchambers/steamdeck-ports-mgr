@@ -72,8 +72,10 @@ export component DialogButton inherits Rectangle {
     callback hovered();
 
     background: root.selected && root.enabled ? Theme.selected-background : Theme.list-background;
-    border-width: border-px;
-    border-color: Theme.border-color;
+    // Fork: the selected button gets a clear outline (3px in the selected-text colour), not only a fill, so the
+    // cursor reads on the Deck's screen in every theme.
+    border-width: root.selected && root.enabled ? max(border-px, 3px) : border-px;
+    border-color: root.selected && root.enabled ? Theme.selected-text : Theme.border-color;
     opacity: root.enabled ? 1.0 : 0.4;
 
     TouchArea {
