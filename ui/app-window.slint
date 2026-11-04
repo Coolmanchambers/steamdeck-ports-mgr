@@ -58,7 +58,7 @@ component ActionButton inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    title: "Ports Launcher";
+    title: "Deck Ports Manager"; // Fork (app name): the fork's own name; the tools find the main window by it
     no-frame: true;
     background: Theme.list-background;
 
@@ -272,7 +272,8 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: root.home-mode ? "Ports Launcher  ›  Home" : root.deck-ready-mode ? "Ports Launcher  ›  Deck-ready" : (root.big-mode ? "Ports Launcher      L1 / R1  Lists      " + root.list-back-hint : "Ports Launcher      " + root.list-back-hint);
+                        // Fork (app name): the title line names the fork.
+                        text: root.home-mode ? "Deck Ports Manager  ›  Home" : root.deck-ready-mode ? "Deck Ports Manager  ›  Deck-ready" : (root.big-mode ? "Deck Ports Manager      L1 / R1  Lists      " + root.list-back-hint : "Deck Ports Manager      " + root.list-back-hint);
                         color: Theme.list-text;
                         vertical-alignment: center;
                         font-weight: 700;
@@ -403,6 +404,10 @@ export component AppWindow inherits Window {
                                         } else if (root.home-mode && event.modifiers.control && event.text == "l") {
                                             // Fork (home view): Ctrl+L switches Home between posters and the list (letters alone search).
                                             root.home-view-requested();
+                                            accept
+                                        } else if (root.deck-ready-mode && event.modifiers.control && event.text == "y") {
+                                            // Fork (Deck-ready filters): Ctrl+Y opens Filters, as Y on the pad does.
+                                            root.deck-ready-filters-requested();
                                             accept
                                         } else if (event.text == Key.UpArrow || (event.modifiers.control && event.text == "w")) {
                                             root.move-requested(0, -1);

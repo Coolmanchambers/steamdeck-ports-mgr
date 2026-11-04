@@ -149,7 +149,7 @@ pub fn tray_host_available() -> bool {
 }
 
 pub fn show_startup_error(message: &str) {
-    let title = to_wide("Ports Launcher");
+    let title = to_wide("Deck Ports Manager"); // Fork (app name)
     let text = to_wide(message);
     unsafe {
         MessageBoxW(None, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONERROR);

@@ -301,7 +301,7 @@ fn found_by(entry: &Entry) -> String {
     let mut names: Vec<&str> = Vec::new();
     for s in &entry.sources {
         let name = match s.split(':').next().unwrap_or("") {
-            "catalog" => "Ports Launcher catalog",
+            "catalog" => "the app's port list",
             "recomp_json" => "maintainer's .recomp.json",
             _ => "GitHub topic",
         };
@@ -434,7 +434,7 @@ pub fn confirm_text(entry: &Entry, folder: &str) -> String {
     let mut lines = vec![
         format!("Download: {file}"),
         format!("From: {from}"),
-        format!("Goes into: Library/{folder}"),
+        format!("Goes into: your ports folder, as {folder}"),
         "Your entry: saved in ports.local.json (the old file is backed up). Its button says Open folder, not Uninstall.".to_string(),
         "Game files: not included. Info shows the project page, which says what it needs.".to_string(),
         "Saves: adding and installing never touch saves. The app doesn't know where this port keeps them, so its updates are not backed up first: copy its save folder yourself before an update.".to_string(),
@@ -601,7 +601,7 @@ mod tests {
         let index = index_of(vec![deck, project("l", "linux_build", "game")]);
         let deck_text = confirm_text(&index.entries[0], "d");
         assert!(deck_text.contains("Download: d-SteamDeck.tar.gz (Deck build)"));
-        assert!(deck_text.contains("Goes into: Library/d"));
+        assert!(deck_text.contains("Goes into: your ports folder, as d"));
         assert!(deck_text.contains("turned off"));
         let linux_text = confirm_text(&index.entries[1], "l");
         assert!(linux_text.contains("Download: l-linux-x86_64.tar.gz (Linux build)"));

@@ -5,7 +5,7 @@
 #   - it skipped the tray (no tray host here) instead of letting Slint try and fail;
 #   - its window is mapped and the screenshot is not blank;
 #   - it opens on Home; Tab goes to All ports, then the Deck-ready list without a crash (whether it downloads is only
-#     reported), then Home again;
+#     reported), where Ctrl+Y (Y on the pad) opens its Filters page and B closes it, then Home again;
 #   - Settings is a page of groups (Settings, Settings: Ports ...): Steam > Artwork sources opens its page, A on its first
 #     card opens the SteamGridDB page, B goes back one level to Artwork sources and B again to the Steam page, B goes up to
 #     Settings, Saves > Cloud backup opens its first page and B returns to the Saves page;
@@ -206,7 +206,7 @@ sleep 1
 import -window root "$OUT/fresh-after-skip.png" 2>/dev/null
 check "confirmed Skip setup is remembered" 'grep -qs "\"setup_done\": true" "$FRESH_DIR/fork-settings.json"'
 check "no wizard window is left after Skip setup" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Setup wizard" 2>/dev/null)" ]'
-check "the main window is still there after Skip setup" 'kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Ports Launcher$" >/dev/null 2>&1'
+check "the main window is still there after Skip setup" 'kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Deck Ports Manager$" >/dev/null 2>&1'
 kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
 
 # Walk the whole wizard to Finish: keep the folder, skip Import ports, go on past Steam (the game files page is passed
@@ -240,7 +240,7 @@ check "walking every page reaches the last page ($walked)" '[ "$walked" = yes ]'
 for _ in $(seq 1 50); do grep -qs '"setup_done": true' "$FRESH_DIR/fork-settings.json" && break; sleep 0.2; done
 sleep 1
 check "Finish writes setup_done" 'grep -qs "\"setup_done\": true" "$FRESH_DIR/fork-settings.json"'
-check "the wizard is gone and the main window is there after Finish" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Setup wizard" 2>/dev/null)" ] && kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Ports Launcher$" >/dev/null 2>&1'
+check "the wizard is gone and the main window is there after Finish" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Setup wizard" 2>/dev/null)" ] && kill -0 "$FRESH" 2>/dev/null && xdotool search --onlyvisible --name "^Deck Ports Manager$" >/dev/null 2>&1'
 kill "$FRESH" 2>/dev/null; wait "$FRESH" 2>/dev/null; FRESH=""
 rm -rf "$FRESH_DIR"
 
@@ -261,12 +261,12 @@ check "still running after ${STARTUP_SECONDS}s" '[ "$alive" = yes ]'
 check "no panic" '! grep -q "panicked" "$OUT/app.log"'
 check "skipped the tray (no tray host)" 'grep -q "no system tray here; closing the window quits" "$OUT/app.log"'
 check "Slint was not asked for a tray" '! grep -q "Failed to create system tray icon" "$OUT/app.log"'
-check "window mapped" 'grep -q "\"Ports Launcher\"" "$OUT/windows.txt"'
+check "window mapped" 'grep -q "\"Deck Ports Manager\"" "$OUT/windows.txt"'
 check "screenshot not blank ($colors colours)" '[ "${colors:-0}" -ge 32 ]'
 
 if [ "$alive" = yes ]; then
     # No window manager here, so focus the window directly.
-    win=$(xdotool search --name "^Ports Launcher$" 2>/dev/null | head -1)
+    win=$(xdotool search --name "^Deck Ports Manager$" 2>/dev/null | head -1)
     if [ -n "$win" ]; then
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.5
         # The app opens on Home; Tab goes to All ports (the catalog, one switch away), then the Deck-ready list (it loads
@@ -281,6 +281,16 @@ if [ "$alive" = yes ]; then
         dr_alive=no; kill -0 "$APP" 2>/dev/null && dr_alive=yes
         check "Deck-ready list opens and the app keeps running" '[ "$dr_alive" = yes ] && ! grep -q "panicked" "$OUT/app.log" && grep -q "^list: Deck-ready$" "$OUT/app.log"'
         if [ -f "$APP_DIR/cache/deck-ready.json" ]; then echo "info: Deck-ready list downloaded and saved"; else echo "info: Deck-ready list not saved (no network here?)"; fi
+        # Ctrl+Y (Y on the pad) in the Deck-ready list opens its Filters page; B closes it and the list is still there.
+        xdotool key ctrl+y; sleep 1.5
+        drf=$(xdotool search --name "^Deck Ports Manager: Deck-ready: Filters$" 2>/dev/null | head -1)
+        import -window root "$OUT/deck-ready-filters.png" 2>/dev/null
+        check "Y in the Deck-ready list opens the Filters page" '[ -n "$drf" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
+        if [ -n "$drf" ]; then
+            press_keys "$drf" Escape; sleep 1.5
+            check "B closes the Deck-ready Filters page and the list is still there" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Deck-ready: " 2>/dev/null)" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Deck-ready" ]'
+        fi
+        xdotool windowfocus "$win" 2>/dev/null; sleep 0.4
         xdotool key Tab; sleep 1
         check "the lists go round back to Home" '[ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ]'
         # The plus tile ("Add a port") is the last tile on Home: A opens the Add a port page, B returns to Home.
@@ -290,7 +300,7 @@ if [ "$alive" = yes ]; then
         check "A on the Add a port tile opens the Add a port page" '[ -n "$ap" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log"'
         if [ -n "$ap" ]; then
             press_keys "$ap" Escape; sleep 1.5
-            check "B returns from Add a port to Home" '[ -z "$(xdotool search --name "^Deck Ports Manager: Add a port$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
+            check "B returns from Add a port to Home" '[ -z "$(xdotool search --name "^Deck Ports Manager: Add a port$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager$" 2>/dev/null)" ]'
         fi
         # Home's "Fix N problems" tile: the seeded setup has problems (no Steam here, a game file missing), so the background
         # look put the tile on Home. With nothing played it is the first tile; A opens the checkup, B leaves it.
@@ -305,7 +315,7 @@ if [ "$alive" = yes ]; then
         check "A on Home's Fix problems tile opens the checkup and it looks over the setup" '[ -n "$fp" ] && kill -0 "$APP" 2>/dev/null && ! grep -q "panicked" "$OUT/app.log" && grep -q "^checkup: looked" "$OUT/app.log"'
         if [ -n "$fp" ]; then
             press_keys "$fp" Escape; sleep 1.5
-            check "B leaves the checkup for Home" '[ -z "$(xdotool search --name "^Deck Ports Manager: Fix problems$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
+            check "B leaves the checkup for Home" '[ -z "$(xdotool search --name "^Deck Ports Manager: Fix problems$" 2>/dev/null)" ] && kill -0 "$APP" 2>/dev/null && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager$" 2>/dev/null)" ]'
         fi
         # The Port page: a right-click on a port's tile (the second tile is a port, with or without the Fix tile first) opens
         # it; a card's page opens and B comes back; B on the Port page returns to Home.
@@ -341,7 +351,7 @@ if [ "$alive" = yes ]; then
             fi
             press_keys "$(find_window ': More$')" Escape; sleep 1.2
             press_keys "$(find_window '^Deck Ports Manager: Port: ')" Escape; sleep 1.5
-            check "B on the Port page returns to Home" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Port: " 2>/dev/null)" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -n "$(xdotool search --onlyvisible --name "^Ports Launcher$" 2>/dev/null)" ]'
+            check "B on the Port page returns to Home" '[ -z "$(xdotool search --onlyvisible --name "^Deck Ports Manager: Port: " 2>/dev/null)" ] && [ "$(grep "^list: " "$OUT/app.log" | tail -1)" = "list: Home" ] && [ -n "$(xdotool search --onlyvisible --name "^Deck Ports Manager$" 2>/dev/null)" ]'
         fi
         # The lists' Home button: Add a port > Deck-ready ports, type a search, click "< Home" (top left) -> Home.
         xdotool windowfocus "$win" 2>/dev/null; sleep 0.4; xdotool key --delay 250 Right Right Right Right Right Right Right Return; sleep 1.5
@@ -692,7 +702,7 @@ if [ "$alive" = yes ]; then
             local w name
             for w in $(visible_windows); do
                 name=$(xdotool getwindowname "$w" 2>/dev/null)
-                [ -n "$name" ] && [ "$name" != "Ports Launcher" ] && echo "$w"
+                [ -n "$name" ] && [ "$w" != "$win" ] && echo "$w"
             done
         }
         for _try in 1 2 3; do
@@ -747,7 +757,7 @@ env -i HOME="$BIG_DIR/home" PATH="$PATH" DISPLAY="$DISPLAY" XDG_RUNTIME_DIR="$BI
     "$BIG_DIR/ports_launcher" >"$OUT/app-big.log" 2>&1 &
 BIG=$!
 sleep 8
-bwin=$(xdotool search --name "^Ports Launcher$" 2>/dev/null | head -1)
+bwin=$(xdotool search --name "^Deck Ports Manager$" 2>/dev/null | head -1)
 if [ -n "$bwin" ]; then
     xdotool windowsize "$bwin" 1280 800; sleep 1; xdotool windowfocus "$bwin" 2>/dev/null; sleep 0.4
     eval "$(xdotool getwindowgeometry --shell "$bwin" 2>/dev/null)"

@@ -306,7 +306,7 @@ fn status_notifier_watcher_running() -> Option<bool> {
 
 pub fn show_startup_error(message: &str) {
     use std::process::Command;
-    let title = "Ports Launcher";
+    let title = "Deck Ports Manager"; // Fork (app name)
     let shown = |mut cmd: Command| cmd.status().is_ok_and(|s| s.success());
     if shown({
         let mut c = Command::new("zenity");

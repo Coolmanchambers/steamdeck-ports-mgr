@@ -1,4 +1,4 @@
-use super::dialogs::{open_message_dialog, tr};
+use super::dialogs::open_message_dialog;
 use super::events::{lock, AppEvent};
 use super::state::AppState;
 use crate::core::catalog_sync::{self, CatalogUpdate};
@@ -7,8 +7,6 @@ use crate::core::version::{APP_VERSION, SELF_REPO};
 use crate::fork::self_update;
 use crate::fork::settings::ForkSettings;
 use crate::ui::gamepad_router::GamepadRouter;
-use crate::Tr;
-use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -26,7 +24,11 @@ pub(crate) fn launch_self_update(app: &Rc<AppState>, router: &Rc<RefCell<Gamepad
             state.set_launcher_update_available(false);
             let _ = slint::quit_event_loop();
         }
-        Err(e) => open_message_dialog(app, router, &tr!(app).invoke_dialog_title_update_error(), &e.to_string()),
+        // Fork (steam, art and settings pages): a title that says what happened and a plain sentence; the raw error goes to the log.
+        Err(e) => {
+            eprintln!("self-update: the updater could not be started: {e}");
+            open_message_dialog(app, router, "Could not update the app", "The updater could not be started, so nothing was changed. Try again later, or download the newest version from the project page.");
+        }
     }
 }
 

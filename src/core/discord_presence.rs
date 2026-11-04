@@ -80,14 +80,14 @@ fn start_activity(name: String, details: Option<String>, large_image: Option<Str
             if let Some(connected) = client.as_mut() {
                 let mut assets = Assets::new();
                 if let Some(image_url) = large_image.as_deref() {
-                    assets = assets.large_image(image_url).large_text(&name).small_image(SMALL_IMAGE_KEY).small_text("Ports Launcher");
+                    assets = assets.large_image(image_url).large_text(&name).small_image(SMALL_IMAGE_KEY).small_text("Deck Ports Manager"); // Fork (app name)
                 }
                 let mut activity = Activity::new()
                     .activity_type(ActivityType::Playing)
                     .name(&name)
                     .timestamps(Timestamps::new().start(started_at))
                     .assets(assets)
-                    .buttons(vec![Button::new("Ports Launcher", PROJECT_URL)]);
+                    .buttons(vec![Button::new("Deck Ports Manager", PROJECT_URL)]);
                 if let Some(details) = details.as_deref() {
                     activity = activity.details(details);
                 }

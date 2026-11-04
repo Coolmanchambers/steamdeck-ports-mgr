@@ -6,28 +6,24 @@
 //! Ports the app already has go through the normal install and launch flow; an entry it doesn't have is
 //! first added to `ports.local.json` as the user's own entry. The text is English only.
 
-use super::dialogs::{
-    build_deck_ready_info_dialog, build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, open_message_dialog, open_picker_dialog,
-    set_picker_items, DialogSlot,
-};
+use super::dialogs::{close_current_dialog, dialog_is_open, open_message_dialog};
+use super::page_dialog::{show_page, Handlers};
+use crate::fork::deck_ready::pages::{self, DrAct};
 use super::events::{lock, AppEvent};
 use super::install_launch::activate_port;
 use super::state::AppState;
-use crate::core::launch::open_url;
 use crate::fork::deck_ready::index::{Host, Index};
 use crate::fork::deck_ready::sync::{self, Meta, Outcome};
 use crate::fork::deck_ready::view::{self, Action, Filters, KnownPort, Row, TagKind};
 use crate::fork::deck_ready::entry;
 use crate::ui::gamepad_router::GamepadRouter;
 use crate::{AppWindow, DeckReadyInfoDialog, DeckReadyRow, DeckReadyTag};
-use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 type Router = Rc<RefCell<GamepadRouter>>;
 
 const PAGE_ROWS: i32 = 10;
-const FILTERS_TITLE: &str = "Deck-ready filters";
 
 #[derive(Default)]
 pub(crate) struct DeckReadyUi {
@@ -327,13 +323,13 @@ fn folder_taken(app: &AppState, folder: &str) -> bool {
 fn confirm_add(app: &Rc<AppState>, router: &Router, id: &str) {
     let Some((entry, name)) = app.deck_ready.index.borrow().as_ref().and_then(|i| i.get(id)).map(|e| (e.clone(), view::display_name(e))) else { return };
     let Some(folder) = entry::folder_for(&entry, |f| folder_taken(app, f)) else {
-        return open_message_dialog(app, router, &name, "There is no free folder name for this port in Library, so nothing was added.");
+        return open_message_dialog(app, router, &name, "There is no free folder name for this port in your ports folder, so nothing was added.");
     };
     // Built and checked before anything is written, so a failure leaves ports.local.json alone.
     // Fork: the cover, icon and notes of the catalog's entry for this folder, even when upstream turned it off.
     let raw = crate::fork::catalog_extras::RawCatalog::load(&app.paths.config_dir.join("ports.json"));
     let Some((value, mut port)) = entry::local_entry_with(&entry, &name, &folder, &raw).and_then(|v| crate::core::models::port_from_value(&v).ok().map(|p| (v, p))) else {
-        return open_message_dialog(app, router, &name, "Nothing was added: the entry could not be built from the list.");
+        return open_message_dialog(app, router, &name, "Nothing was added: the list's entry for this port is missing something the app needs to install it.");
     };
     port.user_managed = true;
     let to_add = port.clone();
@@ -366,50 +362,51 @@ fn releases_url(entry: &crate::fork::deck_ready::index::Entry) -> Option<String>
     })
 }
 
-/// X: the Info dialog for the selected row.
+/// X: the Info page for the selected row (`fork::deck_ready::pages::info_page`): a few plain facts, then Install / Play,
+/// the project page and the releases page (each shown with its address and a QR code first). B goes back to the list.
 pub(crate) fn show_info(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
     }
     let Some(row) = selected_row(app) else { return };
     let ui = &app.deck_ready;
-    let Some((entry, generated)) = ui.index.borrow().as_ref().and_then(|i| i.get(&row.id).map(|e| (e.clone(), i.generated.clone()))) else { return };
-    let checked = view::checked_label(&ui.meta.borrow().checked_at, &chrono::Local::now());
-    let body = view::info_text(&entry, row.standing, &generated, &checked);
-    let project = entry.website.clone().or_else(|| entry::source_url(&entry)).or_else(|| entry.repo_url.clone());
-    let releases = releases_url(&entry);
-
-    let Some(dialog) = build_deck_ready_info_dialog(app, router) else { return };
-    dialog.set_dialog_title(format!("{}  ({})", row.name, view::rating_name(entry.rating)).into());
-    dialog.set_body_text(body.into());
-    dialog.set_action_label(row.button.into());
-    dialog.set_action_enabled(!row.button.is_empty());
-    dialog.set_project_enabled(project.is_some());
-    dialog.set_releases_enabled(releases.is_some());
-    let first = info_buttons(&dialog).iter().position(|&on| on).unwrap_or(3) as i32;
-    let row_name = row.name.clone();
-    app.dialog_nav.info_nav_index.set(first);
-    dialog.set_selected_index(first);
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_action_requested(move || {
-            close_current_dialog(&app, &router);
-            run_action(&app, &router, &row);
-        });
-    }
-    // Fork (port page): the address is shown first (and a QR code to scan in Game Mode, where there is no browser).
-    if let Some(url) = project.filter(|u| crate::core::launch::is_web_url(u)) {
-        let (app, router, name) = (app.clone(), router.clone(), row_name);
-        dialog.on_project_requested(move || super::port_page_screen::open_link(&app, &router, &name, &url, None));
-    }
-    if let Some(url) = releases {
-        dialog.on_releases_requested(move || open_url(&url));
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::DeckReadyInfo(dialog));
+    let Some(entry) = ui.index.borrow().as_ref().and_then(|i| i.get(&row.id).cloned()) else { return };
+    let project = entry.website.clone().or_else(|| entry::source_url(&entry)).or_else(|| entry.repo_url.clone()).filter(|u| crate::core::launch::is_web_url(u));
+    let releases = releases_url(&entry).filter(|u| crate::core::launch::is_web_url(u));
+    let facts = pages::InfoFacts { name: &row.name, standing: row.standing, button: row.button, has_project: project.is_some(), has_releases: releases.is_some() };
+    let page = pages::info_page(&entry, &facts);
+    let again: super::port_page_screen::Back = Rc::new(|app, router| {
+        close_current_dialog(app, router);
+        show_info(app, router);
+    });
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            DrAct::Main => {
+                close_current_dialog(app, router);
+                run_action(app, router, &row);
+            }
+            DrAct::ProjectPage => {
+                if let Some(url) = &project {
+                    super::port_page_screen::open_link(app, router, &row.name, url, Some(again.clone()));
+                }
+            }
+            DrAct::ReleasesPage => {
+                if let Some(url) = &releases {
+                    super::port_page_screen::open_link_with(app, router, &row.name, url, "Releases page", "Every version of it and its download files.", Some(again.clone()));
+                }
+            }
+            DrAct::Back => close_current_dialog(app, router),
+            _ => {}
+        }),
+        on_back: Rc::new(close_current_dialog),
+        on_exit: Rc::new(close_current_dialog),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }
 
-/// Which of the Info dialog's four buttons (action, project page, releases page, close) can be chosen.
+/// Which of the old Info dialog's four buttons (action, project page, releases page, close) can be chosen. Fork (steam,
+/// art and settings pages): Info is a page now; kept for the dialog's controller code.
 pub(crate) fn info_buttons(d: &DeckReadyInfoDialog) -> [bool; 4] {
     [d.get_action_enabled() && !d.get_action_label().is_empty(), d.get_project_enabled(), d.get_releases_enabled(), true]
 }
@@ -434,54 +431,69 @@ pub(crate) fn info_activate(d: &DeckReadyInfoDialog, index: i32) {
     }
 }
 
-/// System is chosen from its own list (about 25 systems), then Filters reopens.
-fn open_system_picker(app: &Rc<AppState>, router: &Router) {
+/// The list behind follows a filter at once.
+fn refilter(app: &AppState) {
+    app.deck_ready.selected.set(0);
+    rebuild(app);
+    scroll_to_selection(&app.window());
+}
+
+/// System: a choice page (All systems, then each system), the one in use marked; choosing one goes back to Filters.
+fn open_system_page(app: &Rc<AppState>, router: &Router) {
     let ui = &app.deck_ready;
     let community = ui.filters.borrow().community;
     let systems = ui.index.borrow().as_ref().map(|i| view::systems(i, community)).unwrap_or_default();
-    let labels = std::iter::once("All systems".to_string()).chain(systems.iter().cloned()).collect();
-    open_picker_dialog(app, router, "System", labels, move |app, router, choice| {
-        app.deck_ready.filters.borrow_mut().system = choice.checked_sub(1).and_then(|i| systems.get(i)).cloned();
-        app.deck_ready.selected.set(0);
-        rebuild(app);
-        open_filters(app, router);
-    });
+    let current = ui.filters.borrow().system.clone();
+    let page = pages::system_page(&systems, current.as_deref());
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            DrAct::PickSystem(choice) => {
+                app.deck_ready.filters.borrow_mut().system = choice.checked_sub(1).and_then(|i| systems.get(i)).cloned();
+                refilter(app);
+                show_filters(app, router);
+            }
+            DrAct::Back => show_filters(app, router),
+            _ => {}
+        }),
+        on_back: Rc::new(show_filters),
+        on_exit: Rc::new(close_current_dialog),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }
 
-/// Y: Filters. Choosing a row changes its value at once (the list behind updates); Done or B closes.
+/// Y: Filters, as a page of three cards. Builds and Community finds change in place (the list behind updates); System
+/// opens its choice page; Done or B closes.
 pub(crate) fn open_filters(app: &Rc<AppState>, router: &Router) {
     if dialog_is_open(app) {
         return;
     }
-    let labels = view::filter_lines(&app.deck_ready.filters.borrow());
-    let Some(dialog) = build_picker_dialog(app, router, FILTERS_TITLE, &labels) else { return };
-    {
-        let (app, router, weak) = (app.clone(), router.clone(), dialog.as_weak());
-        dialog.on_item_selected(move |index| {
-            let ui = &app.deck_ready;
-            {
-                let mut filters = ui.filters.borrow_mut();
-                match index {
-                    0 => filters.build = view::next_build(filters.build),
-                    1 => {
-                        drop(filters);
-                        return open_system_picker(&app, &router);
-                    }
-                    2 => filters.community = !filters.community,
-                    _ => {
-                        drop(filters);
-                        return close_current_dialog(&app, &router);
-                    }
+    show_filters(app, router);
+}
+
+fn show_filters(app: &Rc<AppState>, router: &Router) {
+    let page = pages::filters_page(&app.deck_ready.filters.borrow());
+    let handlers = Handlers {
+        on_action: Rc::new(|app, router, act| {
+            match act {
+                DrAct::Builds => {
+                    let next = view::next_build(app.deck_ready.filters.borrow().build);
+                    app.deck_ready.filters.borrow_mut().build = next;
                 }
+                DrAct::Community => {
+                    let on = !app.deck_ready.filters.borrow().community;
+                    app.deck_ready.filters.borrow_mut().community = on;
+                }
+                DrAct::System => return open_system_page(app, router),
+                DrAct::Done => return close_current_dialog(app, router),
+                _ => return,
             }
-            ui.selected.set(0);
-            rebuild(&app);
-            scroll_to_selection(&app.window());
-            if let Some(d) = weak.upgrade() {
-                set_picker_items(&d, &view::filter_lines(&ui.filters.borrow()));
-            }
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+            refilter(app);
+            show_filters(app, router);
+        }),
+        on_back: Rc::new(close_current_dialog),
+        on_exit: Rc::new(close_current_dialog),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }

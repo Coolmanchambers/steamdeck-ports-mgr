@@ -170,7 +170,7 @@ count_pids() {
     done
     echo "$n"
 }
-main_win() { xdotool search --name '^Ports Launcher$' 2>/dev/null | head -1; }
+main_win() { xdotool search --name '^Deck Ports Manager$' 2>/dev/null | head -1; }
 settings_win() { xdotool search --onlyvisible --name '^Deck Ports Manager: Settings$' 2>/dev/null | tail -1; }
 updates_win() { xdotool search --onlyvisible --name '^Deck Ports Manager: Settings: Updates$' 2>/dev/null | tail -1; }
 last_line() { tail -n 1 "$APP/updater.log" 2>/dev/null; }

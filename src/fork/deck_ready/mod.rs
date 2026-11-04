@@ -6,5 +6,6 @@
 
 pub mod entry;
 pub mod index;
+pub mod pages;
 pub mod sync;
 pub mod view;

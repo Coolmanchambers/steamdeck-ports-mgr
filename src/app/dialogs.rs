@@ -96,6 +96,8 @@ macro_rules! tr {
         $app.window().global::<Tr>()
     };
 }
+// Fork (steam, art and settings pages): sync.rs no longer uses it from outside; kept for merge ease.
+#[allow(unused_imports)]
 pub(crate) use tr;
 
 macro_rules! wire_dialog_close {
@@ -184,6 +186,8 @@ pub(crate) enum DialogSlot {
     Progress(ProgressDialog),
     Picker(ListPickerDialog),
     SearchList(SearchListDialog),
+    // Fork (steam, art and settings pages): the Deck-ready Info is a page now; the dialog is kept for merge ease.
+    #[allow(dead_code)]
     DeckReadyInfo(DeckReadyInfoDialog),
     // Fork: the in-app folder picker (src/app/folder_picker_screen.rs).
     FolderPicker(FolderPickerDialog),
@@ -590,6 +594,8 @@ pub(crate) fn open_legacy_info_dialog(app: &Rc<AppState>, router: &Router, port:
 }
 
 // Fork: the Deck-ready Info dialog, sized and wired like Info; src/app/deck_ready_screen.rs fills it.
+// Fork (steam, art and settings pages): unused since Info is a page (`deck_ready_screen::show_info`).
+#[allow(dead_code)]
 pub(crate) fn build_deck_ready_info_dialog(app: &Rc<AppState>, router: &Router) -> Option<DeckReadyInfoDialog> {
     close_current_dialog(app, router);
     let (dw, dh) = main_window_size(app);
