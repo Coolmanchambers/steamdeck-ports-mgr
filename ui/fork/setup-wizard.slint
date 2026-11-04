@@ -184,7 +184,7 @@ component ProgressBar inherits Rectangle {
         width: root.busy ? root.width * 0.35 : root.width * max(0, min(1, root.value));
         height: 100%;
         border-radius: root.height / 2;
-        background: SemanticColors.info;
+        background: Theme.selected-background;
     }
 }
 
@@ -783,7 +783,11 @@ export component SetupWizardDialog inherits Window {
                 width: self.seg-w;
                 height: root.bar-thickness;
                 border-radius: root.bar-thickness / 2;
-                background: n <= root.step-index ? SemanticColors.info : Theme.border-color;
+                // Done steps in the theme's selection blue over a bordered track (the darker `info` fill and the
+                // border colour are too close to tell apart since the theme quick wins).
+                background: n <= root.step-index ? Theme.selected-background : Theme.search-background;
+                border-width: n <= root.step-index ? 0px : 1px;
+                border-color: Theme.border-color;
             }
 
             Text {

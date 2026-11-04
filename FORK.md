@@ -349,7 +349,7 @@ Files added by this fork:
 | 2026-11-04 | `src/fork/deck_ready/mod.rs` | Steam, art and settings pages: module line for `pages` |
 | 2026-11-04 | `tools/smoke-test.sh`, `tools/test-app-update.sh` | App name: the main window is found by its new title `^Deck Ports Manager$`; the dialog sweep tells the main window by its id instead of its name. New check: Ctrl+Y in the Deck-ready list opens `Deck-ready: Filters` and B closes it |
 | 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Steam, art and settings review: `Page::fresh_focus`; such a page always starts where it says (`starting_focus` skips the remembered place), so a yes/no question with No first starts on No every time (after "Yes, drop it" the next one is the same page to the window) and the key page starts in its text box |
-| 2026-11-04 | `src/ui/theme.rs` | Theme quick wins: `ThemeColors::FALLBACK` is the fork's "arc-dark" (surfaces `#272e38` / `#191f27`, text `#edf2f7`, secondary `#b8c3d1`, border `#566273`) and `load` lays it over the file's "arc-dark" entry (`FORK_THEME`), since the app refreshes `themes.json` from upstream; `SemanticPalette::default()` fills are darker (success `#3a7a47` / `#40834c`, warning `#975300` / `#a45b00`, info `#2470ab` / `#2b7bb6`) so white labels read at 4.5:1 or better; `FALLBACK` is `pub`. Tests: Rust and `ui/shared.slint` in step, WCAG contrast, the override |
+| 2026-11-04 | `src/ui/theme.rs` | Theme quick wins: `ThemeColors::FALLBACK` is the fork's "arc-dark" (surfaces `#272e38` / `#191f27`, text `#edf2f7`, secondary `#b8c3d1`, border `#566273`) and `load` lays it over the file's "arc-dark" entry (`FORK_THEME`), since the app refreshes `themes.json` from upstream; `SemanticPalette::default()` fills are darker (success `#3a7a47` / `#40834c`, warning `#a05800` / `#ab6000`, info `#2470ab` / `#2b7bb6`) so white labels read at 4.5:1 or better; `FALLBACK` is `pub`; a file whose themes are all unusable leaves the loaded set alone; an unknown active theme falls back to the fork's default. Tests: Rust and `ui/shared.slint` in step, WCAG contrast, the override |
 | 2026-11-04 | `ui/shared.slint` | Theme quick wins: the `Theme` and `SemanticColors` defaults mirror `src/ui/theme.rs` (same values as the row above) |
 | 2026-11-04 | `ui/dialogs/chrome.slint` | Theme quick wins: `DialogButton` draws the selected, enabled button with a 3 px outline in `selected-text` (the fill is unchanged), so the cursor on the old dialogs' buttons reads on the Deck |
 
@@ -364,9 +364,12 @@ downloads that file from upstream about every 12 hours, so an edit there would n
    9:1 on the page and 7.7:1 on the bars.
 3. The selected button on the old dialogs (Confirm, pickers, messages) gets a clear 3 px outline.
 4. Darker filled action colours (success, warning, info and their hovers) so white labels read at 4.5:1 or better
-   (danger was already 4.6:1 and is unchanged). The guided pages' accent is now `info` itself (was `info.darker(0.6)`,
-   about the same shade as the new `info`), the "working" status disc is `info` (was darkened) and the "skipped" disc
-   is the border colour (white on the new, brighter `search-text` would not read).
+   (danger was already 4.6:1 and is unchanged; its hover is the one fill under 4.5:1, a transient state). The guided
+   pages' accent is now `info` itself (was `info.darker(0.6)`, about the same shade as the new `info`), the "working"
+   status disc is `info` (was darkened) and the "skipped" disc is the border colour (white on the new, brighter
+   `search-text` would not read). Progress (the step bar's done segments, the working pages' bar) is drawn in the
+   theme's `selected-background` over a bordered `search-background` track: the darker `info` and the border colour
+   had become too close to tell apart (Codex, 1.2:1).
 5. Option descriptions on the guided pages are no longer faded (opacity 0.75 removed).
 6. Option titles are semi-bold (600; the chosen choice stays 700), so the name leads the description.
 7. The hint bar at the bottom of a guided page uses the full item font (was 0.95x).

@@ -65,8 +65,8 @@ impl Default for SemanticPalette {
             // Fork: darker fills so white labels read at 4.5:1 or better (Codex review A4); `contrast` tests below.
             success: rgb(0x3a, 0x7a, 0x47),
             success_hover: rgb(0x40, 0x83, 0x4c),
-            warning: rgb(0x97, 0x53, 0x00),
-            warning_hover: rgb(0xa4, 0x5b, 0x00),
+            warning: rgb(0xa0, 0x58, 0x00),
+            warning_hover: rgb(0xab, 0x60, 0x00),
             danger: rgb(0xdd, 0x2e, 0x44),
             danger_hover: rgb(0xe4, 0x58, 0x69),
             info: rgb(0x24, 0x70, 0xab),
@@ -124,10 +124,13 @@ pub fn load(path: &Path, cfg: &mut ThemeConfig, active_theme: &str) {
         .and_then(Value::as_object)
         .map(|entries| entries.iter().filter_map(|(name, v)| Some((name.clone(), parse_theme_entry(v)?))).collect())
         .unwrap_or_default();
+    if themes.is_empty() {
+        return;
+    }
     // Fork: the file's "arc-dark" is upstream's lighter palette (and the app refreshes the file from upstream);
     // the fork's palette wins for that one name, and the default theme exists even if the file dropped it.
     themes.insert(FORK_THEME.to_string(), ThemeColors::FALLBACK);
-    let Some(first) = themes.values().next().copied() else { return };
+    let first = themes.get(FORK_THEME).copied().unwrap_or(ThemeColors::FALLBACK);
     cfg.current = themes.get(active_theme).copied().unwrap_or(first);
     cfg.themes = themes;
 }
@@ -193,7 +196,7 @@ mod tests {
         let mut cfg = ThemeConfig::default();
         load(&path, &mut cfg, "night");
         assert_eq!(cfg.current.search_background, rgb(0x40, 0x45, 0x52));
-        assert_eq!(cfg.themes.len(), 2);
+        assert_eq!(cfg.themes.len(), 3, "the file's two plus the fork's arc-dark");
         let _ = fs::remove_file(&path);
     }
 
@@ -203,7 +206,22 @@ mod tests {
         fs::write(&path, SAMPLE).unwrap();
         let mut cfg = ThemeConfig::default();
         load(&path, &mut cfg, "does-not-exist");
-        assert!(cfg.current == cfg.themes["night"] || cfg.current == cfg.themes["day"]);
+        // Fork: an unknown theme falls back to the fork's default, not to whichever entry the map yields first.
+        assert_eq!(cfg.current, ThemeColors::FALLBACK);
+        let _ = fs::remove_file(&path);
+    }
+
+    // Fork: a file whose "themes" has no usable entry leaves the loaded set alone (as a missing file does).
+    #[test]
+    fn un_catalogue_sans_theme_utilisable_garde_l_etat_precedent() {
+        let path = temp_path("load_unusable");
+        fs::write(&path, SAMPLE).unwrap();
+        let mut cfg = ThemeConfig::default();
+        load(&path, &mut cfg, "day");
+        fs::write(&path, r##"{"themes": {"broken": {"search_background": "nope"}}}"##).unwrap();
+        load(&path, &mut cfg, "day");
+        assert_eq!(cfg.themes.len(), 3);
+        assert_eq!(cfg.current.search_background, rgb(0xff, 0xff, 0xff));
         let _ = fs::remove_file(&path);
     }
 
@@ -225,7 +243,7 @@ mod tests {
         load(&path, &mut cfg, "night");
         preview_theme(&mut cfg, "day");
         assert_eq!(cfg.current.search_background, rgb(0xff, 0xff, 0xff));
-        assert_eq!(cfg.themes.len(), 2);
+        assert_eq!(cfg.themes.len(), 3);
         let _ = fs::remove_file(&path);
     }
 
@@ -305,8 +323,10 @@ mod tests {
             same("selection-border", s.border_strong, slint_color("selection-border"));
         }
 
+        // Not covered: `danger_hover`. The spec left danger as it was (4.6:1), and a hover that is brighter than
+        // its fill cannot also beat it; the hover is a transient state under the pointer.
         #[test]
-        fn white_labels_read_on_every_filled_action_colour() {
+        fn white_labels_read_on_the_filled_action_colours_and_their_hovers() {
             let s = SemanticPalette::default();
             for (name, fill) in [
                 ("success", s.success),
@@ -327,7 +347,7 @@ mod tests {
             let (t, s) = (ThemeColors::FALLBACK, SemanticPalette::default());
             for (name, fill) in [("success", s.success), ("warning", s.warning), ("info", s.info), ("danger", s.danger)] {
                 let ratio = contrast(fill, t.list_background);
-                assert!(ratio >= 2.9, "{name}: the fill against the list background is {ratio:.2}:1, under 3:1 (icons and chips)");
+                assert!(ratio >= 3.0, "{name}: the fill against the list background is {ratio:.2}:1, under 3:1 (icons and chips)");
             }
         }
 
