@@ -228,7 +228,7 @@ impl SteamScreen {
             },
             SteamLine::Status if self.game_mode => "Game Mode: Steam cannot be closed here, so changes wait for Desktop Mode".to_string(),
             SteamLine::Status => match steam.running_steam_processes() {
-                Ok(p) if p.is_empty() => "Steam is closed: ready to write".to_string(),
+                Ok(p) if p.is_empty() => "Steam is closed: ready to add".to_string(),
                 Ok(_) => "Steam is running: close it first, or let the changes wait".to_string(),
                 Err(_) => "Could not tell if Steam is running: nothing will be changed".to_string(),
             },
@@ -593,7 +593,7 @@ mod tests {
         let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
         let labels = screen.labels(&no_steam);
         assert_eq!(labels[0], "Steam account: Account 1234");
-        assert_eq!(labels[1], "Steam is closed: ready to write");
+        assert_eq!(labels[1], "Steam is closed: ready to add");
         assert_eq!(labels[2], "[x] Dusklight: will add");
         assert_eq!(labels[3], "[ ] Ship of Harkinian: same name as a shortcut for soh.appimage, will point it here");
         assert!(labels[4].starts_with("Two Programs: skipped, several programs found"));

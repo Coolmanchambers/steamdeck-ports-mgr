@@ -365,7 +365,7 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::DiscordRpc => Card { title: plain_or_translated(&l.discord, "Discord Rich Presence", "Discord status"), detail: "Show what you are playing on Discord".into(), switch: Some(f.discord) },
         Entry::CustomRpc => Card {
             title: plain_or_translated(&l.custom_rpc, "Custom Rich Presence", "Custom Discord status"),
-            detail: "Your own text instead (set in Files > Your app settings)".into(),
+            detail: "Your own text instead (set it in Files, in Desktop Mode)".into(),
             switch: Some(f.custom_presence),
         },
         Entry::CheckUpdates => Card { title: l.check_updates.clone(), detail: "Look for new versions of your ports and this app".into(), switch: Some(f.check_updates) },
