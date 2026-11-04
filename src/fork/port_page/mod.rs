@@ -843,7 +843,7 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
     } else {
         page.paragraphs.push("Saves inside its folder are copied to Saves Backup first and come back if you install it again. Saves kept elsewhere are not touched.".into());
     }
-    page.paragraphs.push("Steam shortcuts are left as they are.".into());
+    page.paragraphs.push("Your Steam shortcuts are left as they are.".into());
     let mut keep = option("Keep it", "Nothing is changed", Act::Back);
     keep.recommended = true;
     page.options.push(keep);

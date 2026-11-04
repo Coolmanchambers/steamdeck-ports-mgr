@@ -908,7 +908,7 @@ fn uninstall(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, port: &Port) 
                 mark_uninstalled(&app, &port);
                 eprintln!("port page: uninstalled {}", port.display_name());
                 let mut text = vec![kept.map_or_else(|| "Its folder was removed. It held no game files to keep.".to_string(), |k| k.line())];
-                text.push("Steam shortcuts are left as they are.".to_string());
+                text.push("Your Steam shortcuts are left as they are.".to_string());
                 (format!("{} was uninstalled", port.display_name()), text, true)
             }
             Err(message) => {

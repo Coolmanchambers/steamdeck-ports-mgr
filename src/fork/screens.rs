@@ -206,31 +206,31 @@ impl SteamScreen {
 
     pub fn label(&self, line: SteamLine, steam: &dyn SteamProcessCheck) -> String {
         match line {
-            SteamLine::QueueNote => "The saved queue could not be read and was kept aside (choose for details)".to_string(),
+            SteamLine::QueueNote => "The list of Steam changes waiting could not be read (choose for details)".to_string(),
             SteamLine::ApplyQueue => {
                 let n = self.queue.len();
                 let changes = if n == 1 { "1 Steam change".to_string() } else { format!("{n} Steam changes") };
                 if self.game_mode {
-                    return format!("{changes} queued: will apply next time in Desktop Mode with Steam closed");
+                    return format!("{changes} waiting: made next time in Desktop Mode with Steam closed");
                 }
                 match steam.running_steam_processes() {
-                    Ok(p) if p.is_empty() => format!("{changes} queued {}: apply now...", self.queue.origin()),
-                    Ok(_) => format!("{changes} waiting: close Steam and update {} now...", if n == 1 { "it" } else { "them" }),
-                    Err(_) => format!("{changes} queued: could not tell if Steam is running"),
+                    Ok(p) if p.is_empty() => format!("{changes} waiting {}: make {} now...", self.queue.origin(), if n == 1 { "it" } else { "them" }),
+                    Ok(_) => format!("{changes} waiting: close Steam and make {} now...", if n == 1 { "it" } else { "them" }),
+                    Err(_) => format!("{changes} waiting: could not tell if Steam is running"),
                 }
             }
-            SteamLine::ManageQueue => "View or remove queued changes...".to_string(),
+            SteamLine::ManageQueue => "See or drop the changes waiting...".to_string(),
             SteamLine::Account => match self.active_account() {
                 Some(a) if self.accounts.len() > 1 => format!("Steam account: {} (choose another)", a.label()),
                 Some(a) => format!("Steam account: {}", a.label()),
                 None if self.accounts.is_empty() => "No Steam account found".to_string(),
                 None => "Choose your Steam account".to_string(),
             },
-            SteamLine::Status if self.game_mode => "Game Mode: Steam can't be closed here, so changes are queued for Desktop Mode".to_string(),
+            SteamLine::Status if self.game_mode => "Game Mode: Steam cannot be closed here, so changes wait for Desktop Mode".to_string(),
             SteamLine::Status => match steam.running_steam_processes() {
                 Ok(p) if p.is_empty() => "Steam is closed: ready to write".to_string(),
-                Ok(_) => "Steam is running: close it to write, or queue the changes".to_string(),
-                Err(_) => "Could not tell if Steam is running: nothing will be written".to_string(),
+                Ok(_) => "Steam is running: close it first, or let the changes wait".to_string(),
+                Err(_) => "Could not tell if Steam is running: nothing will be changed".to_string(),
             },
             SteamLine::Port(i) => {
                 let row = &self.rows[i];
@@ -240,7 +240,7 @@ impl SteamScreen {
                     (_, Some(Action::Add)) => "will add".to_string(),
                     (_, Some(Action::Update { changes, by_name: true, .. })) => {
                         let now = changes.iter().find(|c| c.field == "program").map_or("another program", |c| program_name(&c.from));
-                        format!("same name as a shortcut for {now}, will repoint it")
+                        format!("same name as a shortcut for {now}, will point it here")
                     }
                     (_, Some(Action::Update { changes, .. })) => {
                         format!("will update ({})", changes.iter().map(|c| c.field).collect::<Vec<_>>().join(", "))
@@ -250,20 +250,20 @@ impl SteamScreen {
                     (_, None) => "skipped".to_string(),
                 };
                 let queued = match self.active_account() {
-                    Some(a) if self.queue.contains(a.account_id, &row.key) => " (queued)",
+                    Some(a) if self.queue.contains(a.account_id, &row.key) => " (waiting)",
                     _ => "",
                 };
                 format!("{mark}{}: {what}{queued}", row.name)
             }
             SteamLine::FixIcons => "Fix Steam icons...".to_string(),
             SteamLine::Review => match (&self.load_error, self.selected_count()) {
-                (Some(_), _) => "Could not read shortcuts.vdf: see the message".to_string(),
+                (Some(_), _) => "Could not read your Steam shortcuts list: choose for details".to_string(),
                 (None, _) if self.account.is_none() => "Choose a Steam account first".to_string(),
                 (None, 0) if self.rows.is_empty() => "No installed ports to add".to_string(),
                 (None, 0) => "Nothing selected to add or update".to_string(),
                 (None, n) if self.can_queue(steam) => {
                     let until = if self.game_mode { "for Desktop Mode" } else { "until Steam is closed" };
-                    format!("Queue {n} change{} {until}...", if n == 1 { "" } else { "s" })
+                    format!("Let {n} change{} wait {until}...", if n == 1 { "" } else { "s" })
                 }
                 (None, 1) => "Review 1 change...".to_string(),
                 (None, n) => format!("Review {n} changes..."),
@@ -330,24 +330,32 @@ impl SteamScreen {
             && (self.game_mode || steam.running_steam_processes().is_ok_and(|p| !p.is_empty()))
     }
 
-    /// The text of the confirmation: what will be added, what will change, where the backup goes.
-    pub fn review_text(&self) -> String {
+    /// What the review names: the ports to add, and the ports whose shortcut is updated (with what changes).
+    pub fn review_items(&self) -> (Vec<String>, Vec<String>) {
         let mut added = Vec::new();
         let mut updated = Vec::new();
         for item in self.selected_items() {
             match &item.action {
-                Action::Add => added.push(format!("  {}", item.wanted.app_name)),
+                Action::Add => added.push(item.wanted.app_name.clone()),
                 Action::Update { changes, by_name, .. } => {
                     let fields: Vec<&str> = changes.iter().map(|c| c.field).collect();
                     let detail = match (by_name, changes.iter().find(|c| c.field == "program")) {
                         (true, Some(c)) => format!("now {}: {}", program_name(&c.from), fields.join(", ")),
                         _ => fields.join(", "),
                     };
-                    updated.push(format!("  {} ({detail})", item.wanted.app_name));
+                    updated.push(format!("{} ({detail})", item.wanted.app_name));
                 }
                 _ => {}
             }
         }
+        (added, updated)
+    }
+
+    /// The text of the confirmation: what will be added, what will change, that the list is backed up.
+    pub fn review_text(&self) -> String {
+        let (added, updated) = self.review_items();
+        let added: Vec<String> = added.iter().map(|n| format!("  {n}")).collect();
+        let updated: Vec<String> = updated.iter().map(|n| format!("  {n}")).collect();
         let mut out = String::new();
         if !added.is_empty() {
             out.push_str(&format!("Add {}:\n{}\n\n", added.len(), listed(&added)));
@@ -355,7 +363,7 @@ impl SteamScreen {
         if !updated.is_empty() {
             out.push_str(&format!("Update {} (play time stays):\n{}\n\n", updated.len(), listed(&updated)));
         }
-        out.push_str("shortcuts.vdf is backed up first.");
+        out.push_str("Your Steam shortcuts list is backed up first.");
         out
     }
 }
@@ -486,7 +494,7 @@ pub fn apply_selected_with(screen: &SteamScreen, steam: &dyn SteamProcessCheck, 
     let report = match steam_sync::apply(&mut file, &items, steam, &backup_stamp()) {
         Ok(report) => report,
         Err(steam_sync::SyncError::Store(StoreError::SteamRunning(procs))) => return Err(close_steam_message(&procs)),
-        Err(e) => return Err(format!("{e}\n\nNothing was changed in shortcuts.vdf.")),
+        Err(e) => return Err(format!("{e}\n\nNothing was changed in your Steam shortcuts list.")),
     };
 
     let pruned = if report.save.wrote { backups::prune_backups(&path, settings.backups_keep(), now).map(|r| r.deleted.len()).unwrap_or(0) } else { 0 };
@@ -506,10 +514,11 @@ pub fn apply_selected_with(screen: &SteamScreen, steam: &dyn SteamProcessCheck, 
         text.push_str(&format!("\nArtwork:\n{}", listed(&art_notes)));
     }
     if let Some(backup) = &report.backup {
-        let file_name = backup.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        text.push_str(&format!("\n\nBackup of the old list: {file_name}"));
+        // The file's name goes to the log; the owner reads that the old list was kept.
+        eprintln!("add to steam: the old list was backed up as {}", backup.display());
+        text.push_str("\n\nYour Steam shortcuts list was backed up first.");
         if pruned > 0 {
-            text.push_str(&format!(" ({pruned} older backup{} removed)", if pruned == 1 { "" } else { "s" }));
+            text.push_str(&format!(" ({pruned} older backup{} removed.)", if pruned == 1 { " was" } else { "s were" }));
         }
     }
     text.push('\n');
@@ -586,7 +595,7 @@ mod tests {
         assert_eq!(labels[0], "Steam account: Account 1234");
         assert_eq!(labels[1], "Steam is closed: ready to write");
         assert_eq!(labels[2], "[x] Dusklight: will add");
-        assert_eq!(labels[3], "[ ] Ship of Harkinian: same name as a shortcut for soh.appimage, will repoint it");
+        assert_eq!(labels[3], "[ ] Ship of Harkinian: same name as a shortcut for soh.appimage, will point it here");
         assert!(labels[4].starts_with("Two Programs: skipped, several programs found"));
         assert_eq!(labels.last().unwrap(), "Review 1 change...");
         assert_eq!(labels[labels.len() - 2], "Fix Steam icons...");
@@ -633,7 +642,7 @@ mod tests {
         let out = apply_selected(&screen, &no_steam, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap();
         assert!(out.wrote);
         assert!(out.text.starts_with("Added 1, updated 1, already fine 0."), "{}", out.text);
-        assert!(out.text.contains("Backup of the old list: shortcuts.vdf.bak-"));
+        assert!(out.text.contains("Your Steam shortcuts list was backed up first."));
         assert!(out.text.contains("Start Steam again"));
         let backups: Vec<_> = backups::list_backups(&path).unwrap();
         assert_eq!(backups.len(), 1);
@@ -657,7 +666,7 @@ mod tests {
         let before = fs::read(&path).unwrap();
         let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
         let running = || -> std::io::Result<Vec<String>> { Ok(vec!["99 steam".into()]) };
-        assert_eq!(screen.label(SteamLine::Status, &running), "Steam is running: close it to write, or queue the changes");
+        assert_eq!(screen.label(SteamLine::Status, &running), "Steam is running: close it first, or let the changes wait");
         let err = apply_selected(&screen, &running, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap_err();
         assert!(err.starts_with(CLOSE_STEAM_HELP));
         assert!(err.contains("Still running: 99 steam"), "{err}");
@@ -673,7 +682,7 @@ mod tests {
         let before = fs::read(&path).unwrap();
         let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
         let broken = || -> std::io::Result<Vec<String>> { Err(std::io::Error::other("no /proc")) };
-        assert!(screen.label(SteamLine::Status, &broken).contains("nothing will be written"));
+        assert!(screen.label(SteamLine::Status, &broken).contains("nothing will be changed"));
         let err = apply_selected(&screen, &broken, &ForkSettings::load(&home.join("s.json")), SystemTime::now()).unwrap_err();
         assert!(err.contains("Nothing was changed"), "{err}");
         assert_eq!(fs::read(&path).unwrap(), before);
@@ -709,7 +718,7 @@ mod tests {
         fs::write(&settings_path, r#"{"steam_backups_keep": 2}"#).unwrap();
         let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&settings_path), &|_| None);
         let out = apply_selected(&screen, &no_steam, &ForkSettings::load(&settings_path), SystemTime::now()).unwrap();
-        assert!(out.text.contains("older backups removed"), "{}", out.text);
+        assert!(out.text.contains("older backups were removed"), "{}", out.text);
         // The fresh backup plus the newest old one.
         assert_eq!(backups::list_backups(&path).unwrap().len(), 2);
         let _ = fs::remove_dir_all(home);
@@ -730,7 +739,7 @@ mod tests {
         fs::write(&path, b"\x00shortcuts\x00\x09bad\x00").unwrap();
         let screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
         assert!(screen.load_error.is_some() && screen.rows.is_empty());
-        assert!(screen.label(SteamLine::Review, &no_steam).starts_with("Could not read shortcuts.vdf"));
+        assert!(screen.label(SteamLine::Review, &no_steam).starts_with("Could not read your Steam shortcuts list"));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -768,7 +777,7 @@ mod tests {
         fs::write(&path, file_of(&[entry])).unwrap();
         let mut screen = SteamScreen::load(&home, &library, &catalog(), &ForkSettings::load(&home.join("s.json")), &|_| None);
         let labels = screen.labels(&no_steam);
-        assert_eq!(labels[2], "[ ] Dusklight: same name as a shortcut for other-launcher, will repoint it");
+        assert_eq!(labels[2], "[ ] Dusklight: same name as a shortcut for other-launcher, will point it here");
         assert_eq!(screen.selected_count(), 1, "only the ordinary add is on");
         assert!(!screen.review_text().contains("Dusklight"));
         screen.toggle(0);
@@ -1041,7 +1050,7 @@ mod tests {
         let running = || -> std::io::Result<Vec<String>> { Ok(vec!["5 steam".into()]) };
         let broken = || -> std::io::Result<Vec<String>> { Err(std::io::Error::other("no /proc")) };
         assert!(screen.can_queue(&running) && !screen.can_queue(&no_steam) && !screen.can_queue(&broken));
-        assert_eq!(screen.label(SteamLine::Review, &running), "Queue 1 change until Steam is closed...");
+        assert_eq!(screen.label(SteamLine::Review, &running), "Let 1 change wait until Steam is closed...");
         assert_eq!(screen.label(SteamLine::Review, &no_steam), "Review 1 change...");
         assert_eq!(screen.label(SteamLine::Review, &broken), "Review 1 change...", "a failed check does not offer a queue");
         assert_eq!(screen.lines()[0], SteamLine::Account, "no queue rows while nothing is queued");
@@ -1060,18 +1069,18 @@ mod tests {
             icon: None,
         });
         assert_eq!(screen.lines()[..3], [SteamLine::ApplyQueue, SteamLine::ManageQueue, SteamLine::Account]);
-        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued while Steam was running: apply now...");
-        assert_eq!(screen.label(SteamLine::ApplyQueue, &running), "1 Steam change waiting: close Steam and update it now...");
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change waiting while Steam was running: make it now...");
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &running), "1 Steam change waiting: close Steam and make it now...");
         let labels = screen.labels(&running);
-        assert!(labels.contains(&"[x] Dusklight: will add (queued)".to_string()), "{labels:?}");
+        assert!(labels.contains(&"[x] Dusklight: will add (waiting)".to_string()), "{labels:?}");
         screen.queue_note = Some("kept aside".into());
         assert_eq!(screen.lines()[0], SteamLine::QueueNote);
         screen.game_mode = true;
-        let game = "Game Mode: Steam can't be closed here, so changes are queued for Desktop Mode";
+        let game = "Game Mode: Steam cannot be closed here, so changes wait for Desktop Mode";
         assert_eq!((screen.label(SteamLine::Status, &running), screen.label(SteamLine::Status, &no_steam)), (game.to_string(), game.to_string()));
         assert!(screen.can_queue(&no_steam) && screen.can_queue(&broken), "Game Mode queues even if /proc shows no Steam");
-        assert_eq!(screen.label(SteamLine::Review, &no_steam), "Queue 1 change for Desktop Mode...");
-        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change queued: will apply next time in Desktop Mode with Steam closed");
+        assert_eq!(screen.label(SteamLine::Review, &no_steam), "Let 1 change wait for Desktop Mode...");
+        assert_eq!(screen.label(SteamLine::ApplyQueue, &no_steam), "1 Steam change waiting: made next time in Desktop Mode with Steam closed");
         let _ = fs::remove_dir_all(home);
     }
 

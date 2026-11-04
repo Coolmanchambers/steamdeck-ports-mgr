@@ -305,7 +305,7 @@ pub fn summary(group: Group, f: &Facts) -> String {
             }
         }
         Group::Steam if f.steam_waiting > 0 => format!("{} waiting for Steam", count(f.steam_waiting, "change", "changes")),
-        Group::Steam => "Shortcuts and artwork".to_string(),
+        Group::Steam => "Your Steam shortcuts and artwork".to_string(),
         Group::Saves => format!("{}, {}", backup_phrase(f.last_backup_days), f.cloud.phrase()),
         Group::App => "Setup, theme, language".to_string(),
         Group::Updates => {
@@ -334,7 +334,7 @@ fn entry_card(entry: Entry, l: &Labels, f: &Facts) -> Card {
         Entry::KeptFiles => plain("Kept files", "Game files and older versions kept when a port was uninstalled"),
         Entry::OpenPortsFolder => plain(&plain_or_translated(&l.library, "Library", "Open the ports folder"), "Show the ports folder in the file manager"),
         Entry::AddToSteam if f.steam_waiting > 0 => Card { title: "Add to Steam".into(), detail: format!("{} waiting for Steam to close", count(f.steam_waiting, "change", "changes")), switch: None },
-        Entry::AddToSteam => plain("Add to Steam", "Shortcuts and art for your ports"),
+        Entry::AddToSteam => plain("Add to Steam", "Your Steam shortcuts and their artwork"),
         Entry::ArtSources => plain("Artwork sources", "Where covers and pictures come from"),
         Entry::BackupSaves => plain(&plain_or_translated(&l.backup_saves, "Save Backup", crate::fork::backup_pages::ACTION), "Copies every port's saves into one backup"),
         Entry::RestoreSaves => plain("Restore saves", "Put an earlier backup back"),
@@ -483,7 +483,7 @@ mod tests {
         assert_eq!(summary(Group::Ports, &f), "1 port");
         f.ports_place = Some("internal storage".into());
         assert_eq!(summary(Group::Ports, &f), "Internal storage, 1 port");
-        assert_eq!(summary(Group::Steam, &f), "Shortcuts and artwork");
+        assert_eq!(summary(Group::Steam, &f), "Your Steam shortcuts and artwork");
         f.steam_waiting = 1;
         assert_eq!(summary(Group::Steam, &f), "1 change waiting for Steam");
         f.steam_waiting = 3;
@@ -574,7 +574,7 @@ mod tests {
         let l = Labels::english("1");
         let mut f = facts();
         let card = |e: Entry, l: &Labels, f: &Facts| entry_card(e, l, f);
-        assert_eq!((card(Entry::AddToSteam, &l, &f).title, card(Entry::AddToSteam, &l, &f).detail), ("Add to Steam".to_string(), "Shortcuts and art for your ports".to_string()), "the card has the screen's own name");
+        assert_eq!((card(Entry::AddToSteam, &l, &f).title, card(Entry::AddToSteam, &l, &f).detail), ("Add to Steam".to_string(), "Your Steam shortcuts and their artwork".to_string()), "the card has the screen's own name");
         f.steam_waiting = 2;
         let waiting = card(Entry::AddToSteam, &l, &f);
         assert_eq!((waiting.title.as_str(), waiting.detail.as_str()), ("Add to Steam", "2 changes waiting for Steam to close"));

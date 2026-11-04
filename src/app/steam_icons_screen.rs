@@ -195,7 +195,7 @@ fn fix(app: &Rc<AppState>, router: &Router, run: &Rc<Run>) {
         return show_result(app, router, run, report, resolved);
     }
     // Steam has to be closed to change its list: the shared flow asks, closes Steam and applies the queue.
-    let lead = format!("Queued {} icon repair{}.", report.queued.len(), if report.queued.len() == 1 { "" } else { "s" });
+    let lead = format!("{} icon repair{} now waiting.", report.queued.len(), if report.queued.len() == 1 { "" } else { "s" });
     let run2 = run.clone();
     let then: steam_close_screen::Then = Rc::new(move |app, router, finished| {
         let mut report = report.clone();

@@ -1,23 +1,26 @@
 //! The "Add to Steam" screen (Settings menu); "Import ports" is in `import_screen.rs`.
 //!
-//! It is a list built from the picker dialog upstream already has, so it works with the
-//! controller, keyboard and mouse like every other dialog: choosing a row toggles it, and the last
-//! rows review and apply. The decisions are made in `crate::fork::screens` (tested without any UI);
-//! this file only draws their text. The text is English only; it is not part of upstream's
-//! translation tables.
+//! The main screen stays a list on purpose (the picker dialog upstream already has): choosing a row toggles it, and
+//! the last rows review and add. Its questions and notices are pages (`crate::fork::steam_pages`): which Steam
+//! account, the Steam changes waiting (drop one, clear all, each asked with No first), the review ("Add these to
+//! Steam?"), letting changes wait, and the notices ("Steam changes waiting", "Added to Steam"). B on a page goes
+//! back to the list. The decisions are made in `crate::fork::screens` (tested without any UI). The text is English
+//! only; it is not part of upstream's translation tables.
 //!
-//! With Steam running (always, in Game Mode) the review row turns into "Queue for Desktop Mode": the
+//! With Steam running (always, in Game Mode) the review row turns into "Let N changes wait": the
 //! chosen changes go to `steam-queue.json` and `start_queue_watch` offers to apply them once Steam is
 //! seen closed (at startup, then every 30 seconds). With Steam running in Desktop Mode, queuing, the
 //! "apply now" row and the watch (once per run) offer "Close Steam and update shortcuts"
 //! (`steam_close_screen`). The decisions live in `crate::fork::steam_queue` and `crate::fork::steam_close`.
 
-use super::dialogs::{build_picker_dialog, dialog_is_open, finish_dialog_open, open_confirm_dialog, open_message_dialog, open_picker_dialog, set_picker_items, DialogSlot};
+use super::dialogs::{build_picker_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, set_picker_items, DialogSlot};
+use super::page_dialog::{show_page, Handlers};
 use super::state::AppState;
 use crate::fork::screens::{self, SteamLine, SteamScreen};
+use crate::fork::steam_pages::{self, SteamAct, WAITING};
 use crate::fork::settings::{ForkSettings, FILE_NAME};
 use super::steam_close_screen;
-use crate::fork::steam_queue::{self, ManageLine, WatchAction, WatchMemory};
+use crate::fork::steam_queue::{self, WatchAction, WatchMemory};
 use crate::fork::steam_user::SteamAccount;
 use crate::fork::store::{backup_stamp, SteamProcessCheck, SystemSteamCheck};
 use crate::ui::gamepad_router::GamepadRouter;
@@ -29,8 +32,7 @@ use std::time::{Duration, SystemTime};
 
 type Router = Rc<RefCell<GamepadRouter>>;
 
-const STEAM_TITLE: &str = "Add to Steam";
-const QUEUE_TITLE: &str = "Queued Steam changes";
+const STEAM_TITLE: &str = steam_pages::TITLE;
 
 fn home_dir() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v)).map(PathBuf::from).filter(|p| p.is_absolute())
@@ -45,7 +47,7 @@ fn queue_path(app: &AppState) -> PathBuf {
 }
 
 fn no_home(app: &Rc<AppState>, router: &Router, title: &str) {
-    open_message_dialog(app, router, title, "Could not find your home folder, so there is nowhere to look.");
+    notice(app, router, title, "Your home folder was not found", "Could not find your home folder, so there is nowhere to look for Steam.", Rc::new(close_current_dialog));
 }
 
 // -- Add to Steam ---------------------------------------------------------------------------
@@ -116,26 +118,13 @@ fn show_steam_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<Ste
                 Some(SteamLine::Status) | None => {}
                 Some(SteamLine::QueueNote) => {
                     let note = screen.borrow().queue_note.clone().unwrap_or_default();
-                    return open_message_dialog(&app, &router, QUEUE_TITLE, &note);
+                    return notice(&app, &router, WAITING, WAITING, &note, back_to_list(&screen));
                 }
-                Some(SteamLine::ApplyQueue) => return offer_queue(&app, &router, &steam),
-                Some(SteamLine::ManageQueue) => return show_manage_queue(&app, &router, false),
+                Some(SteamLine::ApplyQueue) => return offer_queue(&app, &router, &steam, back_to_list(&screen)),
+                Some(SteamLine::ManageQueue) => return show_waiting(&app, &router),
                 Some(SteamLine::Account) => {
-                    let accounts: Vec<SteamAccount> = screen.borrow().accounts.clone();
-                    if accounts.len() > 1 {
-                        let labels = accounts.iter().map(SteamAccount::label).collect();
-                        let screen = screen.clone();
-                        open_picker_dialog(&app, &router, "Steam account", labels, move |app, router, choice| {
-                            if let Some(account) = accounts.get(choice) {
-                                let mut settings = ForkSettings::load(&settings_path(app));
-                                if let Err(e) = settings.set_steam_account(account.account_id) {
-                                    return open_message_dialog(app, router, STEAM_TITLE, &format!("Could not remember the choice: {e}"));
-                                }
-                                reload_after_account_change(app, &mut screen.borrow_mut(), choice);
-                            }
-                            show_steam_screen(app, router, screen.clone());
-                        });
-                        return;
+                    if screen.borrow().accounts.len() > 1 {
+                        return choose_account(&app, &router, screen.clone());
                     }
                 }
                 Some(SteamLine::FixIcons) => {
@@ -157,9 +146,83 @@ fn show_steam_screen(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<Ste
     finish_dialog_open(app, router, DialogSlot::Picker(dialog));
 }
 
+type Back = Rc<dyn Fn(&Rc<AppState>, &Router)>;
+
+/// Back to the list as it was (the ports switched on or off stay so).
+fn back_to_list(screen: &Rc<RefCell<SteamScreen>>) -> Back {
+    let screen = screen.clone();
+    Rc::new(move |app, router| {
+        close_current_dialog(app, router);
+        show_steam_screen(app, router, screen.clone());
+    })
+}
+
+/// Back to a fresh list (the changes waiting were changed).
+fn fresh_list() -> Back {
+    Rc::new(|app, router| {
+        close_current_dialog(app, router);
+        open_steam_screen(app, router);
+    })
+}
+
+/// A notice page: OK and B run `then`, the title bar's X closes everything.
+fn notice(app: &Rc<AppState>, router: &Router, window: &str, title: &str, text: &str, then: Back) {
+    let page = steam_pages::notice_page(window, title, text);
+    let on_back = then.clone();
+    let handlers = Handlers { on_action: Rc::new(move |app, router, _| then(app, router)), on_back: Rc::new(move |app, router| on_back(app, router)), on_exit: Rc::new(close_current_dialog), on_input: None };
+    show_page(app, router, page, handlers);
+}
+
+/// A question page: Yes runs `yes`, No and B run `no`.
+fn ask(app: &Rc<AppState>, router: &Router, page: crate::fork::page::Page<SteamAct>, yes: Back, no: Back) {
+    let on_back = no.clone();
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            SteamAct::Yes => yes(app, router),
+            SteamAct::No => no(app, router),
+            _ => {}
+        }),
+        on_back: Rc::new(move |app, router| on_back(app, router)),
+        on_exit: Rc::new(close_current_dialog),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
+}
+
+/// Which Steam account: a choice page, the one in use marked. Choosing one remembers it and reloads the list.
+fn choose_account(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<SteamScreen>>) {
+    let (labels, current): (Vec<String>, Option<usize>) = {
+        let s = screen.borrow();
+        (s.accounts.iter().map(SteamAccount::label).collect(), s.account)
+    };
+    let back = back_to_list(&screen);
+    let on_back = back.clone();
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            SteamAct::Account(choice) => {
+                let Some(account) = screen.borrow().accounts.get(choice).cloned() else { return };
+                let mut settings = ForkSettings::load(&settings_path(app));
+                if let Err(e) = settings.set_steam_account(account.account_id) {
+                    eprintln!("add to steam: could not remember the account: {e}");
+                    return notice(app, router, STEAM_TITLE, "Could not remember the choice", "The app's settings could not be saved, so the account in use stays as it was.", back.clone());
+                }
+                reload_after_account_change(app, &mut screen.borrow_mut(), choice);
+                back(app, router);
+            }
+            SteamAct::Back => back(app, router),
+            _ => {}
+        }),
+        on_back: Rc::new(move |app, router| on_back(app, router)),
+        on_exit: Rc::new(close_current_dialog),
+        on_input: None,
+    };
+    show_page(app, router, steam_pages::account_page(&labels, current), handlers);
+}
+
 fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<SteamScreen>>) {
     let steam = SystemSteamCheck::new();
-    // Work out everything first, so no borrow of the screen is held while dialogs are swapped.
+    let back = back_to_list(&screen);
+    // Work out everything first, so no borrow of the screen is held while pages are swapped.
     let queued = {
         let screen = screen.borrow();
         screen.can_queue(&steam).then(|| {
@@ -169,46 +232,50 @@ fn review_steam_changes(app: &Rc<AppState>, router: &Router, screen: Rc<RefCell<
         })
     };
     if let Some((changes, game_mode, show_accounts)) = queued {
-        return confirm_queue(app, router, changes, game_mode, show_accounts);
+        return confirm_queue(app, router, changes, game_mode, show_accounts, back);
     }
     // Steam is closed but changes still wait (a moved port's shortcut that still points at its old copy): writing
     // adds now could add a second shortcut for that port, so the waiting ones go first (the first row).
     if !screen.borrow().queue.is_empty() {
-        return open_message_dialog(app, router, STEAM_TITLE, "Some Steam changes are still waiting. Update those first (the first row), then review the rest.");
+        return notice(app, router, STEAM_TITLE, "Some changes are still waiting", "Make the Steam changes that are waiting first (the first row of the list), then review the rest.", back);
     }
     let problem = screen.borrow().review_problem(&steam);
     if let Some(message) = problem {
-        return open_message_dialog(app, router, STEAM_TITLE, &message);
+        return notice(app, router, STEAM_TITLE, "Nothing was added yet", &message, back);
     }
-    let text = screen.borrow().review_text();
-    open_confirm_dialog(app, router, "Review Steam changes".into(), text.into(), "Apply".into(), move |app, router| {
-        let settings = ForkSettings::load(&settings_path(app));
-        match screens::apply_selected(&screen.borrow(), &SystemSteamCheck::new(), &settings, SystemTime::now()) {
-            Ok(done) => open_message_dialog(app, router, "Added to Steam", &done.text),
-            Err(message) => open_message_dialog(app, router, STEAM_TITLE, &message),
-        }
-    });
-}
-
-// -- Queue while Steam runs -----------------------------------------------------------------
-
-fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::QueuedChange>, game_mode: bool, show_accounts: bool) {
-    let (title, text) = steam_queue::queue_confirm(&changes, game_mode, show_accounts);
-    open_confirm_dialog(app, router, title.into(), text.into(), "Queue".into(), move |app, router| {
-        match steam_queue::queue_changes(&queue_path(app), changes.clone(), game_mode) {
-            // Desktop Mode: Steam can be closed from here, so the next question is whether to do that now.
-            Ok(_) if !game_mode => {
-                let n = changes.len();
-                let lead = format!("Queued {n} change{}.", if n == 1 { "" } else { "s" });
-                close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, lead: Some(lead), ..Default::default() }, true);
+    let (added, updated) = screen.borrow().review_items();
+    let yes: Back = {
+        let back = back.clone();
+        Rc::new(move |app, router| {
+            let settings = ForkSettings::load(&settings_path(app));
+            let result = screens::apply_selected(&screen.borrow(), &SystemSteamCheck::new(), &settings, SystemTime::now());
+            match result {
+                Ok(done) => notice(app, router, STEAM_TITLE, "Added to Steam", &done.text, fresh_list()),
+                Err(message) => notice(app, router, STEAM_TITLE, "Could not add to Steam", &message, back.clone()),
             }
-            Ok(text) => open_message_dialog(app, router, QUEUE_TITLE, &text),
-            Err(text) => open_message_dialog(app, router, STEAM_TITLE, &text),
-        }
-    });
+        })
+    };
+    ask(app, router, steam_pages::review_page(&added, &updated), yes, back);
 }
 
-/// A line for the question when covers for queued adds are not downloaded yet.
+// -- Changes that wait while Steam runs -----------------------------------------------------
+
+fn confirm_queue(app: &Rc<AppState>, router: &Router, changes: Vec<steam_queue::QueuedChange>, game_mode: bool, show_accounts: bool, back: Back) {
+    let page = steam_pages::wait_page(&changes, game_mode, show_accounts);
+    let yes: Back = Rc::new(move |app, router| match steam_queue::queue_changes(&queue_path(app), changes.clone(), game_mode) {
+        // Desktop Mode: Steam can be closed from here, so the next question is whether to do that now.
+        Ok(_) if !game_mode => {
+            let n = changes.len();
+            let lead = format!("{n} change{} now waiting.", if n == 1 { "" } else { "s" });
+            close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, lead: Some(lead), ..Default::default() }, true);
+        }
+        Ok(text) => notice(app, router, WAITING, WAITING, &text, fresh_list()),
+        Err(text) => notice(app, router, STEAM_TITLE, "Could not save the changes", &text, fresh_list()),
+    });
+    ask(app, router, page, yes, back);
+}
+
+/// A line for the question when covers for waiting adds are not downloaded yet.
 fn missing_art_lead(app: &AppState, queue: &steam_queue::SteamQueue) -> Option<String> {
     let missing = steam_queue::missing_art(queue, &app.catalog.borrow(), &app.paths.cache_dir);
     (!missing.is_empty()).then(|| format!("Artwork for {} is not downloaded yet: choose Not now and wait a minute to add it with the artwork.", missing.join(", ")))
@@ -221,15 +288,15 @@ fn close_steam_flow(app: &Rc<AppState>, router: &Router, opts: steam_close_scree
     steam_close_screen::open(app, router, opts, then);
 }
 
-/// The screen's "apply now" row: asks first when Steam is closed (outside Game Mode); with Steam running it
-/// offers to close Steam and apply (the shared flow).
-fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessCheck) {
+/// The screen's "make them now" row: asks first when Steam is closed (outside Game Mode); with Steam running it
+/// offers to close Steam and make them (the shared flow).
+fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessCheck, back: Back) {
     let loaded = steam_queue::load(&queue_path(app));
     if let Some(problem) = loaded.problem {
-        return open_message_dialog(app, router, QUEUE_TITLE, &problem);
+        return notice(app, router, WAITING, WAITING, &problem, back);
     }
     if loaded.queue.is_empty() {
-        return open_message_dialog(app, router, QUEUE_TITLE, "Nothing is queued.");
+        return notice(app, router, WAITING, WAITING, "Nothing is waiting.", back);
     }
     // Game Mode: the shared flow's page says to finish in Desktop Mode.
     if steam_queue::game_mode_from_env() {
@@ -237,56 +304,47 @@ fn offer_queue(app: &Rc<AppState>, router: &Router, steam: &dyn SteamProcessChec
     }
     match steam.running_steam_processes() {
         Ok(_) => close_steam_flow(app, router, steam_close_screen::Opts { ask_first: true, lead: missing_art_lead(app, &loaded.queue), ..Default::default() }, true),
-        Err(_) => open_message_dialog(app, router, QUEUE_TITLE, "Could not tell whether Steam is running, so nothing will be written."),
+        Err(_) => notice(app, router, WAITING, WAITING, "Could not tell whether Steam is running, so nothing will be changed.", back),
     }
 }
 
-/// `select_back`: after a removal the list reopens with Back selected, so a second A press cannot
-/// remove the next entry by accident.
-fn show_manage_queue(app: &Rc<AppState>, router: &Router, select_back: bool) {
+/// The Steam changes waiting, one card each: choosing one asks to drop it; the last card asks to clear them all.
+fn show_waiting(app: &Rc<AppState>, router: &Router) {
     let loaded = steam_queue::load(&queue_path(app));
     if let Some(problem) = &loaded.problem {
-        return open_message_dialog(app, router, QUEUE_TITLE, problem);
+        return notice(app, router, WAITING, WAITING, problem, fresh_list());
     }
     let queue = loaded.queue;
     let device_accounts = home_dir().map_or(0, |home| steam_queue::device_account_count(&home));
-    let labels = steam_queue::manage_labels(&queue, device_accounts > 1);
-    let Some(dialog) = build_picker_dialog(app, router, QUEUE_TITLE, &labels) else { return };
-    if select_back {
-        let back = labels.len().saturating_sub(1) as i32;
-        dialog.set_selected_index(back);
-        app.dialog_nav.picker_index.set(back);
-    }
-    {
-        let (app, router) = (app.clone(), router.clone());
-        dialog.on_item_selected(move |index| match steam_queue::manage_lines(&queue).get(index as usize).copied() {
-            Some(ManageLine::Entry(i)) => {
+    let page = steam_pages::waiting_page(&queue, device_accounts > 1, steam_queue::game_mode_from_env());
+    let again: Back = Rc::new(show_waiting);
+    let handlers = Handlers {
+        on_action: Rc::new(move |app, router, act| match act {
+            SteamAct::Change(i) => {
+                let Some(change) = queue.entries.get(i) else { return };
                 let mut changed = queue.clone();
                 changed.remove(i);
-                match steam_queue::save(&queue_path(&app), &changed) {
-                    Ok(()) => show_manage_queue(&app, &router, true),
-                    Err(e) => open_message_dialog(&app, &router, QUEUE_TITLE, &format!("Could not save the queue: {e}")),
-                }
-            }
-            Some(ManageLine::Clear) => {
-                let n = queue.len();
-                let text = format!("Remove all {n} queued Steam change{}? shortcuts.vdf is not touched.", if n == 1 { "" } else { "s" });
-                open_confirm_dialog(&app, &router, QUEUE_TITLE.into(), text.into(), "Clear".into(), |app, router| {
-                    match steam_queue::save(&queue_path(app), &steam_queue::SteamQueue::default()) {
-                        Ok(()) => open_steam_screen(app, router),
-                        Err(e) => open_message_dialog(app, router, QUEUE_TITLE, &format!("Could not clear the queue: {e}")),
-                    }
+                let yes: Back = Rc::new(move |app, router| match steam_queue::save(&queue_path(app), &changed) {
+                    Ok(()) => show_waiting(app, router),
+                    Err(e) => notice(app, router, WAITING, "Could not drop the change", &format!("The list of Steam changes waiting could not be saved ({e})."), Rc::new(show_waiting)),
                 });
+                ask(app, router, steam_pages::drop_page(change), yes, again.clone());
             }
-            Some(ManageLine::Back) => {
-                super::dialogs::close_current_dialog(&app, &router);
-                open_steam_screen(&app, &router);
+            SteamAct::ClearAll => {
+                let yes: Back = Rc::new(|app, router| match steam_queue::save(&queue_path(app), &steam_queue::SteamQueue::default()) {
+                    Ok(()) => fresh_list()(app, router),
+                    Err(e) => notice(app, router, WAITING, "Could not clear the changes", &format!("The list of Steam changes waiting could not be saved ({e})."), Rc::new(show_waiting)),
+                });
+                ask(app, router, steam_pages::clear_page(queue.len()), yes, again.clone());
             }
-            None => {}
-        });
-    }
-    let _ = dialog.show();
-    finish_dialog_open(app, router, DialogSlot::Picker(dialog));
+            SteamAct::Back => fresh_list()(app, router),
+            _ => {}
+        }),
+        on_back: fresh_list(),
+        on_exit: Rc::new(close_current_dialog),
+        on_input: None,
+    };
+    show_page(app, router, page, handlers);
 }
 
 #[derive(Default)]
@@ -344,7 +402,7 @@ fn check_queue(app: &Rc<AppState>, router: &Router, watch: &QueueWatch) {
         if !watch.shown_problems.borrow().contains(&problem) {
             eprintln!("steam queue: {}", problem.replace('\n', " "));
             watch.shown_problems.borrow_mut().push(problem.clone());
-            open_message_dialog(app, router, QUEUE_TITLE, &problem);
+            notice(app, router, WAITING, WAITING, &problem, Rc::new(close_current_dialog));
         }
         return;
     }

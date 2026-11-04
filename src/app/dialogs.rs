@@ -395,6 +395,8 @@ fn open_two_button_dialog(
 // Fork (port dialogs): upstream's launch error dialog ("Error - X": Reinstall, Open info) is the "Could not start <name>"
 // page now (`play_screen::could_not_start`, called from `install_launch`).
 
+// Fork (steam, art and settings pages): Add to Steam asks on pages now; kept for merge ease.
+#[allow(dead_code)]
 pub(crate) fn open_confirm_dialog(
     app: &Rc<AppState>,
     router: &Router,

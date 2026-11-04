@@ -270,7 +270,7 @@ impl SteamQueue {
         (index < self.entries.len()).then(|| self.entries.remove(index))
     }
 
-    fn accounts(&self) -> Vec<u32> {
+    pub(crate) fn accounts(&self) -> Vec<u32> {
         let mut out: Vec<u32> = Vec::new();
         for e in &self.entries {
             if !out.contains(&e.account_id) {
@@ -349,11 +349,12 @@ pub fn load(path: &Path) -> LoadOutcome {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return empty(None, None, false),
         Err(e) => {
+            eprintln!("steam queue: could not open {}: {e}", path.display());
             return empty(
                 None,
-                Some(format!("Could not open the queue of Steam changes ({}): {e}.\nIt was left as it is; nothing can be queued or applied until it is fixed or removed.", path.display())),
+                Some("Could not open the list of Steam changes waiting. It was left as it is; no change can wait or be made until it is fixed or removed.".to_string()),
                 true,
-            )
+            );
         }
     };
     let parsed = std::str::from_utf8(&bytes)
@@ -364,20 +365,20 @@ pub fn load(path: &Path) -> LoadOutcome {
         Ok(queue) => return LoadOutcome { queue, set_aside: None, problem: None, unreadable: false },
         Err(why) => why,
     };
+    // The details go to the log; the owner reads a plain sentence (the damaged copy is kept beside the app's settings).
     match set_aside(path) {
         Ok(aside) => {
-            let name = aside.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            eprintln!("steam queue: {} could not be read ({why}); kept as {}", path.display(), aside.display());
             empty(
                 Some(aside),
-                Some(format!("The queue of Steam changes could not be read: {why}.\nIt was kept as {name} and the queue starts empty.\nQueue the changes again from Settings > Add to Steam.")),
+                Some("The list of Steam changes waiting was damaged, so it starts empty. A copy of it was kept.\nChoose the changes again in Settings > Add to Steam.".to_string()),
                 false,
             )
         }
-        Err(e) => empty(
-            None,
-            Some(format!("The queue of Steam changes could not be read: {why}.\nIt could not be moved aside either ({e}); nothing can be queued or applied until it is fixed or removed.")),
-            true,
-        ),
+        Err(e) => {
+            eprintln!("steam queue: {} could not be read ({why}) or set aside ({e})", path.display());
+            empty(None, Some("The list of Steam changes waiting is damaged and could not be set aside. No change can wait or be made until it is fixed or removed.".to_string()), true)
+        }
     }
 }
 
@@ -470,13 +471,13 @@ pub fn when_applied_text(game_mode: bool, count: usize) -> String {
     let what = if count == 1 { "The change".to_string() } else { format!("The {count} changes") };
     if game_mode {
         format!(
-            "Steam can't be closed in Game Mode, so nothing is written now.\n\
-             {what} will apply next time you open this app in Desktop Mode with Steam closed (it asks first)."
+            "Steam cannot be closed in Game Mode, so nothing is written now.\n\
+             {what} will be made next time you open this app in Desktop Mode with Steam closed (it asks first)."
         )
     } else {
         format!(
             "Steam is running, so nothing is written now.\n\
-             {what} will apply once Steam is closed (Steam menu, Exit): this app asks within 30 seconds, \
+             {what} will be made once Steam is closed (Steam menu, Exit): this app asks within 30 seconds, \
              or the next time it starts with Steam closed."
         )
     }
@@ -509,9 +510,10 @@ pub fn port_art_missing(port: &Port, cache_dir: &Path) -> bool {
 pub fn offer_text(queue: &SteamQueue, show_accounts: bool, missing_art: &[String]) -> String {
     let lines: Vec<String> = queue.entries.iter().map(|e| e.line(show_accounts)).collect();
     let mut text = format!(
-        "{} queued {}: apply now?\n\n{}\n\n",
+        "{} waiting {}: make {} now?\n\n{}\n\n",
         plural(queue.len(), "Steam change", "Steam changes"),
         queue.origin(),
+        if queue.len() == 1 { "it" } else { "them" },
         listed(&lines)
     );
     if !missing_art.is_empty() {
@@ -521,8 +523,8 @@ pub fn offer_text(queue: &SteamQueue, show_accounts: bool, missing_art: &[String
         ));
     }
     text.push_str(&format!(
-        "Steam is closed, so {} can be written now. shortcuts.vdf is backed up first.\n\
-         Cancel keeps them queued: apply later from Settings > Add to Steam, or this asks again after Steam has run and been closed.",
+        "Steam is closed, so {} can be made now. Your Steam shortcuts list is backed up first.\n\
+         Cancel keeps them waiting: make them later from Settings > Add to Steam, or this asks again after Steam has run and been closed.",
         if queue.len() == 1 { "it" } else { "they" }
     ));
     text
@@ -562,13 +564,6 @@ pub fn changes_from_screen(screen: &SteamScreen, queued_at: &str) -> Vec<QueuedC
             icon: None,
         })
         .collect()
-}
-
-/// Title and text of the confirmation before queuing.
-pub fn queue_confirm(changes: &[QueuedChange], game_mode: bool, show_accounts: bool) -> (&'static str, String) {
-    let lines: Vec<String> = changes.iter().map(|c| c.line(show_accounts)).collect();
-    let title = if game_mode { "Queue for Desktop Mode" } else { "Queue until Steam is closed" };
-    (title, format!("{}\n\n{title}:\n{}", when_applied_text(game_mode, changes.len()), listed(&lines)))
 }
 
 /// Adds the changes to the queue file. Returns the message to show.
@@ -612,55 +607,22 @@ pub fn queue_changes(path: &Path, changes: Vec<QueuedChange>, game_mode: bool) -
     }
     let loaded = load(path);
     if loaded.unreadable {
-        return Err(format!("{}\n\nNothing was queued.", loaded.problem.unwrap_or_default()));
+        return Err(format!("{}\n\nNothing was saved to wait.", loaded.problem.unwrap_or_default()));
     }
     let mut queue = loaded.queue;
     let added = changes.len();
     for change in changes {
         queue.upsert(change);
     }
-    save(path, &queue).map_err(|e| format!("Could not save the queue ({}): {e}\nNothing was queued.", path.display()))?;
-    let mut text = format!("Queued {} ({} waiting in all).\n\n{}", plural(added, "change", "changes"), queue.len(), when_applied_text(game_mode, queue.len()));
+    save(path, &queue).map_err(|e| {
+        eprintln!("steam queue: could not save {}: {e}", path.display());
+        format!("Could not save the list of Steam changes waiting ({e}).\nNothing was saved to wait.")
+    })?;
+    let mut text = format!("{} now waiting ({} in all).\n\n{}", plural(added, "change", "changes"), queue.len(), when_applied_text(game_mode, queue.len()));
     if let Some(problem) = loaded.problem {
         text = format!("{problem}\n\n{text}");
     }
     Ok(text)
-}
-
-// ---------------------------------------------------------------------------------------------
-// Managing the queue
-// ---------------------------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ManageLine {
-    Entry(usize),
-    Clear,
-    Back,
-}
-
-pub fn manage_lines(queue: &SteamQueue) -> Vec<ManageLine> {
-    let mut lines: Vec<ManageLine> = (0..queue.len()).map(ManageLine::Entry).collect();
-    if !queue.is_empty() {
-        lines.push(ManageLine::Clear);
-    }
-    lines.push(ManageLine::Back);
-    lines
-}
-
-pub fn manage_labels(queue: &SteamQueue, show_accounts: bool) -> Vec<String> {
-    let show_accounts = show_accounts || queue.accounts().len() > 1;
-    manage_lines(queue)
-        .into_iter()
-        .map(|line| match line {
-            ManageLine::Entry(i) => {
-                let e = &queue.entries[i];
-                let account = if show_accounts { format!(", {}", e.account_text()) } else { String::new() };
-                format!("Remove: {} ({}{account})", e.name, e.kind.label())
-            }
-            ManageLine::Clear => format!("Clear the queue ({})...", plural(queue.len(), "change", "changes")),
-            ManageLine::Back => "Back".to_string(),
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -799,7 +761,7 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
         };
         screen.set_account(index, inputs.library_dir, inputs.catalog, inputs.favorite_exe);
         if let Some(e) = &screen.load_error {
-            sections.push(format!("Could not read shortcuts.vdf for {}: {e}", entries[0].account_text()));
+            sections.push(format!("Could not read your Steam shortcuts list for {}: {e}", entries[0].account_text()));
             remaining.entries.extend(entries.into_iter().cloned());
             refused = true;
             continue;
@@ -864,17 +826,17 @@ pub fn apply_queue(queue: &SteamQueue, inputs: &ApplyInputs, steam: &dyn SteamPr
 
     let mut text = String::new();
     if refused {
-        text.push_str(&format!("{} still queued.\n\n", plural(remaining.len(), "change is", "changes are")));
+        text.push_str(&format!("{} still waiting.\n\n", plural(remaining.len(), "change is", "changes are")));
     }
     text.push_str(&sections.join("\n\n"));
     if !already.is_empty() {
         push_block(&mut text, &format!("Already in Steam, nothing to do ({}):\n{}", already.len(), listed(&already)));
     }
     if !skipped.is_empty() {
-        push_block(&mut text, &format!("Dropped from the queue ({}):\n{}", skipped.len(), listed(&skipped)));
+        push_block(&mut text, &format!("Dropped from the waiting changes ({}):\n{}", skipped.len(), listed(&skipped)));
     }
     if text.is_empty() {
-        text.push_str("Nothing was queued.");
+        text.push_str("Nothing was waiting.");
     }
     already_count += already.len();
     QueueApplyOutcome { text, remaining, wrote, refused, done, already: already_count, dropped: skipped.len() }
@@ -983,7 +945,7 @@ pub fn apply_queue_file(path: &Path, inputs: &ApplyInputs, steam: &dyn SteamProc
     // An unchanged queue is not rewritten, so a refusal leaves the file exactly as it was.
     if outcome.remaining != loaded.queue {
         if let Err(e) = save(path, &outcome.remaining) {
-            push_block(&mut outcome.text, &format!("Could not update the queue file ({e}); applied changes may be offered again (they would be found already in Steam)."));
+            push_block(&mut outcome.text, &format!("Could not update the list of Steam changes waiting ({e}); changes already made may be offered again (they would be found already in Steam)."));
         }
     }
     if let Some(problem) = loaded.problem {
@@ -1193,7 +1155,7 @@ mod tests {
         assert_eq!((e.account_id, e.port_key.as_str(), e.kind, e.art), (1234, "example/testport", QueuedKind::Add, ArtChoice::Catalog));
         assert_eq!((e.account_label.as_str(), e.from_game_mode), ("", false));
         assert_eq!(e.account_text(), "account 1234");
-        assert!(offer_text(&loaded.queue, false, &[]).starts_with("1 Steam change queued while Steam was running"));
+        assert!(offer_text(&loaded.queue, false, &[]).starts_with("1 Steam change waiting while Steam was running"));
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -1257,8 +1219,9 @@ mod tests {
             let loaded = load(&path);
             assert!(loaded.queue.is_empty());
             let problem = loaded.problem.unwrap();
-            assert!(problem.contains(why), "{why}: {problem}");
-            assert!(problem.contains("kept as steam-queue.json.corrupt-"), "{problem}");
+            let _ = why; // the reason goes to the log; the owner reads a plain sentence
+            assert!(problem.starts_with("The list of Steam changes waiting was damaged") && problem.contains("A copy of it was kept"), "{problem}");
+            assert!(!problem.contains("json") && !problem.contains("queue"), "{problem}");
             let aside = loaded.set_aside.unwrap();
             assert_eq!(fs::read(&aside).unwrap(), bad, "the bad file is kept byte for byte");
             assert!(!path.exists());
@@ -1276,8 +1239,8 @@ mod tests {
         fs::create_dir_all(f.queue.parent().unwrap()).unwrap();
         fs::write(&f.queue, "not json").unwrap();
         let text = queue_changes(&f.queue, vec![change(1234, "a/dusk", QueuedKind::Add)], true).unwrap();
-        assert!(text.starts_with("The queue of Steam changes could not be read"), "{text}");
-        assert!(text.contains("Queued 1 change (1 waiting in all)"), "{text}");
+        assert!(text.starts_with("The list of Steam changes waiting was damaged"), "{text}");
+        assert!(text.contains("1 change now waiting (1 in all)"), "{text}");
         assert_eq!(load(&f.queue).queue.len(), 1);
     }
 
@@ -1304,8 +1267,8 @@ mod tests {
 
         let before = fs::read(&f.vdf).unwrap();
         let text = queue_changes(&f.queue, changes, true).unwrap();
-        assert!(text.contains("Queued 2 changes"), "{text}");
-        assert!(text.contains("can't be closed in Game Mode") && text.contains("next time you open this app in Desktop Mode"), "{text}");
+        assert!(text.contains("2 changes now waiting"), "{text}");
+        assert!(text.contains("cannot be closed in Game Mode") && text.contains("next time you open this app in Desktop Mode"), "{text}");
         assert_eq!(fs::read(&f.vdf).unwrap(), before, "queuing never touches shortcuts.vdf");
         assert_eq!(load(&f.queue).queue.len(), 2);
     }
@@ -1313,9 +1276,9 @@ mod tests {
     #[test]
     fn the_wording_follows_the_mode() {
         let game = when_applied_text(true, 1);
-        assert!(game.contains("Steam can't be closed in Game Mode"));
-        assert!(game.contains("The change will apply next time you open this app in Desktop Mode with Steam closed"), "{game}");
-        assert!(when_applied_text(true, 3).contains("The 3 changes will apply next time"));
+        assert!(game.contains("Steam cannot be closed in Game Mode"));
+        assert!(game.contains("The change will be made next time you open this app in Desktop Mode with Steam closed"), "{game}");
+        assert!(when_applied_text(true, 3).contains("The 3 changes will be made next time"));
         let desk = when_applied_text(false, 2);
         assert!(desk.contains("once Steam is closed (Steam menu, Exit)") && desk.contains("within 30 seconds"), "{desk}");
         assert!(!desk.contains("Game Mode"));
@@ -1344,7 +1307,7 @@ mod tests {
         let out = f.apply(&catalog(), &no_steam);
         assert!(out.wrote && !out.refused, "{}", out.text);
         assert!(out.text.contains("Added 1, updated 1"), "{}", out.text);
-        assert!(out.text.contains("Backup of the old list: shortcuts.vdf.bak-"), "{}", out.text);
+        assert!(out.text.contains("Your Steam shortcuts list was backed up first."), "{}", out.text);
         assert!(out.remaining.is_empty());
         assert!(!f.queue.exists(), "the queue file is gone once applied");
         let list = backups::list_backups(&f.vdf).unwrap();
@@ -1364,7 +1327,7 @@ mod tests {
         let (vdf, queue) = (fs::read(&f.vdf).unwrap(), fs::read(&f.queue).unwrap());
         let out = f.apply(&catalog(), &running);
         assert!(out.refused && !out.wrote);
-        assert!(out.text.starts_with("2 changes are still queued."), "{}", out.text);
+        assert!(out.text.starts_with("2 changes are still waiting."), "{}", out.text);
         assert!(out.text.contains("Still running: 77 steam"), "{}", out.text);
         assert_eq!(fs::read(&f.vdf).unwrap(), vdf);
         assert_eq!(fs::read(&f.queue).unwrap(), queue, "the queue file is untouched");
@@ -1459,7 +1422,7 @@ mod tests {
         save(&f.queue, &q).unwrap();
         let out = f.apply(&catalog(), &no_steam);
         assert!(out.wrote, "the others still go through: {}", out.text);
-        assert!(out.text.contains("Dropped from the queue (1):\n  port: no longer in the catalog"), "{}", out.text);
+        assert!(out.text.contains("Dropped from the waiting changes (1):\n  port: no longer in the catalog"), "{}", out.text);
         assert!(!f.queue.exists(), "the stale entry is not offered again");
         assert_eq!(f.saved().len(), 2);
     }
@@ -1491,7 +1454,7 @@ mod tests {
         fs::write(&f.vdf, b"\x00shortcuts\x00\x09bad\x00").unwrap();
         let out = f.apply(&catalog(), &no_steam);
         assert!(out.refused && !out.wrote);
-        assert!(out.text.contains("Could not read shortcuts.vdf for account 1234"), "{}", out.text);
+        assert!(out.text.contains("Could not read your Steam shortcuts list for account 1234"), "{}", out.text);
         assert_eq!(load(&f.queue).queue.len(), 2);
     }
 
@@ -1503,7 +1466,7 @@ mod tests {
         let before = fs::read(&f.vdf).unwrap();
         let out = f.apply(&catalog(), &no_steam);
         assert!(!out.wrote && !out.refused);
-        assert!(out.text.starts_with("The queue of Steam changes could not be read"), "{}", out.text);
+        assert!(out.text.starts_with("The list of Steam changes waiting was damaged"), "{}", out.text);
         assert_eq!(fs::read(&f.vdf).unwrap(), before);
         assert!(fs::read_dir(f.queue.parent().unwrap()).unwrap().filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().starts_with("steam-queue.json.corrupt-")));
     }
@@ -1571,16 +1534,16 @@ mod tests {
     }
 
     #[test]
-    fn manage_labels_list_entries_then_clear_and_back() {
+    fn the_offer_names_each_waiting_change_and_the_accounts_when_there_are_several() {
         let mut q = SteamQueue::default();
-        assert_eq!(manage_labels(&q, false), ["Back"]);
         q.upsert(change(1234, "a/dusk", QueuedKind::Add));
         q.upsert(change(1234, "a/soh", QueuedKind::Update));
-        assert_eq!(manage_labels(&q, false), ["Remove: dusk (add)", "Remove: soh (update)", "Clear the queue (2 changes)...", "Back"]);
+        assert_eq!(q.accounts(), [1234]);
         q.upsert(change(5678, "a/dusk", QueuedKind::Add));
-        assert_eq!(manage_labels(&q, false)[2], "Remove: dusk (add, account 5678)");
-        assert_eq!(manage_lines(&q)[3], ManageLine::Clear);
-        assert!(offer_text(&q, false, &[]).starts_with("3 Steam changes queued from Game Mode: apply now?"));
+        assert_eq!(q.accounts().len(), 2);
+        let text = offer_text(&q, false, &[]);
+        assert!(text.starts_with("3 Steam changes waiting from Game Mode: make them now?"), "{text}");
+        assert!(text.contains("Your Steam shortcuts list is backed up first") && !text.contains("shortcuts.vdf") && !text.contains("queue"), "{text}");
     }
 
     // -- review fixes -----------------------------------------------------------------------------
@@ -1608,7 +1571,7 @@ mod tests {
         let inputs = ApplyInputs { home: &f.home, library_dir: &f.library, catalog: &cat, favorite_exe: &|_| None, cache_dir: None, settings: &settings, game_mode: true };
         let out = apply_queue_file(&f.queue, &inputs, &no_steam, SystemTime::now());
         assert!(out.refused && !out.wrote);
-        assert!(out.text.contains("Steam can't be closed in Game Mode"), "{}", out.text);
+        assert!(out.text.contains("Steam cannot be closed in Game Mode"), "{}", out.text);
         assert_eq!(fs::read(&f.vdf).unwrap(), vdf);
         assert_eq!(fs::read(&f.queue).unwrap(), queue);
         assert!(backups::list_backups(&f.vdf).unwrap().is_empty());
@@ -1640,7 +1603,7 @@ mod tests {
         save(&f.queue, &q).unwrap();
         let out = f.apply(&catalog(), &running);
         assert!(out.refused, "{}", out.text);
-        assert!(out.text.contains("Dropped from the queue (1):\n  port: no longer in the catalog"), "{}", out.text);
+        assert!(out.text.contains("Dropped from the waiting changes (1):\n  port: no longer in the catalog"), "{}", out.text);
         let keys: Vec<&str> = out.remaining.entries.iter().map(|e| e.port_key.as_str()).collect();
         assert_eq!(keys, ["a/dusk", "a/soh"]);
         assert_eq!(load(&f.queue).queue, out.remaining);
@@ -1655,7 +1618,7 @@ mod tests {
         assert!(loaded.unreadable && loaded.set_aside.is_none());
         assert!(loaded.problem.as_deref().unwrap().contains("left as it is"));
         let err = queue_changes(&f.queue, vec![change(1234, "a/dusk", QueuedKind::Add)], true).unwrap_err();
-        assert!(err.contains("Nothing was queued"), "{err}");
+        assert!(err.contains("Nothing was saved to wait"), "{err}");
         let out = f.apply(&catalog(), &no_steam);
         assert!(out.refused && !out.wrote);
         assert!(f.queue.join("inside").is_dir(), "left exactly as it was");
@@ -1676,10 +1639,10 @@ mod tests {
         q.upsert(dusk);
         assert_eq!(missing_art(&q, &cat, &cache), ["Dusklight"]);
         let text = offer_text(&q, false, &missing_art(&q, &cat, &cache));
-        assert!(text.starts_with("1 Steam change queued from Game Mode: apply now?"), "{text}");
+        assert!(text.starts_with("1 Steam change waiting from Game Mode: make it now?"), "{text}");
         assert!(text.contains("Artwork for Dusklight is not downloaded yet. Cancel and wait a minute to add it with the artwork, or Apply without it."), "{text}");
-        assert!(text.contains("so it can be written now"));
-        assert!(text.contains("Cancel keeps them queued: apply later from Settings > Add to Steam, or this asks again after Steam has run and been closed."));
+        assert!(text.contains("so it can be made now"));
+        assert!(text.contains("Cancel keeps them waiting: make them later from Settings > Add to Steam, or this asks again after Steam has run and been closed."));
         image::RgbaImage::from_pixel(60, 90, image::Rgba([1, 2, 3, 255])).save(cache.join("dusklight.png")).unwrap();
         assert!(missing_art(&q, &cat, &cache).is_empty());
         q.entries[0].art = ArtChoice::None;
@@ -1687,7 +1650,7 @@ mod tests {
         assert!(missing_art(&q, &cat, &cache).is_empty(), "no art wanted, none missing");
         // Queued from Desktop Mode while Steam ran: no Game Mode wording.
         q.entries[0].from_game_mode = false;
-        assert!(offer_text(&q, false, &[]).starts_with("1 Steam change queued while Steam was running: apply now?"));
+        assert!(offer_text(&q, false, &[]).starts_with("1 Steam change waiting while Steam was running: make it now?"));
     }
 
     #[test]
@@ -1713,13 +1676,8 @@ mod tests {
         q.upsert(c);
         assert!(!q.show_accounts(1));
         assert!(q.show_accounts(2));
-        assert_eq!(manage_labels(&q, true)[0], "Remove: dusk (add, Deck Player)");
-        assert_eq!(manage_labels(&q, false)[0], "Remove: dusk (add)");
         assert!(offer_text(&q, true, &[]).contains("  dusk (add, Deck Player)"));
-        let (title, text) = queue_confirm(&q.entries, false, true);
-        assert_eq!(title, "Queue until Steam is closed");
-        assert!(text.contains("Queue until Steam is closed:\n  dusk (add, Deck Player)"), "{text}");
-        assert_eq!(queue_confirm(&q.entries, true, false).0, "Queue for Desktop Mode");
+        assert!(offer_text(&q, false, &[]).contains("  dusk (add)\n"));
     }
 
     #[test]
