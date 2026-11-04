@@ -352,6 +352,7 @@ Files added by this fork:
 | 2026-11-04 | `src/ui/theme.rs` | Theme quick wins: `ThemeColors::FALLBACK` is the fork's "arc-dark" (surfaces `#272e38` / `#191f27`, text `#edf2f7`, secondary `#b8c3d1`, border `#566273`) and `load` lays it over the file's "arc-dark" entry (`FORK_THEME`), since the app refreshes `themes.json` from upstream; `SemanticPalette::default()` fills are darker (success `#3a7a47` / `#40834c`, warning `#a05800` / `#ab6000`, info `#2470ab` / `#2b7bb6`) so white labels read at 4.5:1 or better; `FALLBACK` is `pub`; a file whose themes are all unusable leaves the loaded set alone; an unknown active theme falls back to the fork's default. Tests: Rust and `ui/shared.slint` in step, WCAG contrast, the override |
 | 2026-11-04 | `ui/shared.slint` | Theme quick wins: the `Theme` and `SemanticColors` defaults mirror `src/ui/theme.rs` (same values as the row above) |
 | 2026-11-04 | `ui/dialogs/chrome.slint` | Theme quick wins: `DialogButton` draws the selected, enabled button with a 3 px outline in `selected-text` (the fill is unchanged), so the cursor on the old dialogs' buttons reads on the Deck |
+| 2026-11-04 | `ui/app-window.slint` | Theme quick wins (Fable review): the focused "< Home" list button fills `info-hover` instead of `info.darker(0.3)` (one line in the fork's own Home button block) |
 
 ## Theme quick wins (Codex review of 2026-11-02, section A)
 
@@ -375,8 +376,13 @@ downloads that file from upstream about every 12 hours, so an edit there would n
 7. The hint bar at the bottom of a guided page uses the full item font (was 0.95x).
 8. The Deck-ready list's small text (chips, subtitle, counts) is 0.95x the item font (was 0.85x) and the subtitle is
    no longer faded.
-A test in `src/ui/theme.rs` fails if the Rust and Slint palettes drift apart, if white on any fill drops under 4.5:1,
-if a fill drops under about 3:1 against the page, or if secondary text drops under 4.5:1.
+   Home's tile icons (the checklist, the plus, the "to do" exclamation) are stroked in the theme's
+   `selected-background` instead of `info` (the darker `info` was 2.6:1 on the tile), and the focused "< Home"
+   button is `info-hover`, not a darkened `info`.
+A test in `src/ui/theme.rs` fails if the Rust and Slint palettes drift apart, if white on any fill (danger's hover
+aside) drops under 4.5:1, if a fill drops under 3:1 against the page, or if secondary text drops under 4.5:1. On the
+lighter bars (`search-background`) the fills sit at about 2.6:1; the white mark inside each disc carries the meaning
+there.
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 

@@ -112,7 +112,7 @@ component Tile inherits Rectangle {
             viewbox-width: 100;
             viewbox-height: 100;
             commands: "M 8 22 L 16 30 L 30 14 M 44 22 H 92 M 8 52 L 16 60 L 30 44 M 44 52 H 92 M 8 82 L 16 90 L 30 74 M 44 82 H 92";
-            stroke: SemanticColors.info;
+            stroke: Theme.selected-background;
             stroke-width: root.font-px * 0.3;
         }
         // Add a port: a plus, bigger than the badge marks, so it reads from across the room.
@@ -124,7 +124,7 @@ component Tile inherits Rectangle {
             viewbox-width: 100;
             viewbox-height: 100;
             commands: "M 50 8 L 50 92 M 8 50 L 92 50";
-            stroke: SemanticColors.info;
+            stroke: Theme.selected-background;
             stroke-width: root.font-px * 0.55;
         }
         // Fix problems: an exclamation mark in a circle, red when a game will not start, else the blue of "to do".
@@ -136,7 +136,7 @@ component Tile inherits Rectangle {
             viewbox-width: 100;
             viewbox-height: 100;
             commands: "M 6 50 A 44 44 0 1 1 94 50 A 44 44 0 1 1 6 50 Z M 50 26 V 56 M 50 70 V 72";
-            stroke: root.tile.mark == 5 ? SemanticColors.danger : SemanticColors.info;
+            stroke: root.tile.mark == 5 ? SemanticColors.danger : Theme.selected-background;
             stroke-width: root.font-px * 0.45;
         }
         // Continue: a tag over the top of the cover.
@@ -312,7 +312,7 @@ component Row inherits Rectangle {
             viewbox-width: 100;
             viewbox-height: 100;
             commands: "M 8 22 L 16 30 L 30 14 M 44 22 H 92 M 8 52 L 16 60 L 30 44 M 44 52 H 92 M 8 82 L 16 90 L 30 74 M 44 82 H 92";
-            stroke: SemanticColors.info;
+            stroke: Theme.selected-background;
             stroke-width: root.font-px * 0.12;
         }
         if root.tile.kind == 3: Path {
@@ -323,7 +323,7 @@ component Row inherits Rectangle {
             viewbox-width: 100;
             viewbox-height: 100;
             commands: "M 50 8 L 50 92 M 8 50 L 92 50";
-            stroke: SemanticColors.info;
+            stroke: Theme.selected-background;
             stroke-width: root.font-px * 0.14;
         }
         if root.tile.kind == 4: Path {
@@ -334,7 +334,7 @@ component Row inherits Rectangle {
             viewbox-width: 100;
             viewbox-height: 100;
             commands: "M 6 50 A 44 44 0 1 1 94 50 A 44 44 0 1 1 6 50 Z M 50 26 V 56 M 50 70 V 72";
-            stroke: root.tile.mark == 5 ? SemanticColors.danger : SemanticColors.info;
+            stroke: root.tile.mark == 5 ? SemanticColors.danger : Theme.selected-background;
             stroke-width: root.font-px * 0.12;
         }
     }

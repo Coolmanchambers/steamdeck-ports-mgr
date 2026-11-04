@@ -345,7 +345,7 @@ export component AppWindow inherits Window {
                             height: 100%;
                             text: "< Home";
                             font-size: item-font-px * 1.1;
-                            fill-color: root.list-home-focused ? SemanticColors.info.darker(0.3) : SemanticColors.info;
+                            fill-color: root.list-home-focused ? SemanticColors.info-hover : SemanticColors.info;
                             clicked => { root.list-home-requested(); }
                             Rectangle {
                                 visible: root.list-home-focused;

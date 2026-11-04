@@ -130,7 +130,7 @@ pub fn load(path: &Path, cfg: &mut ThemeConfig, active_theme: &str) {
     // Fork: the file's "arc-dark" is upstream's lighter palette (and the app refreshes the file from upstream);
     // the fork's palette wins for that one name, and the default theme exists even if the file dropped it.
     themes.insert(FORK_THEME.to_string(), ThemeColors::FALLBACK);
-    let first = themes.get(FORK_THEME).copied().unwrap_or(ThemeColors::FALLBACK);
+    let first = ThemeColors::FALLBACK;
     cfg.current = themes.get(active_theme).copied().unwrap_or(first);
     cfg.themes = themes;
 }
@@ -342,6 +342,8 @@ mod tests {
             }
         }
 
+        // Guards the page only. On the lighter bars (`search_background`: title bars, Home tiles, fact boxes) the
+        // fills sit at about 2.6:1; there the white mark inside each disc (5.2:1 or better) carries the meaning.
         #[test]
         fn the_filled_colours_stand_out_from_the_dark_surface() {
             let (t, s) = (ThemeColors::FALLBACK, SemanticPalette::default());
