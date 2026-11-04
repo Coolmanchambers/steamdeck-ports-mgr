@@ -505,6 +505,8 @@ mod tests {
         assert_eq!(again.usable("owner/repo", SourceId::SteamGridDb).map(|e| e.id), Some(77));
         assert!(again.usable("other", SourceId::SteamGridDb).is_none());
         assert_eq!(again.pending("other", SourceId::SteamGridDb).len(), 1);
+        assert_eq!(again.pending("other", SourceId::SteamGridDb)[0].year, Some(1994));
+        assert_eq!(again.pending("other", SourceId::SteamGridDb)[0].verified, Some(true));
         assert!(again.searched_recently("other", SourceId::SteamGridDb, 700));
         assert!(!again.searched_recently("other", SourceId::SteamGridDb, 600 + SEARCH_TTL_SECS + 1));
         assert_eq!(again.rom_game("14:abcd:100"), Some(9001));

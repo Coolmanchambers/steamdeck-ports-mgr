@@ -19,11 +19,9 @@
 //! empty. A file that cannot be opened at all (permissions, a folder in its place) is left alone, and
 //! queuing and applying refuse until it is fixed, so it is never silently replaced.
 
-use super::artwork;
 use super::screens::{self, listed, SteamScreen};
 use super::settings::ForkSettings;
 use super::steam_sync::Action;
-use super::steam_user;
 use super::store::{backup_stamp, SteamProcessCheck};
 use crate::core::models::Port;
 use serde_json::{json, Map, Value};
@@ -528,15 +526,6 @@ pub fn offer_text(queue: &SteamQueue, show_accounts: bool, missing_art: &[String
         if queue.len() == 1 { "it" } else { "they" }
     ));
     text
-}
-
-/// How many Steam accounts this device has (the folder `SteamScreen::load` would use).
-pub fn device_account_count(home: &Path) -> usize {
-    artwork::existing_steam_roots(home)
-        .iter()
-        .filter_map(|root| steam_user::discover_accounts(root).ok())
-        .find(|accounts| !accounts.is_empty())
-        .map_or(0, |accounts| accounts.len())
 }
 
 // ---------------------------------------------------------------------------------------------

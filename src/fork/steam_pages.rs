@@ -103,7 +103,7 @@ pub fn waiting_page(queue: &SteamQueue, accounts: &[(u32, String)], game_mode: b
         } else {
             "These are made once Steam is closed. Choose one to drop it.".to_string()
         });
-        if accounts.len() > 1 {
+        if accounts.len() > 1 || queue.accounts().len() > 1 {
             for account in queue.accounts() {
                 // The account on a line of its own: a dimmed line that cannot be chosen, the account's changes under it.
                 p.options.push(PageOption { enabled: false, ..option(ellipsize(&account_name(accounts, account), 40), "Changes for this Steam account", SteamAct::Back) });
@@ -287,8 +287,14 @@ mod tests {
         assert_eq!(action_at(&p, initial_focus(&p)), Some(SteamAct::Change(0)), "the cursor starts on a change, not a name");
         let last = p.options.last().unwrap();
         assert_eq!((last.title.as_str(), last.detail.as_str(), last.action), ("Clear all waiting changes", "Drop all 4 changes", SteamAct::ClearAll));
-        let one = waiting_page(&queue(), &accounts()[..1], false);
-        assert!(one.options.iter().all(|o| o.enabled), "one account on the Deck: no account lines");
+        // One account left on the Deck, but changes still wait for one it no longer has: the lines stay, so the owner
+        // can see which changes will not be made.
+        let orphan = waiting_page(&queue(), &accounts()[..1], false);
+        assert_eq!((orphan.options[0].title.as_str(), orphan.options[0].enabled), ("Deck Player (deckplayer)", false));
+        assert!(orphan.options.iter().any(|o| o.title == "Steam account 2" && !o.enabled));
+        let mine = SteamQueue { entries: queue().entries.into_iter().filter(|c| c.account_id == 1).collect() };
+        let one = waiting_page(&mine, &accounts()[..1], false);
+        assert!(one.options.iter().all(|o| o.enabled), "one account on the Deck and only its changes: no account lines");
         assert_eq!(one.options[0].detail, "Will be added to Steam");
         assert_eq!(account_name(&accounts(), 9), "Steam account 9");
     }
