@@ -210,16 +210,23 @@ export component SearchListDialog inherits Window {
                 height: parent.height;
             }
 
+            // Fork (UI polish U6): the text box's room is clipped short of the clock (long text grew past its width).
+            picker-clip := Rectangle {
+                clip: true;
+                x: text-margin;
+                y: 0px;
+                width: search-box.width - text-margin * 2 - search-box.clock-room;
+                height: search-box.height;
             search-input := TextInput {
                 color: Theme.search-text;
                 font-size: search-font-px;
                 vertical-alignment: center;
                 single-line: true;
                 input-type: root.password ? InputType.password : InputType.text;
-                x: text-margin;
+                x: 0px;
                 y: 0px;
-                width: parent.width - text-margin * 2 - search-box.clock-room; // Fork (UI polish U6)
-                height: parent.height;
+                width: picker-clip.width;
+                height: picker-clip.height;
                 edited => { root.search-changed(self.text); }
                 key-pressed(event) => {
                     // Fork: a held Return or Escape acts once (navigation safety review).
@@ -241,6 +248,7 @@ export component SearchListDialog inherits Window {
                         reject
                     }
                 }
+            }
             }
         }
 

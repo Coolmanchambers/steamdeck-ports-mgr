@@ -732,13 +732,20 @@ mod tests {
     fn the_screen_files_draw_the_polish() {
         let app = include_str!("../../ui/app-window.slint");
         assert_eq!(app.matches("root.list-hint").count(), 4, "the grid's bar (shown, height, text) and Deck-ready's hint-text");
-        assert!(app.contains("empty-message: root.list-empty-text;"), "the grid's empty text comes from all_ports_empty_text");
+        assert!(app.contains("if root.card-rows.length == 0: Text {") && app.contains("text: root.list-empty-text;"), "the grid's empty text comes from all_ports_empty_text");
         assert!(app.contains("if root.ports.length == 0: Text {"), "the windowed list says why it is empty");
         assert!(app.contains("root.big-mode ? @tr(\"Type to search your ports...\") : @tr(\"Type to search all ports...\")"));
         assert!(!app.contains("L1 / R1  Lists"), "big mode's title line no longer carries hints");
         assert!(app.contains("padding-right: text-margin + search-bar.clock-room;") && app.contains("search-clock.preferred-width"));
         let picker = include_str!("../../ui/dialogs/picker.slint");
         assert_eq!(picker.matches("search-box.clock-room").count(), 2, "the placeholder and the text box both stop short of the clock");
+        // A long text grew past the text box's width (seen on the after shots), so each box sits in a clipped room.
+        let clipped = |src: &str, id: &str| {
+            let mut lines = src.lines().skip_while(|l| !l.contains(&format!("{id} := Rectangle {{")));
+            lines.next().is_some() && lines.next().is_some_and(|l| l.trim() == "clip: true;")
+        };
+        assert!(clipped(app, "search-clip"), "the main search box is clipped");
+        assert!(clipped(picker, "picker-clip"), "the picker's search box is clipped");
         let deck = include_str!("../../ui/fork/deck-ready.slint");
         assert!(deck.contains("text: root.hint-text;") && !deck.contains("B / Esc"), "Deck-ready's hints come from Rust");
     }

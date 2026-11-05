@@ -383,12 +383,18 @@ export component AppWindow inherits Window {
                                 padding-left: text-margin;
                                 padding-right: text-margin + search-bar.clock-room;
 
+                                // Fork (UI polish U6): the text box's own room is clipped (long text grew past its width).
+                                search-clip := Rectangle {
+                                    clip: true;
+                                    horizontal-stretch: 1;
+                                    min-width: 0px;
                                 search-input := TextInput {
+                                    width: search-clip.width;
+                                    height: search-clip.height;
                                     color: Theme.search-text;
                                     font-size: search-font-px;
                                     vertical-alignment: center;
                                     single-line: true;
-                                    horizontal-stretch: 1;
                                     edited => { root.search-changed(self.text); }
                                     key-pressed(event) => {
                                         if (root.key-intercepted(event.text, event.modifiers.control || event.modifiers.alt || event.modifiers.meta || event.modifiers.shift, event.repeat)) {
@@ -457,6 +463,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
+                                }
                             }
 
                             // Fork (UI polish U6): always there (hidden when off), so the search box can measure it.
@@ -480,7 +487,7 @@ export component AppWindow inherits Window {
                                 color: Theme.search-text;
                                 font-size: search-font-px;
                                 vertical-alignment: center;
-                                x: search-input.x;
+                                x: search-clip.x;
                             }
                         }
                     }
@@ -518,8 +525,21 @@ export component AppWindow inherits Window {
                                 card-hovered(r, c) => { root.card-hovered(r, c); }
                                 card-options(r, c) => { root.card-options(r, c); }
                                 card-unhovered() => { root.card-unhovered(); }
-                                // Fork (UI polish U4): says when a search found nothing (src/fork/home.rs `empty_text`).
-                                empty-message: root.list-empty-text;
+                                // Fork (UI polish U4): the grid's own empty text (no font size) gives way to the one below.
+                                empty-message: "";
+                            }
+
+                            // Fork (UI polish U4): says why the grid is empty (a search found nothing), at the list's text size.
+                            if root.card-rows.length == 0: Text {
+                                x: content-margin;
+                                width: parent.width - content-margin * 2;
+                                height: parent.height - parent.grid-hint-h;
+                                text: root.list-empty-text;
+                                color: Theme.list-text;
+                                font-size: item-font-px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
                             }
 
                             if root.list-hint != "": Text {
