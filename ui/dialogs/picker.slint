@@ -216,7 +216,10 @@ export component SearchListDialog inherits Window {
                 height: parent.height;
                 edited => { root.search-changed(self.text); }
                 key-pressed(event) => {
-                    if (event.text == Key.Escape) {
+                    // Fork: a held Return or Escape acts once (navigation safety review).
+                    if (event.repeat && (event.text == Key.Return || event.text == Key.Escape)) {
+                        accept
+                    } else if (event.text == Key.Escape) {
                         root.close-requested();
                         accept
                     } else if (event.text == Key.UpArrow || (event.modifiers.control && event.text == "w")) {

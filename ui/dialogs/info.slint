@@ -69,6 +69,10 @@ export component InfoDialog inherits Window {
     forward-focus: key-handler;
 
     function handle-nav-key(event: KeyEvent) -> EventResult {
+        // Fork: a held Return or Escape acts once (navigation safety review).
+        if (event.repeat && (event.text == Key.Return || event.text == Key.Escape)) {
+            return accept;
+        }
         if (event.text == Key.Escape) {
             root.close-requested();
             return accept;

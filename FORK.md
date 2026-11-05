@@ -358,6 +358,7 @@ Files added by this fork:
 | 2026-11-04 | `src/main.rs` | Navigation safety: `on_info_requested` (Ctrl+I) calls `show_info_for_current_selection`, as X on the pad does (2 lines) |
 | 2026-11-04 | `src/app/dialogs.rs` | Navigation safety review: `close_current_dialog` calls `press_echo::note_closed` after hiding a dialog, so a held Return or Escape cannot act on the main window or the next dialog within `CLOSE_GUARD` (2 lines) |
 | 2026-11-04 | `ui/app-window.slint` | Navigation safety review: the search box ignores a repeated Escape and a repeated Return (`if (!event.repeat)` around `escape-pressed` and `activate-requested`) |
+| 2026-11-04 | `ui/dialogs/chrome.slint`, `ui/dialogs/picker.slint`, `ui/dialogs/info.slint` | Navigation safety re-check: the dialogs' key handlers (`DialogNavKeyHandler`, the picker's search box, Info's `handle-nav-key`) ignore a repeated Return or Escape, so a held key that reaches an upstream dialog after the close guard acts only once (one guard each) |
 | 2026-11-04 | `README.md`, `STEAM_DECK.md` | Navigation safety: the keyboard table and the Home help name Ctrl+I (Info) and Ctrl+P (Settings) |
 | 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Navigation safety: the cursor is remembered and kept by item, an option by its title (`page::Place`, `place_at`, `find_place`); `PageHandle::update` and `starting_focus` find it again by title or start where the page says, never on another option that took its number |
 

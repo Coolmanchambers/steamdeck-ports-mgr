@@ -624,6 +624,8 @@ pub(crate) fn park(app: &Rc<AppState>, dialog: &SetupWizardDialog) -> bool {
         super::dialog_layer::sync(&app);
         let Some((_, dialog)) = WIN.with(|w| w.borrow_mut().take()) else { return };
         let _ = dialog.window().hide();
+        // Count the close guard from the real hide too: the main window only gets the keyboard after this.
+        press_echo::note_closed();
         ART_TIMER.with(|t| t.stop());
         // What `close_current_dialog` does after hiding a dialog. When another dialog opened meanwhile (a hand-off) it
         // is in front already and keeps the keyboard, so the main window is left alone, and the cursor memory is kept

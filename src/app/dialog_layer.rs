@@ -323,6 +323,20 @@ mod tests {
     }
 
     #[test]
+    fn a_held_return_or_escape_acts_once_on_the_upstream_dialogs() {
+        let guard = "event.repeat && (event.text == Key.Return || event.text == Key.Escape)";
+        for (file, slint, handler) in [
+            ("chrome.slint", include_str!("../../ui/dialogs/chrome.slint"), "key-pressed(event) =>"),
+            ("picker.slint", include_str!("../../ui/dialogs/picker.slint"), "key-pressed(event) =>"),
+            ("info.slint", include_str!("../../ui/dialogs/info.slint"), "function handle-nav-key("),
+        ] {
+            let at = &slint[slint.find(handler).unwrap_or_else(|| panic!("{file}: {handler}"))..];
+            let first_escape = at.find("Key.Escape)").unwrap_or_else(|| panic!("{file}: Escape branch"));
+            assert!(at[..first_escape + "Key.Escape)".len()].contains(guard), "{file}: the repeat guard comes first");
+        }
+    }
+
+    #[test]
     fn the_layer_names_the_keys_outside_game_mode() {
         assert_eq!(layer_hint(true), "A or B, click or tap");
         assert!(layer_hint(false).contains("Enter or Esc"));
