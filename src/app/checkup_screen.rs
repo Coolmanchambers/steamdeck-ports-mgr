@@ -295,7 +295,8 @@ fn program_facts(i: &SysInput) -> ProgramFacts {
         let found = walk.found;
         match (named_by_catalog, found.len()) {
             // The bounded walk stopped before the end: "none here" is not known (Play looks further), so nothing is said.
-            (_, 0) if !walk.complete => {}
+            // A program the catalog names is never searched for by Play: when it is gone, the port cannot start.
+            (false, 0) if !walk.complete => {}
             (_, 0) => out.none.push(named(p)),
             (true, _) => out.gone.push(named(p)),
             (false, 1) => {}
@@ -1187,6 +1188,15 @@ mod tests {
         assert!(f.none.is_empty() && f.gone.is_empty() && f.to_choose.is_empty(), "{:?}", f.none);
         i.installing.clear();
         assert_eq!(program_facts(&i).none, vec![Named::new("busy", "busy")], "once installed, an empty folder is no program");
+        // Re-check: a program the catalog names is never searched for, so a cut-short walk does not hide that it is gone.
+        let named_dir = root.path().join("Library").join("named").join("a_data");
+        std::fs::create_dir_all(&named_dir).unwrap();
+        for n in 0..4001 {
+            std::fs::write(named_dir.join(format!("f{n}.dat")), b"").unwrap();
+        }
+        let named_port = crate::core::models::port_from_value(&serde_json::json!({"name": "named", "folder": "named", "source": "https://example.com/x.zip", "executable": "game.x86_64"})).unwrap();
+        let j = input(root.path(), vec![named_port]);
+        assert_eq!(program_facts(&j).none, vec![Named::new("named", "named")], "the catalog's program is gone: Install again");
     }
 
     // W9: a restore that stopped part way shows on the Saves line, read without touching anything.

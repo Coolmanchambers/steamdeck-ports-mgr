@@ -589,7 +589,8 @@ catalog program joined to the folder, `last-run.json`).
   all: "Missing for X" (red) with "Install X again", which opens the install wizard's "Update X?" as Could not start's
   Reinstall does; saves are backed up first. Several at once read like the Game files line: "Missing for A; program
   gone for B; not chosen for C" (decision 5). The folder walk is bounded (`checkup::program_walk`: 4,000 entries, 5
-  folders deep); a walk cut short that found nothing says nothing, since Play's own search would go on. A port
+  folders deep); a walk cut short that found nothing says nothing for a port with no catalog program, since Play's own
+  search would go on (a catalog-named program that is gone is still "Missing": Play never searches for it). A port
   installing or updating when the look starts is left out.
 - **One port's Fix problems (W8, F-W2).** One port's look asks whether any port is in Steam
   (`steam_icons::any_shortcut_of`: the owner match only, no icons looked at, no log lines), so a port missing from Steam
