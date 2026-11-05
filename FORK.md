@@ -571,6 +571,39 @@ Section 4 of the 2026-11-04 full review, with Fable's checked fixes and Tim's de
   (it searches the installed ports there); windowed keeps "all ports".
 - Not changed: U5 (Steam icons pages, Tim's Deck run first), N11 (Tim: no change).
 
+## Repair accuracy (2026-11-04 review)
+
+Section 2 of the 2026-11-04 full review, with Fable's checked fixes. Fork files only: no upstream file changed, so no
+row in the upstream-edit table. A checkup still only looks: every new fact is a read (`interrupted_restores`, the
+catalog program joined to the folder, `last-run.json`).
+- **A dead game file link no longer counts (W3).** A recorded connection counts only while the file the port reads is
+  there (`port_mover::game_files::reaches_file`: its link or copy, a link followed to its original, or the original
+  for "use original"). It is a `metadata` look, not the full health check, so a changed date or size still counts.
+  Home's badge, the install wizard, the Port page, the checkup and the wizard's skip all read `files_state`, and the
+  move summary's "not found" list reads `missing_in`; both use it.
+- **The program to start is checked like Play does (W10).** A port whose catalog names its program is no longer passed
+  over: the program is joined to the folder (`resolve_executable`) and must be there. Gone with other programs in the
+  folder: the usual "Choose the program for X" (red, Play cannot start it). No program at all: the line says "Missing
+  for X" (red) with "Install X again", which opens the install wizard's "Update X?" as Could not start's Reinstall does;
+  saves are backed up first. Wording follows the Game files line (decision 5).
+- **One port's Fix problems (W8, F-W2).** One port's look reads every port's Steam shortcuts, so a port missing from
+  Steam while others are in it says "Not in Steam" with Add it to Steam, not "Not in Steam yet". A switch of this port
+  to a new folder that was cut short leads its Fix problems (the Ports folder line, "Finish switching X"); other ports'
+  switches stay out.
+- **A restore that stopped part way shows on the Saves line (W9):** "A restore of X stopped part way", with "Look at
+  the restore of X" opening Restore saves for the port, where it comes first with what to do. A reminder, not a Home
+  tile: the app never removes what the restore left, so only the user can clear it.
+- **A backup that missed ports says so (W6).** Back up saves writes `Saves Backup > Global Backups > last-run.json`
+  (date, end time, the ports it could not back up; `fork::backup_last_run`). While no newer zip came after that run,
+  the Save backups line says "Last backup missed X" with Back up saves now (a reminder), also when cloud backup is fine
+  (the cloud holds the same zip). Ports uninstalled since are left out. Nothing else reads the file: the backup lists,
+  Restore saves and the cloud copy take only `.zip`.
+- **A setup rerun keeps Game files to do (W7)** while the saved scan found files that Connect them now can still
+  connect: "Game files: <folder>, found for 3 of 4, 2 to connect".
+- **Putting kept files back counts what it left (F-W3).** A kept file whose place in the port's folder is a folder or a
+  link now (or was taken between the plan and the copy) is counted; the kept files page and the last page say "N kept
+  files stay in Kept files".
+
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
 Every guided page (setup wizard, Import ports cards and progress, old copies, cloud backup, save finder, Close Steam
