@@ -469,7 +469,9 @@ pub(crate) fn saved_results(app: &AppState) -> Option<crate::fork::setup_wizard:
     let rows: Vec<&crate::fork::rom_screens::report::PortRow> = out.report.groups.iter().flat_map(|g| g.ports.iter()).filter(|r| r.installed).collect();
     let dirs = rows.iter().filter_map(|r| safe_join(&library, &r.port.folder).ok().map(|d| (&r.port, d)));
     let in_folder = crate::fork::setup_wizard::game_files::in_folder_keys(dirs, &app.paths.config_dir);
-    Some(crate::fork::setup_wizard::game_files::Results::from_report(&out.report, &in_folder, &Default::default()))
+    // The ports "Connect them now" could still do: found, but not connected yet (a rerun keeps the step to do for them).
+    let connectable: std::collections::HashSet<String> = wizard_requests(app, &out.report).1.into_iter().collect();
+    Some(crate::fork::setup_wizard::game_files::Results::from_report(&out.report, &in_folder, &connectable))
 }
 
 /// Takes what the last wizard scan found (once).

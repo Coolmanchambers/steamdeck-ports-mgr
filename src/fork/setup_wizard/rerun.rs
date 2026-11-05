@@ -93,6 +93,8 @@ pub struct Facts {
     /// What the saved scan of that folder says (have, total), however it was made (the wizard, Settings > Game
     /// files, an older build); `None` when that folder was never scanned.
     pub game_files_found: Option<(usize, usize)>,
+    /// Of the ports that scan found files for, how many are still not connected and "Connect them now" can do.
+    pub game_files_connectable: usize,
     pub steam_to_add: usize,
     pub steam_waiting: usize,
     pub steam_problem: bool,
@@ -172,6 +174,10 @@ pub fn lines(facts: &Facts, progress: &Progress) -> Vec<StepLine> {
         _ if facts.game_files_needed == 0 => line(Step::GameFiles, State::Done, "Game files: nothing missing".to_string()),
         (None, _) if progress.game_files_skipped => marked(Step::GameFiles, State::Pending, Mark::Skipped, "Game files: skipped, no folder set".to_string()),
         (None, _) => line(Step::GameFiles, State::Pending, "Game files: no folder set yet".to_string()),
+        // "Found" counts files that are not connected yet: while some can still be connected, the step is not done.
+        (Some(folder), Some((have, total))) if facts.game_files_connectable > 0 => {
+            line(Step::GameFiles, State::Pending, format!("Game files: {folder}, found for {have} of {total}, {} to connect", facts.game_files_connectable))
+        }
         (Some(folder), Some((have, total))) => line(Step::GameFiles, State::Done, format!("Game files: {folder}, found for {have} of {total}")),
         (Some(folder), None) => line(Step::GameFiles, State::Pending, format!("Game files: {folder}, not looked at yet")),
     });
@@ -256,6 +262,7 @@ mod tests {
             game_files_needed: 4,
             rom_folder: None,
             game_files_found: None,
+            game_files_connectable: 0,
             steam_to_add: 0,
             steam_waiting: 4,
             steam_problem: false,
@@ -313,6 +320,18 @@ mod tests {
         assert_eq!((l[2].state, l[2].text.as_str()), (State::Done, "Game files: SD card > Emulation > roms, found for 3 of 4"));
         // What the app's saved scan says wins over what an earlier run recorded.
         assert_eq!(lines(&f, &Progress { game_files_found: Some((1, 4)), ..Progress::default() })[2].text, "Game files: SD card > Emulation > roms, found for 3 of 4");
+    }
+
+    // W7: "found" includes files not connected yet; while "Connect them now" can still do some, the step is not done.
+    #[test]
+    fn game_files_found_but_not_connected_yet_stay_to_do() {
+        let f = Facts { rom_folder: Some("SD card > Emulation > roms".into()), game_files_found: Some((3, 4)), game_files_connectable: 2, ..tims_deck() };
+        let l = lines(&f, &Progress::default());
+        assert_eq!((l[2].state, l[2].text.as_str()), (State::Pending, "Game files: SD card > Emulation > roms, found for 3 of 4, 2 to connect"));
+        assert_eq!(l[2].mark(), Mark::ToDo);
+        assert!(pending(&l).contains(&Step::GameFiles), "Finish what's left visits it");
+        let connected = lines(&Facts { game_files_connectable: 0, ..f }, &Progress::default());
+        assert_eq!(connected[2].state, State::Done);
     }
 
     #[test]

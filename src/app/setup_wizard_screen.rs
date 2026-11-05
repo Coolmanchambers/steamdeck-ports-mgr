@@ -203,6 +203,7 @@ fn setup_lines(app: &AppState) -> Vec<rerun::StepLine> {
     let ready = old.iter().filter(|o| crate::fork::port_mover::old_copies::readiness_now(o, home.as_deref().unwrap_or(Path::new("/")), &app.paths.config_dir).is_ok_and(|r| r.is_ready())).count();
     let steam = steam_info(app);
     let needing = app.catalog.borrow().iter().filter(|p| super::rom_screens::port_missing_game_files(app, p)).count();
+    let saved = super::rom_screens::saved_results(app);
     let facts = rerun::Facts {
         ports_place: places::place_of(&current, &internal_default, &drives),
         ports_folder_is_default: current == internal_default,
@@ -211,7 +212,8 @@ fn setup_lines(app: &AppState) -> Vec<rerun::StepLine> {
         old_ready: ready,
         game_files_needed: needing,
         rom_folder: rom_folder(app).map(|dir| places::folder_label(&dir, &drives, home.as_deref())),
-        game_files_found: super::rom_screens::saved_results(app).map(|r| (r.have(), r.total)),
+        game_files_found: saved.as_ref().map(|r| (r.have(), r.total)),
+        game_files_connectable: saved.as_ref().map_or(0, |r| r.connectable),
         steam_to_add: steam.to_add.saturating_sub(steam.queued),
         steam_waiting: steam.waiting.max(steam.queued),
         steam_problem: steam.problem.is_some(),
