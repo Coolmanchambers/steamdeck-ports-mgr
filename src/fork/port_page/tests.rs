@@ -372,13 +372,23 @@ fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
     let page = uninstall_page(&port(), Some(&f), Some(&saves), &places);
     // One sequence, top to bottom: what moves and where, which files, what a reinstall does, then what is deleted.
     let p = &page.paragraphs;
-    assert_eq!(p[0], "3 game files and 1 older version will be moved to Kept files, saves are backed up. Kept files: Internal storage > Saves Backup > Kept files > shipwright.", "{p:?}");
+    // Fork (data safety): no save folder with files inside the port folder, so the page does not say saves are backed up.
+    assert_eq!(p[0], "3 game files and 1 older version will be moved to Kept files. Kept files: Internal storage > Saves Backup > Kept files > shipwright.", "{p:?}");
     assert_eq!(p[1], "Kept: oot.o2r, oot-mq.o2r, zelda.z64.");
     assert!(p[2].starts_with("Reinstalling it offers to put them back"), "{p:?}");
     assert_eq!(p[3], "The rest of its folder is deleted: Internal storage > Ports > shipwright (200 MB).", "the kept files are not counted as deleted");
+    assert!(p.iter().any(|l| l.starts_with("No saves were found inside its folder")), "{p:?}");
+    assert!(!p.iter().any(|l| l.contains("are copied to Saves Backup first")), "{p:?}");
     assert!(page.facts.is_empty(), "nothing about keeping sits below in the facts box: {:?}", page.facts);
     let go = page.options.iter().find(|o| o.action == Act::UninstallYes).unwrap();
     assert_eq!(go.detail, "Keep the game files, delete the rest now");
+
+    let with_saves = SavesFacts { folders: vec![SaveFolder { path: "/home/deck/Ports/shipwright/Save".into(), source: SaveSource::Catalog, exists: true, files: 2, capped: false }], ..SavesFacts::default() };
+    let p = uninstall_page(&port(), Some(&f), Some(&with_saves), &places).paragraphs;
+    assert_eq!(p[0], "3 game files and 1 older version will be moved to Kept files, saves are backed up. Kept files: Internal storage > Saves Backup > Kept files > shipwright.", "{p:?}");
+    assert!(p.iter().any(|l| l.contains("are copied to Saves Backup first")), "{p:?}");
+    let outside = SavesFacts { folders: vec![SaveFolder { path: "/home/deck/.local/share/soh".into(), source: SaveSource::Catalog, exists: true, files: 2, capped: false }], ..SavesFacts::default() };
+    assert!(!uninstall_page(&port(), Some(&f), Some(&outside), &places).paragraphs[0].contains("saves are backed up"), "a save folder elsewhere is not copied");
 
     let plain = uninstall_page(&port(), Some(&FilesFacts { dir: "/home/deck/Ports/dusk".into(), ..FilesFacts::default() }), Some(&saves), &places);
     assert!(plain.facts.iter().all(|l| !l.contains("Kept files")));

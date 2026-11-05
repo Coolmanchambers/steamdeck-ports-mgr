@@ -171,6 +171,8 @@ pub fn extras_ask_page(name: &str) -> Page<Step> {
     let mut p = base(name, Card::Updates, "Install the extra files?");
     p.paragraphs.push(format!("Extras are optional add-ons the catalog lists for {name}, such as extra play options or ready-made settings."));
     p.paragraphs.push("They are downloaded into its folder and replace any copies of the same files that are already there.".to_string());
+    // Fork (data safety, decision 4): the user's own files are the exception.
+    p.paragraphs.push("Your saves, game files, keys and dumps are never replaced: they stay as they are.".to_string());
     p.options = vec![
         option("Yes, install the extras", "Replaces copies of these files already in its folder", Step::Yes),
         recommended(option("No, leave it as it is", "Nothing is downloaded", Step::Back)),
@@ -389,6 +391,7 @@ mod tests {
         assert_eq!(p.title, "Install the extra files?");
         assert!(p.paragraphs[0].starts_with("Extras are optional add-ons"));
         assert!(p.paragraphs[1].contains("replace any copies"));
+        assert!(p.paragraphs[2].starts_with("Your saves, game files, keys and dumps are never replaced"));
         assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["Yes, install the extras", "No, leave it as it is"]);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(Step::Back), "replacing files is never the answer the cursor starts on");
         assert!(p.fresh_focus, "starts on No every time, not where the last one was left");

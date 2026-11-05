@@ -100,6 +100,7 @@ fn retry_transient<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     Err(last_err.expect("at least one attempt"))
 }
 
+#[allow(dead_code)] // Fork (data safety): the merge no longer deletes in place (`fork::update_merge`); kept for merge ease
 fn remove_existing(path: &Path) -> io::Result<()> {
     let Ok(meta) = fs::symlink_metadata(path) else { return Ok(()) };
     if meta.is_dir() {
@@ -109,6 +110,7 @@ fn remove_existing(path: &Path) -> io::Result<()> {
     }
 }
 
+#[allow(dead_code)] // Fork (data safety): see `remove_existing`
 fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
@@ -205,14 +207,15 @@ fn reject_if_too_large(total_bytes: u64, max_uncompressed_size: u64) -> Result<(
 
 fn flatten_single_wrapper_folder(dir: &Path) -> io::Result<()> {
     loop {
-        let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+        // Fork (data safety, F-D2): an entry that cannot be read fails the install instead of being dropped.
+        let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.collect::<io::Result<_>>()?;
         let [wrapper] = entries.as_slice() else { return Ok(()) };
         if !wrapper.file_type()?.is_dir() {
             return Ok(());
         }
         let staging = dir.join(format!(".flatten-{}", wrapper.file_name().to_string_lossy()));
         with_path(retry_transient(|| fs::rename(wrapper.path(), &staging)), &staging)?;
-        for item in fs::read_dir(&staging)?.filter_map(|e| e.ok()) {
+        for item in fs::read_dir(&staging)?.collect::<io::Result<Vec<_>>>()? {
             let target = dir.join(item.file_name());
             with_path(retry_transient(|| fs::rename(item.path(), &target)), &target)?;
         }
@@ -220,26 +223,31 @@ fn flatten_single_wrapper_folder(dir: &Path) -> io::Result<()> {
     }
 }
 
+// Fork (data safety, 2026-11-04 review W2 / D1, D7, F-D2, F-D3): the merge is `fork::update_merge::merge`: the user's
+// files stay, replaced protected files are kept, a failure puts everything back. This keeps upstream's name for the
+// plain case (everything replaced) its tests use.
+#[cfg(test)]
 fn merge_into(src: &Path, dest: &Path) -> io::Result<()> {
-    with_path(fs::create_dir_all(dest), dest)?;
-    for entry in fs::read_dir(src)?.filter_map(|e| e.ok()) {
-        let item = entry.path();
-        let target = dest.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            if !is_real_dir(&target) {
-                with_path(retry_transient(|| remove_existing(&target)), &target)?;
-            }
-            merge_into(&item, &target)?;
-        } else {
-            with_path(retry_transient(|| remove_existing(&target)), &target)?;
-            with_path(retry_transient(|| fs::rename(&item, &target)), &target)?;
-        }
+    let guard = crate::fork::update_merge::Guard::plain(dest.parent().unwrap_or(dest));
+    crate::fork::update_merge::merge(src, dest, &guard, &mut move_entry).map(|_| ())
+}
+
+// Fork (data safety): one move of the merge, retried like upstream's renames; across drives a checked copy.
+fn move_entry(from: &Path, to: &Path) -> io::Result<()> {
+    with_path(retry_transient(|| crate::fork::uninstall_keep::move_path(from, to)), to)
+}
+
+// Fork (data safety, D2): the port's folder in the Library; never the Library itself (an empty or "." folder name).
+pub fn port_dir(library_dir: &Path, folder: &str) -> Result<PathBuf, String> {
+    let dir = safe_join(library_dir, folder)?;
+    if super::path_safety::is_within(library_dir, &dir) {
+        return Err(format!("\"{folder}\" is not a folder name inside the Library -- please report this port."));
     }
-    Ok(())
+    Ok(dir)
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
-    for entry in fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+    for entry in fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()? {
         if entry.file_type()?.is_dir() {
             collect_files(&entry.path(), out)?;
         } else {
@@ -395,13 +403,34 @@ fn extract_to_staging(archive: &Path, staging: &Path, exe_is_archive: Option<&st
 
 // Fork: returns the release's top-level names. Superseded versioned files are no longer deleted here; the
 // app moves them to `.previous/` after the update is verified (`fork::versioned`).
+#[cfg(test)]
 fn extract(archive: &Path, dest_dir: &Path, library_dir: &Path, exe_is_archive: Option<&str>, on_progress: &mut dyn FnMut(&str)) -> Result<Vec<String>, InstallError> {
+    let guard = crate::fork::update_merge::Guard::plain(library_dir);
+    extract_guarded(archive, dest_dir, library_dir, exe_is_archive, &guard, on_progress).map(|(release, _)| release)
+}
+
+// Fork (data safety): `extract` with the merge's guard (`fork::update_merge`), returning what it set aside too.
+fn extract_guarded(
+    archive: &Path,
+    dest_dir: &Path,
+    library_dir: &Path,
+    exe_is_archive: Option<&str>,
+    guard: &crate::fork::update_merge::Guard,
+    on_progress: &mut dyn FnMut(&str),
+) -> Result<(Vec<String>, crate::fork::update_merge::MergeReport), InstallError> {
     on_progress("Extracting...");
     let staging = with_path(tempfile::Builder::new().prefix("_staging_").tempdir_in(library_dir), library_dir).install_err()?;
     let merge_root = extract_to_staging(archive, staging.path(), exe_is_archive)?;
     let release = top_level_names(&merge_root);
-    merge_into(&merge_root, dest_dir).install_err()?;
-    Ok(release)
+    let report = crate::fork::update_merge::merge(&merge_root, dest_dir, guard, &mut move_entry).install_err()?;
+    Ok((release, report))
+}
+
+// Fork (data safety): the guard of a merge into `dest_dir`: the port's saves, game files (`rom_library.json` sits in the
+// app's config folder, the one that holds Saves Backup), ROMs, keys and dumps stay; replaced archives go to Saves Backup.
+fn guard_for(port: &Port, dest_dir: &Path, library_dir: &Path, saves_backup_dir: &Path, stamp: &str) -> crate::fork::update_merge::Guard {
+    let protect = crate::fork::update_merge::Protect::for_port(port, dest_dir, saves_backup_dir.parent());
+    crate::fork::update_merge::Guard::protecting(protect, saves_backup_dir, &port.folder, library_dir, stamp)
 }
 
 fn temp_dir_in(library_dir: &Path, prefix: &str) -> Result<tempfile::TempDir, InstallError> {
@@ -419,9 +448,11 @@ fn refuse_adopted(dest_dir: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-pub fn install_extra(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMut(&str)) -> Result<(), InstallError> {
+// Fork (data safety, decision 4): `saves_backup_dir`, so the extras keep the user's saves, game files, ROMs, keys and
+// dumps like an update does (`fork::update_merge`).
+pub fn install_extra(port: &Port, library_dir: &Path, saves_backup_dir: &Path, on_progress: &mut dyn FnMut(&str)) -> Result<(), InstallError> {
     let url = port.extra.as_deref().ok_or_else(|| InstallError::Message("This port has no \"extra\" files to install.".to_string()))?;
-    let dest_dir = safe_join(library_dir, &port.folder).map_err(InstallError::Message)?;
+    let dest_dir = port_dir(library_dir, &port.folder).map_err(InstallError::Message)?; // Fork (data safety, D2)
     refuse_adopted(&dest_dir)?;
     if !dest_dir.exists() {
         return Err(InstallError::Message("Install this port first, then add its extra files.".to_string()));
@@ -435,7 +466,10 @@ pub fn install_extra(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMu
     // Fork (port dialogs): from here on files in the port's folder are replaced, so a failure after this line may have changed
     // some of them; the extras page says "Nothing was changed" only for a failure before it.
     on_progress(EXTRA_PLACING);
-    merge_into(&merge_root, &dest_dir).install_err()
+    let guard = guard_for(port, &dest_dir, library_dir, saves_backup_dir, &crate::fork::update_merge::stamp());
+    let report = crate::fork::update_merge::merge(&merge_root, &dest_dir, &guard, &mut move_entry).install_err()?;
+    crate::fork::update_merge::record(&dest_dir, report);
+    Ok(())
 }
 
 // Fork (port dialogs): the progress line `install_extra` sends just before files in the port's folder are replaced; the app
@@ -490,7 +524,7 @@ pub fn install_port(
     ctl: &DownloadCtl, // Fork (install wizard): byte progress and Stop
 ) -> Result<Option<String>, InstallError> {
     let library_dir = paths.library_dir;
-    let dest_dir = safe_join(library_dir, &port.folder).map_err(InstallError::Message)?;
+    let dest_dir = port_dir(library_dir, &port.folder).map_err(InstallError::Message)?; // Fork (data safety, D2)
     refuse_adopted(&dest_dir)?;
     let tmp = temp_dir_in(library_dir, "_download_")?;
     let preferred_asset = port.preferred_asset.as_ref().and_then(resolve_preferred_asset);
@@ -540,7 +574,10 @@ pub(crate) fn apply_archive(
     if ctl.cancelled() {
         return Err(InstallError::Message(CANCELLED.to_string()));
     }
-    let release = extract(archive_path, dest_dir, library_dir, port.exe_is_archive.as_deref(), on_progress)?;
+    // Fork (data safety): the user's files in the port folder stay; what was set aside is told on the Done page.
+    let guard = guard_for(port, dest_dir, library_dir, saves_backup_dir, stamp);
+    let (release, report) = extract_guarded(archive_path, dest_dir, library_dir, port.exe_is_archive.as_deref(), &guard, on_progress)?;
+    crate::fork::update_merge::record(dest_dir, report);
     save_backup::restore_all_after_install(port, saves_backup_dir, dest_dir);
     crate::fork::versioned::record_installed(dest_dir, before, release);
     Ok(())
@@ -555,7 +592,7 @@ pub fn uninstall_port(port: &Port, library_dir: &Path, saves_backup_dir: &Path) 
 // Fork: game files, `.o2r` archives, keys, dumps and `.previous/` are moved to Saves Backup/Kept files before the
 // folder is removed (fork::uninstall_keep); `config_dir` lets it read the port's connected game files.
 pub fn uninstall_port_keeping(port: &Port, library_dir: &Path, saves_backup_dir: &Path, config_dir: Option<&Path>) -> Result<Option<crate::fork::uninstall_keep::Kept>, String> {
-    let dest_dir = safe_join(library_dir, &port.folder)?;
+    let dest_dir = port_dir(library_dir, &port.folder)?; // Fork (data safety, D2): never the Library itself
     let mut kept = None;
     if dest_dir.exists() {
         if !save_backup::preserve_all_before_uninstall(port, saves_backup_dir, &dest_dir) {
@@ -568,7 +605,7 @@ pub fn uninstall_port_keeping(port: &Port, library_dir: &Path, saves_backup_dir:
 }
 
 pub fn is_installed(port: &Port, library_dir: &Path) -> bool {
-    safe_join(library_dir, &port.folder).is_ok_and(|p| p.exists())
+    port_dir(library_dir, &port.folder).is_ok_and(|p| p.exists()) // Fork (data safety, D2)
 }
 
 #[cfg(test)]
@@ -622,7 +659,7 @@ mod tests {
         };
         let err = install_port(&port, paths, None, None, InstallOverrides::default(), &mut no_progress, &DownloadCtl::default()).unwrap_err();
         assert!(text(err).contains("adopted"));
-        let err = install_extra(&port, &library_dir, &mut no_progress).unwrap_err();
+        let err = install_extra(&port, &library_dir, &saves, &mut no_progress).unwrap_err();
         assert!(text(err).contains("adopted"));
         assert_eq!(fs::read_to_string(theirs.join("keep.sav")).unwrap(), "mine");
         assert_eq!(fs::read_dir(&theirs).unwrap().count(), 1);
@@ -1336,6 +1373,109 @@ mod tests {
     fn is_installed_faux_si_folder_invalide() {
         let dir = temp_dir("is_installed");
         assert!(!is_installed(&port_with_save("../evil", None), &dir));
+    }
+
+    // Fork (data safety, D2): a port whose folder name is empty (or ".") is never the Library itself: it is not
+    // installed, and an uninstall refuses instead of deleting the whole Library.
+    #[test]
+    fn an_empty_folder_name_never_means_the_library() {
+        let dir = temp_dir("empty_folder_is_not_library");
+        let library_dir = dir.join("Library");
+        put(&library_dir.join("other").join("game.exe"), b"another port");
+        for folder in ["", ".", "./", "sub/.."] {
+            let mut port = port_with_save("x", None);
+            port.folder = folder.to_string();
+            assert!(port_dir(&library_dir, folder).is_err(), "{folder:?}");
+            assert!(!is_installed(&port, &library_dir), "{folder:?}");
+            assert!(uninstall_port_keeping(&port, &library_dir, &dir.join("Saves Backup"), None).is_err(), "{folder:?}");
+            assert!(install_extra(&port, &library_dir, &dir.join("Saves Backup"), &mut no_progress).is_err(), "{folder:?}");
+        }
+        assert_eq!(fs::read(library_dir.join("other").join("game.exe")).unwrap(), b"another port");
+        assert_eq!(port_dir(&library_dir, "game").unwrap(), library_dir.join("game"));
+    }
+
+    // Fork (data safety, W2 / D1): an update never replaces the user's files. A ROM, a key, a connected game file, a
+    // generated archive and a file in the save folder stay; the release's copies go to `.previous/<stamp>/`. The
+    // release's own archive (`soh.o2r`) is replaced, the old one kept in Saves Backup > Replaced by update. Program
+    // files are replaced as before.
+    #[test]
+    fn an_update_keeps_the_users_files_and_sets_the_releases_copies_aside() {
+        let dir = temp_dir("update_keeps_user_files");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("App").join("Saves Backup");
+        let dest_dir = library_dir.join("shipwright");
+        put(&dest_dir.join("soh.appimage"), b"old program");
+        put(&dest_dir.join("soh.o2r"), b"old soh archive");
+        put(&dest_dir.join("oot.o2r"), b"generated from my rom");
+        put(&dest_dir.join("roms").join("zelda.z64"), b"my rom");
+        put(&dest_dir.join("prod.keys"), b"my keys");
+        put(&dest_dir.join("mine").join("my copy.n64x"), b"connected copy");
+        put(&dest_dir.join("Save").join("file1.dat"), b"my save");
+        put(&dest_dir.join("same.o2r"), b"identical");
+        let port = super::super::models::port_from_value(&serde_json::json!({"name": "SoH", "folder": "shipwright", "source": "https://example.com/x.zip", "save": "Save"})).unwrap();
+        let store = serde_json::json!({"version": 1, "mappings": [{"port_key": port.key(), "slot": "s", "method": "copy", "source": "/elsewhere/zelda.z64", "dest": dest_dir.join("mine").join("my copy.n64x").to_string_lossy(), "size": 14}]});
+        put(&dir.join("App").join("rom_library.json"), store.to_string().as_bytes());
+        let archive_path = dir.join("update.zip");
+        build_archive(
+            "zip",
+            &[
+                ("soh.appimage", b"new program".as_slice()),
+                ("soh.o2r", b"new soh archive".as_slice()),
+                ("oot.o2r", b"release placeholder".as_slice()),
+                ("roms/zelda.z64", b"release rom".as_slice()),
+                ("prod.keys", b"release keys".as_slice()),
+                ("mine/my copy.n64x", b"release copy".as_slice()),
+                ("Save/file1.dat", b"release default save".as_slice()),
+                ("same.o2r", b"identical".as_slice()),
+                ("new.txt", b"new file".as_slice()),
+            ],
+            &archive_path,
+        );
+        let paths = InstallPaths { library_dir: &library_dir, saves_backup_dir: &saves_backup_dir };
+
+        apply_archive(&port, paths, &archive_path, &dest_dir, "2026-11-04_10-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
+
+        assert_eq!(fs::read(dest_dir.join("soh.appimage")).unwrap(), b"new program");
+        assert_eq!(fs::read(dest_dir.join("new.txt")).unwrap(), b"new file");
+        assert_eq!(fs::read(dest_dir.join("soh.o2r")).unwrap(), b"new soh archive", "the release's own archive is updated");
+        for (rel, mine) in [("oot.o2r", "generated from my rom"), ("roms/zelda.z64", "my rom"), ("prod.keys", "my keys"), ("mine/my copy.n64x", "connected copy"), ("Save/file1.dat", "my save"), ("same.o2r", "identical")] {
+            assert_eq!(fs::read_to_string(dest_dir.join(rel)).unwrap(), mine, "{rel} stays the user's");
+        }
+        let previous = dest_dir.join(".previous").join("2026-11-04_10-00-00");
+        assert_eq!(fs::read_to_string(previous.join("roms").join("zelda.z64")).unwrap(), "release rom");
+        assert_eq!(fs::read_to_string(previous.join("oot.o2r")).unwrap(), "release placeholder");
+        assert_eq!(fs::read_to_string(previous.join("Save").join("file1.dat")).unwrap(), "release default save");
+        assert!(!previous.join("same.o2r").exists(), "an identical file sets nothing aside");
+        let replaced = saves_backup_dir.join("Replaced by update").join("shipwright").join("2026-11-04_10-00-00");
+        assert_eq!(fs::read_to_string(replaced.join("soh.o2r")).unwrap(), "old soh archive");
+        let report = crate::fork::update_merge::take(&dest_dir).expect("the Done page hears of it");
+        assert_eq!(report.kept_yours.len(), 5);
+        assert_eq!(report.replaced, [PathBuf::from("soh.o2r")]);
+        let line = report.line("update", &|p: &Path| p.file_name().unwrap().to_string_lossy().into_owned()).unwrap();
+        assert!(line.starts_with("Kept your files: 5 files in the update had the same name as yours; yours are still in place."), "{line}");
+        assert!(line.contains("1 older file replaced by the update is kept in 2026-11-04_10-00-00."), "{line}");
+        let left: Vec<_> = fs::read_dir(&library_dir).unwrap().flatten().map(|e| e.file_name()).filter(|n| n.to_string_lossy().starts_with('_')).collect();
+        assert!(left.is_empty(), "no staging or displaced folder is left: {left:?}");
+    }
+
+    // Fork (data safety, decision 4): the extras keep the user's files the same way.
+    #[test]
+    fn extras_keep_the_users_files_too() {
+        let dir = temp_dir("extras_keep_user_files");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let dest_dir = library_dir.join("game");
+        put(&dest_dir.join("game.sav"), b"my save");
+        put(&dest_dir.join("mods").join("tex.png"), b"old texture");
+        let src = dir.join("extra");
+        put(&src.join("game.sav"), b"extras save");
+        put(&src.join("mods").join("tex.png"), b"new texture");
+        let port = port_with_save("game", None);
+        let guard = guard_for(&port, &dest_dir, &library_dir, &saves_backup_dir, "s");
+        let report = crate::fork::update_merge::merge(&src, &dest_dir, &guard, &mut move_entry).unwrap();
+        assert_eq!(fs::read(dest_dir.join("game.sav")).unwrap(), b"my save");
+        assert_eq!(fs::read(dest_dir.join("mods").join("tex.png")).unwrap(), b"new texture", "ordinary files are replaced");
+        assert_eq!(report.kept_yours, [PathBuf::from("game.sav")]);
     }
 
     fn build_adversarial_zip(path: &Path, cycle: usize) {

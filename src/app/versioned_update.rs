@@ -55,9 +55,14 @@ pub(crate) fn after_install(app: &Rc<AppState>, key: &str, tag: Option<&str>, la
     for (name, why) in &outcome.kept {
         eprintln!("versioned update: {} kept {name} in place: {why}", port.folder);
     }
-    let text = outcome.summary(port.display_name(), &port.folder, tag)?;
+    // Fork (data safety): what the update set aside to keep the user's own files (`fork::update_merge`), one plain line.
+    let kept = crate::fork::update_merge::take(&game_dir).and_then(|r| r.line("update", &crate::fork::port_page::paths::human_path_here));
+    let text = match (outcome.summary(port.display_name(), &port.folder, tag), kept.clone()) {
+        (Some(text), Some(kept)) => format!("{text}\n\n{kept}"),
+        (text, kept) => text.or(kept)?,
+    };
     if launching {
-        if outcome.needs_attention() {
+        if outcome.needs_attention() || kept.is_some() {
             match save_note(&app.paths.config_dir, port.display_name(), &text) {
                 Ok(()) => notes_changed(),
                 Err(e) => eprintln!("versioned update: could not keep the note for later ({e})"),

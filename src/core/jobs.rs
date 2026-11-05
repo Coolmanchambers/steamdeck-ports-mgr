@@ -70,8 +70,9 @@ fn update_available(
     fetch_latest(preferred.as_deref()).map(|(tag, date)| update_decision(installed_tag, installed_at, &tag, date.as_deref())).map_err(|e| e.message().to_string())
 }
 
-pub fn run_extra_install(port: &Port, library_dir: &Path, on_progress: &mut dyn FnMut(&str)) -> Result<(), String> {
-    installer::install_extra(port, library_dir, on_progress).map_err(|e| match e {
+// Fork (data safety): `saves_backup_dir` for the extras' guard (`fork::update_merge`).
+pub fn run_extra_install(port: &Port, library_dir: &Path, saves_backup_dir: &Path, on_progress: &mut dyn FnMut(&str)) -> Result<(), String> {
+    installer::install_extra(port, library_dir, saves_backup_dir, on_progress).map_err(|e| match e {
         InstallError::Message(m) => m,
         InstallError::Ambiguous(_) => "This \"extra\" archive has an unexpected layout.".to_string(),
     })

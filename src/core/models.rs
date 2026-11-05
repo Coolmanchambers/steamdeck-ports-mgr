@@ -154,6 +154,10 @@ pub fn port_from_value(d: &Value) -> Result<Port, PortParseError> {
 
     let name = string("name").ok_or(PortParseError)?;
     let folder = string("folder").ok_or(PortParseError)?;
+    // Fork (data safety, D2): an empty or "." folder name would be the Library itself.
+    if std::path::Path::new(&folder).components().all(|c| matches!(c, std::path::Component::CurDir)) {
+        return Err(PortParseError);
+    }
     let (source_type, repo, source) = match obj.get("source") {
         None => (SourceType::None, None, Value::Null),
         Some(v) if v.is_string() || v.is_object() => {
@@ -216,6 +220,15 @@ impl Default for InstalledInfo {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // Fork (data safety, D2): a catalog row whose folder is empty or "." is refused; it would name the Library itself.
+    #[test]
+    fn a_folder_that_names_no_folder_is_refused() {
+        for folder in ["", ".", "./"] {
+            assert!(port_from_value(&json!({"name": "x", "folder": folder, "source": "https://example.com/x.zip"})).is_err(), "{folder:?}");
+        }
+        assert!(port_from_value(&json!({"name": "x", "folder": "game", "source": "https://example.com/x.zip"})).is_ok());
+    }
 
     #[test]
     fn source_github_avec_et_sans_git() {

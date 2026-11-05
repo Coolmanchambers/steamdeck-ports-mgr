@@ -203,6 +203,7 @@ fn run_extras(app: &Rc<AppState>, router: &Router, port: Port, card: Card, back:
     EXTRAS.with(|e| e.borrow_mut().insert(key.clone(), Pending { id: 0, port: port.clone(), card, back, wait: None }));
     show_page(app, router, pages::extras_wait_page(port.display_name()), still_handlers());
     let library_dir = app.paths.library_dir();
+    let saves_backup_dir = app.paths.saves_backup_dir.clone();
     let events = app.events.clone();
     std::thread::spawn(move || {
         // The install says when it starts putting files in place; a failure after that may have changed some of them.
@@ -212,7 +213,7 @@ fn run_extras(app: &Rc<AppState>, router: &Router, port: Port, card: Card, back:
                 partway.set(true);
             }
         };
-        let result = crate::core::jobs::run_extra_install(&port, &library_dir, &mut on_progress);
+        let result = crate::core::jobs::run_extra_install(&port, &library_dir, &saves_backup_dir, &mut on_progress);
         let result = result.map_err(|e| if partway.get() { format!("{}{e}", pages::PARTWAY) } else { e });
         lock(&events).push(AppEvent::ExtraInstallDone { key, result });
     });
@@ -233,7 +234,12 @@ pub(crate) fn extras_done(app: &Rc<AppState>, router: &Router, key: &str, result
             None => return,
         },
     };
-    let page = pages::extras_done_page(&name, result.as_ref().map(|_| ()).map_err(String::as_str));
+    let mut page = pages::extras_done_page(&name, result.as_ref().map(|_| ()).map_err(String::as_str));
+    // What the extras set aside to keep the user's own files (`fork::update_merge`), in one plain line.
+    let port_dir = app.find_port(key).and_then(|p| crate::core::installer::port_dir(&app.paths.library_dir(), &p.folder).ok());
+    if let Some(line) = port_dir.and_then(|d| crate::fork::update_merge::take(&d)).and_then(|r| r.line("extras", &crate::fork::port_page::paths::human_path_here)) {
+        page.fact(crate::fork::page::Mark::Done, line);
+    }
     show_page(app, router, page, handlers(move |app, router, _| back(app, router)));
 }
 

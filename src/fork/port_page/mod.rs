@@ -810,18 +810,29 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
         return page;
     }
     let saves_kept = !saves.is_some_and(|s| s.unknown_on_linux);
+    // Fork (data safety, 2026-11-04 review): "saves are backed up" only when a save folder inside the port folder has
+    // files to copy (it said so even when nothing would be copied).
+    let saves_inside = match (saves, files) {
+        (Some(s), Some(f)) => Some(s.folders.iter().any(|sf| sf.exists && sf.files > 0 && crate::core::path_safety::is_within(&sf.path, &f.dir))),
+        _ => None,
+    };
     let keeps = files.and_then(|f| f.keep.what());
     let blocked = files.and_then(|f| f.keep_error.clone());
+    let record_blocked = blocked.as_deref() == Some(crate::fork::uninstall_keep::UNREADABLE_RECORD);
     match files {
         Some(f) => {
             // The size that goes: the folder less what is kept.
             let gone = f.size.map(|s| s.saturating_sub(f.keep.bytes));
             let size = gone.map(|s| format!(" ({}{})", if f.size_capped { "over " } else { "" }, size_text(s))).unwrap_or_default();
             if let Some(why) = &blocked {
-                page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything until the record can be read. To go on, fix or remove rom_library.json in the app's config folder (Desktop Mode)."));
+                if record_blocked {
+                    page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything until the record can be read. To go on, fix or remove rom_library.json in the app's config folder (Desktop Mode)."));
+                } else {
+                    page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything while part of its folder cannot be read. Check the folder in Desktop Mode."));
+                }
             } else if let Some(what) = &keeps {
                 let mut line = format!("{what} will be moved to Kept files");
-                if saves_kept {
+                if saves_kept && saves_inside != Some(false) {
                     line.push_str(", saves are backed up");
                 }
                 line.push_str(&format!(". Kept files: {}.", human_path(&f.kept_dir, places)));
@@ -841,6 +852,8 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
     }
     if !saves_kept {
         page.fact(Mark::Problem, "Saves are not kept: no Linux save folder is known for this port. Copy any save inside its folder yourself first.");
+    } else if saves_inside == Some(false) {
+        page.paragraphs.push("No saves were found inside its folder, so none are copied first. Save files it holds by name (.sav, .srm and the like) go to Kept files. Saves kept elsewhere are not touched.".into());
     } else {
         page.paragraphs.push("Saves inside its folder are copied to Saves Backup first and come back if you install it again. Saves kept elsewhere are not touched.".into());
     }
@@ -852,7 +865,7 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
     page.options.push(if p.running || p.busy {
         disabled(PageOption { detail: "Not while it runs, installs or restores".into(), ..go })
     } else if blocked.is_some() {
-        disabled(PageOption { detail: "Not until the game files record can be read".into(), ..go })
+        disabled(PageOption { detail: if record_blocked { "Not until the game files record can be read" } else { "Not until its whole folder can be read" }.into(), ..go })
     } else {
         go
     });

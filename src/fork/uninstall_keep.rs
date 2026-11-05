@@ -12,7 +12,13 @@
 //!   `dc_boot.bin`, `dc_flash.bin`, `scph1001.bin`);
 //! - a generic data file (`bin`, `img`, `zip`, `7z`, `dat`, `swf`, `md`) that none of the above names is kept when it is
 //!   of 256 KB or more, as "maybe game data" (a hand-placed disc image looks like this; the cost is disk space only);
-//! - the `.previous/` folder of older versions (`fork::versioned`).
+//! - the `.previous/` folder of older versions (`fork::versioned`);
+//! - save files by name (`.sav`, `.srm`, `.sl2`, `.dsv`, `.mcr`, `.gci`, or a name starting `save`): a save folder that
+//!   is known is copied by `save_backup` first, but one that is not known (or not on Linux) would be lost with the folder
+//!   (2026-11-04 review D3). Whole folders are never kept (Tim's O1 ruling, 2026-10-21).
+//!
+//! A folder that cannot be read, or one nested deeper than the walk goes, stops the uninstall before anything moves
+//! (D4): files the walk did not see could be game files.
 //!
 //! A link is never followed and never kept: removing the folder removes the link only, its target stays where it is.
 //! A record of connected game files that cannot be read stops the uninstall before anything moves. A move that fails
@@ -33,14 +39,20 @@ use std::path::{Path, PathBuf};
 /// The folder under Saves Backup that holds kept files.
 pub const KEPT_DIR: &str = "Kept files";
 pub const MANIFEST: &str = "kept.json";
-/// How deep the walk looks inside the port folder.
-const MAX_DEPTH: usize = 8;
+/// How deep the walk looks inside the port folder; a folder deeper than this stops the uninstall (D4).
+const MAX_DEPTH: usize = 32;
 /// A generic data file of this size or more is kept anyway (small BIOS dumps without a telling name are 256 KB and up).
 pub const MAYBE_GAME_DATA_BYTES: u64 = 256 * 1024;
 /// Cue sheets read for the tracks they name; bigger "sheets" are not sheets.
 const SHEET_MAX_BYTES: u64 = 1024 * 1024;
 
 pub const UNREADABLE_RECORD: &str = "The game files record could not be read; nothing was deleted.";
+
+/// D4: part of the port folder could not be looked through, so nobody can say what in it is a game file.
+pub fn unreadable_folder(rel: &Path) -> String {
+    let place = if rel.as_os_str().is_empty() { "Its folder".to_string() } else { format!("The folder {} inside it", rel.display()) };
+    format!("{place} could not be read all the way through; nothing was deleted.")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KeepKind {
@@ -57,6 +69,8 @@ pub enum KeepKind {
     MaybeGameData,
     /// The `.previous/` folder of older versions.
     Previous,
+    /// A save file, known by its name (D3).
+    Save,
 }
 
 impl KeepKind {
@@ -69,6 +83,7 @@ impl KeepKind {
             KeepKind::Dump => "dump",
             KeepKind::MaybeGameData => "maybe game data",
             KeepKind::Previous => "previous",
+            KeepKind::Save => "save",
         }
     }
 }
@@ -88,6 +103,7 @@ pub struct KeepSummary {
     pub keys_and_dumps: usize,
     pub data_files: usize,
     pub older_versions: usize,
+    pub saves: usize,
     pub names: Vec<String>,
     /// Bytes of the kept files (the rest of the folder is what is deleted).
     pub bytes: u64,
@@ -107,6 +123,7 @@ impl KeepSummary {
                 KeepKind::Key | KeepKind::Dump => s.keys_and_dumps += 1,
                 KeepKind::MaybeGameData => s.data_files += 1,
                 KeepKind::Previous => s.older_versions += versions_in(&dir.join(&i.rel)).max(1),
+                KeepKind::Save => s.saves += 1,
             }
             if i.kind != KeepKind::Previous {
                 s.names.push(i.rel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
@@ -116,7 +133,7 @@ impl KeepSummary {
     }
 
     pub fn count(&self) -> usize {
-        self.game_files + self.keys_and_dumps + self.data_files + self.older_versions
+        self.game_files + self.keys_and_dumps + self.data_files + self.older_versions + self.saves
     }
 
     /// "3 game files and 1 older version"; `None` when nothing is kept.
@@ -130,6 +147,9 @@ impl KeepSummary {
         }
         if self.data_files > 0 {
             parts.push(plural(self.data_files, "large data file", "large data files"));
+        }
+        if self.saves > 0 {
+            parts.push(plural(self.saves, "save file", "save files"));
         }
         if self.older_versions > 0 {
             parts.push(plural(self.older_versions, "older version", "older versions"));
@@ -169,6 +189,8 @@ fn stem_of(name: &str) -> &str {
 
 /// Generic extensions a port also ships as its own data.
 const GENERIC: [&str; 7] = ["bin", "zip", "7z", "dat", "img", "md", "swf"];
+/// Save files by extension (D3); a name starting `save` counts too.
+const SAVE_EXTS: [&str; 6] = ["sav", "srm", "sl2", "dsv", "mcr", "gci"];
 /// Cue sheets: they name the track files beside them.
 const SHEETS: [&str; 3] = ["cue", "gdi", "toc"];
 
@@ -187,6 +209,9 @@ pub fn classify(name: &str, size: u64, named_by_sheet: bool) -> Option<KeepKind>
     if ext == "keys" {
         return Some(KeepKind::Key);
     }
+    if SAVE_EXTS.contains(&ext) || name.starts_with("save") {
+        return Some(KeepKind::Save);
+    }
     let rom_like = is_rom_extension(ext) || SHEETS.contains(&ext);
     if rom_like && is_dump_name(&name) {
         return Some(KeepKind::Dump);
@@ -202,7 +227,7 @@ pub fn classify(name: &str, size: u64, named_by_sheet: bool) -> Option<KeepKind>
 
 /// Lowercase names of the files the port's entry says it needs, and the connected copies inside `dir`. An unreadable
 /// record of connections is an error: without it nobody can say which files are the user's.
-fn known_game_files(port: &Port, dir: &Path, config_dir: Option<&Path>) -> Result<(Vec<String>, Vec<PathBuf>), String> {
+pub(crate) fn known_game_files(port: &Port, dir: &Path, config_dir: Option<&Path>) -> Result<(Vec<String>, Vec<PathBuf>), String> {
     let locals = config_dir.map(|c| crate::fork::rom_library::load_local_entries(&c.join("ports.local.json"))).unwrap_or_default();
     let spec = RomSpec::for_port(port, locals.get(&port.folder));
     let mut names: Vec<String> = spec.requirement.slots.iter().flat_map(|s| s.alternatives.iter().flat_map(|a| a.names.iter().map(|n| n.to_lowercase()))).collect();
@@ -226,7 +251,7 @@ pub fn plan(port: &Port, dir: &Path, config_dir: Option<&Path>) -> Result<Vec<Ke
     let (names, connected) = known_game_files(port, dir, config_dir)?;
     let connected: Vec<PathBuf> = connected.iter().filter_map(|d| d.strip_prefix(dir).ok().map(Path::to_path_buf)).collect();
     let mut out = Vec::new();
-    walk(dir, Path::new(""), MAX_DEPTH, &names, &connected, &mut out);
+    walk(dir, Path::new(""), MAX_DEPTH, &names, &connected, &mut out).map_err(|rel| unreadable_folder(&rel))?;
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
     Ok(out)
 }
@@ -257,11 +282,13 @@ impl Sheets {
     }
 }
 
-fn walk(root: &Path, rel: &Path, depth: usize, names: &[String], connected: &[PathBuf], out: &mut Vec<KeepItem>) {
-    let Ok(entries) = fs::read_dir(root.join(rel)) else { return };
+/// D4: an `Err` names the folder (relative) that could not be read, or that sits deeper than the walk goes.
+fn walk(root: &Path, rel: &Path, depth: usize, names: &[String], connected: &[PathBuf], out: &mut Vec<KeepItem>) -> Result<(), PathBuf> {
+    let entries = fs::read_dir(root.join(rel)).map_err(|_| rel.to_path_buf())?;
     let mut files: Vec<(String, PathBuf, u64)> = Vec::new();
-    for e in entries.flatten() {
-        let Ok(t) = e.file_type() else { continue };
+    for e in entries {
+        let e = e.map_err(|_| rel.to_path_buf())?;
+        let t = e.file_type().map_err(|_| rel.to_path_buf())?;
         let r = rel.join(e.file_name());
         if t.is_symlink() {
             continue;
@@ -271,7 +298,9 @@ fn walk(root: &Path, rel: &Path, depth: usize, names: &[String], connected: &[Pa
                 let size = crate::fork::save_restore::tree_size_capped(&e.path(), u64::MAX / 2, 200_000).0;
                 out.push(KeepItem { rel: r, kind: KeepKind::Previous, size });
             } else if depth > 0 {
-                walk(root, &r, depth - 1, names, connected, out);
+                walk(root, &r, depth - 1, names, connected, out)?;
+            } else {
+                return Err(r);
             }
         } else if t.is_file() {
             files.push((e.file_name().to_string_lossy().to_lowercase(), e.path(), e.metadata().map_or(0, |m| m.len())));
@@ -290,6 +319,7 @@ fn walk(root: &Path, rel: &Path, depth: usize, names: &[String], connected: &[Pa
             out.push(KeepItem { rel: r, kind, size: *size });
         }
     }
+    Ok(())
 }
 
 /// What was kept, for the result message.
@@ -384,7 +414,7 @@ fn tree_bytes(path: &Path) -> io::Result<u64> {
     }
 }
 
-fn unused_stamp_dir(base: &Path, stamp: &str) -> PathBuf {
+pub(crate) fn unused_stamp_dir(base: &Path, stamp: &str) -> PathBuf {
     let first = base.join(stamp);
     if fs::symlink_metadata(&first).is_err() {
         return first;
@@ -539,6 +569,7 @@ pub fn kind_words(id: &str) -> &'static str {
         "key" => "key",
         "dump" => "BIOS or dump",
         "maybe game data" => "data file",
+        "save" => "save file",
         _ => "file",
     }
 }
@@ -614,7 +645,7 @@ pub struct RestorePlan {
 
 /// True when both files hold the same bytes, read in blocks (game files are big). A file that cannot be read counts as
 /// different, so it is copied aside before anything replaces it.
-fn same_bytes(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_bytes(a: &Path, b: &Path) -> bool {
     let (Ok(mut fa), Ok(mut fb)) = (fs::File::open(a), fs::File::open(b)) else { return false };
     let (mut ba, mut bb) = (vec![0u8; 256 * 1024], vec![0u8; 256 * 1024]);
     loop {
@@ -699,20 +730,25 @@ pub fn restore_kept(set: &KeptSet, steps: &[RestoreStep], port_dir: &Path, backu
         }
         let (from, to) = (set.dir.join(&step.rel), port_dir.join(&step.rel));
         let failed = |what: &str, e: io::Error| format!("{what} {}: {e}. {} put back before this; nothing was overwritten.", step.rel.display(), done.copied);
+        // The copy is written beside its place and renamed in, so a stop part way never leaves a half file under the
+        // real name (W4: the new-file case wrote straight to the final name).
+        let staged = to.with_file_name(format!("{}.dpm-restore", to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+        let put = |staged: &Path| {
+            copy_checked(&from, staged).and_then(|()| fs::rename(staged, &to)).map_err(|e| {
+                let _ = fs::remove_file(staged);
+                e
+            })
+        };
         if step.replaces {
             copy_checked(&to, &backup_dir.join(&step.rel)).map_err(|e| failed("Could not copy aside", e))?;
             done.backed_up += 1;
             done.backup_dir = Some(backup_dir.clone());
-            let staged = to.with_file_name(format!("{}.dpm-restore", to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
-            copy_checked(&from, &staged).and_then(|()| fs::rename(&staged, &to)).map_err(|e| {
-                let _ = fs::remove_file(&staged);
-                failed("Could not put back", e)
-            })?;
+            put(&staged).map_err(|e| failed("Could not put back", e))?;
         } else {
             if fs::symlink_metadata(&to).is_ok() {
                 continue;
             }
-            copy_checked(&from, &to).map_err(|e| failed("Could not put back", e))?;
+            put(&staged).map_err(|e| failed("Could not put back", e))?;
         }
         done.copied += 1;
     }
@@ -797,9 +833,72 @@ mod tests {
         assert_eq!(classify("unknown.bin", MAYBE_GAME_DATA_BYTES, false), Some(KeepKind::MaybeGameData));
         assert_eq!(classify("unknown.bin", MAYBE_GAME_DATA_BYTES - 1, false), None);
         assert_eq!(classify("track 02.bin", 10, true), Some(KeepKind::Rom));
-        for plain in ["game.exe", "README.md", "config.bin", "assets.zip", "level.dat", "lib.so", "soh.appimage", "save.sav"] {
+        for plain in ["game.exe", "README.md", "config.bin", "assets.zip", "level.dat", "lib.so", "soh.appimage"] {
             assert_eq!(k(plain), None, "{plain}");
         }
+        // D3: save files by name, whatever folder they sit in.
+        for save in ["save.sav", "Zelda (USA).srm", "DRAKS0005.sl2", "game.dsv", "card1.mcr", "01-GZLE.gci", "savegame.dat", "SAVE1.bin"] {
+            assert_eq!(k(save), Some(KeepKind::Save), "{save}");
+        }
+        assert_eq!(kind_words("save"), "save file");
+        let s = KeepSummary { saves: 2, game_files: 1, ..KeepSummary::default() };
+        assert_eq!(s.what().as_deref(), Some("1 game file and 2 save files"));
+    }
+
+    // D3: a port whose save folder is not known keeps its save files on uninstall (moved to Kept files, never deleted).
+    #[test]
+    fn uninstall_keeps_save_files_when_no_save_folder_is_known() {
+        use crate::core::installer::uninstall_port_keeping;
+        let tmp = tempfile::tempdir().unwrap();
+        let library = tmp.path().join("Library");
+        let saves = tmp.path().join("Saves Backup");
+        let dir = library.join("game");
+        write(&dir.join("game.x86_64"), b"prog");
+        write(&dir.join("data").join("slot1.srm"), b"my save");
+        write(&dir.join("Save1.sav"), b"other save");
+        let kept = uninstall_port_keeping(&port("game"), &library, &saves, None).unwrap().expect("the save files are kept");
+        assert!(!dir.exists());
+        assert_eq!(fs::read(kept.dir.join("data").join("slot1.srm")).unwrap(), b"my save");
+        assert_eq!(fs::read(kept.dir.join("Save1.sav")).unwrap(), b"other save");
+        assert!(!kept.dir.join("game.x86_64").exists());
+        assert_eq!(kept.summary.what().as_deref(), Some("2 save files"));
+    }
+
+    // D4: a folder the walk cannot read, or one deeper than it goes, stops the uninstall before anything is deleted.
+    #[test]
+    fn a_folder_nested_deeper_than_the_walk_stops_the_uninstall() {
+        use crate::core::installer::uninstall_port_keeping;
+        let tmp = tempfile::tempdir().unwrap();
+        let library = tmp.path().join("Library");
+        let dir = library.join("game");
+        let mut deep = dir.clone();
+        for i in 0..=MAX_DEPTH + 1 {
+            deep.push(format!("d{i}"));
+        }
+        write(&deep.join("zelda.z64"), b"a rom the walk would never see");
+        let err = uninstall_port_keeping(&port("game"), &library, &tmp.path().join("Saves Backup"), None).unwrap_err();
+        assert!(err.contains("nothing was deleted"), "{err}");
+        assert_eq!(fs::read(deep.join("zelda.z64")).unwrap(), b"a rom the walk would never see");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_folder_stops_the_uninstall() {
+        use crate::core::installer::uninstall_port_keeping;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let library = tmp.path().join("Library");
+        let dir = library.join("game");
+        write(&dir.join("locked").join("zelda.z64"), b"rom");
+        fs::set_permissions(dir.join("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(dir.join("locked")).is_ok() {
+            fs::set_permissions(dir.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+            return; // running as root: permissions do not stop a read
+        }
+        let err = uninstall_port_keeping(&port("game"), &library, &tmp.path().join("Saves Backup"), None).unwrap_err();
+        fs::set_permissions(dir.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(err, unreadable_folder(Path::new("locked")));
+        assert_eq!(fs::read(dir.join("locked").join("zelda.z64")).unwrap(), b"rom");
     }
 
     #[test]
@@ -1217,6 +1316,27 @@ mod restore_tests {
         assert!(again.steps.is_empty(), "a second reinstall has nothing left to offer");
         assert_eq!(again.already, 3);
         assert!(!tmp.path().join("Ports/escape.bin").exists());
+    }
+
+    // W4: a missing file goes back through the `.dpm-restore` name too, so a stop part way never leaves half a file
+    // under the real name. Here the staged name is blocked (a folder sits there): the copy fails and the real name
+    // stays empty (written straight to the real name, it would have gone through).
+    #[test]
+    fn a_missing_file_is_copied_beside_its_place_then_renamed_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        let port = tmp.path().join("Ports/soh");
+        fs::create_dir_all(port.join("oot.o2r.dpm-restore")).unwrap();
+        let plan = restore_plan(&set, &port);
+        let step = plan.steps.iter().find(|s| s.rel == Path::new("oot.o2r")).unwrap().clone();
+        assert!(!step.replaces);
+        assert!(restore_kept(&set, &[step.clone()], &port, &replaced_dir_for(tmp.path(), "soh"), "s").is_err());
+        assert!(!port.join("oot.o2r").exists(), "nothing half-made under the real name");
+        fs::remove_dir(port.join("oot.o2r.dpm-restore")).unwrap();
+        restore_kept(&set, &[step], &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
+        assert_eq!(fs::read(port.join("oot.o2r")).unwrap(), b"ARCHIVE");
+        assert!(!port.join("oot.o2r.dpm-restore").exists());
     }
 
     #[cfg(unix)]

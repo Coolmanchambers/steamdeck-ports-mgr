@@ -46,18 +46,78 @@ pub(crate) fn pending_restore_dir(saves_backup_dir: &Path, folder_name: &str, fi
     saves_backup_dir.join(PENDING_RESTORE_DIR).join(folder_name).join(field)
 }
 
+// Fork (data safety, F-D1): a save folder inside the game folder that leads, through a link, to a folder far too broad to
+// be a save folder (the home folder, all of Steam: `save_restore::folder_problem`) is not copied: the uninstall removes
+// only the link, and its target stays where it is. Copying it would fill the drive and then cancel the uninstall.
+fn leads_somewhere_too_broad(src: &Path, game_dir: &Path, saves_backup_dir: &Path) -> Option<String> {
+    let (Ok(real_src), Ok(real_game)) = (fs::canonicalize(src), fs::canonicalize(game_dir)) else { return None };
+    if is_within(&real_src, &real_game) {
+        return None;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from).map(|h| fs::canonicalize(&h).unwrap_or(h));
+    crate::fork::save_restore::folder_problem(&real_src, &real_game, real_game.parent(), saves_backup_dir, home.as_deref()).map(|why| format!("{} leads to {}, which {why}", src.display(), real_src.display()))
+}
+
 #[must_use]
 fn preserve_before_uninstall(save_folder: Option<&Value>, saves_backup_dir: &Path, dest_dir: &Path, folder_name: &str, field: &str) -> bool {
     let Some(src) = save_folder.and_then(|v| resolve_save_folder(v, dest_dir)) else { return true };
     if !is_within(&src, dest_dir) || !src.exists() {
         return true;
     }
+    if let Some(why) = leads_somewhere_too_broad(&src, dest_dir, saves_backup_dir) {
+        eprintln!("uninstall: not copying the save folder of {folder_name}: {why}; only the link inside the game folder goes");
+        return true;
+    }
     let dst = pending_restore_dir(saves_backup_dir, folder_name, field);
     if !is_within(&dst, saves_backup_dir) {
         return false;
     }
-    let _ = fs::remove_dir_all(&dst);
+    // Fork (data safety, F-W1): a copy kept from an earlier uninstall (the fork keeps it when a restore fails) may be the
+    // only copy of those saves: it is renamed `<field>.<time>`, never deleted.
+    if fs::symlink_metadata(&dst).is_ok() {
+        let aside = crate::fork::uninstall_keep::unused_stamp_dir(dst.parent().unwrap_or(saves_backup_dir), &format!("{field}.{}", crate::fork::update_merge::stamp()));
+        if let Err(e) = fs::rename(&dst, &aside) {
+            eprintln!("uninstall: could not set aside the earlier kept saves {} ({e})", dst.display());
+            return false;
+        }
+    }
     copy_save(&src, &dst).is_ok()
+}
+
+/// True when `dir` holds anything but empty folders.
+fn holds_anything(dir: &Path) -> bool {
+    fs::read_dir(dir).map_or(true, |entries| {
+        entries.into_iter().any(|e| match e {
+            Ok(e) => !e.file_type().is_ok_and(|t| t.is_dir()) || holds_anything(&e.path()),
+            Err(_) => true,
+        })
+    })
+}
+
+// Fork (data safety, D6): before a kept copy goes back, what is at the save's place now (the live saves, or files the
+// release put there) is moved to `<Saves Backup>/Replaced by restore/<folder>/<time>/<field>`, never deleted. A folder
+// with nothing but empty folders in it is just removed. False when it could not be moved: then nothing is restored.
+fn move_live_aside(dst: &Path, saves_backup_dir: &Path, folder_name: &str, field: &str) -> bool {
+    let Ok(meta) = fs::symlink_metadata(dst) else { return true };
+    if meta.is_dir() && !holds_anything(dst) {
+        return fs::remove_dir_all(dst).is_ok();
+    }
+    let base = crate::fork::uninstall_keep::replaced_dir_for(saves_backup_dir, folder_name);
+    if !is_within(&base, saves_backup_dir) {
+        return false;
+    }
+    let stamp_dir = crate::fork::uninstall_keep::unused_stamp_dir(&base, &crate::fork::update_merge::stamp()).join(field);
+    let to = if meta.is_dir() { stamp_dir } else { stamp_dir.join(dst.file_name().unwrap_or_default()) };
+    match crate::fork::uninstall_keep::move_path(dst, &to) {
+        Ok(()) => {
+            eprintln!("save restore: moved what was at {} to {} before putting the kept saves back", dst.display(), to.display());
+            true
+        }
+        Err(e) => {
+            eprintln!("save restore: could not move {} aside ({e}); the kept saves stay kept", dst.display());
+            false
+        }
+    }
 }
 
 fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, dest_dir: &Path, folder_name: &str, field: &str) {
@@ -74,18 +134,23 @@ fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, d
     if !is_within(&dst, dest_dir) {
         return;
     }
+    // Fork (data safety, D6): a "save folder" that is the game folder itself ("save": ".") is never replaced: that would
+    // replace the program just installed. The kept copy stays in Pending Restore.
+    if is_within(dest_dir, &dst) {
+        eprintln!("save restore: the save folder of {folder_name} is the game folder itself; kept {}", src.display());
+        return;
+    }
     // Upstream (2026-10-30): a save that is a single file (`game.sav`) was kept as `<pending>/<name>` and goes
     // back to its place without touching the rest of the game folder. Fork: only when that file is all the kept
     // copy holds; a kept folder that happens to contain a file of the folder's name goes back whole (never a part).
     let only_entry = fs::read_dir(&src).map(|d| d.count() == 1).unwrap_or(false);
     let saved_file = dst.file_name().map(|name| src.join(name)).filter(|f| only_entry && f.is_file() && !dst.is_dir());
-    let restored = match saved_file {
-        Some(saved_file) => dst.parent().is_some_and(|parent| fs::create_dir_all(parent).is_ok()) && fs::copy(&saved_file, &dst).is_ok(),
-        None => {
-            let _ = fs::remove_dir_all(&dst);
-            copy_non_empty(&src, &dst).is_ok()
-        }
-    };
+    // Fork (data safety, D6): what is at the place now is moved aside first, never deleted (upstream removed it).
+    let restored = move_live_aside(&dst, saves_backup_dir, folder_name, field)
+        && match saved_file {
+            Some(saved_file) => dst.parent().is_some_and(|parent| fs::create_dir_all(parent).is_ok()) && fs::copy(&saved_file, &dst).is_ok(),
+            None => copy_non_empty(&src, &dst).is_ok(),
+        };
     if !restored {
         return;
     }
@@ -168,13 +233,9 @@ pub fn backup_before_update(port: &Port, saves_backup_dir: &Path, game_dir: &Pat
         return Ok(None);
     }
     let zip_path = unused_zip_path(&backups_dir, stamp)?;
-    // Fork (install wizard): the missing zip is named the human way (`human_path_here`).
-    let zipped = zip_staging_dir(staging.path(), &zip_path)
-        .and_then(|()| if fs::metadata(&zip_path).map_or(true, |m| m.len() == 0) { Err(format!("the backup file is missing -- {}", crate::fork::port_page::paths::human_path_here(&zip_path))) } else { Ok(()) });
-    if let Err(e) = zipped {
-        let _ = fs::remove_file(&zip_path);
-        return Err(e);
-    }
+    // Fork (install wizard): the missing zip is named the human way (`human_path_here`). Fork (data safety, W1 / D5):
+    // `zip_staging_dir` checks the file and removes its own part file on failure; nothing at `zip_path` is removed here.
+    zip_staging_dir(staging.path(), &zip_path)?;
     Ok(Some(zip_path))
 }
 
@@ -229,9 +290,31 @@ fn zip_staging_dir(staging: &Path, zip_path: &Path) -> Result<(), String> {
     if let Some(parent) = zip_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let _ = fs::remove_file(zip_path);
-    run_7z(&tool, &[OsStr::new("a"), OsStr::new("-tzip"), zip_path.as_os_str(), OsStr::new(".")], "create", Some(staging))?;
-    Ok(())
+    // Fork (data safety, W1 / D5): 7-Zip writes `<name>.zip.part` (no reader takes it for a backup: they all look for
+    // `.zip`), and only a complete, non-empty file is renamed to its name; a failure removes the part file. A backup
+    // already at `zip_path` is never removed: callers pick a free name (`unused_zip_path`).
+    let part = part_path(zip_path);
+    let _ = fs::remove_file(&part);
+    let made = run_7z(&tool, &[OsStr::new("a"), OsStr::new("-tzip"), part.as_os_str(), OsStr::new(".")], "create", Some(staging)).and_then(|_| {
+        if fs::metadata(&part).map_or(true, |m| m.len() == 0) {
+            return Err(format!("the backup file is missing -- {}", crate::fork::port_page::paths::human_path_here(zip_path)));
+        }
+        if fs::symlink_metadata(zip_path).is_ok() {
+            return Err(format!("a backup of that name appeared meanwhile -- {}", crate::fork::port_page::paths::human_path_here(zip_path)));
+        }
+        fs::rename(&part, zip_path).map_err(|e| e.to_string())
+    });
+    if made.is_err() {
+        let _ = fs::remove_file(&part);
+    }
+    made
+}
+
+// Fork (data safety, W1 / D5): the name a backup is written under until it is complete.
+fn part_path(zip_path: &Path) -> PathBuf {
+    let mut name = zip_path.file_name().unwrap_or_default().to_os_string();
+    name.push(".part");
+    zip_path.with_file_name(name)
 }
 
 pub fn run_global_backup(
@@ -292,8 +375,9 @@ pub fn run_global_backup(
     }
 
     if summary.copied > 0 {
-        let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join(format!("{date}.zip"));
-        if let Err(e) = zip_staging_dir(staging.path(), &zip_path) {
+        // Fork (data safety, W1 / D5): a second backup the same day is `<date>-2.zip`; the morning's stays.
+        let zipped = unused_zip_path(&saves_backup_dir.join(GLOBAL_BACKUPS_DIR), date).and_then(|zip_path| zip_staging_dir(staging.path(), &zip_path));
+        if let Err(e) = zipped {
             summary.failed += summary.copied;
             summary.copied = 0;
             // Fork (back up saves page): the copies were made, but the one backup file that holds them was not.
@@ -379,9 +463,13 @@ mod tests {
         let dest_dir = dir.join("MyGame");
         fs::create_dir_all(&dest_dir).unwrap();
         fs::write(dest_dir.join("Save"), b"blocks Save from being a directory").unwrap();
+        // Fork (data safety, D6): the file in the way is moved aside before a restore; here that cannot happen either
+        // (a file sits where Replaced by restore would go), so nothing is restored and both stay.
+        fs::write(saves_backup_dir.join(crate::fork::uninstall_keep::REPLACED_DIR), b"blocks the aside folder").unwrap();
 
         restore_after_install(port.save.as_ref(), &saves_backup_dir, &dest_dir, &port.folder, "save_folder");
         assert_eq!(fs::read_to_string(backup.join("slot1.dat")).unwrap(), "precious");
+        assert_eq!(fs::read_to_string(dest_dir.join("Save")).unwrap(), "blocks Save from being a directory");
     }
 
     #[test]
@@ -614,6 +702,127 @@ mod tests {
         assert_eq!(plain_io_reason(&io::Error::from(io::ErrorKind::PermissionDenied)), "a file could not be read (no permission)");
     }
 
+    // Fork (data safety, W1 / D5): a second backup the same day gets its own name; the first one is never replaced.
+    #[test]
+    fn a_second_backup_the_same_day_keeps_the_first() {
+        let dir = temp_dir("global_same_day_kept");
+        let library_dir = dir.join("Library");
+        let saves_backup_dir = dir.join("Saves Backup");
+        fs::create_dir_all(&library_dir).unwrap();
+        let external_a = dir.join("external_a");
+        fs::create_dir_all(&external_a).unwrap();
+        fs::write(external_a.join("slot1.dat"), b"a").unwrap();
+        run_global_backup(&[port_with_save_folders("GameA", Some(external_a.to_str().unwrap()), None)], &library_dir, &saves_backup_dir, "2026-08-23", &mut |_| {});
+        let first = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
+        let morning = fs::read(&first).unwrap();
+
+        // An evening run whose zip cannot be made (a folder blocks the part file): the morning's backup is untouched.
+        let blocked = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23-2.zip.part");
+        fs::create_dir_all(blocked.join("x")).unwrap();
+        let failed = run_global_backup(&[port_with_save_folders("GameA", Some(external_a.to_str().unwrap()), None)], &library_dir, &saves_backup_dir, "2026-08-23", &mut |_| {});
+        assert_eq!(failed.ports, vec![("GameA".into(), PortBackup::Failed("the backup file could not be made".into()))]);
+        assert_eq!(fs::read(&first).unwrap(), morning, "the morning's backup is never removed");
+        assert!(!saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23-2.zip").exists());
+        fs::remove_dir_all(&blocked).unwrap();
+
+        let external_b = dir.join("external_b");
+        fs::create_dir_all(&external_b).unwrap();
+        fs::write(external_b.join("slot1.dat"), b"b").unwrap();
+        run_global_backup(&[port_with_save_folders("GameB", Some(external_b.to_str().unwrap()), None)], &library_dir, &saves_backup_dir, "2026-08-23", &mut |_| {});
+        assert_eq!(fs::read(&first).unwrap(), morning);
+        assert_eq!(read_zip_entry(&first, "GameA/save_folder/slot1.dat"), "a");
+        let second = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23-2.zip");
+        assert_eq!(read_zip_entry(&second, "GameB/save_folder/slot1.dat"), "b");
+        let left: Vec<String> = fs::read_dir(saves_backup_dir.join(GLOBAL_BACKUPS_DIR)).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".part")).collect();
+        assert!(left.is_empty(), "no part file is left: {left:?}");
+    }
+
+    // Fork (data safety, D6): putting kept saves back moves what is there now aside; nothing is deleted.
+    #[test]
+    fn restoring_kept_saves_moves_the_live_ones_aside() {
+        let dir = temp_dir("restore_moves_live_aside");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let port = port_with_save_folders("MyGame", Some("Save"), Some("game.sav"));
+        let kept = pending_restore_dir(&saves_backup_dir, "MyGame", "save_folder");
+        fs::create_dir_all(&kept).unwrap();
+        fs::write(kept.join("slot1.dat"), b"kept from the uninstall").unwrap();
+        let kept_file = pending_restore_dir(&saves_backup_dir, "MyGame", "save_folder2");
+        fs::create_dir_all(&kept_file).unwrap();
+        fs::write(kept_file.join("game.sav"), b"kept file save").unwrap();
+        let dest_dir = dir.join("MyGame");
+        fs::create_dir_all(dest_dir.join("Save")).unwrap();
+        fs::write(dest_dir.join("Save").join("slot2.dat"), b"played since").unwrap();
+        fs::write(dest_dir.join("game.sav"), b"live file save").unwrap();
+
+        restore_all_after_install(&port, &saves_backup_dir, &dest_dir);
+
+        assert_eq!(fs::read(dest_dir.join("Save").join("slot1.dat")).unwrap(), b"kept from the uninstall");
+        assert_eq!(fs::read(dest_dir.join("game.sav")).unwrap(), b"kept file save");
+        let replaced = crate::fork::uninstall_keep::replaced_dir_for(&saves_backup_dir, "MyGame");
+        let mut found = Vec::new();
+        for stamp in fs::read_dir(&replaced).unwrap().flatten() {
+            for field in fs::read_dir(stamp.path()).unwrap().flatten() {
+                for f in fs::read_dir(field.path()).unwrap().flatten() {
+                    found.push((field.file_name().to_string_lossy().into_owned(), fs::read(f.path()).unwrap()));
+                }
+            }
+        }
+        found.sort();
+        assert_eq!(found, vec![("save_folder".to_string(), b"played since".to_vec()), ("save_folder2".to_string(), b"live file save".to_vec())]);
+    }
+
+    // Fork (data safety, D6): a "save folder" that is the game folder itself is never replaced by a kept copy.
+    #[test]
+    fn a_kept_copy_never_replaces_the_whole_game_folder() {
+        let dir = temp_dir("restore_whole_game");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let kept = pending_restore_dir(&saves_backup_dir, "MyGame", "save_folder");
+        fs::create_dir_all(&kept).unwrap();
+        fs::write(kept.join("game.exe"), b"old program").unwrap();
+        let dest_dir = dir.join("MyGame");
+        fs::create_dir_all(&dest_dir).unwrap();
+        fs::write(dest_dir.join("game.exe"), b"new program").unwrap();
+        restore_all_after_install(&port_with_save_folders("MyGame", Some("."), None), &saves_backup_dir, &dest_dir);
+        assert_eq!(fs::read(dest_dir.join("game.exe")).unwrap(), b"new program");
+        assert_eq!(fs::read(kept.join("game.exe")).unwrap(), b"old program", "the kept copy stays kept");
+    }
+
+    // Fork (data safety, F-W1): a second uninstall never deletes a kept copy an earlier one left (a failed restore).
+    #[test]
+    fn a_second_uninstall_keeps_the_earlier_kept_copy() {
+        let dir = temp_dir("preserve_keeps_earlier");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let port = port_with_save_folders("MyGame", Some("Save"), None);
+        let pending = pending_restore_dir(&saves_backup_dir, "MyGame", "save_folder");
+        fs::create_dir_all(&pending).unwrap();
+        fs::write(pending.join("slot1.dat"), b"the only copy").unwrap();
+        let dest_dir = dir.join("MyGame");
+        fs::create_dir_all(dest_dir.join("Save")).unwrap();
+        fs::write(dest_dir.join("Save").join("slot1.dat"), b"newer").unwrap();
+
+        assert!(preserve_before_uninstall(port.save.as_ref(), &saves_backup_dir, &dest_dir, &port.folder, "save_folder"));
+
+        assert_eq!(fs::read(pending.join("slot1.dat")).unwrap(), b"newer");
+        let earlier: Vec<_> = fs::read_dir(pending.parent().unwrap()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("save_folder.")).collect();
+        assert_eq!(earlier.len(), 1);
+        assert_eq!(fs::read(earlier[0].path().join("slot1.dat")).unwrap(), b"the only copy");
+    }
+
+    // Fork (data safety, F-D1): a save folder that is a link to a folder far too broad (here the drive's top) is not
+    // copied; the uninstall goes on and removes only the link.
+    #[test]
+    #[cfg(unix)]
+    fn a_save_folder_linked_to_somewhere_too_broad_is_not_copied() {
+        let dir = temp_dir("preserve_broad_link");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let dest_dir = dir.join("MyGame");
+        fs::create_dir_all(&dest_dir).unwrap();
+        std::os::unix::fs::symlink("/", dest_dir.join("Save")).unwrap();
+        let port = port_with_save_folders("MyGame", Some("Save"), None);
+        assert!(preserve_before_uninstall(port.save.as_ref(), &saves_backup_dir, &dest_dir, &port.folder, "save_folder"));
+        assert!(!pending_restore_dir(&saves_backup_dir, "MyGame", "save_folder").exists(), "nothing was copied");
+    }
+
     #[test]
     fn run_global_backup_second_export_le_meme_jour_remplace_le_premier() {
         let dir = temp_dir("global_same_day_overwrite");
@@ -633,9 +842,11 @@ mod tests {
         let port_b = port_with_save_folders("GameB", Some(external_b.to_str().unwrap()), None);
         run_global_backup(&[port_b], &library_dir, &saves_backup_dir, "2026-08-23", &mut |_| {});
 
-        let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip");
+        // Fork (data safety, W1 / D5): the second export of the day is `<date>-2.zip`; the first is no longer replaced.
+        let zip_path = saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23-2.zip");
         assert_eq!(read_zip_entry(&zip_path, "GameB/save_folder/slot1.dat"), "b");
         assert!(!zip_path.with_extension("extracted").join("GameA").exists());
+        assert!(saves_backup_dir.join(GLOBAL_BACKUPS_DIR).join("2026-08-23.zip").is_file());
     }
 
     #[cfg(target_os = "linux")]

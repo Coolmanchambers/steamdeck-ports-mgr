@@ -59,5 +59,6 @@ pub mod steam_sync;
 pub mod steam_user;
 pub mod store;
 pub mod uninstall_keep;
+pub mod update_merge; // an update or the extras never replace the user's files (data safety review, 2026-11-04)
 pub mod vdf;
 pub mod versioned;
