@@ -461,7 +461,16 @@ fn tree_bytes(path: &Path) -> u64 {
 
 /// Bytes held by the versions in `.previous/` other than `skip`.
 fn older_versions_bytes(game_dir: &Path, skip: &[PathBuf]) -> u64 {
-    fs::read_dir(game_dir.join(PREVIOUS)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| !skip.contains(p)).map(|p| tree_bytes(&p)).sum()
+    fs::read_dir(game_dir.join(PREVIOUS))
+        .into_iter()
+        .flatten()
+        .flatten()
+        // A release's copies of the user's files (data safety review) are not an older version.
+        .filter(|e| !e.file_name().to_string_lossy().starts_with(crate::fork::update_merge::UPDATE_COPIES))
+        .map(|e| e.path())
+        .filter(|p| !skip.contains(p))
+        .map(|p| tree_bytes(&p))
+        .sum()
 }
 
 /// Moves `entry` (a top-level name of `game_dir`) into `.previous/<version>/`, reusing `folder` when

@@ -47,6 +47,8 @@ pub struct Protect {
     names: Vec<String>,
     /// Connected game files inside the port folder.
     connected: Vec<PathBuf>,
+    /// The cue sheets of each folder looked at, read once (recheck 2).
+    sheets: std::cell::RefCell<std::collections::HashMap<PathBuf, uninstall_keep::Sheets>>,
 }
 
 fn real(p: &Path) -> PathBuf {
@@ -68,7 +70,7 @@ impl Protect {
     pub fn for_port(port: &Port, port_dir: &Path, config_dir: Option<&Path>) -> Result<Protect, String> {
         let saves = [port.save.as_ref(), port.save2.as_ref()].into_iter().flatten().filter_map(|v| resolve_save_folder(v, port_dir)).collect();
         let (names, connected) = uninstall_keep::known_game_files(port, port_dir, config_dir)?;
-        Ok(Protect { saves, names, connected })
+        Ok(Protect { saves, names, connected, sheets: Default::default() })
     }
 
     /// A save folder that is the whole port folder (or holds it): `"save": "."`. Then any file may be a save, and the
@@ -92,7 +94,13 @@ impl Protect {
             return true;
         }
         let size = fs::metadata(there).map_or(0, |m| m.len());
-        let named_by_sheet = there.parent().is_some_and(|dir| uninstall_keep::sheets_in(dir).names(&name));
+        // Recheck 2: a cue sheet only matters for generic data (`classify` reads it for nothing else), and each folder's
+        // sheets are read once per merge.
+        let named_by_sheet = uninstall_keep::sheet_may_name(&name)
+            && there.parent().is_some_and(|dir| {
+                let mut cache = self.sheets.borrow_mut();
+                cache.entry(dir.to_path_buf()).or_insert_with(|| uninstall_keep::sheets_in(dir)).names(&name)
+            });
         match uninstall_keep::classify(&name, size, named_by_sheet) {
             Some(KeepKind::Rom | KeepKind::Key | KeepKind::Dump) => true,
             // Review S1: `save*` alone is too broad for an update (`save_icon.png`, `savemanager.lua` are program files
@@ -107,6 +115,14 @@ impl Protect {
 fn protected_archive(there: &Path) -> bool {
     let name = there.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
     uninstall_keep::classify(&name, 0, false) == Some(KeepKind::Archive)
+}
+
+/// Recheck 3 (hard rule): a file the uninstall would keep as a save (any name starting `save`, or a save extension) that
+/// an update replaces anyway (`save.json`, `save_icon.png`: maybe a program file, maybe a save of a port with no known
+/// save folder) is kept in Replaced by update, never deleted with the replaced program files.
+fn maybe_a_save(there: &Path) -> bool {
+    let name = there.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    uninstall_keep::classify(&name, 0, false) == Some(KeepKind::Save)
 }
 
 /// How a merge treats what is already there.
@@ -149,6 +165,8 @@ pub struct MergeReport {
     /// Review S3: saves kept from an earlier uninstall went back, and what was at their place (newer saves) was moved
     /// to this folder (`<Saves Backup>/Replaced by restore/<port folder>/<time>`) first.
     pub saves_set_aside: Option<PathBuf>,
+    /// Recheck 1: the kept saves did go back (false: they stay in Pending Restore).
+    pub saves_put_back: bool,
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {
@@ -175,7 +193,16 @@ impl MergeReport {
             parts.push(format!("{} replaced by the {what} {} kept in {}.", plural(n, "older file", "older files"), if n == 1 { "is" } else { "are" }, port_place(dir)));
         }
         if let Some(dir) = &self.saves_set_aside {
-            parts.push(format!("Saves kept from an earlier uninstall were put back; the saves that were there were moved to {} first.", port_place(dir)));
+            if self.saves_put_back {
+                parts.push(format!("Saves kept from an earlier uninstall were put back; the saves that were there were moved to {} first.", port_place(dir)));
+            } else {
+                // `<Saves Backup>/Replaced by restore/<folder>/<time>`: the kept copy stays in `<Saves Backup>/Pending Restore/<folder>`.
+                let pending = match (dir.ancestors().nth(3), dir.parent().and_then(Path::file_name)) {
+                    (Some(saves_backup), Some(folder)) => place(&saves_backup.join("Pending Restore").join(folder)),
+                    _ => "Saves Backup > Pending Restore".to_string(),
+                };
+                parts.push(format!("Saves kept from an earlier uninstall could not be put back; they stay in {pending}. The saves that were there were moved to {}.", port_place(dir)));
+            }
         }
         (!parts.is_empty()).then(|| parts.join(" "))
     }
@@ -247,7 +274,7 @@ impl Run<'_> {
     fn clear(&mut self, there: &Path, rel: &Path) -> io::Result<()> {
         let meta = fs::symlink_metadata(there)?;
         let keep = self.guard.protect.as_ref().is_some_and(|p| p.saves_hold_the_folder(&self.port_dir))
-            || (self.guard.protect.is_some() && ((meta.is_dir() && !meta.file_type().is_symlink()) || protected_archive(there) || self.user_data(there)));
+            || (self.guard.protect.is_some() && ((meta.is_dir() && !meta.file_type().is_symlink()) || protected_archive(there) || maybe_a_save(there) || self.user_data(there)));
         if keep {
             let to = self.replaced_dir().join(rel);
             self.mv(there, &to)?;

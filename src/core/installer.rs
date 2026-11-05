@@ -581,7 +581,10 @@ pub(crate) fn apply_archive(
     // Fork (data safety): the user's files in the port folder stay; what was set aside is told on the Done page,
     // with the saves a restore of kept saves moved out of the way (review S3).
     let (release, mut report) = extract_guarded(archive_path, dest_dir, library_dir, port.exe_is_archive.as_deref(), &guard, on_progress)?;
-    report.saves_set_aside = save_backup::restore_all_after_install(port, saves_backup_dir, dest_dir);
+    if let Some((dir, put_back)) = save_backup::restore_all_after_install(port, saves_backup_dir, dest_dir) {
+        report.saves_set_aside = Some(dir);
+        report.saves_put_back = put_back;
+    }
     crate::fork::update_merge::record(dest_dir, report);
     crate::fork::versioned::record_installed(dest_dir, before, release);
     Ok(())
@@ -1490,6 +1493,7 @@ mod tests {
         apply_archive(&f.port, f.paths(), &archive_path, &f.dest_dir, "2026-11-04_10-00-00", &mut no_progress, &DownloadCtl::default()).unwrap();
         let report = crate::fork::update_merge::take(&f.dest_dir).expect("the Done page hears of it");
         let aside = report.saves_set_aside.clone().expect("the newer saves went somewhere");
+        assert!(report.saves_put_back);
         assert_eq!(fs::read(aside.join("save_folder").join("slot1.dat")).unwrap(), b"slot one");
         assert_eq!(fs::read(aside.join("save_folder").join("sub").join("slot2.dat")).unwrap(), b"slot two");
         let line = report.line("update", &|p: &Path| p.file_name().unwrap().to_string_lossy().into_owned()).unwrap();

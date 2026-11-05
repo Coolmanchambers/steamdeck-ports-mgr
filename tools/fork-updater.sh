@@ -64,7 +64,8 @@ rollback_program() { # returns 1 when any file could not be put back (review C9)
         rm -f "./.$g.new"
         case " $HAD " in
             *" $g "*) { cp -p ".previous/$g" "./.$g.restore" && mv -f "./.$g.restore" "./$g"; } || rb=1 ;;
-            *) rm -f "./$g" || rb=1 ;;
+            # A folder in the way was not put there by this run: nothing to take back.
+            *) [ -d "./$g" ] || rm -f "./$g" || rb=1 ;;
         esac
     done
     return $rb

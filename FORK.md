@@ -144,6 +144,13 @@ to a file that came from upstream is listed here with its date.
 | 2026-11-01 | `ui/app-window.slint` | Home view: `TileLayout` imported; `home-view`, `home-view-requested`, `home-layout-reported` and a pure `home-tile-layout` callback (replacing `home-columns`) passed to `HomeView`; while Home is shown `content-body` takes the window's height (also windowed: `vertical-stretch` and `preferred-height` read `home-mode`); in big mode on Home the bottom padding is 6 px and the zero-height footer row is left out (`if`), so Home runs to the bottom edge. Ctrl+L on the search box asks for the switch while Home shows; `home-layout-reported` carries the screen's layout line (logged for the smoke test). Every other screen lays out as before |
 | 2026-11-01 | `src/core/gamepad.rs`, `src/ui/gamepad_router.rs`, `src/app/gamepad_target.rs` | Home view: a click of the right stick (R3, `Button::RightThumb`) is a ninth button, `GamepadAction::SwitchView` (`GamepadTarget::switch_view`, no-op by default); only the main window's target acts on it (`home_screen::toggle_view`). Select stays the full-screen toggle; tests |
 | 2026-11-02 | `tools/smoke-test.sh` | Home view: the right-click on a Home tile and the view-button click are aimed by the app's own `home: layout` log line (`home_point`) instead of fixed offsets; checks that the view button and Ctrl+L switch Posters / List and that the choice is kept in `fork-settings.json` |
+| 2026-11-04 | `src/core/installer.rs` | Data safety: the merge is `fork::update_merge::merge` (the user's files stay, replaced archives are kept, a failure puts everything back); `merge_into` and `extract` become test-only wrappers of it, `extract_guarded` and `guard_for` are new, `remove_existing` / `is_real_dir` get `#[allow(dead_code)]`; `install_extra` takes `saves_backup_dir`; new `port_dir` (never the Library itself) used by `install_port`, `install_extra`, `uninstall_port_keeping` and `is_installed`; `flatten_single_wrapper_folder` and `collect_files` fail on an unreadable entry instead of dropping it; tests |
+| 2026-11-04 | `src/core/save_backup.rs` | Data safety: `restore_after_install` moves what is at the save's place to Replaced by restore first (was deleted) and never replaces the game folder itself; `preserve_before_uninstall` renames an earlier kept copy to `<field>.<time>` (was deleted) and does not copy a save folder that leads through a link somewhere too broad; `zip_staging_dir` writes `<name>.zip.part` and renames it when complete; `run_global_backup` picks a free name (`<date>-2.zip`); the old same-day test now expects both files; tests |
+| 2026-11-04 | `src/core/jobs.rs` | Data safety: `run_extra_install` passes `saves_backup_dir` on to `install_extra` |
+| 2026-11-04 | `src/core/models.rs` | Data safety: `port_from_value` refuses a folder name that is empty or only `.`; test |
+| 2026-11-04 | `src/core/files.rs` | Data safety: `write_atomic` syncs the file before the rename and its folder after it; new `write_atomic_unsynced` for caches; test |
+| 2026-11-04 | `src/core/image_cache.rs` | Data safety: catalog images are written with `write_atomic_unsynced` (a cache) |
+| 2026-11-04 | `src/core/installer.rs`, `src/core/save_backup.rs` | Data safety review fixes: `guard_for` returns a `Result` and runs first in `apply_archive` and `install_extra` (an unreadable game files record stops the install, nothing changed); `restore_after_install` / `restore_all_after_install` return where the saves in the way went and whether the kept copy went back, which `apply_archive` puts in the merge report; upstream's `save: "."` test checks no update zip was made (the replaced `game.exe` is kept in Replaced by update); tests |
 
 Files added by this fork:
 
@@ -361,13 +368,6 @@ Files added by this fork:
 | 2026-11-04 | `ui/dialogs/chrome.slint`, `ui/dialogs/picker.slint`, `ui/dialogs/info.slint` | Navigation safety re-check: the dialogs' key handlers (`DialogNavKeyHandler`, the picker's search box, Info's `handle-nav-key`) ignore a repeated Return or Escape, so a held key that reaches an upstream dialog after the close guard acts only once (one guard each) |
 | 2026-11-04 | `README.md`, `STEAM_DECK.md` | Navigation safety: the keyboard table and the Home help name Ctrl+I (Info) and Ctrl+P (Settings) |
 | 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Navigation safety: the cursor is remembered and kept by item, an option by its title (`page::Place`, `place_at`, `find_place`); `PageHandle::update` and `starting_focus` find it again by title or start where the page says, never on another option that took its number |
-| 2026-11-04 | `src/core/installer.rs` | Data safety: the merge is `fork::update_merge::merge` (the user's files stay, replaced archives are kept, a failure puts everything back); `merge_into` and `extract` become test-only wrappers of it, `extract_guarded` and `guard_for` are new, `remove_existing` / `is_real_dir` get `#[allow(dead_code)]`; `install_extra` takes `saves_backup_dir`; new `port_dir` (never the Library itself) used by `install_port`, `install_extra`, `uninstall_port_keeping` and `is_installed`; `flatten_single_wrapper_folder` and `collect_files` fail on an unreadable entry instead of dropping it; tests |
-| 2026-11-04 | `src/core/save_backup.rs` | Data safety: `restore_after_install` moves what is at the save's place to Replaced by restore first (was deleted) and never replaces the game folder itself; `preserve_before_uninstall` renames an earlier kept copy to `<field>.<time>` (was deleted) and does not copy a save folder that leads through a link somewhere too broad; `zip_staging_dir` writes `<name>.zip.part` and renames it when complete; `run_global_backup` picks a free name (`<date>-2.zip`); the old same-day test now expects both files; tests |
-| 2026-11-04 | `src/core/jobs.rs` | Data safety: `run_extra_install` passes `saves_backup_dir` on to `install_extra` |
-| 2026-11-04 | `src/core/models.rs` | Data safety: `port_from_value` refuses a folder name that is empty or only `.`; test |
-| 2026-11-04 | `src/core/files.rs` | Data safety: `write_atomic` syncs the file before the rename and its folder after it; new `write_atomic_unsynced` for caches; test |
-| 2026-11-04 | `src/core/image_cache.rs` | Data safety: catalog images are written with `write_atomic_unsynced` (a cache) |
-| 2026-11-04 | `src/core/installer.rs`, `src/core/save_backup.rs` | Data safety review fixes: `guard_for` returns a `Result` and runs first in `apply_archive` and `install_extra` (an unreadable game files record stops the install, nothing changed); `restore_after_install` / `restore_all_after_install` return where the saves in the way went, which `apply_archive` puts in the merge report; upstream's `save: "."` test checks no update zip was made (the replaced `game.exe` is kept in Replaced by update); tests |
 
 ## Data safety (2026-11-04 review)
 
@@ -382,16 +382,20 @@ older versions list): a file under the port's save folder, a game file connected
 (`rom_library.json`) or named by its entry (including the generated `oot.o2r` / `mm.o2r`), a ROM, key or dump as Kept
 files names them (a `.bin` track a cue sheet beside it names counts as a ROM), and a save file: a save extension
 (`.sav`, `.srm`, `.sl2`, `.dsv`, `.mcr`, `.gci`) or a `save` name on generic data or with no extension (`savegame.dat`,
-`SAVE1`). A release's own `save_icon.png` or `savemanager.lua` is updated as a program file. An `.o2r` / `.otr` the
+`SAVE1`). A release's own `save_icon.png`, `savemanager.lua` or `save.json` is updated, but the old file (any name
+the uninstall would keep as a save) goes to Replaced by update, never deleted: in a port with no known save folder it
+may be the user's save. Cue sheets are read only for generic data and once per folder. An `.o2r` / `.otr` the
 release ships itself (`soh.o2r`) is updated: the old one goes to
 `<Saves Backup>/Replaced by update/<port folder>/<time>/<path>` first. A folder a release file replaces goes there
 too, and so does every replaced file of a port whose save folder is the whole port folder (`"save": "."`: any file may
-be a save, and the pre-update zip skips such a folder). A file with the same bytes is left alone. Program files are
+be a save, and the pre-update zip skips such a folder; Replaced by update grows by the old files on every update, so
+clear it in Desktop Mode when you need the room). A file with the same bytes is left alone. Program files are
 replaced as before. An update is never refused for a clash, but a record of connected game files that cannot be read
 stops it before anything changes (as it stops an uninstall). The install wizard's Done page (or the update note) and
 the extras' result page say it in one line, for example "Kept your files: 2 files in the update had the same name as
 yours; yours are still in place.", naming places down to the port's folder in Saves Backup; when the update put
-back saves kept by an earlier uninstall, the line says where the saves that were there went. The extras' question
+back saves kept by an earlier uninstall, the line says where the saves that were there went (and, when the kept copy
+could not go back, that it stays in Pending Restore). The extras' question
 adds "Your saves, game files, keys and dumps are never replaced". Limit: a release file named like a dump
 (`*boot*.bin`, `*bios*.bin`) that the user's folder already holds in another version stays the old one; the new one
 is in `.previous/update-copies-<time>/`.
@@ -430,7 +434,9 @@ before and after the rename; image caches are not. The Steam changes list is rea
 lock (the Waiting changes page's drop and clear too). The app updater stages both new files, syncs, swaps, and on a
 failure or INT/TERM/HUP during the swap puts the previous program back from `.previous/` (written beside the file,
 then renamed); `update-failed.txt` says whether that worked or that copies are in `.previous/`. BUILD_INFO is replaced
-the same way and only warned about. `tools/test-fork-updater.sh` case 6 makes the swap fail half way.
+the same way and only warned about. `tools/test-fork-updater.sh` case 6 makes the swap fail half way (the old version
+is put back) and case 7 also makes putting it back fail (the message points at `.previous/`); both need a normal
+user. A folder that sat where a program file goes is left as it is by the roll back.
 
 ## Theme quick wins (Codex review of 2026-11-02, section A)
 

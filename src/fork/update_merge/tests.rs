@@ -143,6 +143,8 @@ fn only_real_save_files_and_named_tracks_stay_the_users() {
     for (name, mine, theirs) in [
         ("save_icon.png", "old icon", "new icon"),
         ("savemanager.lua", "old script", "new script"),
+        ("save.json", "my save in json", "release default"),
+        ("game.x86_64", "old program", "new program"),
         ("savegame.dat", "my save", "release save"),
         ("slot.srm", "my srm", "release srm"),
         ("SAVE1", "my save1", "release save1"),
@@ -162,6 +164,18 @@ fn only_real_save_files_and_named_tracks_stay_the_users() {
     let mut kept: Vec<String> = report.kept_yours.iter().map(|p| p.to_string_lossy().replace('\\', "/")).collect();
     kept.sort();
     assert_eq!(kept, ["SAVE1", "disc/Game (Track 2).bin", "savegame.dat", "slot.srm"]);
+    // Recheck 3: a `save*` file the update does replace is kept in Replaced by update, never deleted; a plain program
+    // file is replaced as before.
+    assert_eq!(read(&dest.join("save.json")), "release default");
+    let aside = tmp.path().join("Saves Backup").join(REPLACED_BY_UPDATE).join("game").join("2026-11-04_10-00-00");
+    assert_eq!(read(&aside.join("save.json")), "my save in json");
+    assert_eq!(read(&aside.join("save_icon.png")), "old icon");
+    assert_eq!(read(&aside.join("savemanager.lua")), "old script");
+    assert!(!aside.join("game.x86_64").exists());
+    assert_eq!(read(&dest.join("game.x86_64")), "new program");
+    let mut replaced: Vec<String> = report.replaced.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    replaced.sort();
+    assert_eq!(replaced, ["save.json", "save_icon.png", "savemanager.lua"]);
 }
 
 // Review C4: with a save folder that is the whole port folder, every file a release replaces is kept, not deleted.
@@ -213,8 +227,14 @@ fn the_report_is_taken_once_per_port_folder() {
     record(&dir, MergeReport { kept_yours: vec!["old.sav".into()], ..MergeReport::default() });
     record(&dir, MergeReport::default());
     assert_eq!(take(&dir), None, "no stale line from an earlier merge");
-    let s3 = MergeReport { saves_set_aside: Some(PathBuf::from("/b/Replaced by restore/game/stamp")), ..MergeReport::default() };
+    let s3 = MergeReport { saves_set_aside: Some(PathBuf::from("/b/Replaced by restore/game/stamp")), saves_put_back: true, ..MergeReport::default() };
     assert_eq!(s3.line("update", &|p: &Path| p.display().to_string()).as_deref(), Some("Saves kept from an earlier uninstall were put back; the saves that were there were moved to /b/Replaced by restore/game first."));
+    // Recheck 1: when the kept copy could not go back, the line never says it did.
+    let failed = MergeReport { saves_put_back: false, ..s3 };
+    assert_eq!(
+        failed.line("update", &|p: &Path| p.display().to_string()).as_deref(),
+        Some("Saves kept from an earlier uninstall could not be put back; they stay in /b/Pending Restore/game. The saves that were there were moved to /b/Replaced by restore/game.")
+    );
     record(&dir, MergeReport { kept_yours: vec!["a.sav".into()], ..MergeReport::default() });
     assert_eq!(take(&dir).map(|r| r.kept_yours.len()), Some(1));
     assert_eq!(take(&dir), None);

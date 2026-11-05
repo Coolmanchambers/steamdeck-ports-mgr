@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests tools/fork-updater.sh against fake installs and fake releases. Linux only; needs gcc.
 # Local: bash tools/test-fork-updater.sh   CI runs it in ci.yml. Works only inside $T, which it deletes at the end.
+# Run it as a normal user: cases 6 and 7 rely on a read-only folder (chmod 555), which root can write into anyway.
 set -u
 SRC="${SRC:-$(dirname "$(readlink -f "$0")")/fork-updater.sh}"
 T="${T:-$HOME/dpm-test/self-updater}"
@@ -117,11 +118,19 @@ echo "== 6. the swap fails half way (7zzs cannot be replaced), app already quit"
 # A read-only folder where 7zzs should be: mv can neither replace it nor move the file into it.
 make_app quit; rm -f "$T/app/7zzs"; mkdir -p "$T/app/7zzs/blocker"; chmod 555 "$T/app/7zzs"; make_release good; run_updater
 check "previous ports_launcher put back and reopened" 'cmp -s "$T/app/ports_launcher" "$T/bin/old" && [ "$(count_app)" = 1 ]'
-check "update-failed.txt explains" 'grep -q "could not install 7zzs" "$T/app/update-failed.txt"'
+check "update-failed.txt says it was put back" 'grep -q "could not install 7zzs, restored the previous version" "$T/app/update-failed.txt"'
 check "no staged file left" '[ ! -e "$T/app/.ports_launcher.new" ] && [ ! -e "$T/app/.7zzs.new" ] && [ -d "$T/app/7zzs/blocker" ]'
 chmod 755 "$T/app/7zzs"
 
-echo "== last log lines (case 6)"; tail -2 "$T/app/updater.log"
+echo "== 7. the swap fails and putting the old version back fails too (a cp that cannot write .restore files)"
+mkdir -p "$T/fakebin"
+printf '#!/bin/sh\ncase "$*" in *.restore*) exit 1 ;; esac\nexec /bin/cp "$@"\n' > "$T/fakebin/cp"; chmod 755 "$T/fakebin/cp"
+make_app quit; rm -f "$T/app/7zzs"; mkdir -p "$T/app/7zzs/blocker"; chmod 555 "$T/app/7zzs"; make_release good
+(cd "$T/app" && PATH="$T/fakebin:$PATH" DPM_RELEASE_BASE="file://$T/rel" sh ./ports_launcher_updater.sh); sleep 3
+check "update-failed.txt says the old version is in .previous" 'grep -q "could not be fully put back: copies of it are in .previous/" "$T/app/update-failed.txt" && cmp -s "$T/app/.previous/ports_launcher" "$T/bin/old"'
+chmod 755 "$T/app/7zzs"; stop_all
+
+echo "== last log lines (case 7)"; tail -2 "$T/app/updater.log"
 stop_all; rm -rf "$T"
 echo "RESULT: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

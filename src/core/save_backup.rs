@@ -121,7 +121,9 @@ fn move_live_aside(dst: &Path, saves_backup_dir: &Path, folder_name: &str, field
     }
 }
 
-fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, dest_dir: &Path, folder_name: &str, field: &str) -> Option<PathBuf> {
+// Fork (data safety): `Some((folder, restored))` when saves in the way were moved to `folder`; `restored` says whether
+// the kept copy then went back.
+fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, dest_dir: &Path, folder_name: &str, field: &str) -> Option<(PathBuf, bool)> {
     let src = pending_restore_dir(saves_backup_dir, folder_name, field);
     if !is_within(&src, saves_backup_dir) || !src.exists() {
         return None;
@@ -153,10 +155,12 @@ fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, d
         None => copy_non_empty(&src, &dst).is_ok(),
     };
     if !restored {
-        return aside;
+        // Recheck 1: the saves that were in the way moved, but the kept copy did not go back (it stays in Pending
+        // Restore); the caller must not say it was put back.
+        return aside.map(|dir| (dir, false));
     }
     let _ = fs::remove_dir_all(&src);
-    aside
+    aside.map(|dir| (dir, true))
 }
 
 #[must_use]
@@ -165,11 +169,14 @@ pub fn preserve_all_before_uninstall(port: &Port, saves_backup_dir: &Path, dest_
     results.iter().all(|&ok| ok)
 }
 
-// Fork (data safety, review S3): returns the folder the saves that were in the way went to, when any did.
-pub fn restore_all_after_install(port: &Port, saves_backup_dir: &Path, dest_dir: &Path) -> Option<PathBuf> {
-    let mut aside = None;
+// Fork (data safety, review S3): returns the folder the saves that were in the way went to, when any did, and whether
+// every kept copy then went back (recheck 1: false when one stayed in Pending Restore).
+pub fn restore_all_after_install(port: &Port, saves_backup_dir: &Path, dest_dir: &Path) -> Option<(PathBuf, bool)> {
+    let mut aside: Option<(PathBuf, bool)> = None;
     for (save_folder, field) in save_fields(port) {
-        aside = restore_after_install(save_folder, saves_backup_dir, dest_dir, &port.folder, field).or(aside);
+        if let Some((dir, restored)) = restore_after_install(save_folder, saves_backup_dir, dest_dir, &port.folder, field) {
+            aside = Some((dir, restored && aside.as_ref().is_none_or(|(_, all)| *all)));
+        }
     }
     aside
 }
@@ -774,6 +781,31 @@ mod tests {
         }
         found.sort();
         assert_eq!(found, vec![("save_folder".to_string(), b"played since".to_vec()), ("save_folder2".to_string(), b"live file save".to_vec())]);
+    }
+
+    // Fork (data safety, recheck 1): a kept copy that cannot go back is reported as not put back, and stays kept.
+    #[test]
+    #[cfg(unix)]
+    fn a_kept_copy_that_cannot_go_back_is_reported_as_not_put_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("restore_copy_back_fails");
+        let saves_backup_dir = dir.join("Saves Backup");
+        let kept = pending_restore_dir(&saves_backup_dir, "MyGame", "save_folder");
+        fs::create_dir_all(&kept).unwrap();
+        fs::write(kept.join("slot1.dat"), b"kept").unwrap();
+        fs::set_permissions(kept.join("slot1.dat"), fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(kept.join("slot1.dat")).is_ok() {
+            return; // running as root: permissions do not stop a read
+        }
+        let dest_dir = dir.join("MyGame");
+        fs::create_dir_all(dest_dir.join("Save")).unwrap();
+        fs::write(dest_dir.join("Save").join("slot2.dat"), b"newer").unwrap();
+        let result = restore_all_after_install(&port_with_save_folders("MyGame", Some("Save"), None), &saves_backup_dir, &dest_dir);
+        fs::set_permissions(kept.join("slot1.dat"), fs::Permissions::from_mode(0o644)).unwrap();
+        let (aside, put_back) = result.expect("the newer saves were moved aside");
+        assert!(!put_back);
+        assert_eq!(fs::read(aside.join("save_folder").join("slot2.dat")).unwrap(), b"newer");
+        assert_eq!(fs::read(kept.join("slot1.dat")).unwrap(), b"kept", "the kept copy stays in Pending Restore");
     }
 
     // Fork (data safety, D6): a "save folder" that is the game folder itself is never replaced by a kept copy.

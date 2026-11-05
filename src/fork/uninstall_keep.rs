@@ -278,11 +278,17 @@ pub(crate) fn sheets_in(dir: &Path) -> Sheets {
 /// For an update only (review S1): a lowercase name `classify` calls a save that is surely one: a save extension, or a
 /// `save` name on generic data or with no extension. `save_icon.png` is a program file a release must update.
 pub(crate) fn save_like_for_update(name: &str) -> bool {
-    let ext = if name.contains('.') { ext_of(name) } else { "" };
+    let ext = ext_of(name);
     SAVE_EXTS.contains(&ext) || (name.starts_with("save") && (ext.is_empty() || GENERIC.contains(&ext)))
 }
 
+/// Whether a cue sheet beside `name` (lowercase) can change what `classify` says: only for generic data (recheck 2).
+pub(crate) fn sheet_may_name(name: &str) -> bool {
+    GENERIC.contains(&ext_of(name))
+}
+
 /// What the cue sheets in one folder name: their lowercase text and stems.
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Sheets {
     texts: Vec<String>,
     stems: Vec<String>,
