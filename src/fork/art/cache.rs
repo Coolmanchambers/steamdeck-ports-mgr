@@ -105,9 +105,10 @@ impl ArtCache {
             fs::create_dir_all(dir)?;
         }
         let _ = fs::remove_file(Self::with_ext(&base, ".none"));
-        crate::core::files::write_atomic(&Self::with_ext(&base, ".img"), bytes)?;
+        // Images and their notes are a cache: no sync per file (data safety review D8; slow on an SD card).
+        crate::core::files::write_atomic_unsynced(&Self::with_ext(&base, ".img"), bytes)?;
         let meta = json!({ "image_id": image_id, "fetched_at": now });
-        crate::core::files::write_atomic(&Self::with_ext(&base, ".json"), meta.to_string().as_bytes())?;
+        crate::core::files::write_atomic_unsynced(&Self::with_ext(&base, ".json"), meta.to_string().as_bytes())?;
         self.prune(MAX_CACHE_BYTES);
         Ok(())
     }
@@ -117,7 +118,7 @@ impl ArtCache {
         if let Some(dir) = base.parent() {
             fs::create_dir_all(dir)?;
         }
-        crate::core::files::write_atomic(&Self::with_ext(&base, ".none"), now.to_string().as_bytes())
+        crate::core::files::write_atomic_unsynced(&Self::with_ext(&base, ".none"), now.to_string().as_bytes())
     }
 
     /// Total size of the downloaded images.

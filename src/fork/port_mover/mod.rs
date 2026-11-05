@@ -154,6 +154,20 @@ pub struct Prepared {
     pub import_folder: Option<String>,
 }
 
+/// The marker a new copy carries until its move is recorded (data safety review W5).
+pub const MOVED_FROM: &str = ".dpm-moved-from";
+
+/// A copy at `dir` whose move was never recorded (the app closed between the copy and the record).
+pub fn unrecorded_copy(dir: &Path) -> bool {
+    fs::symlink_metadata(dir.join(MOVED_FROM)).is_ok()
+}
+
+fn clear_marker(prepared: &Prepared) {
+    if !prepared.link_only {
+        let _ = fs::remove_file(prepared.to.join(MOVED_FROM));
+    }
+}
+
 fn staging_path(to: &Path) -> PathBuf {
     let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "port".into());
     to.with_file_name(format!(".{name}.dpm-moving-{}", std::process::id()))
@@ -230,6 +244,14 @@ pub fn prepare(
         if !after.is_empty() {
             let _ = copy::remove_copy(&staging);
             return Err(MoveError::GameFiles { stage: Stage::AfterCopy, issues: after });
+        }
+    }
+    // Data safety review W5: until the move is recorded (`record_pending` or `switch_over`), the new copy carries a
+    // marker; an app closed in between leaves a copy that `ports_folder::plan_move` treats as stale, never adopts.
+    if !link_only {
+        if let Err(e) = fs::write(staging.join(MOVED_FROM), from.to_string_lossy().as_bytes()) {
+            let _ = copy::remove_copy(&staging);
+            return Err(MoveError::Copy(format!("could not mark the new copy at {}: {e}", staging.display())));
         }
     }
     // The target may have appeared while copying.
@@ -355,6 +377,9 @@ pub fn record_pending(config_dir: &Path, prepared: &[Prepared]) -> std::io::Resu
     for p in prepared {
         old_copies::record(config_dir, old_copy_record(p, false, None))?;
     }
+    for p in prepared {
+        clear_marker(p);
+    }
     Ok(())
 }
 
@@ -364,6 +389,8 @@ pub fn switch_over(prepared: &Prepared, env: &MoveEnv) -> SwitchReport {
     if let Err(e) = old_copies::record(env.config_dir, old_copy_record(prepared, false, None)) {
         report.notes.push(format!("The old copy at {} could not be added to the list of old copies ({e}); it is still there.", prepared.from.display()));
     }
+    clear_marker(prepared); // W5: the move is recorded (or said not to be, above); the new copy is the one in use now
+
     let ctx = steam::SteamCtx { home: env.home, config_dir: env.config_dir, settings: env.settings, steam: env.steam, game_mode: env.game_mode, now: SystemTime::now() };
     report.steam = steam::repoint_everywhere(&prepared.port.key, &prepared.port.name, &prepared.from, &prepared.to, &ctx);
     match RomLibraryStore::load(&env.config_dir.join("rom_library.json")) {

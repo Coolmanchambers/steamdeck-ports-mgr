@@ -53,7 +53,34 @@ for tool in curl tar sha256sum pgrep; do
 done
 
 TMP_DIR="$(mktemp -d)" || fail "could not create a temporary folder"
-trap 'rm -rf "$TMP_DIR"' EXIT
+# The swap (data safety review D11, the pattern of tools/installer.sh): both new files are staged as .<name>.new and
+# synced first; a failure or an INT/TERM/HUP during the renames puts the previous program back from .previous/
+# (written beside the file, then renamed over it), and a file that was not there before is removed again.
+HAD=""
+SWAPPING=""
+rollback_program() {
+    for g in ports_launcher 7zzs; do
+        rm -f "./.$g.new"
+        case " $HAD " in
+            *" $g "*) cp -p ".previous/$g" "./.$g.restore" && mv -f "./.$g.restore" "./$g" ;;
+            *) rm -f "./$g" ;;
+        esac
+    done
+}
+cleanup() {
+    rm -f "./.ports_launcher.new" "./.7zzs.new" "./.ports_launcher.restore" "./.7zzs.restore"
+    rm -rf "$TMP_DIR"
+}
+on_signal() {
+    if [ -n "$SWAPPING" ]; then
+        rollback_program
+        SWAPPING=""
+        fail "the update was stopped part way, restored the previous version"
+    fi
+    exit 130
+}
+trap cleanup EXIT
+trap on_signal INT TERM HUP
 
 fetch() { curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-delay 5 -o "$2" "$1"; }
 echo "downloading $BASE/$ASSET"
@@ -83,19 +110,29 @@ mkdir -p .previous || fail "could not create .previous, nothing was changed"
 for f in ports_launcher 7zzs; do
     if [ -f "$f" ]; then
         cp -p "$f" ".previous/$f" || fail "could not back up $f, nothing was changed"
+        HAD="$HAD $f"
     fi
 done
 
 for f in ports_launcher 7zzs; do
-    if ! { cp "$NEW/$f" "./.$f.new" && chmod 755 "./.$f.new" && mv -f "./.$f.new" "./$f"; }; then
-        rm -f "./.$f.new"
-        for g in ports_launcher 7zzs; do
-            [ -f ".previous/$g" ] && cp -p ".previous/$g" "./$g"
-        done
+    if ! { cp "$NEW/$f" "./.$f.new" && chmod 755 "./.$f.new"; }; then
+        rm -f ./.ports_launcher.new ./.7zzs.new
+        fail "could not stage the new $f (drive full?), nothing was changed"
+    fi
+done
+sync 2>/dev/null
+SWAPPING=1
+for f in ports_launcher 7zzs; do
+    if ! mv -f "./.$f.new" "./$f"; then
+        rollback_program
+        SWAPPING=""
         fail "could not install $f, restored the previous version"
     fi
 done
-[ -f "$NEW/BUILD_INFO" ] && cp "$NEW/BUILD_INFO" ./BUILD_INFO
+SWAPPING=""
+if [ -f "$NEW/BUILD_INFO" ]; then
+    { cp "$NEW/BUILD_INFO" ./.BUILD_INFO.new && mv -f ./.BUILD_INFO.new ./BUILD_INFO; } || { rm -f ./.BUILD_INFO.new; echo "warning: BUILD_INFO could not be updated (the program is updated)"; }
+fi
 rm -f "$APP_DIR/update-failed.txt"
 echo "installed new ports_launcher and 7zzs"
 

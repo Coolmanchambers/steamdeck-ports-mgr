@@ -175,12 +175,32 @@ fn a_move_copies_bits_links_and_times_verifies_and_keeps_the_original() {
     let env = w.env(&no_steam, &nothing_running, &plenty);
     let p = prepare(&w.port(), &old, &w.new_lib.join("SoH"), &env, &MoveOptions::default(), &mut |done, total, _| { assert!(done <= total); seen = done; }, &AtomicBool::new(false)).unwrap();
     assert_eq!(snapshot(&old), before, "the original is untouched");
-    assert_eq!(snapshot(&p.to), before, "the copy matches entry for entry (bits, sizes, hashes, times, links)");
+    // Data safety review W5: until the move is recorded, the copy carries its marker; that is the only extra entry.
+    let mut copy = snapshot(&p.to);
+    assert!(copy.remove(Path::new(MOVED_FROM)).is_some(), "the new copy is marked until its move is recorded");
+    assert_eq!(copy, before, "the copy matches entry for entry (bits, sizes, hashes, times, links)");
     assert_eq!(p.files, 3);
     assert_eq!(p.hashed, 3, "small ports are hashed whole");
     assert_eq!(seen, p.bytes);
     assert!(!w.staging_left());
     assert!(old.is_dir());
+}
+
+// Data safety review W5: a copy made but never recorded (the app closed between the two) is marked, so a later move
+// plan treats it as stale instead of adopting it as "already there"; recording the move clears the mark.
+#[test]
+fn a_copy_whose_move_was_never_recorded_is_stale_not_already_there() {
+    let w = World::new("unrecorded");
+    let p = w.prepare_with(&MoveOptions::default()).unwrap();
+    assert!(unrecorded_copy(&p.to));
+    let catalog = vec![crate::core::models::port_from_value(&serde_json::json!({"name": "Ship of Harkinian", "folder": "SoH", "source": "https://github.com/harbour/soh"})).unwrap()];
+    let plan = crate::fork::ports_folder::plan_move(&w.old_lib, &w.new_lib, &catalog, &[]);
+    assert!(plan.already_there.is_empty(), "{:?}", plan.already_there);
+    assert_eq!(plan.stale.iter().map(|s| s.to.clone()).collect::<Vec<_>>(), [p.to.clone()]);
+    record_pending(&w.app, std::slice::from_ref(&p)).unwrap();
+    assert!(!unrecorded_copy(&p.to), "recorded: the mark is gone");
+    let plan = crate::fork::ports_folder::plan_move(&w.old_lib, &w.new_lib, &catalog, &[]);
+    assert_eq!(plan.already_there, ["Ship of Harkinian"]);
 }
 
 #[test]

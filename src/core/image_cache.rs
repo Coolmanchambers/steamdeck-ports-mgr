@@ -22,7 +22,7 @@ pub fn cache_image(url: &str, cache_dir: &Path, folder_name: &str) {
             return;
         }
     }
-    let _ = super::files::write_atomic(&dest, &bytes);
+    let _ = super::files::write_atomic_unsynced(&dest, &bytes); // Fork (data safety, D8): a cache, no sync
 }
 
 #[cfg(test)]

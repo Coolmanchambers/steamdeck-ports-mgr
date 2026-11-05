@@ -413,7 +413,9 @@ pub fn plan_move(old: &Path, new: &Path, catalog: &[crate::core::models::Port], 
         let link_only = meta.file_type().is_symlink();
         let bytes = if link_only { 0 } else { super::port_mover::copy::tree_size(&from) };
         if fs::symlink_metadata(&to).is_ok() {
-            if kept_old_copies.contains(&to) {
+            // Data safety review W5: a copy whose move was never recorded (the app closed between the copy and the
+            // record) may be older than the one in use: replaced first, like a kept old copy, never adopted.
+            if kept_old_copies.contains(&to) || super::port_mover::unrecorded_copy(&to) {
                 plan.bytes += bytes;
                 plan.stale.push(PortToMove { key: port.key().to_string(), name: port.display_name().to_string(), from, to, link_only, bytes });
             } else {

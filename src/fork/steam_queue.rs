@@ -561,6 +561,7 @@ pub fn changes_from_screen(screen: &SteamScreen, queued_at: &str) -> Vec<QueuedC
 /// would now start where it ends is dropped, and so is a second identical one. Returns how many entries
 /// changed. An unreadable queue is an error, so the caller keeps `old` in place.
 pub fn retarget_repoints(path: &Path, old: &Path, new: &Path) -> Result<usize, String> {
+    let _held = queue_lock();
     let loaded = load(path);
     if loaded.unreadable {
         return Err(loaded.problem.unwrap_or_default());
@@ -590,10 +591,19 @@ pub fn retarget_repoints(path: &Path, old: &Path, new: &Path) -> Result<usize, S
     Ok(changed)
 }
 
+/// Data safety review D9: the queue is read, changed and written back by the UI and by worker threads (a move's
+/// repoint); one lock around each read-change-write keeps one writer from undoing another's change.
+static QUEUE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn queue_lock() -> std::sync::MutexGuard<'static, ()> {
+    QUEUE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn queue_changes(path: &Path, changes: Vec<QueuedChange>, game_mode: bool) -> Result<String, String> {
     if changes.is_empty() {
         return Err("Nothing is selected.".into());
     }
+    let _held = queue_lock();
     let loaded = load(path);
     if loaded.unreadable {
         return Err(format!("{}\n\nNothing was saved to wait.", loaded.problem.unwrap_or_default()));
@@ -915,6 +925,7 @@ fn push_block(text: &mut String, block: &str) {
 
 /// Loads, applies and saves what is left. The caller shows `text`.
 pub fn apply_queue_file(path: &Path, inputs: &ApplyInputs, steam: &dyn SteamProcessCheck, now: SystemTime) -> QueueApplyOutcome {
+    let _held = queue_lock();
     let loaded = load(path);
     if loaded.unreadable {
         let text = loaded.problem.unwrap_or_default();
@@ -1145,6 +1156,28 @@ mod tests {
         assert_eq!((e.account_label.as_str(), e.from_game_mode), ("", false));
         assert_eq!(e.account_text(), "Steam account 1234");
         assert!(offer_text(&loaded.queue, false, &[]).starts_with("1 Steam change waiting while Steam was running"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    // Data safety review D9: writers on several threads at once never lose each other's changes.
+    #[test]
+    fn changes_queued_from_several_threads_at_once_are_all_kept() {
+        let dir = temp_dir("threads");
+        let path = dir.join(FILE_NAME);
+        let workers: Vec<_> = (0..8)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for i in 0..10 {
+                        queue_changes(&path, vec![change(1234, &format!("a/port-{t}-{i}"), QueuedKind::Add)], false).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in workers {
+            w.join().unwrap();
+        }
+        assert_eq!(load(&path).queue.len(), 80);
         let _ = fs::remove_dir_all(dir);
     }
 
