@@ -561,6 +561,8 @@ pub fn first_page(p: &PortFacts, disk: Option<&DiskFacts>, places: &Places) -> P
         lines.push(format!("Play time: {t}"));
     }
     page.card = Some(PageCard { art: p.art.clone(), qr: None, title: p.name.clone(), lines });
+    // UI polish U8: a short card, so more of the eleven option cards are on screen (about 3 showed with the big one).
+    page.compact_card = true;
     for (i, card) in Card::ALL.into_iter().enumerate() {
         let mut o = option(card.title(), summary(card, p, disk, places), Act::Open(card));
         if card == Card::Play && (p.busy || p.running) {

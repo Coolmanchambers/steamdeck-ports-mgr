@@ -194,6 +194,7 @@ fn apply_art<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, images: &HashMap<S
         d.set_card(WizardCard {
             image: card.qr.as_ref().map_or_else(|| image_of(images, &card.art), qr_image),
             square: card.qr.is_some(),
+            compact: page.compact_card && card.qr.is_none(),
             title: card.title.clone().into(),
             lines: model(card.lines.iter().map(|l| l.clone().into()).collect::<Vec<slint::SharedString>>()),
         });
@@ -765,6 +766,17 @@ fn scrolls_instead(before: usize, after: usize, dy: i32) -> bool {
 /// dialog is open. False when the window could not be made.
 pub(crate) fn show_page<A: Clone + 'static>(app: &Rc<AppState>, router: &Router, page: Page<A>, handlers: Handlers<A>) -> bool {
     show_page_handle(app, router, page, handlers).is_some()
+}
+
+/// UI polish U7: a message as a one-button page (`page::message_page`): OK, B, Escape and the title bar's X all close
+/// it. Used where upstream's message dialog (no button, no hint) was; falls back to that dialog when the page window
+/// cannot be made.
+pub(crate) fn show_message(app: &Rc<AppState>, router: &Router, heading: &str, title: &str, text: &str) {
+    let close: Rc<dyn Fn(&Rc<AppState>, &Router)> = Rc::new(close_current_dialog);
+    let handlers = Handlers { on_action: Rc::new(|app, router, _: page::MessageAct| close_current_dialog(app, router)), on_back: close.clone(), on_exit: close, on_input: None };
+    if !show_page(app, router, page::message_page(heading, title, text), handlers) {
+        super::dialogs::open_message_dialog(app, router, title, text);
+    }
 }
 
 /// [`show_page`], giving back the handle that replaces the page later.

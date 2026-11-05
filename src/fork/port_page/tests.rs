@@ -283,6 +283,18 @@ fn the_first_page_has_the_cover_a_card_per_area_and_b_goes_back() {
     assert_eq!(page.options[2].detail, "No program found");
 }
 
+// UI polish U8: only the first page draws its card short; the other card pages keep the big one.
+#[test]
+fn only_the_first_page_has_a_compact_card() {
+    let p = port();
+    assert!(first_page(&p, None, &deck_places()).compact_card);
+    assert!(!program_page(&p, &ProgramFacts::default(), &deck_places()).compact_card);
+    assert!(!crate::fork::page::Page::<Act>::default().compact_card, "no other page asks for it");
+    let slint = include_str!("../../../ui/fork/setup-wizard.slint");
+    assert!(slint.contains("height: root.card.compact ? "), "the window draws the compact card shorter");
+    assert!(include_str!("../../app/page_dialog.rs").contains("compact: page.compact_card"), "the page window passes the flag on");
+}
+
 #[test]
 fn the_card_pages_have_their_window_titles_and_safe_starting_places() {
     let p = port();

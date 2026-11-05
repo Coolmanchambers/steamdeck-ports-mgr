@@ -1,4 +1,4 @@
-use super::dialogs::{dialog_is_open, open_info_dialog, open_message_dialog};
+use super::dialogs::{dialog_is_open, open_info_dialog};
 use super::events::{lock, AppEvent};
 use super::playtime::is_port_running;
 use super::state::AppState;
@@ -165,7 +165,8 @@ pub(crate) fn launch_installed(app: &Rc<AppState>, router: &Router, port: &Port)
     if app.install_runtime.installing.borrow().contains(port.key()) {
         // Its progress dialog is usually up; leave that in place rather than replacing it with this note.
         if !dialog_is_open(app) {
-            open_message_dialog(app, router, &port.name, "This port is being installed, updated or restored. Wait for that to finish, then start it.");
+            // Fork (UI polish U7): a one-button page instead of the old message dialog.
+            super::page_dialog::show_message(app, router, port.display_name(), "Not ready to start", "This port is being installed, updated or restored. Wait for that to finish, then start it.");
         }
         return;
     }

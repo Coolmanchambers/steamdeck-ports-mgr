@@ -183,17 +183,23 @@ export component SearchListDialog inherits Window {
             border-width: 1px / Theme.scale-factor;
             border-color: Theme.border-color;
 
+            // Fork (UI polish U6): the placeholder and the search text stop short of the clock instead of running under it.
+            property <length> clock-room: root.show-clock ? picker-clock.preferred-width + text-margin : 0px;
+
             if search-input.text == "": Text {
                 text: root.placeholder-text;
                 color: Theme.search-text;
                 font-size: search-font-px;
                 vertical-alignment: center;
                 x: text-margin;
-                width: parent.width - text-margin * 2;
+                width: search-box.width - text-margin * 2 - search-box.clock-room;
                 height: parent.height;
+                overflow: elide;
             }
 
-            if root.show-clock: Text {
+            // Fork (UI polish U6): always there (hidden when off), so the box can measure it.
+            picker-clock := Text {
+                visible: root.show-clock;
                 text: root.clock-text;
                 color: Theme.search-text;
                 font-size: search-font-px;
@@ -212,7 +218,7 @@ export component SearchListDialog inherits Window {
                 input-type: root.password ? InputType.password : InputType.text;
                 x: text-margin;
                 y: 0px;
-                width: parent.width - text-margin * 2;
+                width: parent.width - text-margin * 2 - search-box.clock-room; // Fork (UI polish U6)
                 height: parent.height;
                 edited => { root.search-changed(self.text); }
                 key-pressed(event) => {
@@ -269,7 +275,7 @@ export component SearchListDialog inherits Window {
 
                 Text {
                     text: item.label;
-                    color: index == root.selected-index ? Theme.selected-text : Theme.list-text;
+                    color: index == root.selected-index ? Theme.selected-ink : Theme.list-text; // Fork (UI polish U3)
                     font-size: root.item-font-px;
                     vertical-alignment: center;
                     x: text-margin;

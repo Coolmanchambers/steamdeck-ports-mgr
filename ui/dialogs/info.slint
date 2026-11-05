@@ -293,7 +293,7 @@ export component InfoDialog inherits Window {
                             single-line: false;
                             wrap: word-wrap;
                             selection-background-color: Theme.selected-background;
-                            selection-foreground-color: Theme.selected-text;
+                            selection-foreground-color: Theme.selected-ink; // Fork (UI polish U3)
                             width: instructions-flick.width;
                             key-pressed(event) => { return root.handle-nav-key(event); }
                         }

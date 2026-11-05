@@ -148,7 +148,8 @@ fn row(index: usize, entry: &Entry, known: &[KnownPort]) -> Row {
         }
         None => {
             if entry.catalog_disabled {
-                tags.push(Tag { label: "Off in catalog", kind: TagKind::Muted });
+                // UI polish F-U3: says where the user would look for it ("Off in catalog" meant nothing to them).
+                tags.push(Tag { label: "Not in All ports", kind: TagKind::Muted });
             }
             if can_add(entry) { (Standing::New, Action::AddAndInstall, "Install") } else { (Standing::New, Action::InfoOnly, "") }
         }
@@ -165,7 +166,8 @@ fn row(index: usize, entry: &Entry, known: &[KnownPort]) -> Row {
     if entry.missing_since.is_some() {
         tags.push(Tag { label: "Not found", kind: TagKind::Warning });
     }
-    let mut sub = vec![entry.system.clone().unwrap_or_else(|| "Unknown system".to_string())];
+    // UI polish F-U4: a system the list does not know is left out, not shown as "Unknown system".
+    let mut sub: Vec<String> = entry.system.clone().filter(|s| !s.trim().is_empty()).into_iter().collect();
     if let Some(release) = &entry.release {
         sub.extend([Some(release.tag.clone()).filter(|t| !t.is_empty()), date_short(&release.date)].into_iter().flatten());
     }
@@ -219,7 +221,7 @@ pub fn mark_same_game(rows: &mut [Row], index: &Index, owned: &[crate::fork::sam
         let b = badge(&found);
         let kind = if b.verdict == Verdict::SameGame { TagKind::Info } else { TagKind::Plain };
         row.badge = Some(Tag { label: b.label, kind });
-        row.sub = format!("{}  ·  {}", row.sub, b.note);
+        row.sub = if row.sub.is_empty() { b.note.to_string() } else { format!("{}  ·  {}", row.sub, b.note) };
         log.push(log_line(found.verdict, if key.is_empty() { &row.id } else { key }, &found.owned.key));
     }
     log
@@ -491,9 +493,26 @@ mod tests {
         assert_eq!((by("inst").standing, by("inst").button), (Standing::Installed, "Play"));
         assert!(by("inst").tags.is_empty());
         assert_eq!((by("own").standing, by("own").button, labels(by("own"))), (Standing::Yours, "Play", vec!["Yours"]));
-        assert_eq!((by("off").action.clone(), labels(by("off"))), (Action::AddAndInstall, vec!["Off in catalog"]));
+        assert_eq!((by("off").action.clone(), labels(by("off"))), (Action::AddAndInstall, vec!["Not in All ports"]), "UI polish F-U3");
         assert_eq!((by("gone").action.clone(), by("gone").button, labels(by("gone"))), (Action::InfoOnly, "", vec!["Not found"]));
         assert_eq!((by("new").action.clone(), by("new").button), (Action::AddAndInstall, "Install"));
+    }
+
+    // UI polish F-U4: no "Unknown system"; the line starts with what the list does know.
+    #[test]
+    fn a_row_without_a_system_leaves_it_out() {
+        let mut none = project("nosys", "linux_build", "game");
+        none["system"] = json!(null);
+        let mut bare = project("bare", "linux_build", "game");
+        bare["system"] = json!(null);
+        bare["evidence"]["release"] = json!(null);
+        let index = index_of(vec![none, bare, project("n64", "linux_build", "game")]);
+        let rows = rows(&index, &[], &Filters::default(), "");
+        let sub = |name: &str| rows.iter().find(|r| r.name == format!("Game {name}")).unwrap().sub.clone();
+        assert_eq!(sub("nosys"), "v1.0  ·  Oct 18");
+        assert_eq!(sub("bare"), "", "nothing known: nothing said");
+        assert_eq!(sub("n64"), "N64  ·  v1.0  ·  Oct 18");
+        assert!(rows.iter().all(|r| !r.sub.contains("Unknown")));
     }
 
     #[test]

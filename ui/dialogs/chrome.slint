@@ -96,7 +96,7 @@ export component DialogButton inherits Rectangle {
     }
     label := Text {
         text: root.text;
-        color: root.selected && root.enabled ? Theme.selected-text : Theme.list-text;
+        color: root.selected && root.enabled ? Theme.selected-ink : Theme.list-text; // Fork (UI polish U3): reads at 4.5:1
         font-size: root.font-size;
         horizontal-alignment: root.left-align ? left : center;
         vertical-alignment: center;

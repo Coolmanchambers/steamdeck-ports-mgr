@@ -88,7 +88,7 @@ component FilterChip inherits Rectangle {
     }
     label := Text {
         text: root.text;
-        color: area.has-hover ? Theme.selected-text : Theme.list-text;
+        color: area.has-hover ? Theme.selected-ink : Theme.list-text;
         font-size: root.font-size;
         font-weight: 700;
         horizontal-alignment: center;
@@ -110,8 +110,8 @@ export component DeckReadyList inherits Rectangle {
     in property <string> filter-text: "";
     in property <string> empty-text: "";
     in property <bool> show-hints: true;
-    // Fork (port page): what B does now ("B / Esc  Home", or "B / Esc  Clear search" while there is search text).
-    in property <string> back-hint: "B / Esc  Back";
+    // UI polish F-U2: the hint line, built in Rust for all three lists (src/fork/home.rs `List::hint_line`).
+    in property <string> hint-text: "";
     in property <bool> scroll-trigger: false;
     callback row-hovered(int);
     callback row-info(int);
@@ -248,7 +248,9 @@ export component DeckReadyList inherits Rectangle {
                         x: root.spacing * 2;
                         y: (row.height - self.height) / 2;
                         text: item.deck ? (row.compact ? "Deck" : "Deck build") : (row.compact ? "Linux" : "Linux build");
-                        fill: row.selected ? Theme.selected-text : (item.deck ? SemanticColors.success : SemanticColors.info);
+                        // UI polish U3: on a selected row the chip is drawn in the row's ink with the selection's blue
+                        // inside (white with blue words was 3.1:1).
+                        fill: row.selected ? Theme.selected-ink : (item.deck ? SemanticColors.success : SemanticColors.info);
                         ink: row.selected ? Theme.selected-background : SemanticColors.text-on-accent;
                         line: self.fill;
                         font-size: root.small-font;
@@ -263,13 +265,13 @@ export component DeckReadyList inherits Rectangle {
                         alignment: center;
                         Text {
                             text: item.name;
-                            color: row.selected ? Theme.selected-text : Theme.list-text;
+                            color: row.selected ? Theme.selected-ink : Theme.list-text;
                             font-size: root.item-font-px;
                             overflow: elide;
                         }
                         Text {
                             text: item.sub;
-                            color: row.selected ? Theme.selected-text : Theme.list-text;
+                            color: row.selected ? Theme.selected-ink : Theme.list-text;
                             font-size: root.small-font;
                             overflow: elide;
                         }
@@ -285,8 +287,8 @@ export component DeckReadyList inherits Rectangle {
                         for tag in item.tags: Chip {
                             text: tag.label;
                             fill: tag.kind == 4 ? SemanticColors.info : (tag.kind == 3 ? Theme.border-color : (tag.kind == 2 ? SemanticColors.warning : transparent));
-                            ink: tag.kind >= 2 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-text : Theme.list-text);
-                            line: tag.kind == 1 ? Theme.search-text : (tag.kind == 0 ? (row.selected ? Theme.selected-text : Theme.list-text) : self.fill);
+                            ink: tag.kind >= 2 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-ink : Theme.list-text);
+                            line: tag.kind == 1 ? Theme.search-text : (tag.kind == 0 ? (row.selected ? Theme.selected-ink : Theme.list-text) : self.fill);
                             font-size: root.small-font;
                             chip-height: root.chip-height;
                         }
@@ -298,8 +300,8 @@ export component DeckReadyList inherits Rectangle {
                         y: (row.height - root.chip-height) / 2;
                         text: item.badge.label;
                         fill: item.badge.kind == 4 ? SemanticColors.info : transparent;
-                        ink: item.badge.kind == 4 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-text : Theme.list-text);
-                        line: item.badge.kind == 4 ? self.fill : (row.selected ? Theme.selected-text : Theme.list-text);
+                        ink: item.badge.kind == 4 ? SemanticColors.text-on-accent : (row.selected ? Theme.selected-ink : Theme.list-text);
+                        line: item.badge.kind == 4 ? self.fill : (row.selected ? Theme.selected-ink : Theme.list-text);
                         font-size: root.small-font;
                         chip-height: root.chip-height;
                     }
@@ -345,8 +347,8 @@ export component DeckReadyList inherits Rectangle {
             }
         }
 
-        if root.show-hints: Text {
-            text: "A  Install / Play     X  Info     Y  Filters     " + root.back-hint + "     L1 R1 / Tab  Switch list";
+        if root.show-hints && root.hint-text != "": Text {
+            text: root.hint-text;
             color: Theme.list-text;
             font-size: root.small-font;
             vertical-alignment: center;

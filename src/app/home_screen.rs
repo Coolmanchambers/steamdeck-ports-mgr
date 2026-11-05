@@ -232,11 +232,16 @@ pub(crate) fn opened_from_add_port(app: &AppState, from_settings: bool) {
     push_list_hint(app);
 }
 
-/// Fork (port page): the hint for B on the lists ("B / Esc  Home", "B / Esc  Clear search"), and the Home button's focus.
+/// Fork (port page): the hint for B on the lists ("B Home", "B / Esc Clear search"), and the Home button's focus.
+/// UI polish F-U2: also the hint line along the bottom of Deck-ready and the big-mode card grid (`List::hint_line`).
 pub(crate) fn push_list_hint(app: &AppState) {
     let window = app.window();
     let searching = !app.windowed_nav.search_query.borrow().trim().is_empty();
-    window.set_list_back_hint(current_list(app).back_hint(searching, app.home.from_add_port.get().is_some()).into());
+    let big = window.get_big_mode();
+    let list = current_list(app);
+    let back = list.back_hint(searching, app.home.from_add_port.get().is_some(), big);
+    window.set_list_hint(list.hint_line(focused_kind(app), app.home.view.get(), &back, big).into());
+    window.set_list_back_hint(back.into());
     window.set_list_home_focused(app.home.list_button.get() && !app.home.is_active());
 }
 

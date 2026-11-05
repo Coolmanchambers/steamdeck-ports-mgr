@@ -1,4 +1,3 @@
-use super::dialogs::open_message_dialog;
 use super::events::{lock, AppEvent};
 use super::state::AppState;
 use crate::core::catalog_sync::{self, CatalogUpdate};
@@ -27,7 +26,8 @@ pub(crate) fn launch_self_update(app: &Rc<AppState>, router: &Rc<RefCell<Gamepad
         // Fork (steam, art and settings pages): a title that says what happened and a plain sentence; the raw error goes to the log.
         Err(e) => {
             eprintln!("self-update: the updater could not be started: {e}");
-            open_message_dialog(app, router, "Could not update the app", "The updater could not be started, so nothing was changed. Try again later, or download the newest version from the project page.");
+            // Fork (UI polish U7): a page with an OK button and a hint bar, not the old message dialog.
+            super::page_dialog::show_message(app, router, "", "Could not update the app", "The updater could not be started, so nothing was changed. Try again later, or download the newest version from the project page.");
         }
     }
 }

@@ -34,6 +34,7 @@ fn push_colors(theme: &Theme, semantic: &SemanticColors, c: &ThemeColors, s: &Se
     theme.set_list_text(c.list_text);
     theme.set_selected_background(c.selected_background);
     theme.set_selected_text(c.selected_text);
+    theme.set_selected_ink(c.selected_ink()); // Fork (UI polish U3): text on selected rows
     theme.set_border_color(c.border);
     theme.set_border_width(border_width);
 

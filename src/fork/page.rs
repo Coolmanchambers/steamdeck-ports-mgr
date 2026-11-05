@@ -217,6 +217,9 @@ pub struct Page<A> {
     /// A progress bar under the summary box.
     pub progress: Option<Progress>,
     pub card: Option<Card>,
+    /// UI polish U8: the card is drawn short (a small cover, its lines on one row), so a page with many options shows
+    /// more of them. The Port page's first page only.
+    pub compact_card: bool,
     /// A text box under the text. It is the first thing the cursor can be on; Down or A leaves it for the choices.
     pub input: Option<InputBox>,
     pub tiles: Vec<Tile<A>>,
@@ -259,6 +262,7 @@ impl<A> Default for Page<A> {
             marks: Vec::new(),
             progress: None,
             card: None,
+            compact_card: false,
             input: None,
             tiles: Vec::new(),
             options: Vec::new(),
@@ -583,6 +587,24 @@ pub fn move_focus_in_rows<A>(page: &Page<A>, current: usize, dx: i32, dy: i32, p
     target.and_then(index_of).unwrap_or(current)
 }
 
+/// UI polish U7: the one thing a message page can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageAct {
+    Ok,
+}
+
+/// UI polish U7: a message as a page with one OK button (A or B), instead of upstream's message dialog, which has no
+/// button and no hint. `heading` names the window and goes top left (a port's name, say); paragraphs split at blank
+/// lines.
+pub fn message_page(heading: &str, title: &str, text: &str) -> Page<MessageAct> {
+    let window_title = if heading.is_empty() { title.to_string() } else { format!("{heading}: {title}") };
+    let mut p = Page { window_title, large: true, header: heading.to_string(), title: title.to_string(), ..Page::default() };
+    p.paragraphs = text.split("\n\n").map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect();
+    p.options.push(PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: MessageAct::Ok });
+    p.initial = Focus::Option(0);
+    p.b_does(&MessageAct::Ok)
+}
+
 /// What choosing the focused item does.
 pub fn action_at<A: Clone>(page: &Page<A>, number: usize) -> Option<A> {
     match focus_at(page, number)? {
@@ -607,6 +629,20 @@ mod tests {
 
     fn option(title: &str, action: Act, enabled: bool) -> PageOption<Act> {
         PageOption { title: title.into(), detail: String::new(), choice: None, enabled, recommended: false, action }
+    }
+
+    // UI polish U7: a message page has one button, says so in the hint bar, and A or B leave it.
+    #[test]
+    fn a_message_page_has_one_ok_button_and_a_hint() {
+        let p = message_page("Dusklight", "Could not start it", "First sentence.\n\nSecond one.");
+        assert_eq!(p.window_title, "Dusklight: Could not start it");
+        assert_eq!(p.paragraphs, ["First sentence.", "Second one."]);
+        assert_eq!(p.options.len(), 1);
+        assert_eq!(action_at(&p, initial_focus(&p)), Some(MessageAct::Ok));
+        assert_eq!(p.back_hint, "OK");
+        assert_eq!(hints(&p), ["A Choose", "B OK"].join(HINT_GAP), "one thing to choose: no D-pad");
+        assert!(!p.no_back);
+        assert_eq!(message_page("", "Could not update the app", "x").window_title, "Could not update the app");
     }
 
     fn card_page() -> Page<Act> {

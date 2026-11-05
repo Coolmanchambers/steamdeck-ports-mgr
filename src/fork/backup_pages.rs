@@ -53,15 +53,18 @@ pub fn done_page(outcomes: &[(String, PortBackup)], problem: Option<&str>, place
     let nothing = count(|o| *o == PortBackup::NothingYet);
     let failed: Vec<(&str, &str)> = outcomes.iter().filter_map(|(n, o)| if let PortBackup::Failed(why) = o { Some((n.as_str(), why.as_str())) } else { None }).collect();
     let no_place: Vec<&str> = outcomes.iter().filter(|(_, o)| *o == PortBackup::NoPlace).map(|(n, _)| n.as_str()).collect();
+    // UI polish U2: with ports whose saves the app cannot find, the title gives the count ("Most" showed at 1 of 10),
+    // and when none could be backed up it says so (not "no saves", which they may well have).
     let title = match (problem, backed, failed.len()) {
-        (Some(_), _, _) => "Your saves were not backed up",
-        (None, 0, 0) => "There were no saves to back up",
-        (None, _, 0) if !no_place.is_empty() => "Most saves are backed up",
-        (None, _, 0) => "Your saves are backed up",
-        (None, 0, _) => "Your saves were not backed up",
-        (None, _, _) => "Some saves could not be backed up",
+        (Some(_), _, _) => "Your saves were not backed up".to_string(),
+        (None, 0, 0) if !no_place.is_empty() => "No saves were backed up".to_string(),
+        (None, 0, 0) => "There were no saves to back up".to_string(),
+        (None, _, 0) if !no_place.is_empty() => format!("Saves backed up for {backed} of {} ports", backed + no_place.len()),
+        (None, _, 0) => "Your saves are backed up".to_string(),
+        (None, 0, _) => "Your saves were not backed up".to_string(),
+        (None, _, _) => "Some saves could not be backed up".to_string(),
     };
-    let mut p = base("Back up saves: done", title);
+    let mut p = base("Back up saves: done", &title);
     if let Some(why) = problem {
         p.paragraphs.push(format!("Nothing was backed up: {why}."));
     }
@@ -134,11 +137,17 @@ mod tests {
         assert_eq!(p.facts.len(), 6);
         assert_eq!(p.facts[5], "And 2 more.");
         let q = done_page(&all(&[("Osu", PortBackup::NoPlace), ("X", PortBackup::NoPlace), ("Y", PortBackup::NoPlace), ("Z", PortBackup::NoPlace)]), None, PLACE);
-        assert_eq!(q.title, "There were no saves to back up");
+        // UI polish U2: titles by counts.
+        assert_eq!(q.title, "No saves were backed up", "they may have saves; the app could not find them");
         assert_eq!(q.paragraphs, ["The app does not know where 4 ports keep their saves, so they were not backed up: Osu, X and 2 more."]);
         let most = done_page(&all(&[("A", PortBackup::BackedUp), ("Space Cadet", PortBackup::NoPlace)]), None, PLACE);
-        assert_eq!(most.title, "Most saves are backed up");
+        assert_eq!(most.title, "Saves backed up for 1 of 2 ports");
         assert_eq!(most.paragraphs[1], "The app does not know where 1 port keeps its saves, so it was not backed up: Space Cadet.");
+        let mut one_of_ten = all(&[("A", PortBackup::BackedUp), ("E", PortBackup::NothingYet)]);
+        one_of_ten.extend((0..9).map(|i| (format!("P{i}"), PortBackup::NoPlace)));
+        let few = done_page(&one_of_ten, None, PLACE);
+        assert_eq!(few.title, "Saves backed up for 1 of 10 ports", "a port with no saves yet is not counted");
+        assert!(!few.title.starts_with("Most"));
         let none = done_page(&[], None, PLACE);
         assert_eq!(none.paragraphs, ["None of your ports has saves to back up yet."]);
         let broken = done_page(&[], Some("the backup folder could not be made: the drive is full"), PLACE);

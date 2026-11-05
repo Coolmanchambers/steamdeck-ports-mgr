@@ -88,6 +88,8 @@ export struct WizardCard {
     image: image,
     // the picture is square (a QR code) instead of a portrait cover
     square: bool,
+    // UI polish U8: drawn short (the title and the lines on two rows), so the Port page shows more of its option cards.
+    compact: bool,
     title: string,
     lines: [string],
 }
@@ -453,7 +455,7 @@ component CardBox inherits Rectangle {
         font-size: root.font-size * 0.9;
         border-px: root.border-px;
     }
-    VerticalLayout {
+    if !root.card.compact: VerticalLayout {
         x: cover.x + cover.width + root.pad;
         y: root.pad;
         width: root.width - self.x - root.pad;
@@ -472,6 +474,32 @@ component CardBox inherits Rectangle {
             color: Theme.list-text;
             font-size: root.font-size;
             wrap: word-wrap;
+        }
+    }
+    // UI polish U8: the short card, one line for the title and one for its lines side by side.
+    if root.card.compact: VerticalLayout {
+        x: cover.x + cover.width + root.pad;
+        y: root.pad;
+        width: root.width - self.x - root.pad;
+        height: root.height - root.pad * 2;
+        alignment: center;
+        spacing: root.font-size * 0.3;
+        Text {
+            text: root.card.title;
+            color: Theme.list-text;
+            font-size: root.font-size * 1.3;
+            font-weight: 700;
+            overflow: elide;
+        }
+        HorizontalLayout {
+            alignment: start;
+            spacing: root.font-size * 1.5;
+            for line in root.card.lines: Text {
+                text: line;
+                color: Theme.list-text;
+                font-size: root.font-size;
+                overflow: elide;
+            }
         }
     }
 }
@@ -992,7 +1020,8 @@ export component SetupWizardDialog inherits Window {
                     }
                     if root.has-card: CardBox {
                         // A QR code (a square card) gets the room to be scanned from across a room.
-                        height: root.large ? root.height * (root.card.square ? 0.47 : 0.34) : root.row-height * 4.2;
+                        // UI polish U8: a compact card is about two text lines tall (the Port page's first page).
+                        height: root.card.compact ? root.body-font * 5.0 : (root.large ? root.height * (root.card.square ? 0.47 : 0.34) : root.row-height * 4.2);
                         card: root.card;
                         font-size: root.body-font;
                         border-px: root.border-px;

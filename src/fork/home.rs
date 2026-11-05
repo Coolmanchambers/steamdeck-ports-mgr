@@ -480,15 +480,31 @@ impl List {
         }
     }
 
-    /// "Add a port" when the list was opened from that page (B goes back to it), else "Home"; empty on Home.
-    /// "Home"; empty on Home.
-    pub fn back_hint(self, searching: bool, from_add_port: bool) -> &'static str {
-        match (self, searching) {
-            (List::Home, _) => "",
-            (_, true) => "B / Esc  Clear search",
-            (_, false) if from_add_port => "B / Esc  Add a port",
-            (_, false) => "B / Esc  Home",
-        }
+    /// What B does here: "Clear search" while there is search text, "Add a port" when the list was opened from that
+    /// page (B goes back to it), else "Home"; empty on Home. UI polish F-U1: the Deck has no Esc key, so in big mode
+    /// (Game Mode) the hint names B alone; windowed it says "B / Esc".
+    pub fn back_hint(self, searching: bool, from_add_port: bool, big_mode: bool) -> String {
+        let what = match (self, searching) {
+            (List::Home, _) => return String::new(),
+            (_, true) => "Clear search",
+            (_, false) if from_add_port => "Add a port",
+            (_, false) => "Home",
+        };
+        format!("{} {what}", if big_mode { "B" } else { "B / Esc" })
+    }
+
+    /// UI polish F-U2: the hint line along the bottom of this list, one style for all three (`HINT_GAP` between the
+    /// parts, as on the guided pages). Home: `hints` for the focused tile. Deck-ready and All ports (the big-mode card
+    /// grid): the buttons that act there, then B (`back`, from `back_hint`) and the list switch. Tab is a keyboard key,
+    /// so only the windowed lists name it.
+    pub fn hint_line(self, focused: Option<TileKind>, view: View, back: &str, big_mode: bool) -> String {
+        let lists = if big_mode { "L1/R1 Lists" } else { "L1/R1 / Tab Lists" };
+        let parts: Vec<&str> = match self {
+            List::Home => return hints(focused, view),
+            List::DeckReady => vec!["A Install / Play", "X Info", "D-pad Move", "Y Filters", back, lists],
+            List::AllPorts => vec!["A Play", "X Options", "D-pad Move", "Y Settings", back, lists],
+        };
+        parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(crate::fork::page::HINT_GAP)
     }
 
     /// Where "Browse ports" goes: a list of ports to install.
@@ -503,6 +519,18 @@ impl List {
             List::DeckReady => "Deck-ready",
         }
     }
+}
+
+/// UI polish U4: what All ports says when it shows nothing. With search text, that nothing matches it and how to clear
+/// it (B, and Esc outside Game Mode); without, that there is nothing to list (big mode's card grid shows installed
+/// ports only).
+pub fn all_ports_empty_text(query: &str, big_mode: bool) -> String {
+    let query = query.trim();
+    if !query.is_empty() {
+        let (what, key) = if big_mode { ("No installed port", "B") } else { ("No port", "B or Esc") };
+        return format!("{what} matches \u{201c}{query}\u{201d}. Press {key} to clear the search.");
+    }
+    if big_mode { "No installed ports yet.".to_string() } else { "No ports in the list yet.".to_string() }
 }
 
 /// Whether Play's own update check is due for an installed port: "check for updates" on, the port follows a GitHub or
@@ -673,11 +701,73 @@ mod tests {
         assert_eq!((List::browse(true), List::browse(false)), (List::DeckReady, List::AllPorts));
         assert_eq!(List::DeckReady.back(), Some(List::Home), "B leaves Deck-ready for Home, also in big mode where next_in goes to All ports");
         assert_eq!((List::Home.back(), List::AllPorts.back()), (None, Some(List::Home)), "B goes Home from All ports too");
-        assert_eq!(List::AllPorts.back_hint(true, true), "B / Esc  Clear search", "the first B clears the search, wherever the list came from");
-        assert_eq!(List::AllPorts.back_hint(false, true), "B / Esc  Add a port", "after the search is cleared, B goes back to Add a port");
-        assert_eq!(List::DeckReady.back_hint(false, true), "B / Esc  Add a port");
-        assert_eq!(List::DeckReady.back_hint(false, false), "B / Esc  Home");
-        assert_eq!(List::Home.back_hint(true, true), "");
+        assert_eq!(List::AllPorts.back_hint(true, true, false), "B / Esc Clear search", "the first B clears the search, wherever the list came from");
+        assert_eq!(List::AllPorts.back_hint(false, true, false), "B / Esc Add a port", "after the search is cleared, B goes back to Add a port");
+        assert_eq!(List::DeckReady.back_hint(false, true, false), "B / Esc Add a port");
+        assert_eq!(List::DeckReady.back_hint(false, false, false), "B / Esc Home");
+        assert_eq!(List::Home.back_hint(true, true, false), "");
+        assert_eq!(List::Home.back_hint(true, true, true), "");
+    }
+
+    // UI polish F-U1: the Deck has no Esc key (nor Tab); Game Mode's hints name only the pad.
+    #[test]
+    fn game_mode_hints_never_name_esc_or_tab() {
+        for list in [List::AllPorts, List::DeckReady] {
+            for (searching, from_add) in [(true, false), (false, true), (false, false)] {
+                let back = list.back_hint(searching, from_add, true);
+                assert!(back.starts_with("B ") && !back.contains("Esc"), "{list:?}: {back}");
+                let line = list.hint_line(None, View::Posters, &back, true);
+                assert!(!line.contains("Esc") && !line.contains("Tab"), "{list:?}: {line}");
+                let windowed = list.hint_line(None, View::Posters, &list.back_hint(searching, from_add, false), false);
+                assert!(windowed.contains("B / Esc") && windowed.contains("Tab"), "windowed keeps the keys: {windowed}");
+            }
+        }
+        assert_eq!(List::AllPorts.back_hint(false, false, true), "B Home");
+        assert_eq!(List::DeckReady.back_hint(true, false, true), "B Clear search");
+    }
+
+    // UI polish, read from the screen files: the grid's hint bar and empty text, Game Mode's Home placeholder (Tim's
+    // decision 1a), and the clock that never covers the search text (U6).
+    #[test]
+    fn the_screen_files_draw_the_polish() {
+        let app = include_str!("../../ui/app-window.slint");
+        assert_eq!(app.matches("root.list-hint").count(), 4, "the grid's bar (shown, height, text) and Deck-ready's hint-text");
+        assert!(app.contains("empty-message: root.list-empty-text;"), "the grid's empty text comes from all_ports_empty_text");
+        assert!(app.contains("if root.ports.length == 0: Text {"), "the windowed list says why it is empty");
+        assert!(app.contains("root.big-mode ? @tr(\"Type to search your ports...\") : @tr(\"Type to search all ports...\")"));
+        assert!(!app.contains("L1 / R1  Lists"), "big mode's title line no longer carries hints");
+        assert!(app.contains("padding-right: text-margin + search-bar.clock-room;") && app.contains("search-clock.preferred-width"));
+        let picker = include_str!("../../ui/dialogs/picker.slint");
+        assert_eq!(picker.matches("search-box.clock-room").count(), 2, "the placeholder and the text box both stop short of the clock");
+        let deck = include_str!("../../ui/fork/deck-ready.slint");
+        assert!(deck.contains("text: root.hint-text;") && !deck.contains("B / Esc"), "Deck-ready's hints come from Rust");
+    }
+
+    // UI polish U4: a search with no match says so (it said "No installed ports yet." on the grid, nothing in the list).
+    #[test]
+    fn an_empty_all_ports_says_why() {
+        let grid = all_ports_empty_text("zelda", true);
+        assert!(grid.contains("\u{201c}zelda\u{201d}") && grid.contains("Press B to clear") && !grid.contains("Esc"), "{grid}");
+        assert!(all_ports_empty_text("  zelda ", false).contains("B or Esc"));
+        assert_eq!(all_ports_empty_text("", true), "No installed ports yet.");
+        assert_eq!(all_ports_empty_text("   ", false), "No ports in the list yet.");
+        assert!(!all_ports_empty_text("x", true).contains('\u{2014}'));
+    }
+
+    // UI polish F-U2: one hint style for the three lists, and the big-mode card grid names A, X and Y.
+    #[test]
+    fn the_three_lists_share_one_hint_style() {
+        let gap = crate::fork::page::HINT_GAP;
+        assert_eq!(List::Home.hint_line(Some(TileKind::Port), View::Posters, "", true), hints(Some(TileKind::Port), View::Posters));
+        let grid = List::AllPorts.hint_line(None, View::Posters, "B Home", true);
+        assert_eq!(grid, ["A Play", "X Options", "D-pad Move", "Y Settings", "B Home", "L1/R1 Lists"].join(gap));
+        let deck = List::DeckReady.hint_line(None, View::Posters, "B Clear search", true);
+        assert_eq!(deck, ["A Install / Play", "X Info", "D-pad Move", "Y Filters", "B Clear search", "L1/R1 Lists"].join(gap));
+        for line in [grid, deck, hints(Some(TileKind::Port), View::List)] {
+            assert!(line.contains(gap) && !line.contains("     "), "one gap style: {line}");
+            assert!(line.chars().count() < 110, "one line at 1280 px: {line}");
+        }
+        assert!(!List::AllPorts.hint_line(None, View::Posters, "", true).contains(&format!("{gap}{gap}")), "an empty B part leaves no double gap");
     }
 
     #[test]

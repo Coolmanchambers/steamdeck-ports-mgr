@@ -193,6 +193,7 @@ impl AppState {
         let new_index = previous_key.and_then(|k| displayed.iter().position(|p| p.key() == k)).unwrap_or(0);
         *self.windowed_nav.displayed_windowed.borrow_mut() = displayed;
         self.windowed_nav.windowed_selected.set(new_index);
+        self.window().set_list_empty_text(crate::fork::home::all_ports_empty_text(query, false).into()); // Fork (UI polish U4)
         self.rebuild_ports_model();
     }
 
@@ -302,6 +303,7 @@ impl AppState {
         self.grid_nav.grid_mouse_active.set(true);
         let rows = build_card_rows(&self.grid_nav.card_image_cache, &installed, &self.paths.cache_dir, columns, Some(self.grid_nav.grid_selected.get()), &|p| super::save_finder_screen::saves_warning(self, p));
         self.window().set_card_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        self.window().set_list_empty_text(crate::fork::home::all_ports_empty_text(&query, true).into()); // Fork (UI polish U4)
         self.ensure_card_images_cached(&installed);
         *self.grid_nav.displayed_installed.borrow_mut() = installed;
     }
@@ -449,6 +451,8 @@ impl AppState {
         if self.home.is_active() {
             super::home_screen::rebuild(self);
         }
+        // Fork (UI polish F-U1): the lists' hints name Esc and Tab only outside Game Mode.
+        super::home_screen::push_list_hint(self);
     }
 
     pub(crate) fn enter_fullscreen(&self) {

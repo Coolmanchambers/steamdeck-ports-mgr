@@ -156,6 +156,11 @@ export component AppWindow inherits Window {
     callback list-home-requested();
     in property <bool> list-home-focused: false;
     in property <string> list-back-hint: "";
+    // Fork (UI polish F-U2): the hint line along the bottom of Deck-ready and the big-mode card grid (src/fork/home.rs
+    // `List::hint_line`).
+    in property <string> list-hint: "";
+    // Fork (UI polish U4): what All ports says when it shows nothing (no ports yet, or no match for the search).
+    in property <string> list-empty-text: "";
 
     init => { search-input.focus(); }
 
@@ -280,7 +285,8 @@ export component AppWindow inherits Window {
 
                     Text {
                         // Fork (app name): the title line names the fork.
-                        text: root.home-mode ? "Deck Ports Manager  ›  Home" : root.deck-ready-mode ? "Deck Ports Manager  ›  Deck-ready" : (root.big-mode ? "Deck Ports Manager      L1 / R1  Lists      " + root.list-back-hint : "Deck Ports Manager      " + root.list-back-hint);
+                        // Fork (UI polish F-U2): big mode's All ports names itself; its hints are on the bar along the bottom.
+                        text: root.home-mode ? "Deck Ports Manager  ›  Home" : root.deck-ready-mode ? "Deck Ports Manager  ›  Deck-ready" : (root.big-mode ? "Deck Ports Manager  ›  All ports" : "Deck Ports Manager      " + root.list-back-hint);
                         color: Theme.list-text;
                         vertical-alignment: center;
                         font-weight: 700;
@@ -371,9 +377,11 @@ export component AppWindow inherits Window {
                             border-width: 1px / Theme.scale-factor;
                             border-color: Theme.border-color;
 
+                            // Fork (UI polish U6): the search text stops short of the clock instead of running under it.
+                            property <length> clock-room: root.show-clock ? search-clock.preferred-width + text-margin : 0px;
                             HorizontalLayout {
                                 padding-left: text-margin;
-                                padding-right: text-margin;
+                                padding-right: text-margin + search-bar.clock-room;
 
                                 search-input := TextInput {
                                     color: Theme.search-text;
@@ -451,7 +459,9 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            if root.show-clock: Text {
+                            // Fork (UI polish U6): always there (hidden when off), so the search box can measure it.
+                            search-clock := Text {
+                                visible: root.show-clock;
                                 text: root.clock-text;
                                 color: Theme.search-text;
                                 font-size: search-font-px;
@@ -463,7 +473,10 @@ export component AppWindow inherits Window {
                             }
 
                             if search-input.text.is-empty: Text {
-                                text: root.deck-ready-mode ? @tr("Search Deck-ready...") : root.home-mode ? @tr("Type to search all ports...") : root.placeholder-text;
+                                width: search-input.width;
+                                overflow: elide;
+                                // Fork (UI polish, Tim's decision 1a): Game Mode's Home searches the installed ports only, so it says "your ports".
+                                text: root.deck-ready-mode ? @tr("Search Deck-ready...") : root.home-mode ? (root.big-mode ? @tr("Type to search your ports...") : @tr("Type to search all ports...")) : root.placeholder-text;
                                 color: Theme.search-text;
                                 font-size: search-font-px;
                                 vertical-alignment: center;
@@ -488,9 +501,11 @@ export component AppWindow inherits Window {
                             height: 100%;
                             transform-rotation: root.sway-angle;
 
+                            // Fork (UI polish F-U2): the same hint line as Deck-ready along the bottom (A, X and Y were never shown).
+                            property <length> grid-hint-h: root.list-hint == "" ? 0px : item-font-px * 2.0;
                             CardGrid {
                                 width: 100%;
-                                height: 100%;
+                                height: parent.height - parent.grid-hint-h;
                                 rows: root.card-rows;
                                 card-width: root.card-width;
                                 card-height: root.card-height;
@@ -503,6 +518,20 @@ export component AppWindow inherits Window {
                                 card-hovered(r, c) => { root.card-hovered(r, c); }
                                 card-options(r, c) => { root.card-options(r, c); }
                                 card-unhovered() => { root.card-unhovered(); }
+                                // Fork (UI polish U4): says when a search found nothing (src/fork/home.rs `empty_text`).
+                                empty-message: root.list-empty-text;
+                            }
+
+                            if root.list-hint != "": Text {
+                                x: 0px;
+                                y: parent.height - parent.grid-hint-h;
+                                width: 100%;
+                                height: parent.grid-hint-h;
+                                text: root.list-hint;
+                                color: Theme.list-text;
+                                font-size: item-font-px * 0.95;
+                                vertical-alignment: center;
+                                overflow: elide;
                             }
                         }
 
@@ -611,7 +640,8 @@ export component AppWindow inherits Window {
                                     name-text := Text {
                                         text: item.name;
                                         overflow: elide;
-                                        color: index == root.selected-index ? Theme.selected-text : Theme.list-text;
+                                        // Fork (UI polish U3): text on the selected row in selected-ink (4.5:1).
+                                        color: index == root.selected-index ? Theme.selected-ink : Theme.list-text;
                                         font-size: item-font-px;
                                         vertical-alignment: center;
                                         x: text-margin;
@@ -624,7 +654,7 @@ export component AppWindow inherits Window {
                                         visible: item.same-game-note != "" && self.room > 80px;
                                         text: item.same-game-note;
                                         overflow: elide;
-                                        color: index == root.selected-index ? Theme.selected-text : Theme.list-text;
+                                        color: index == root.selected-index ? Theme.selected-ink : Theme.list-text;
                                         opacity: 0.6;
                                         font-size: item-font-px * 0.85;
                                         vertical-alignment: center;
@@ -641,10 +671,10 @@ export component AppWindow inherits Window {
                                         height: action-button-height;
                                         background: item.same-game-soft ? transparent : SemanticColors.info;
                                         border-width: item.same-game-soft ? 1px : 0px;
-                                        border-color: index == root.selected-index ? Theme.selected-text : Theme.list-text;
+                                        border-color: index == root.selected-index ? Theme.selected-ink : Theme.list-text;
                                         same-label := Text {
                                             text: item.same-game-badge;
-                                            color: !item.same-game-soft ? SemanticColors.text-on-accent : (index == root.selected-index ? Theme.selected-text : Theme.list-text);
+                                            color: !item.same-game-soft ? SemanticColors.text-on-accent : (index == root.selected-index ? Theme.selected-ink : Theme.list-text);
                                             font-size: item-font-px * 0.85;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
@@ -753,6 +783,17 @@ export component AppWindow inherits Window {
                                 }
                             }
 
+                            // Fork (UI polish U4): an empty list says why (a search with no match, say) instead of nothing.
+                            if root.ports.length == 0: Text {
+                                x: text-margin;
+                                y: row-spacing * 3;
+                                width: content-width - text-margin * 2;
+                                text: root.list-empty-text;
+                                color: Theme.list-text;
+                                font-size: item-font-px;
+                                wrap: word-wrap;
+                            }
+
                             ThemedScrollbar {
                                 x: content-width + (content-margin - scrollbar-width) / 2;
                                 y: 0px;
@@ -803,7 +844,7 @@ export component AppWindow inherits Window {
                             row-info(i) => { root.deck-ready-row-info(i); }
                             row-action(i) => { root.deck-ready-row-action(i); }
                             row-options(i) => { root.deck-ready-row-options(i); }
-                            back-hint: root.list-back-hint;
+                            hint-text: root.list-hint;
                             filters-requested => { root.deck-ready-filters-requested(); }
                         }
                     }

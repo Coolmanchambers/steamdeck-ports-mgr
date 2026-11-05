@@ -32,6 +32,34 @@ impl ThemeColors {
         selected_text: rgb(0xff, 0xff, 0xff),
         border: rgb(0x56, 0x62, 0x73),
     };
+
+    // Fork (UI polish U3): the colour for text on a selected row. The theme's `selected_text` when it reads at 4.5:1
+    // on `selected_background`, else whichever of the theme's own list colours reads best there (the fork's
+    // arc-dark: white on #5294e2 is 3.1:1, #191f27 is 5.3:1). Derived, so every downloaded theme adapts by itself;
+    // `selected_text` itself is left alone (it also draws the old dialogs' cursor outline and chips).
+    pub fn selected_ink(&self) -> Color {
+        if contrast(self.selected_text, self.selected_background) >= 4.5 {
+            return self.selected_text;
+        }
+        [self.list_background, self.list_text, self.selected_text]
+            .into_iter()
+            .max_by(|a, b| contrast(*a, self.selected_background).total_cmp(&contrast(*b, self.selected_background)))
+            .unwrap_or(self.selected_text)
+    }
+}
+
+// Fork: WCAG 2 relative luminance and contrast ratio (1.0 to 21.0).
+fn luminance(c: Color) -> f64 {
+    let lin = |v: u8| {
+        let v = v as f64 / 255.0;
+        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * lin(c.red()) + 0.7152 * lin(c.green()) + 0.0722 * lin(c.blue())
+}
+
+pub fn contrast(a: Color, b: Color) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
 // Fork: the theme the fork's palette replaces, whatever themes.json says about it.
@@ -283,20 +311,6 @@ mod tests {
             );
         }
 
-        fn luminance(c: Color) -> f64 {
-            let lin = |v: u8| {
-                let v = v as f64 / 255.0;
-                if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
-            };
-            0.2126 * lin(c.red()) + 0.7152 * lin(c.green()) + 0.0722 * lin(c.blue())
-        }
-
-        /// WCAG 2 contrast ratio, 1.0 to 21.0.
-        fn contrast(a: Color, b: Color) -> f64 {
-            let (la, lb) = (luminance(a), luminance(b));
-            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-        }
-
         #[test]
         fn the_fork_palette_in_rust_and_slint_is_the_same() {
             let t = ThemeColors::FALLBACK;
@@ -306,6 +320,7 @@ mod tests {
             same("list-text", t.list_text, slint_color("list-text"));
             same("selected-background", t.selected_background, slint_color("selected-background"));
             same("selected-text", t.selected_text, slint_color("selected-text"));
+            same("selected-ink", t.selected_ink(), slint_color("selected-ink"));
             same("border-color", t.border, slint_color("border-color"));
             same("card-background", t.list_background, slint_color("card-background"));
             same("fallback-text", t.list_text, slint_color("fallback-text"));
@@ -362,6 +377,65 @@ mod tests {
                 let body = contrast(t.list_text, bg);
                 assert!(body >= 7.0, "list-text on {name} is {body:.2}:1, below 7:1");
             }
+        }
+
+        // UI polish U3: text on a selected row reads at 4.5:1 in the fork's palette and in every theme the app
+        // ships (themes.json is upstream's file, so this also covers the themes downloaded later, as far as they
+        // keep a list colour that reads on their selection).
+        #[test]
+        fn text_on_a_selected_row_reads_in_every_shipped_theme() {
+            let t = ThemeColors::FALLBACK;
+            assert!(contrast(t.selected_text, t.selected_background) < 4.5, "the case this guards: white on the fork's blue");
+            assert_eq!(t.selected_ink(), t.list_background, "the fork's arc-dark writes selected rows in its page colour");
+            assert!(contrast(t.selected_ink(), t.selected_background) >= 4.5);
+
+            let path = temp_path("selected_ink_all");
+            fs::write(&path, THEMES_JSON).unwrap();
+            let mut cfg = ThemeConfig::default();
+            load(&path, &mut cfg, FORK_THEME);
+            let _ = fs::remove_file(&path);
+            for (name, theme) in &cfg.themes {
+                let best = [theme.list_background, theme.list_text, theme.selected_text]
+                    .into_iter()
+                    .map(|c| contrast(c, theme.selected_background))
+                    .fold(0.0, f64::max);
+                let ink = contrast(theme.selected_ink(), theme.selected_background);
+                assert!(
+                    ink >= 4.5 || (ink - best).abs() < 1e-9,
+                    "{name}: selected-ink reads at {ink:.2}:1 though a theme colour reaches {best:.2}:1"
+                );
+            }
+        }
+
+        #[test]
+        fn a_theme_whose_selected_text_reads_keeps_it() {
+            let mut t = ThemeColors::FALLBACK;
+            t.selected_background = rgb(0x1e, 0x4f, 0x8f);
+            assert_eq!(t.selected_ink(), t.selected_text);
+        }
+
+        // UI polish U3: text drawn on a selected row uses `selected-ink`; `selected-text` stays for outlines only.
+        #[test]
+        fn text_on_selected_rows_uses_selected_ink() {
+            let files = [
+                ("app-window.slint", include_str!("../../ui/app-window.slint")),
+                ("dialogs/chrome.slint", include_str!("../../ui/dialogs/chrome.slint")),
+                ("dialogs/picker.slint", include_str!("../../ui/dialogs/picker.slint")),
+                ("dialogs/info.slint", include_str!("../../ui/dialogs/info.slint")),
+                ("fork/deck-ready.slint", include_str!("../../ui/fork/deck-ready.slint")),
+                ("fork/folder-picker.slint", include_str!("../../ui/fork/folder-picker.slint")),
+            ];
+            let mut bad = Vec::new();
+            for (file, src) in files {
+                for (n, line) in src.lines().enumerate() {
+                    let l = line.trim_start();
+                    let text_colour = ["color:", "ink:", "selection-foreground-color:", "fill:"].iter().any(|p| l.starts_with(p));
+                    if text_colour && l.contains("Theme.selected-text") {
+                        bad.push(format!("{file}:{}: {l}", n + 1));
+                    }
+                }
+            }
+            assert!(bad.is_empty(), "text on a selected row must use Theme.selected-ink:\n{}", bad.join("\n"));
         }
 
         #[test]
