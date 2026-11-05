@@ -101,8 +101,13 @@ pub enum Fix {
     /// ports are the problem's `ports`): written when Steam is closed, else queued and the Close Steam flow follows.
     Repoint,
     PickProgram(String),
+    /// The install wizard's "Update <name>?" for a port with no program to start at all: it downloads the port again (its
+    /// saves are backed up first), as "Could not start"'s Reinstall does.
+    InstallAgain(String),
     GameFiles,
     FindSaves(String),
+    /// Restore saves for the port, where a restore that stopped part way comes first with what to do about it.
+    StoppedRestore(String),
     OldCopies,
     /// Asks first on a page of its own, then the usual update.
     Update(String),
@@ -319,17 +324,30 @@ pub struct Facts {
     pub queue: Result<Vec<QueuedFact>, String>,
     /// Every Steam shortcut that belongs to an installed port, with what its icon is.
     pub shortcuts: Result<Vec<IconFinding>, String>,
+    /// One port's checkup (`only_port`): another port has a Steam shortcut, so a port missing from Steam is worth a word
+    /// (the full checkup reads this from `shortcuts`).
+    pub any_in_steam: bool,
     /// Ports with more than one program to start and none remembered.
     pub programs: Vec<Named>,
+    /// Ports whose catalog program is not there, with other programs in their folder to choose from: Play cannot start
+    /// them until one is chosen.
+    pub program_gone: Vec<Named>,
+    /// Ports with no program to start at all (none remembered, the catalog's is not there, none in the folder).
+    pub no_program: Vec<Named>,
     /// Ports whose game files are missing (red) or only named by title (not red).
     pub files: Vec<(Named, FilesState)>,
     /// Ports whose saves the app could not find.
     pub saves: Vec<Named>,
+    /// Ports with a restore of saves that stopped part way (a hidden folder left beside a save folder).
+    pub stopped_restores: Vec<Named>,
     pub old_copies: Result<Vec<CopyFact>, String>,
     /// Ports with an update waiting.
     pub updates: Vec<Named>,
     /// Whole days since the last "Back up saves now" zip; `None` when there is none.
     pub backup_days: Option<u64>,
+    /// The ports (shown names) the newest "Back up saves now" run could not back up; empty when it missed none or a newer
+    /// backup came after it.
+    pub backup_missed: Vec<String>,
     /// Cloud backup is signed in and reports a problem.
     pub cloud_problem: bool,
     /// Cloud backup is signed in and copied saves successfully recently: saves are safe without a zip here.
@@ -352,12 +370,17 @@ impl Default for Facts {
             steam_found: true,
             queue: Ok(Vec::new()),
             shortcuts: Ok(Vec::new()),
+            any_in_steam: false,
             programs: Vec::new(),
+            program_gone: Vec::new(),
+            no_program: Vec::new(),
             files: Vec::new(),
             saves: Vec::new(),
+            stopped_restores: Vec::new(),
             old_copies: Ok(Vec::new()),
             updates: Vec::new(),
             backup_days: None,
+            backup_missed: Vec::new(),
             cloud_problem: false,
             cloud_ok: false,
             saves_known: 0,
@@ -434,16 +457,23 @@ impl Facts {
             game_mode: self.game_mode,
             installed: self.installed.iter().filter(|n| mine(n)).cloned().collect(),
             folder: self.folder,
-            unfinished_moves: Vec::new(),
+            // F-W2: the port's own switch cut short (the records carry its name, not its key).
+            unfinished_moves: self.unfinished_moves.iter().filter(|m| name.as_deref() == Some(m.as_str())).cloned().collect(),
             steam_found: self.steam_found,
             queue: self.queue.as_ref().map(|q| q.iter().filter(|e| e.port_key == key).cloned().collect()).map_err(Clone::clone),
             shortcuts: self.shortcuts.as_ref().map(|s| s.iter().filter(|f| f.port_key == key).cloned().collect()).map_err(Clone::clone),
+            // W8: Steam is in use when any port is in it (this one's absence is then worth a word).
+            any_in_steam: self.any_in_steam || self.shortcuts.as_ref().is_ok_and(|s| !s.is_empty()),
             programs: self.programs.iter().filter(|n| mine(n)).cloned().collect(),
+            program_gone: self.program_gone.iter().filter(|n| mine(n)).cloned().collect(),
+            no_program: self.no_program.iter().filter(|n| mine(n)).cloned().collect(),
             files: self.files.iter().filter(|(n, _)| mine(n)).cloned().collect(),
             saves: self.saves.iter().filter(|n| mine(n)).cloned().collect(),
+            stopped_restores: self.stopped_restores.iter().filter(|n| mine(n)).cloned().collect(),
             old_copies: self.old_copies.as_ref().map(|c| c.iter().filter(|c| name.as_deref() == Some(c.name.as_str())).cloned().collect()).map_err(Clone::clone),
             updates: self.updates.iter().filter(|n| mine(n)).cloned().collect(),
             backup_days: None,
+            backup_missed: Vec::new(),
             cloud_problem: false,
             cloud_ok: false,
             saves_known: 0,
@@ -454,10 +484,12 @@ impl Facts {
 }
 
 /// The checkup for one port: [`Check::PORT`] over [`Facts::only_port`]. The same checks, words and fixes as the full
-/// checkup, so nothing about a port is decided twice.
+/// checkup, so nothing about a port is decided twice. A switch of this port to a new folder that was cut short leads it
+/// (the Ports folder line, as the full checkup shows it), so its own Fix problems never says it is fine meanwhile.
 pub fn run_for_port(f: &Facts, key: &str) -> Results {
     let mine = f.only_port(key);
-    Results { items: Check::PORT.into_iter().map(|c| (c, check(c, &mine))).collect() }.with_skips(&mine.skips)
+    let move_line = (!mine.unfinished_moves.is_empty() && mine.folder == Folder::Here).then_some(Check::PortsFolder);
+    Results { items: move_line.into_iter().chain(Check::PORT).map(|c| (c, check(c, &mine))).collect() }.with_skips(&mine.skips)
 }
 
 impl Results {
@@ -496,7 +528,7 @@ impl Results {
         self.problems().into_iter().filter(|(_, p)| p.mark == Mark::Problem || !p.advisory).collect()
     }
 
-    /// A game will not start (red): the ports folder is missing, or a game file the catalog names is.
+    /// A game will not start (red): the ports folder is missing, or a game file the catalog names is, or its program.
     pub fn any_red(&self) -> bool {
         self.problems().iter().any(|(_, p)| p.mark == Mark::Problem)
     }
@@ -703,8 +735,9 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
             at_old.push(Named::new(&s.port_key, &s.port_name));
         }
     }
-    // Nobody asked for Steam shortcuts yet (none in Steam): not a thing to nag about.
-    if in_steam.is_empty() {
+    // Nobody asked for Steam shortcuts yet (none in Steam): not a thing to nag about. One port's checkup asks about every
+    // port (W8): its port missing while others are in Steam is "Not in Steam", not "Not in Steam yet".
+    if in_steam.is_empty() && !f.any_in_steam {
         return Outcome::Ok(one_or_all(f, "Not in Steam yet", "No ports in Steam yet").to_string());
     }
     let missing: Vec<Named> = f.installed.iter().filter(|p| !in_steam.contains(p.key.as_str()) && !queued.contains(p.key.as_str())).cloned().collect();
@@ -742,12 +775,37 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
     problem(Mark::ToDo, parts.join("; "), keys(&missing), Fix::AddToSteam, one_or_all(f, "Add it to Steam", "Add them to Steam"))
 }
 
+/// What the step page says about a port with no program to start, or one whose usual program is gone (W10).
+pub const NO_PROGRAM_DETAIL: &str = "No program to start is in its folder. Part of the port is missing; installing it again puts it back.";
+pub const PROGRAM_GONE_DETAIL: &str = "The program it usually starts is not there. Another program in its folder can start it.";
+
 fn programs(f: &Facts) -> Outcome {
-    if f.programs.is_empty() {
+    // A port the catalog's program is gone from has nothing remembered either: it is chosen like an unanswered question.
+    let to_choose: Vec<Named> = f.program_gone.iter().chain(&f.programs).cloned().collect();
+    if f.no_program.is_empty() && to_choose.is_empty() {
         return Outcome::Ok("Nothing to choose".to_string());
     }
-    let first = f.programs[0].clone();
-    problem(Mark::ToDo, format!("Not chosen for {}", named_list(&f.programs)), keys(&f.programs), Fix::PickProgram(first.key), &format!("Choose the program for {}", first.name))
+    // The same words as the Game files line: "Missing for A; not chosen for B".
+    let summary = match (f.no_program.is_empty(), to_choose.is_empty()) {
+        (false, true) => format!("Missing for {}", named_list(&f.no_program)),
+        (false, false) => format!("Missing for {}; not chosen for {}", named_list(&f.no_program), named_list(&to_choose)),
+        _ => format!("Not chosen for {}", named_list(&to_choose)),
+    };
+    let mut detail = Vec::new();
+    if !f.no_program.is_empty() {
+        detail.push(NO_PROGRAM_DETAIL.to_string());
+    }
+    if !f.program_gone.is_empty() {
+        detail.push(PROGRAM_GONE_DETAIL.to_string());
+    }
+    // Red when Play cannot start a game: no program at all, or the one it starts is gone.
+    let mark = if f.no_program.is_empty() && f.program_gone.is_empty() { Mark::ToDo } else { Mark::Problem };
+    let (fix, fix_label) = match f.no_program.first() {
+        Some(first) => (Fix::InstallAgain(first.key.clone()), format!("Install {} again", first.name)),
+        None => (Fix::PickProgram(to_choose[0].key.clone()), format!("Choose the program for {}", to_choose[0].name)),
+    };
+    let all: Vec<Named> = f.no_program.iter().cloned().chain(to_choose).collect();
+    Outcome::Problem(Problem { mark, summary, detail, ports: keys(&all), fix, fix_label, advisory: false, desktop_only: false })
 }
 
 fn game_files(f: &Facts) -> Outcome {
@@ -766,6 +824,15 @@ fn game_files(f: &Facts) -> Outcome {
 }
 
 fn saves(f: &Facts) -> Outcome {
+    // W9: a restore that stopped part way comes first; Restore saves explains it (the app never removes what it left).
+    if let Some(first) = f.stopped_restores.first() {
+        let mut summary = format!("A restore of {} stopped part way", named_list(&f.stopped_restores));
+        if !f.saves.is_empty() {
+            summary.push_str(&format!("; not found for {}", named_list(&f.saves)));
+        }
+        let ports = keys(&f.stopped_restores).into_iter().chain(keys(&f.saves)).collect();
+        return advisory(problem(Mark::ToDo, summary, ports, Fix::StoppedRestore(first.key.clone()), &format!("Look at the restore of {}", first.name)));
+    }
     if f.saves.is_empty() {
         return Outcome::Ok(one_or_all(f, "Its saves are found", "All found").to_string());
     }
@@ -820,6 +887,16 @@ fn updates(f: &Facts) -> Outcome {
 fn backups(f: &Facts) -> Outcome {
     if f.installed.is_empty() {
         return Outcome::Ok("No ports yet".to_string());
+    }
+    // W6: the newest backup could not copy some ports' saves. Only ports still installed count; the cloud holds the same
+    // zip, so it does not have them either.
+    let missed: Vec<String> = f.backup_missed.iter().filter(|m| f.installed.iter().any(|n| &n.name == *m)).cloned().collect();
+    if !missed.is_empty() {
+        let mut summary = format!("Last backup missed {}", names(&missed));
+        if f.cloud_problem {
+            summary.push_str("; cloud backup has a problem");
+        }
+        return advisory(problem(Mark::ToDo, summary, Vec::new(), Fix::BackUpNow, crate::fork::backup_pages::ACTION));
     }
     // Signed in to cloud backup with a recent success: the saves are copied online, a zip here is not needed.
     if f.cloud_ok && !f.cloud_problem {

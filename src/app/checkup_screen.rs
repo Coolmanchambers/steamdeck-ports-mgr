@@ -119,6 +119,8 @@ fn session() -> Option<Rc<Session>> {
 /// What the worker thread reads from: only paths and plain values, so it never touches the UI's state.
 struct SysInput {
     installed: Vec<Port>,
+    /// Every installed port, also for one port's checkup: whether any of them is in Steam (W8).
+    all_installed: Vec<Port>,
     favorites: HashMap<String, String>,
     /// The installed ports that were ever played (a game never run has no saves to miss yet).
     played: HashSet<String>,
@@ -137,14 +139,26 @@ struct SysFacts {
     steam_found: bool,
     queue: Result<Vec<QueuedFact>, String>,
     shortcuts: Result<Vec<steam_icons::IconFinding>, String>,
-    programs: Vec<Named>,
+    any_in_steam: bool,
+    programs: ProgramFacts,
     files: Vec<(Named, FilesState)>,
     saves: Vec<Named>,
     saves_known: usize,
+    stopped_restores: Vec<Named>,
     unfinished_moves: Vec<String>,
     old_copies: Result<Vec<CopyFact>, String>,
     backup_days: Option<u64>,
+    backup_missed: Vec<String>,
     skips: Skips,
+}
+
+/// What the program check found (W10): a question to answer, the usual program gone with others to choose from, or no
+/// program at all.
+#[derive(Default)]
+struct ProgramFacts {
+    to_choose: Vec<Named>,
+    gone: Vec<Named>,
+    none: Vec<Named>,
 }
 
 /// What is in memory: read here, quickly, when the worker's answer arrives.
@@ -191,7 +205,8 @@ fn sys_input(app: &AppState) -> SysInput {
 
 /// The facts to read, for every installed port or (`scope`) for one.
 fn sys_input_for(app: &AppState, scope: Option<&str>) -> SysInput {
-    let installed: Vec<Port> = installed_ports(app).into_iter().filter(|p| scope.is_none_or(|k| p.key() == k)).collect();
+    let all_installed = installed_ports(app);
+    let installed: Vec<Port> = all_installed.iter().filter(|p| scope.is_none_or(|k| p.key() == k)).cloned().collect();
     let (favorites, played) = {
         let state = app.state.borrow();
         let favorites = installed.iter().filter_map(|p| state.get(p.key()).and_then(|i| i.favorite_exe.clone()).map(|f| (p.key().to_string(), f))).collect();
@@ -200,6 +215,7 @@ fn sys_input_for(app: &AppState, scope: Option<&str>) -> SysInput {
     };
     SysInput {
         installed,
+        all_installed,
         favorites,
         played,
         catalog_folders: app.catalog.borrow().iter().map(|p| p.folder.clone()).collect(),
@@ -226,36 +242,68 @@ fn sys_gather(i: SysInput) -> SysFacts {
         checkup::QUEUE_UNREADABLE.to_string()
     });
     let steam_found = i.home.as_deref().is_some_and(|h| !crate::fork::port_mover::steam::device_accounts(h).is_empty());
-    let shortcuts = match i.home.as_deref() {
-        Some(h) => steam_icons::diagnose(h, &i.library, &i.config_dir, &i.installed),
+    // Every installed port's shortcuts are read, so one port's checkup knows whether Steam is in use at all (W8); the
+    // facts keep only the ports being checked.
+    let all_shortcuts = match i.home.as_deref() {
+        Some(h) => steam_icons::diagnose(h, &i.library, &i.config_dir, &i.all_installed),
         None => Err("Could not find your home folder".to_string()),
     };
+    let any_in_steam = all_shortcuts.as_ref().is_ok_and(|s| !s.is_empty());
+    let shortcuts = all_shortcuts.map(|s| s.into_iter().filter(|f| i.installed.iter().any(|p| p.key() == f.port_key)).collect());
     let here = folder == Folder::Here;
-    let programs = if here { programs_to_choose(&i) } else { Vec::new() };
+    let programs = if here { program_facts(&i) } else { ProgramFacts::default() };
     let files = if here { game_files_missing(&i) } else { Vec::new() };
     let (saves, saves_known) = if here { saves_not_found(&i) } else { (Vec::new(), 0) };
+    let stopped_restores = if here { stopped_restores(&i) } else { Vec::new() };
     let old_copies = old_copy_facts(&i);
     let unfinished_moves = unfinished_switches(&i);
+    let global = i.saves_backup_dir.join(crate::fork::save_restore::GLOBAL_BACKUPS_DIR);
+    let newest = crate::fork::settings_menu::newest_zip(&global);
     let backup_days = {
-        let dir = i.saves_backup_dir.join(crate::fork::save_restore::GLOBAL_BACKUPS_DIR);
         let now = chrono::Utc::now().timestamp();
-        crate::fork::settings_menu::newest_zip(&dir).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| crate::fork::settings_menu::days_ago(d.as_secs() as i64, now))
+        newest.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| crate::fork::settings_menu::days_ago(d.as_secs() as i64, now))
     };
+    let backup_missed = crate::fork::backup_last_run::missed_by_newest(&global, newest);
     let skips = checkup::skips_from_json(ForkSettings::load(&i.settings_path).get(KEY_SKIPS));
-    SysFacts { folder, steam_found, queue, shortcuts, programs, files, saves, saves_known, unfinished_moves, old_copies, backup_days, skips }
+    SysFacts { folder, steam_found, queue, shortcuts, any_in_steam, programs, files, saves, saves_known, stopped_restores, unfinished_moves, old_copies, backup_days, backup_missed, skips }
 }
 
-/// The ports with more than one program to start and none remembered (the same question Play asks at the first start).
-fn programs_to_choose(i: &SysInput) -> Vec<Named> {
-    let mut out = Vec::new();
+/// What Play would do with each port's program (`install_launch::launch_installed`): a remembered program that is there
+/// starts; else the catalog's program (`resolve_executable`), which must be there; else the one program in its folder,
+/// or a question when there are several. Read-only, and the folder walk is bounded (`checkup::shallow_programs`).
+fn program_facts(i: &SysInput) -> ProgramFacts {
+    use crate::core::executable_detect::resolve_executable;
+    let mut out = ProgramFacts::default();
     for p in &i.installed {
         let Ok(dir) = crate::core::path_safety::safe_join(&i.library, &p.folder) else { continue };
         let favorite_works = i.favorites.get(p.key()).and_then(|f| crate::core::path_safety::safe_join(&dir, f).ok()).is_some_and(|f| f.exists());
-        let named_by_catalog = p.executable.as_ref().is_some_and(crate::core::platform_resolve::is_truthy);
-        if favorite_works || named_by_catalog {
+        if favorite_works {
             continue;
         }
-        if checkup::shallow_programs(&dir).is_ok_and(|found| found.len() > 1) {
+        let named_by_catalog = p.executable.as_ref().is_some_and(crate::core::platform_resolve::is_truthy);
+        // The catalog's program is only joined to the folder here, never searched for: is it there?
+        if named_by_catalog && resolve_executable(p.executable.as_ref(), &dir).is_ok_and(|exe| exe.is_file()) {
+            continue;
+        }
+        let Ok(found) = checkup::shallow_programs(&dir) else { continue };
+        match (named_by_catalog, found.len()) {
+            (_, 0) => out.none.push(named(p)),
+            (true, _) => out.gone.push(named(p)),
+            (false, 1) => {}
+            (false, _) => out.to_choose.push(named(p)),
+        }
+    }
+    out
+}
+
+/// The ports with a restore of saves that stopped part way (`save_restore::interrupted_restores`, what Restore saves
+/// lists first). A read of the save folders' parents.
+fn stopped_restores(i: &SysInput) -> Vec<Named> {
+    let mut out = Vec::new();
+    for p in &i.installed {
+        let Ok(dir) = crate::core::path_safety::safe_join(&i.library, &p.folder) else { continue };
+        let targets = crate::fork::save_restore::save_targets(p, &dir, &i.saves_backup_dir, i.home.as_deref());
+        if !crate::fork::save_restore::interrupted_restores(&targets).is_empty() {
             out.push(named(p));
         }
     }
@@ -333,12 +381,17 @@ fn assemble(app: &AppPart, sys: SysFacts) -> Facts {
         steam_found: sys.steam_found,
         queue: sys.queue,
         shortcuts: sys.shortcuts,
-        programs: sys.programs,
+        any_in_steam: sys.any_in_steam,
+        programs: sys.programs.to_choose,
+        program_gone: sys.programs.gone,
+        no_program: sys.programs.none,
         files: sys.files,
         saves: sys.saves,
+        stopped_restores: sys.stopped_restores,
         old_copies: sys.old_copies,
         updates: app.updates.clone(),
         backup_days: sys.backup_days,
+        backup_missed: sys.backup_missed,
         cloud_problem: app.cloud_problem,
         cloud_ok: app.cloud_ok,
         saves_known: sys.saves_known,
@@ -890,6 +943,18 @@ fn hand_off(app: &Rc<AppState>, router: &Router, s: &Rc<Session>, fix: Fix) {
                 super::install_launch::open_favorite_exe_picker(app, router, port);
             }
         }
+        // W10: the install wizard's "Update <name>?", as "Could not start"'s Reinstall opens it; Not now comes back here.
+        Fix::InstallAgain(key) => {
+            if let Some(port) = port_by_key(app, &key) {
+                super::install_wizard_screen::open(app, router, port, back_here);
+            }
+        }
+        // W9: Restore saves for the port, where the stopped restore comes first with what to do; B comes back here.
+        Fix::StoppedRestore(key) => {
+            if let Some(port) = port_by_key(app, &key) {
+                super::save_restore_screen::show_port(app, router, &port, back_here);
+            }
+        }
         Fix::GameFiles => match &s.scope {
             Some(key) => super::rom_screens::find_for_port(app, router, key, back_here),
             None => super::rom_screens::open_game_files(app, router),
@@ -973,6 +1038,7 @@ mod tests {
 
     fn input(root: &std::path::Path, installed: Vec<Port>) -> SysInput {
         SysInput {
+            all_installed: installed.clone(),
             installed,
             favorites: HashMap::new(),
             played: HashSet::new(),
@@ -1018,8 +1084,10 @@ mod tests {
         assert!(!facts.steam_found, "an empty home has no Steam folder");
         assert_eq!(facts.queue.as_ref().err().map(String::as_str), Some(checkup::QUEUE_UNREADABLE), "not 'nothing waiting'");
         assert!(matches!(&facts.shortcuts, Ok(s) if s.is_empty()));
-        assert!(facts.programs.is_empty() && facts.files.is_empty() && facts.saves.is_empty(), "the folder is not there: no walks");
+        assert!(facts.programs.to_choose.is_empty() && facts.programs.none.is_empty() && facts.files.is_empty() && facts.saves.is_empty(), "the folder is not there: no walks");
+        assert!(facts.stopped_restores.is_empty());
         assert_eq!(facts.backup_days, None);
+        assert!(facts.backup_missed.is_empty());
         assert_eq!(snapshot(root.path()), before, "not a file made, moved or changed (no .corrupt-* copy of the list either)");
         let unreadable = checkup::check(Check::SteamWaiting, &assemble_for_test(facts));
         assert_eq!(unreadable, Outcome::Unknown("Steam's change list cannot be read".into()));
@@ -1053,11 +1121,67 @@ mod tests {
         std::fs::create_dir_all(&one).unwrap();
         std::fs::write(one.join("a.sh"), b"#!/bin/sh\n").unwrap();
         let mut i = input(root.path(), vec![port("two"), port("one")]);
-        assert_eq!(programs_to_choose(&i), vec![Named::new("two", "two")], "a single program needs no choice");
+        assert_eq!(program_facts(&i).to_choose, vec![Named::new("two", "two")], "a single program needs no choice");
         i.favorites.insert("two".to_string(), "b.sh".to_string());
-        assert!(programs_to_choose(&i).is_empty(), "a remembered choice that still exists settles it");
+        assert!(program_facts(&i).to_choose.is_empty(), "a remembered choice that still exists settles it");
         i.favorites.insert("two".to_string(), "gone.sh".to_string());
-        assert_eq!(programs_to_choose(&i).len(), 1, "a remembered program that is gone asks again");
+        assert_eq!(program_facts(&i).to_choose.len(), 1, "a remembered program that is gone asks again");
+    }
+
+    fn port_with_program(folder: &str, exe: &str) -> Port {
+        crate::core::models::port_from_value(&serde_json::json!({"name": folder, "folder": folder, "source": "https://example.com/x.zip", "executable": exe})).unwrap()
+    }
+
+    // W10: the catalog's program is checked like Play does (`resolve_executable`), not taken on trust.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_catalog_program_that_is_not_there_is_found_and_so_is_a_port_with_no_program() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = root.path().join("Library");
+        for d in ["named", "gone", "empty", "bare"] {
+            std::fs::create_dir_all(lib.join(d)).unwrap();
+        }
+        std::fs::write(lib.join("named").join("game.sh"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(lib.join("gone").join("other.sh"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(lib.join("empty").join("readme.txt"), b"x").unwrap();
+        let i = input(root.path(), vec![port_with_program("named", "game.sh"), port_with_program("gone", "game.sh"), port_with_program("empty", "game.sh"), port("bare")]);
+        let f = program_facts(&i);
+        assert!(f.to_choose.is_empty());
+        assert_eq!(f.gone, vec![Named::new("gone", "gone")], "its program is not there, another one is: choose");
+        assert_eq!(f.none, vec![Named::new("empty", "empty"), Named::new("bare", "bare")], "nothing to start at all");
+        let facts = assemble(&AppPart { installed: Vec::new(), updates: Vec::new(), cloud_problem: false, cloud_ok: false, game_mode: false }, sys_gather(i));
+        let Outcome::Problem(p) = checkup::check(Check::Programs, &facts) else { panic!("a problem") };
+        assert_eq!((p.mark, p.summary.as_str()), (crate::fork::page::Mark::Problem, "Missing for empty and bare; not chosen for gone"));
+        assert_eq!((p.fix, p.fix_label.as_str()), (Fix::InstallAgain("empty".into()), "Install empty again"));
+    }
+
+    // W9: a restore that stopped part way shows on the Saves line, read without touching anything.
+    #[test]
+    fn a_restore_that_stopped_part_way_is_found_for_its_port() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = root.path().join("Library");
+        let game = crate::core::models::port_from_value(&serde_json::json!({"name": "g", "folder": "g", "source": "https://example.com/x.zip", "save": "Save"})).unwrap();
+        std::fs::create_dir_all(lib.join("g").join("Save")).unwrap();
+        std::fs::create_dir_all(lib.join("h")).unwrap();
+        let i = input(root.path(), vec![game.clone(), port("h")]);
+        assert!(stopped_restores(&i).is_empty());
+        std::fs::create_dir_all(lib.join("g").join(".Save.before-restore-999")).unwrap();
+        std::fs::write(lib.join("g").join(".Save.before-restore-999").join("slot1.sav"), b"saves").unwrap();
+        let before = snapshot(root.path());
+        assert_eq!(stopped_restores(&i), vec![Named::new("g", "g")]);
+        assert_eq!(snapshot(root.path()), before, "looking moved nothing");
+    }
+
+    // W8: one port's look reads every port's shortcuts, so "others are in Steam" is known; its facts keep only its own.
+    #[test]
+    fn one_ports_look_knows_whether_other_ports_are_in_steam() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("Library")).unwrap();
+        let mut i = input(root.path(), vec![port("a")]);
+        i.all_installed = vec![port("a"), port("b")];
+        let facts = sys_gather(i);
+        assert!(!facts.any_in_steam, "no Steam here at all");
+        assert!(matches!(&facts.shortcuts, Ok(s) if s.is_empty()));
     }
 
     #[test]

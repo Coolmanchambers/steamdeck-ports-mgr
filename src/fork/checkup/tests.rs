@@ -833,3 +833,114 @@ fn one_ports_checkup_speaks_of_that_port_not_every_port() {
     let none_in_steam = Facts { shortcuts: Ok(Vec::new()), ..fine() };
     assert_eq!(run_for_port(&none_in_steam, "soh").outcome(Check::SteamShortcuts), Some(&Outcome::Ok("Not in Steam yet".to_string())));
 }
+
+// -- Repair accuracy (2026-11-04 review, section 2) -----------------------------------------------------------
+
+// W8: one port's Fix problems said "Not in Steam yet" (nothing to do) for a port missing while the others are in Steam.
+#[test]
+fn one_port_missing_from_steam_while_others_are_in_it_is_offered_the_add() {
+    let f = Facts { shortcuts: Ok(vec![ok_icon("dusk")]), ..fine() };
+    let p = problem_of(run_for_port(&f, "soh").outcome(Check::SteamShortcuts).unwrap().clone());
+    assert_eq!((p.summary.as_str(), p.fix.clone(), p.fix_label.as_str()), ("Not in Steam: SOH", Fix::AddToSteam, "Add it to Steam"));
+    assert_eq!(p.ports, vec!["soh"]);
+    // The same as the full checkup says about it.
+    assert_eq!(problem_of(check(Check::SteamShortcuts, &f)).summary, "Not in Steam: SOH");
+    // One port's look (only its own shortcuts read in) carries the fact through `only_port`.
+    let looked = Facts { shortcuts: Ok(Vec::new()), any_in_steam: true, installed: vec![named("soh")], ..fine() };
+    assert!(run_for_port(&looked, "soh").outcome(Check::SteamShortcuts).unwrap().is_problem());
+    // Its add waiting for Steam to close: queued, not missing.
+    let queued_add = Facts { queue: Ok(vec![queued("soh", QueuedKind::Add)]), ..looked };
+    assert!(matches!(run_for_port(&queued_add, "soh").outcome(Check::SteamShortcuts), Some(Outcome::Queued { .. })));
+}
+
+// F-W2: only_port emptied the switches cut short, so a port's own Fix problems said fine while the full one did not.
+#[test]
+fn a_ports_own_unfinished_switch_shows_in_its_fix_problems() {
+    let mut f = fine();
+    f.installed = vec![Named::new("soh", "Ship of Harkinian"), Named::new("dusk", "Dusklight")];
+    f.shortcuts = Ok(vec![ok_icon("soh"), ok_icon("dusk")]);
+    f.unfinished_moves = vec!["Dusklight".into()];
+    let dusk = run_for_port(&f, "dusk");
+    assert_eq!(dusk.items[0].0, Check::PortsFolder, "it leads");
+    let p = problem_of(dusk.outcome(Check::PortsFolder).unwrap().clone());
+    assert_eq!((p.summary.as_str(), p.fix.clone(), p.fix_label.as_str()), ("A move did not finish: Dusklight", Fix::PortsFolderMenu, "Finish switching Dusklight"));
+    assert_eq!(dusk.summary(), "1 thing to fix");
+    let soh = run_for_port(&f, "soh");
+    assert!(soh.outcome(Check::PortsFolder).is_none(), "another port's switch is not this port's line");
+    assert_eq!(soh.summary(), "Everything looks fine");
+}
+
+// W10: a port with no program at all, and one whose catalog program is gone.
+#[test]
+fn a_port_with_no_program_is_red_and_offers_to_install_it_again() {
+    let mut f = fine();
+    f.no_program = vec![named("dusk")];
+    let p = problem_of(check(Check::Programs, &f));
+    assert_eq!((p.mark, p.summary.as_str()), (Mark::Problem, "Missing for DUSK"));
+    assert_eq!((p.fix.clone(), p.fix_label.as_str()), (Fix::InstallAgain("dusk".into()), "Install DUSK again"));
+    assert_eq!(p.detail, vec![NO_PROGRAM_DETAIL.to_string()]);
+    assert!(!p.advisory, "a game that will not start raises the tile");
+    assert_eq!(run(&f).home_tile().unwrap().mark, Mark::Problem);
+    let page = pages::step_page(Check::Programs, &p, 1, 1);
+    assert_eq!((page.options[0].title.as_str(), page.options[0].action), ("Install DUSK again", Act::Fix));
+    // The catalog's program is gone but others are there: the usual choice, red because Play cannot start it now.
+    let mut g = fine();
+    g.program_gone = vec![named("soh")];
+    g.programs = vec![named("abuse")];
+    let p = problem_of(check(Check::Programs, &g));
+    assert_eq!((p.mark, p.summary.as_str()), (Mark::Problem, "Not chosen for SOH and ABUSE"));
+    assert_eq!((p.fix.clone(), p.fix_label.as_str()), (Fix::PickProgram("soh".into()), "Choose the program for SOH"));
+    assert_eq!(p.detail, vec![PROGRAM_GONE_DETAIL.to_string()]);
+    // Both: the line names both, the port that cannot start at all is fixed first.
+    g.no_program = vec![named("dusk")];
+    let p = problem_of(check(Check::Programs, &g));
+    assert_eq!(p.summary, "Missing for DUSK; not chosen for SOH and ABUSE");
+    assert_eq!(p.fix, Fix::InstallAgain("dusk".into()));
+    assert_eq!(p.ports, vec!["dusk", "soh", "abuse"]);
+    // Only a question to answer stays a to-do, as before.
+    let h = Facts { programs: vec![named("abuse")], ..fine() };
+    assert_eq!(problem_of(check(Check::Programs, &h)).mark, Mark::ToDo);
+    // One port's checkup keeps its own.
+    assert!(run_for_port(&g, "dusk").outcome(Check::Programs).unwrap().is_problem());
+    assert!(!run_for_port(&g, "dusk").outcome(Check::Programs).map(|o| o.words()).unwrap().contains("SOH"));
+    assert!(!Fix::InstallAgain("a".into()).returns_to(Menu::SettingsGroup(crate::fork::settings_menu::Group::Ports)));
+}
+
+// W9: a restore that stopped part way shows on the Saves line, with Restore saves as the way to look at it.
+#[test]
+fn a_restore_that_stopped_part_way_shows_on_the_saves_line() {
+    let mut f = fine();
+    f.stopped_restores = vec![named("soh")];
+    let p = problem_of(check(Check::Saves, &f));
+    assert_eq!((p.summary.as_str(), p.fix.clone(), p.fix_label.as_str()), ("A restore of SOH stopped part way", Fix::StoppedRestore("soh".into()), "Look at the restore of SOH"));
+    assert!(p.advisory, "the app never removes what it left: a reminder, not a tile");
+    f.saves = vec![named("dusk")];
+    let p = problem_of(check(Check::Saves, &f));
+    assert_eq!(p.summary, "A restore of SOH stopped part way; not found for DUSK");
+    assert_eq!(p.ports, vec!["soh", "dusk"]);
+    assert_eq!(problem_of(run_for_port(&f, "soh").outcome(Check::Saves).unwrap().clone()).summary, "A restore of SOH stopped part way");
+    assert_eq!(problem_of(run_for_port(&f, "dusk").outcome(Check::Saves).unwrap().clone()).summary, "Not found for DUSK");
+}
+
+// W6: a backup that missed some ports counted as "Backed up today".
+#[test]
+fn a_backup_that_missed_ports_says_so_and_offers_another() {
+    let mut f = fine();
+    f.backup_days = Some(0);
+    f.saves_known = 2;
+    f.backup_missed = vec!["SOH".into()];
+    let p = problem_of(check(Check::Backups, &f));
+    assert_eq!((p.summary.as_str(), p.fix.clone(), p.fix_label.as_str()), ("Last backup missed SOH", Fix::BackUpNow, crate::fork::backup_pages::ACTION));
+    assert!(p.advisory);
+    f.cloud_ok = true;
+    assert!(check(Check::Backups, &f).is_problem(), "the cloud holds the same zip: it lacks them too");
+    f.cloud_problem = true;
+    assert_eq!(problem_of(check(Check::Backups, &f)).summary, "Last backup missed SOH; cloud backup has a problem");
+    // A port uninstalled since is not nagged about.
+    let mut g = fine();
+    g.backup_days = Some(0);
+    g.saves_known = 2;
+    g.backup_missed = vec!["GONE".into()];
+    assert_eq!(check(Check::Backups, &g), Outcome::Ok("Backed up today".into()));
+    assert!(g.only_port("soh").backup_missed.is_empty(), "not a one-port line");
+}

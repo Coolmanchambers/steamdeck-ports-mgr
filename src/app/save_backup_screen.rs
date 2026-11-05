@@ -32,6 +32,19 @@ fn nothing() -> Rc<dyn Fn(&Rc<AppState>, &Router)> {
     Rc::new(|_, _| {})
 }
 
+/// Review W6: which ports this run could not back up, for the checkup's Save backups line
+/// (`crate::fork::backup_last_run`). A run stopped before any port (the folder could not be made) has nothing to say.
+fn record_last_run(global_dir: &std::path::Path, ports: &[(String, crate::core::save_backup::PortBackup)], stopped: bool) {
+    if stopped {
+        return;
+    }
+    let missed = ports.iter().filter(|(_, o)| matches!(o, crate::core::save_backup::PortBackup::Failed(_))).map(|(n, _)| n.clone()).collect();
+    let run = crate::fork::backup_last_run::LastRun { date: chrono::Local::now().format("%Y-%m-%d").to_string(), at: crate::fork::backup_last_run::now_secs(), missed };
+    if let Err(e) = crate::fork::backup_last_run::write(global_dir, &run) {
+        eprintln!("save backup: could not note which ports were missed ({e})");
+    }
+}
+
 /// Starts the backup of every port's saves, behind its waiting page.
 pub(crate) fn start(app: &Rc<AppState>, router: &Router) {
     if RUNNING.with(Cell::get) {
@@ -52,6 +65,7 @@ pub(crate) fn start(app: &Rc<AppState>, router: &Router) {
     let library_dir = app.paths.library_dir();
     let saves_backup_dir = app.paths.saves_backup_dir.clone();
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let global_dir = app.paths.saves_backup_dir.join(crate::fork::save_restore::GLOBAL_BACKUPS_DIR);
     let job = Background::spawn(move |ctl| crate::core::save_backup::run_global_backup(&catalog, &library_dir, &saves_backup_dir, &date, &mut |name: &str| ctl.set_progress(name.to_string())));
     let (app, router) = (app.clone(), router.clone());
     let last = RefCell::new(String::new());
@@ -73,6 +87,7 @@ pub(crate) fn start(app: &Rc<AppState>, router: &Router) {
                 Ok(summary) => {
                     eprintln!("save backup: {} save folder(s) copied, {} skipped, {} failed", summary.copied, summary.skipped, summary.failed);
                     let ports: Vec<_> = summary.ports.iter().map(|(name, o)| (shown_name(name), o.clone())).collect();
+                    record_last_run(&global_dir, &ports, summary.problem.is_some());
                     done_page(&ports, summary.problem.as_deref(), &place)
                 }
                 Err(e) => done_page(&[], Some(&format!("the app ran into an error ({e})")), &place),
