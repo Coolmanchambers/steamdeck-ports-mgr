@@ -23,7 +23,7 @@
 use super::dialogs::{build_setup_wizard_dialog, close_current_dialog, dialog_is_open, finish_dialog_open, DialogSlot};
 use super::state::AppState;
 use crate::fork::art::thumbs::{ArtRef, ThumbLoader};
-use crate::fork::page::{self, Focus, Page};
+use crate::fork::page::{self, Focus, Page, Place};
 use crate::fork::press_echo::{self, Press};
 use crate::ui::chrome;
 use crate::ui::gamepad_router::GamepadRouter;
@@ -156,7 +156,7 @@ thread_local! {
     static WIN: RefCell<Option<(u64, SetupWizardDialog)>> = const { RefCell::new(None) };
     /// Where the cursor was on pages shown (page key, focus number), newest last. Kept across hand-offs to other
     /// screens; forgotten when the guided pages end (the page window goes and nothing else is open).
-    static HISTORY: RefCell<Vec<(String, Focus)>> = const { RefCell::new(Vec::new()) };
+    static HISTORY: RefCell<Vec<(String, Place)>> = const { RefCell::new(Vec::new()) };
 }
 
 fn with_art<R>(app: &AppState, f: impl FnOnce(&mut ArtState) -> R) -> R {
@@ -328,7 +328,7 @@ trait Binding {
     fn back(&self);
     fn exit(&self);
     /// The page's key and where the cursor is on it (for "B returns to where you were").
-    fn place(&self) -> (String, Option<Focus>);
+    fn place(&self) -> (String, Option<Place>);
     /// "Show the app" (the footer button, or Y): the page steps aside for the main window, with its layer.
     fn show_app(&self);
 }
@@ -415,9 +415,9 @@ impl<A: Clone + 'static> Binding for Bound<A> {
         (self.handlers.on_exit)(&self.app, &self.router);
     }
 
-    fn place(&self) -> (String, Option<Focus>) {
+    fn place(&self) -> (String, Option<Place>) {
         let page = page_now(&self.cur);
-        (page_key(&page), page::focus_at(&page, self.focus.get()))
+        (page_key(&page), page::place_at(&page, self.focus.get()))
     }
 
     fn show_app(&self) {
@@ -447,23 +447,24 @@ fn bound(serial: u64) -> Option<Rc<dyn Binding>> {
 
 /// Notes where the cursor is on the page being left, so coming back to it finds the same place.
 fn remember_current() {
-    let Some((key, Some(focus))) = HOST.with(|h| h.borrow().page.as_ref().map(|(_, b)| b.place())) else { return };
-    remember((key, focus));
+    let Some((key, Some(place))) = HOST.with(|h| h.borrow().page.as_ref().map(|(_, b)| b.place())) else { return };
+    remember((key, place));
 }
 
-/// The item itself is remembered, not its number: "Show the app" (full screen only) shifts the numbers after it.
-fn remember((key, focus): (String, Focus)) {
+/// The item itself is remembered, not its number: "Show the app" (full screen only) shifts the numbers after it, and
+/// an option is remembered with its title, since options come and go ("Update now" after a check) and shift too.
+fn remember((key, place): (String, Place)) {
     HISTORY.with(|h| {
         let mut h = h.borrow_mut();
         h.retain(|(k, _)| *k != key);
-        h.push((key, focus));
+        h.push((key, place));
         let extra = h.len().saturating_sub(HISTORY_LEN);
         h.drain(..extra);
     });
 }
 
-fn recalled(key: &str) -> Option<Focus> {
-    HISTORY.with(|h| h.borrow().iter().rev().find(|(k, _)| k == key).map(|(_, f)| *f))
+fn recalled(key: &str) -> Option<Place> {
+    HISTORY.with(|h| h.borrow().iter().rev().find(|(k, _)| k == key).map(|(_, p)| p.clone()))
 }
 
 /// Where the cursor starts on `page`: where it was when the page was shown before in these guided pages (B, a footer
@@ -472,10 +473,7 @@ fn starting_focus<A>(page: &Page<A>) -> usize {
     if page.fresh_focus {
         return page::initial_focus(page);
     }
-    match recalled(&page_key(page)) {
-        Some(f) if page::focusables(page).contains(&f) => page::focus_number(page, f),
-        _ => page::initial_focus(page),
-    }
+    recalled(&page_key(page)).and_then(|p| page::find_place(page, &p)).unwrap_or_else(|| page::initial_focus(page))
 }
 
 /// Wires a newly built window's callbacks once: each reaches whatever page is on it now.
@@ -673,22 +671,29 @@ impl<A: Clone + 'static> PageHandle<A> {
         HOST.with(|h| h.borrow().is_current(self.generation)) && self.weak.upgrade().is_some_and(|d| d.window().is_visible())
     }
 
-    /// Draws `page` in its place; the cursor stays where it was when that place still exists. False when the
-    /// page is gone (something else replaced it), so the owner can stop updating.
+    /// Draws `page` in its place; the cursor stays on the same item (an option by its title) when it is still
+    /// there, else it starts where the page says. False when the page is gone (something else replaced it), so the
+    /// owner can stop updating.
     pub(crate) fn update(&self, page: Page<A>) -> bool {
         if !self.is_open() {
             return false;
         }
         let Some(d) = self.weak.upgrade() else { return false };
+        let old = page::place_at(&page_now(&self.cur), self.focus.get());
         let page = Rc::new(prepare(&self.app, page));
         *self.cur.borrow_mut() = page.clone();
         fill(&d, &page);
         load_art(&self.app, &d, &self.cur);
-        let n = self.focus.get().min(page::focusables(&page).len().saturating_sub(1));
-        select(&d, &page, &self.focus, n);
+        select(&d, &page, &self.focus, focus_after_update(old.as_ref(), &page));
         super::dialog_layer::sync(&self.app);
         true
     }
+}
+
+/// Where the cursor goes when a page on screen is drawn again: the same item, found by [`page::find_place`] (so "Update
+/// now" added in front after a check never takes the cursor that was on "Look for an update now"), else the page's start.
+fn focus_after_update<A>(old: Option<&Place>, page: &Page<A>) -> usize {
+    old.and_then(|p| page::find_place(page, p)).unwrap_or_else(|| page::initial_focus(page))
 }
 
 /// Shows the page: in the page window when it is open (or parked), otherwise in a new one, replacing whatever
@@ -744,6 +749,59 @@ mod tests {
         HISTORY.with(|h| h.borrow_mut().clear());
     }
 
+    /// A remembered place on a `page(..)` page (option `i` is titled "o{i}").
+    fn at(focus: Focus) -> Place {
+        Place { focus, title: if let Focus::Option(i) = focus { Some(format!("o{i}")) } else { None } }
+    }
+
+    /// The Updates page before and after a check finds an update ("Update now" is put in front).
+    fn updates(ready: bool) -> Page<u8> {
+        let mut p = page("Updates", 0);
+        let opt = |t: &str, a: u8| PageOption { title: t.into(), detail: String::new(), choice: None, enabled: true, recommended: false, action: a };
+        if ready {
+            p.options.push(opt("Update now", 1));
+        }
+        p.options.extend([opt("Look for an update now", 2), opt("Check for updates", 3), opt("Select version", 4)]);
+        p.initial = Focus::Option(0);
+        p
+    }
+
+    #[test]
+    fn a_check_that_finds_an_update_keeps_the_cursor_off_update_now() {
+        let before = updates(false);
+        let after = updates(true);
+        let n = focus_after_update(page::place_at(&before, 0).as_ref(), &after);
+        assert_eq!(page::action_at(&after, n), Some(2), "still on Look for an update now; one more A must not install");
+        // While it checks, "Look for an update now" is disabled: the cursor goes to where the page says it starts.
+        let mut checking = updates(false);
+        checking.options[0].enabled = false;
+        let n = focus_after_update(page::place_at(&before, 0).as_ref(), &checking);
+        assert_eq!(n, page::initial_focus(&checking));
+    }
+
+    #[test]
+    fn a_held_return_escape_or_y_acts_once_on_a_page() {
+        // Steam types a held A as repeated Returns in Desktop Mode: a repeat must not answer the next page.
+        let slint = include_str!("../../ui/fork/setup-wizard.slint");
+        let handlers: Vec<&str> = slint.match_indices("key-pressed(event)").map(|(i, _)| &slint[i..]).collect();
+        assert_eq!(handlers.len(), 2, "the page's keys and its text box's keys");
+        for keys in handlers {
+            let repeat = keys.find("event.repeat").expect("held keys are checked");
+            for key in ["Key.Return", "Key.Escape"] {
+                assert!(repeat < keys.find(key).unwrap(), "{key} is checked after the repeat guard");
+            }
+        }
+    }
+
+    #[test]
+    fn coming_back_to_a_page_whose_options_changed_finds_the_same_option_by_title() {
+        clear();
+        let before = updates(false);
+        remember((page_key(&before), page::place_at(&before, 2).unwrap()));
+        let after = updates(true);
+        assert_eq!(page::action_at(&after, starting_focus(&after)), Some(4), "Select version again, not the Check for updates switch now in its slot");
+    }
+
     /// A page that only says it was asked something.
     struct Stub;
     impl Binding for Stub {
@@ -756,7 +814,7 @@ mod tests {
         fn input(&self, _: &str) {}
         fn back(&self) {}
         fn exit(&self) {}
-        fn place(&self) -> (String, Option<Focus>) {
+        fn place(&self) -> (String, Option<Place>) {
             ("stub".into(), None)
         }
         fn show_app(&self) {}
@@ -833,7 +891,7 @@ mod tests {
         clear();
         let first = page("Where are your ports?", 3);
         assert_eq!(starting_focus(&first), page::initial_focus(&first), "the first time it starts where the page says");
-        remember((page_key(&first), Focus::Option(2)));
+        remember((page_key(&first), at(Focus::Option(2))));
         assert_eq!(starting_focus(&first), 2, "back to the page (B, a Back button, after a hand-off): the third option again");
     }
 
@@ -841,13 +899,13 @@ mod tests {
     fn a_page_remembered_windowed_and_shown_full_screen_starts_on_the_same_item_not_on_show_the_app() {
         clear();
         let windowed = page("Settings", 3);
-        remember((page_key(&windowed), Focus::Button(page::RIGHT)));
+        remember((page_key(&windowed), at(Focus::Button(page::RIGHT))));
         let mut big = windowed.clone();
         big.show_app = true;
         let n = starting_focus(&big);
         assert_eq!(page::focus_at(&big, n), Some(Focus::Button(page::RIGHT)), "the primary button, not Show the app");
         // And back: a place on Show the app is not there windowed, so the page starts where it says.
-        remember((page_key(&big), Focus::ShowApp));
+        remember((page_key(&big), at(Focus::ShowApp)));
         assert_eq!(starting_focus(&windowed), page::initial_focus(&windowed));
     }
 
@@ -855,7 +913,7 @@ mod tests {
     fn a_remembered_place_that_no_longer_exists_falls_back_to_the_start() {
         clear();
         let before = page("Your ports", 4);
-        remember((page_key(&before), Focus::Option(3)));
+        remember((page_key(&before), at(Focus::Option(3))));
         let now = page("Your ports", 1);
         assert_eq!(starting_focus(&now), page::initial_focus(&now));
     }
@@ -867,7 +925,7 @@ mod tests {
         let mut q = page("Drop this waiting change?", 2);
         q.initial = Focus::Option(0);
         q.fresh_focus = true;
-        remember((page_key(&q), Focus::Option(1)));
+        remember((page_key(&q), at(Focus::Option(1))));
         assert_eq!(page::focus_at(&q, starting_focus(&q)), Some(Focus::Option(0)));
         let mut plain = q.clone();
         plain.fresh_focus = false;
@@ -877,7 +935,7 @@ mod tests {
     #[test]
     fn an_unseen_page_starts_where_it_says() {
         clear();
-        remember((page_key(&page("Other", 3)), Focus::Option(1)));
+        remember((page_key(&page("Other", 3)), at(Focus::Option(1))));
         let p = page("Never shown", 3);
         assert_eq!(starting_focus(&p), page::initial_focus(&p));
     }
@@ -886,11 +944,11 @@ mod tests {
     fn the_memory_keeps_the_latest_place_per_page_and_stays_small() {
         clear();
         let p = page("Steam", 3);
-        remember((page_key(&p), Focus::Option(0)));
-        remember((page_key(&p), Focus::Option(1)));
-        assert_eq!(recalled(&page_key(&p)), Some(Focus::Option(1)));
+        remember((page_key(&p), at(Focus::Option(0))));
+        remember((page_key(&p), at(Focus::Option(1))));
+        assert_eq!(recalled(&page_key(&p)), Some(at(Focus::Option(1))));
         for i in 0..(HISTORY_LEN + 5) {
-            remember((format!("k{i}"), Focus::Option(i)));
+            remember((format!("k{i}"), at(Focus::Option(i))));
         }
         assert_eq!(HISTORY.with(|h| h.borrow().len()), HISTORY_LEN);
         assert_eq!(recalled(&page_key(&p)), None, "the oldest pages are forgotten first");
@@ -916,7 +974,7 @@ mod tests {
         other.card.as_mut().unwrap().title = "Ship of Harkinian".into();
         assert_ne!(page_key(&card), page_key(&other));
         clear();
-        remember((page_key(&card), Focus::Button(page::RIGHT)));
+        remember((page_key(&card), at(Focus::Button(page::RIGHT))));
         assert_eq!(starting_focus(&other), page::initial_focus(&other));
     }
 }

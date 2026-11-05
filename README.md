@@ -66,8 +66,8 @@ A lightweight library/installer for unofficial game ports: browse a catalog, ins
 | `←` / `→` or `Ctrl+A` / `Ctrl+D` | D-pad / left stick | Jump a page (10 rows, windowed list) / a column (Library grid) |
 | `Enter` | `A` or `Start` | Install the selected port if it isn't installed yet, launch it otherwise |
 | `Shift+Enter` | — | Open the selected port's install folder in Explorer |
-| — | `X` | Open the Info panel for the selected port |
-| — | `Y` | Open ◯ Settings |
+| `Ctrl+I` | `X` | Open the Info panel for the selected port |
+| `Ctrl+P` | `Y` | Open ◯ Settings |
 | `Alt+Enter` | `Back` | Toggle fullscreen Library mode |
 | `Ctrl+1`...`Ctrl+9` / `Ctrl+0` | — | Resize the windowed launcher to 10%...90% / 100% of screen size, windowed mode only |
 | `Ctrl+-` / `Ctrl+=` | — | Shrink / grow the border by 1px, windowed mode only |

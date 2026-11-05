@@ -5,6 +5,9 @@ use std::time::{Duration, Instant};
 
 const STICK_DEADZONE: f32 = 8000.0 / 32767.0;
 const NAV_REPEAT_DELAY: Duration = Duration::from_millis(350);
+// Fork (navigation safety): once a held direction repeats, it moves every 4th 20 ms poll (about 12 a second), not every
+// poll (50 a second; Deck-ready's sideways move jumps 10 rows each time).
+const NAV_REPEAT_INTERVAL: Duration = Duration::from_millis(75);
 pub const POLL_INTERVAL_MS: u64 = 20;
 
 const DIRECTION_DELTAS: [(i32, i32); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
@@ -77,7 +80,8 @@ fn decide_moves(prev: [bool; 4], current: [bool; 4], last_move: &mut [Instant; 4
             continue;
         }
         let fresh_press = !prev[i];
-        if fresh_press || repeating[i] || now.duration_since(last_move[i]) > NAV_REPEAT_DELAY {
+        // Fork: a repeat waits NAV_REPEAT_INTERVAL after the last one (upstream repeated on every poll).
+        if fresh_press || now.duration_since(last_move[i]) > if repeating[i] { NAV_REPEAT_INTERVAL } else { NAV_REPEAT_DELAY } {
             moves.push((DIRECTION_DELTAS[i], fresh_press.then_some(DIRECTION_INPUTS[i])));
             last_move[i] = now;
             repeating[i] = !fresh_press;
@@ -220,8 +224,21 @@ mod tests {
         let mut repeating = [false; 4];
         assert_eq!(decide_moves(UP, UP, &mut last_move, &mut repeating, now), vec![((0, -1), None)]);
         assert!(repeating[0]);
-        let later = now + Duration::from_millis(1);
+        // Fork: the next repeat comes after NAV_REPEAT_INTERVAL (upstream: 1 ms later, on the very next poll).
+        let later = now + NAV_REPEAT_INTERVAL + Duration::from_millis(1);
         assert_eq!(decide_moves(UP, UP, &mut last_move, &mut repeating, later), vec![((0, -1), None)]);
+    }
+
+    // Fork (navigation safety): a held direction repeats about 12 times a second, not on every 20 ms poll.
+    #[test]
+    fn a_held_direction_repeats_at_the_interval_not_on_every_poll() {
+        let now = Instant::now();
+        let mut last_move = [now - NAV_REPEAT_DELAY * 2; 4];
+        let mut repeating = [false; 4];
+        assert_eq!(decide_moves(UP, UP, &mut last_move, &mut repeating, now).len(), 1, "the first repeat after the delay");
+        let poll = Duration::from_millis(POLL_INTERVAL_MS);
+        let moves: usize = (1..=10).map(|n| decide_moves(UP, UP, &mut last_move, &mut repeating, now + poll * n).len()).sum();
+        assert_eq!(moves, 2, "10 polls (200 ms) give 2 more moves, at 80 ms and 160 ms");
     }
 
     #[test]

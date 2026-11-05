@@ -133,7 +133,12 @@ export component AppWindow inherits Window {
     // Fork: the dim layer while a page or dialog is open ("Settings is open", "Go back to it"): src/app/dialog_layer.rs.
     in property <bool> dialog-layer-shown: false;
     in property <string> dialog-layer-text: "";
+    in property <string> dialog-layer-hint: "A or B, click or tap";
+    // Fork (navigation safety): a click (`pressed`), Return or Space (`chosen`) and Escape (`backed`) come apart, so
+    // only the keys go through the one-press filter.
     callback dialog-layer-pressed();
+    callback dialog-layer-chosen();
+    callback dialog-layer-backed();
     changed dialog-layer-shown => { root.focus-keyboard(); }
     function focus-keyboard() {
         if (root.dialog-layer-shown) {
@@ -158,6 +163,8 @@ export component AppWindow inherits Window {
     callback close-requested();
     callback minimize-requested();
     callback settings-requested();
+    // Fork (navigation safety): Ctrl+I, the keyboard's X (Port options / Info for the selection).
+    callback info-requested();
     callback fullscreen-toggle-requested();
     callback window-drag-requested();
     callback window-drag-moved();
@@ -408,6 +415,14 @@ export component AppWindow inherits Window {
                                         } else if (root.deck-ready-mode && event.modifiers.control && event.text == "y") {
                                             // Fork (Deck-ready filters): Ctrl+Y opens Filters, as Y on the pad does.
                                             root.deck-ready-filters-requested();
+                                            accept
+                                        } else if (event.modifiers.control && event.text == "i") {
+                                            // Fork (navigation safety): Ctrl+I opens the selection's Port options / Info, as X on the pad does.
+                                            root.info-requested();
+                                            accept
+                                        } else if (event.modifiers.control && event.text == "p") {
+                                            // Fork (navigation safety): Ctrl+P opens Settings, as the gear does (Y on the pad outside Deck-ready).
+                                            root.settings-requested();
                                             accept
                                         } else if (event.text == Key.UpArrow || (event.modifiers.control && event.text == "w")) {
                                             root.move-requested(0, -1);
@@ -842,7 +857,10 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height - self.y;
         text: root.dialog-layer-text;
+        hint: root.dialog-layer-hint;
         font-px: root.item-font-px * (root.big-mode ? 1.25 : 1.0);
-        pressed => { root.dialog-layer-pressed(); }
+        clicked => { root.dialog-layer-pressed(); }
+        chosen => { root.dialog-layer-chosen(); }
+        backed => { root.dialog-layer-backed(); }
     }
 }

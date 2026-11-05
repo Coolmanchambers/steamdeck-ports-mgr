@@ -17,6 +17,7 @@
 
 use super::dialogs::{dialog_is_open, DialogSlot};
 use super::state::AppState;
+use crate::fork::press_echo::{self, Press};
 use crate::ui::chrome;
 use slint::ComponentHandle;
 use std::cell::Cell;
@@ -153,10 +154,51 @@ pub(crate) fn sync(app: &Rc<AppState>) {
     }
 }
 
+/// How the layer was pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerPress {
+    /// A click or a tap.
+    Click,
+    /// Return or Space.
+    Chosen,
+    /// Escape.
+    Backed,
+}
+
+/// The one-press check a press on the layer goes through: a key may be Steam's echo of a pad A or B (and when the key
+/// comes first, the pad's own press must then be dropped, or it would press the page just brought back). A click is
+/// never an echo: it is not filtered, so it can neither be dropped nor leave a press waiting for an echo.
+fn echo_check(how: LayerPress) -> Option<Press> {
+    match how {
+        LayerPress::Click => None,
+        LayerPress::Chosen => Some(Press::Choose),
+        LayerPress::Backed => Some(Press::Back),
+    }
+}
+
+/// What the layer says under its button: the pad's buttons and the pointer; outside Game Mode the keys too.
+fn layer_hint(game_mode: bool) -> &'static str {
+    if game_mode {
+        "A or B, click or tap"
+    } else {
+        "A or B, Enter or Esc, click or tap"
+    }
+}
+
 /// The main window's "Go back to it" (wired with the window's other callbacks in `main.rs`).
 pub(crate) fn wire(main: &crate::AppWindow, app: &Rc<AppState>) {
-    let app = app.clone();
-    main.on_dialog_layer_pressed(move || go_back(&app));
+    main.set_dialog_layer_hint(layer_hint(crate::fork::steam_queue::game_mode_from_env()).into());
+    let pressed = |how: LayerPress| {
+        let app = app.clone();
+        move || {
+            if echo_check(how).is_none_or(press_echo::key) {
+                go_back(&app);
+            }
+        }
+    };
+    main.on_dialog_layer_pressed(pressed(LayerPress::Click));
+    main.on_dialog_layer_chosen(pressed(LayerPress::Chosen));
+    main.on_dialog_layer_backed(pressed(LayerPress::Backed));
 }
 
 /// "Go back to it": the open page or dialog comes back in front with the keyboard.
@@ -254,5 +296,35 @@ mod tests {
         assert!(owner_rule(true, false), "a Confirm, Progress, Picker... stays above the main window");
         assert!(owner_rule(false, true), "Game Mode and Windows keep the owner");
         assert!(owner_rule(false, false));
+    }
+
+    #[test]
+    fn keys_on_the_layer_go_through_the_one_press_check_and_a_click_never_does() {
+        assert_eq!(echo_check(LayerPress::Chosen), Some(Press::Choose));
+        assert_eq!(echo_check(LayerPress::Backed), Some(Press::Back));
+        assert_eq!(echo_check(LayerPress::Click), None, "a click is never an echo: never dropped, never leaves a press waiting");
+        // Steam's Return comes first and brings the page back; the pad's own A a moment later is its echo and is dropped,
+        // so it cannot press the page's focused button.
+        let t = Instant::now();
+        let mut f = press_echo::EchoFilter::default();
+        assert!(f.allow(press_echo::Source::Key, Press::Choose, t));
+        assert!(!f.allow(press_echo::Source::Pad, Press::Choose, t + Duration::from_millis(20)));
+    }
+
+    #[test]
+    fn the_layer_names_the_keys_outside_game_mode() {
+        assert_eq!(layer_hint(true), "A or B, click or tap");
+        assert!(layer_hint(false).contains("Enter or Esc"));
+    }
+
+    #[test]
+    fn the_layer_splits_keys_from_clicks_and_ignores_held_keys() {
+        let slint = include_str!("../../ui/fork/dialog-layer.slint");
+        let touch = &slint[slint.find("TouchArea {").expect("the layer's touch area")..];
+        assert!(touch[..touch.find('}').unwrap()].contains("root.clicked()"), "a click is its own callback");
+        let keys = &slint[slint.find("key-pressed(event)").expect("the layer's keys")..];
+        let repeat = keys.find("event.repeat").expect("held keys are ignored");
+        assert!(repeat < keys.find("Key.Return").unwrap() && repeat < keys.find("Key.Escape").unwrap());
+        assert!(keys.contains("root.chosen()") && keys.contains("root.backed()"));
     }
 }

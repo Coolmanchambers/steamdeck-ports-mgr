@@ -700,6 +700,11 @@ export component SetupWizardDialog inherits Window {
 
     key-handler := FocusScope {
         key-pressed(event) => {
+            // A held A, B or Y (Steam types a held A as repeated Returns in Desktop Mode) acts once: a repeat must not
+            // answer the next page. Held arrows still repeat.
+            if (event.repeat && (event.text == Key.Return || event.text == Key.Escape || event.text == "y" || event.text == "Y")) {
+                return accept;
+            }
             if (event.text == Key.Escape) {
                 root.close-requested();
                 return accept;
@@ -905,7 +910,10 @@ export component SetupWizardDialog inherits Window {
                                 }
                             }
                             key-pressed(event) => {
-                                if (event.text == Key.Escape) {
+                                if (event.repeat && (event.text == Key.Return || event.text == Key.Escape)) {
+                                    // A held Return or Escape acts once (see key-handler).
+                                    accept
+                                } else if (event.text == Key.Escape) {
                                     root.close-requested();
                                     accept
                                 } else if (event.text == Key.UpArrow) {

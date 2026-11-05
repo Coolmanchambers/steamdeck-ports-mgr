@@ -353,6 +353,11 @@ Files added by this fork:
 | 2026-11-04 | `ui/shared.slint` | Theme quick wins: the `Theme` and `SemanticColors` defaults mirror `src/ui/theme.rs` (same values as the row above) |
 | 2026-11-04 | `ui/dialogs/chrome.slint` | Theme quick wins: `DialogButton` draws the selected, enabled button with a 3 px outline in `selected-text` (the fill is unchanged), so the cursor on the old dialogs' buttons reads on the Deck |
 | 2026-11-04 | `ui/app-window.slint` | Theme quick wins (Fable review): the focused "< Home" list button fills `info-hover` instead of `info.darker(0.3)` (one line in the fork's own Home button block) |
+| 2026-11-04 | `src/ui/gamepad_router.rs` | Navigation safety: `NAV_REPEAT_INTERVAL` (75 ms); once a held direction repeats, `decide_moves` waits that long between repeats instead of moving on every 20 ms poll (about 12 moves a second, was 50). Upstream test `decide_moves_repete_apres_le_delai_puis_a_chaque_scrutation`: its second poll is `NAV_REPEAT_INTERVAL + 1 ms` later (was 1 ms); 1 new test |
+| 2026-11-04 | `ui/app-window.slint` | Navigation safety: the dim layer's keys and click come apart (`dialog-layer-chosen` for Return / Space, `dialog-layer-backed` for Escape, `dialog-layer-pressed` stays the click) and its hint is `dialog-layer-hint`; Ctrl+I (`info-requested`, Port options / Info, as X on the pad) and Ctrl+P (`settings-requested`, Settings) on the search box |
+| 2026-11-04 | `src/main.rs` | Navigation safety: `on_info_requested` (Ctrl+I) calls `show_info_for_current_selection`, as X on the pad does (2 lines) |
+| 2026-11-04 | `README.md`, `STEAM_DECK.md` | Navigation safety: the keyboard table and the Home help name Ctrl+I (Info) and Ctrl+P (Settings) |
+| 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Navigation safety: the cursor is remembered and kept by item, an option by its title (`page::Place`, `place_at`, `find_place`); `PageHandle::update` and `starting_focus` find it again by title or start where the page says, never on another option that took its number |
 
 ## Theme quick wins (Codex review of 2026-11-02, section A)
 
@@ -384,6 +389,34 @@ A test in `src/ui/theme.rs` fails if the Rust and Slint palettes drift apart, if
 aside) drops under 4.5:1, if a fill drops under 3:1 against the page, or if secondary text drops under 4.5:1. On the
 lighter bars (`search-background`) the fills sit at about 2.6:1; the white mark inside each disc carries the meaning
 there.
+
+## Navigation safety (2026-11-04 review)
+
+Section 3 of the 2026-11-04 full review, with Fable's checked fixes. The standing ruling holds: a question whose safe
+answer is first starts on it every time (`Page::fresh_focus`).
+- **Safe answer first, every time (N1).** Seven more questions set `fresh_focus`: Uninstall, Install the extra files,
+  Reset the play time, Forget this connection, Stop looking in this folder, Put back the saves, Remove the old copies.
+  Each page's test checks it.
+- **"Go back to it" filters its keys, never a click (N2).** The dim layer's Return / Space (`chosen`) and Escape
+  (`backed`) go through `press_echo::key`; a click or tap (`clicked`) never does, so it is never dropped and leaves no
+  press waiting. When Steam's typed Return arrives before the pad's A, the A is now its echo and is dropped, so it
+  cannot press the page just brought back.
+- **A held key acts once (N7).** On a guided page (the page and its text box) a repeated Return, Escape or Y does
+  nothing; held arrows still repeat. Same on the dim layer.
+- **The cursor stays on the same option (N5, F-N1).** The cursor is kept as an item, an option with its title
+  (`page::Place`). A page drawn again in place (`PageHandle::update`) or shown again (B, a hand-off) finds that option
+  by its title; if it is gone or disabled, the cursor starts where the page says. So after "Look for an update now"
+  finds an update, "Update now" put in front no longer takes the cursor, and coming back to Updates after a check does
+  not land on the "Check for updates" switch where "Select version" was.
+- **Deck-ready keeps its selection in view (N8).** A rebuild (the background download, a search) that moves the
+  selected row scrolls to it; one that leaves it where it was does not touch the scroll. A filter change scrolls once
+  (two toggles of the shared trigger in one go would cancel out).
+- **A held direction repeats about 12 times a second (N9),** not 50: see the `gamepad_router.rs` row above.
+- **Keyboard for X and Y (N6).** Ctrl+I opens Port options / Info for the selection, Ctrl+P opens Settings, beside
+  Ctrl+L and Ctrl+Y.
+- **The dim layer's hint names the keys (F-N3)** outside Game Mode: "A or B, Enter or Esc, click or tap".
+- Not changed: N11 (Tim: no change). F-N2 (does Steam's desktop layout also type arrow keys, so one D-pad press
+  moves twice in Desktop Mode?) is checked on the Deck first; arrows join the one-press filter only if it is real.
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
@@ -424,6 +457,7 @@ Pages and dialogs stay top-level windows of their own. While one is open, the ma
 title bar: "<page> is open" (the title before its first ':'; "A question is open" for a Confirm, "A message is open" for
 an error) and a "Go back to it" button. A, B, Return, Space, Escape, a click or a tap anywhere on it brings the page
 back in front with the keyboard (`chrome::bring_back`); looking at the main window alone does not raise the page.
+Its keys go through the one-press filter and its click does not (see "Navigation safety").
 The layer follows the dialog slot (`dialog_layer::sync` on open, close, the page window's park and every page shown,
 plus a 250 ms re-check while it is up); during the 40 ms park between two pages it stays as it was. While the main
 window is in front of the dialog, the controller's A and B only bring the dialog back and nothing else reaches the page

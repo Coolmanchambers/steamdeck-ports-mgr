@@ -479,6 +479,40 @@ pub fn focus_at<A>(page: &Page<A>, number: usize) -> Option<Focus> {
     focusables(page).get(number).copied()
 }
 
+/// Where the cursor is, in a form that survives the page being drawn again with other options: the item, and for an
+/// option its title (option numbers move when an option is added in front, such as "Update now" after a check).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Place {
+    pub focus: Focus,
+    pub title: Option<String>,
+}
+
+/// The place of focus number `number` on `page`.
+pub fn place_at<A>(page: &Page<A>, number: usize) -> Option<Place> {
+    let focus = focus_at(page, number)?;
+    let title = match focus {
+        Focus::Option(i) => page.options.get(i).map(|o| o.title.clone()),
+        _ => None,
+    };
+    Some(Place { focus, title })
+}
+
+/// The focus number of `place` on `page` (the page may have changed since): an option is found again by its title
+/// (the same number first when two share it), never by its number alone, so the cursor cannot land on another option
+/// that moved into its slot. `None` when the place is gone (the caller starts where the page says).
+pub fn find_place<A>(page: &Page<A>, place: &Place) -> Option<usize> {
+    let items = focusables(page);
+    let number = |f: Focus| items.iter().position(|x| *x == f);
+    match (place.focus, &place.title) {
+        (Focus::Option(i), Some(title)) => {
+            let same = |j: &usize| page.options.get(*j).is_some_and(|o| o.enabled && o.title == *title);
+            let at = Some(i).filter(same).or_else(|| (0..page.options.len()).find(same))?;
+            number(Focus::Option(at))
+        }
+        (focus, _) => number(focus),
+    }
+}
+
 pub fn initial_focus<A>(page: &Page<A>) -> usize {
     let items = focusables(page);
     let Some(first) = items.first().copied() else { return 0 };
@@ -790,5 +824,41 @@ mod tests {
         r.primary = None;
         r.buttons[RIGHT] = None;
         assert_eq!(focus_at(&r, move_focus(&r, 0, 0, 1)), Some(Focus::Button(LEFT)));
+    }
+
+    fn updates(ready: bool) -> Page<Act> {
+        let mut p = Page::<Act>::default();
+        if ready {
+            p.options.push(option("Update now", Act::Yes, true));
+        }
+        p.options.extend([option("Look for an update now", Act::Other, true), option("Check for updates", Act::Skip, true), option("Select version", Act::Details, true)]);
+        p.buttons[LEFT] = Some(PageButton { label: "Back".into(), action: Act::Details });
+        p.initial = Focus::Option(0);
+        p
+    }
+
+    #[test]
+    fn an_option_is_found_again_by_its_title_when_an_option_is_added_in_front() {
+        let before = updates(false);
+        let after = updates(true);
+        let look = place_at(&before, 0).unwrap();
+        assert_eq!(look.title.as_deref(), Some("Look for an update now"));
+        assert_eq!(action_at(&after, find_place(&after, &look).unwrap()), Some(Act::Other), "not Update now, which took its number");
+        let select = place_at(&before, 2).unwrap();
+        assert_eq!(action_at(&after, find_place(&after, &select).unwrap()), Some(Act::Details), "Select version, not the switch that moved into its slot");
+    }
+
+    #[test]
+    fn a_place_that_is_gone_or_disabled_is_not_found_and_buttons_are_kept() {
+        let before = updates(false);
+        let mut checking = updates(false);
+        checking.options[0].enabled = false;
+        assert_eq!(find_place(&checking, &place_at(&before, 0).unwrap()), None, "the option it was on is disabled: the caller starts where the page says");
+        let back = place_at(&before, focus_number(&before, Focus::Button(LEFT))).unwrap();
+        assert_eq!(back.title, None);
+        assert_eq!(focus_at(&checking, find_place(&checking, &back).unwrap()), Some(Focus::Button(LEFT)));
+        let mut renamed = updates(false);
+        renamed.options[1].title = "Something else".into();
+        assert_eq!(find_place(&renamed, &place_at(&before, 1).unwrap()), None, "never the same number with another title");
     }
 }

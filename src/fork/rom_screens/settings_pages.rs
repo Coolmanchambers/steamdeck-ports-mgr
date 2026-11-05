@@ -335,6 +335,7 @@ pub fn forget_page(c: &ConnGroup) -> Page<GsAct> {
     p.options = vec![option("Yes, forget it", "Your files are not touched", GsAct::Forget), option("No, keep it", "Nothing changes", GsAct::Keep)];
     p.options[1].recommended = true;
     p.initial = Focus::Option(1);
+    p.fresh_focus = true;
     p.buttons = [None, None, None, None];
     p.b_does(&GsAct::Keep)
 }
@@ -499,6 +500,7 @@ pub(crate) mod tests {
         let f = forget_page(&conn("SoH", "fake.z64", 0, Method::Copy, Health::Ok));
         assert_eq!(f.title, "Forget this connection?");
         assert_eq!(action_at(&f, initial_focus(&f)), Some(GsAct::Keep));
+        assert!(f.fresh_focus, "starts on No every time, not where the last one was left");
         assert_eq!(f.back_hint, "No, keep it");
         assert!(f.paragraphs[1].contains("stay where they are"));
     }

@@ -219,6 +219,7 @@ pub fn remove_page(f: &RemoveFacts) -> Page<PfAct> {
     ];
     p.options[1].recommended = true;
     p.initial = Focus::Option(1);
+    p.fresh_focus = true;
     p.buttons = [None, None, None, None];
     p.b_does(&PfAct::Keep)
 }
@@ -419,6 +420,7 @@ mod tests {
         assert_eq!(p.paragraphs[0], "Its saves are backed up first, to Internal storage > Saves Backup. If that backup does not work, nothing is removed.");
         assert!(p.paragraphs[1].contains("The copy you use now is not touched. This frees 2.0 GB."));
         assert_eq!(action_at(&p, initial_focus(&p)), Some(PfAct::Keep));
+        assert!(p.fresh_focus, "starts on No every time, not where the last one was left");
         assert_eq!(p.back_hint, "No, keep it");
         let long = remove_page(&RemoveFacts { names: vec![LONG.into()], ..RemoveFacts::default() });
         assert_eq!((long.title.as_str(), long.header.as_str()), ("Remove this old copy?", LONG));

@@ -331,6 +331,7 @@ impl FoldersScreen {
             paragraphs: vec![format!("{place}."), "Only this list changes. The folder and what is in it are not touched.".to_string()],
             options: vec![option("Yes, stop looking there", "It comes off the list", StopLooking::Yes), option("No, keep it", "Nothing changes", StopLooking::No)],
             initial: Focus::Option(1),
+            fresh_focus: true,
             ..Page::default()
         };
         p.options[1].recommended = true;
@@ -632,6 +633,7 @@ mod folders_page_tests {
         let stop = s.stop_page(1, &places());
         assert_eq!(stop.title, "Stop looking in this folder?");
         assert_eq!(action_at(&stop, initial_focus(&stop)), Some(StopLooking::No));
+        assert!(stop.fresh_focus, "starts on No every time, not where the last one was left");
         assert_eq!(stop.back_hint, "No, keep it");
         crate::fork::rom_screens::settings_pages::tests::assert_fits(&p);
         crate::fork::rom_screens::settings_pages::tests::assert_fits(&stop);

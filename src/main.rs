@@ -295,6 +295,8 @@ fn wire_main_window(window: &AppWindow, app: &Rc<AppState>, router: &Rc<RefCell<
     window.on_fullscreen_toggle_requested(with!(app => move || app.toggle_fullscreen()));
     window.on_minimize_requested(with!(app => move || app.window().window().set_minimized(true)));
     window.on_settings_requested(with!(app, router => move || open_settings_dialog(&app, &router)));
+    // Fork (navigation safety): Ctrl+I, as X on the pad.
+    window.on_info_requested(with!(app, router => move || app::install_launch::show_info_for_current_selection(&app, &router)));
     window.on_window_size_requested(with!(app => move |percent| app.set_window_size_percent(percent)));
     window.on_border_adjust_requested(with!(app => move |delta| app.adjust_border(delta)));
     window.on_move_requested(with!(app => move |dx, dy| app.move_selection(dx, dy)));

@@ -803,6 +803,7 @@ pub fn updates_page_at_switch(p: &PortFacts) -> Page<Act> {
 /// The plain confirm page of Uninstall: what goes, what stays, "Keep it" first.
 pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&SavesFacts>, places: &Places) -> Page<Act> {
     let mut page = card_page(p, Card::Uninstall);
+    page.fresh_focus = true;
     page.title = format!("Uninstall {}?", p.name);
     if p.user_managed {
         page.paragraphs.push(format!("{} is a port you added yourself: the app never deletes its folder. Remove it in Desktop Mode if you want it gone.", p.name));

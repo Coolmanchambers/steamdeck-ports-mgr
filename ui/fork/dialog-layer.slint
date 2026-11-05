@@ -1,6 +1,8 @@
 // Fork: the main window's dim layer while a page or dialog is open (src/app/dialog_layer.rs). The app behind stays
 // readable through it; one line says what is open ("Settings is open") and the button brings it back. A, Return,
-// Space, Escape, a click or a tap anywhere on the layer all do the same: `pressed`.
+// Space, Escape, a click or a tap anywhere on the layer all do the same. The keys come out apart from the click
+// (`chosen`: Return, Space; `backed`: Escape; `clicked`), so the app can drop a key that is Steam's echo of a pad
+// press without ever dropping a click (src/fork/press_echo.rs). A held key's repeats do nothing.
 
 import { SemanticColors, Theme } from "../shared.slint";
 import { FocusLook, FocusRing } from "setup-wizard.slint";
@@ -8,7 +10,11 @@ import { FocusLook, FocusRing } from "setup-wizard.slint";
 export component DialogLayer inherits Rectangle {
     in property <string> text: "";
     in property <length> font-px: 14px;
-    callback pressed();
+    // What brings the page back, under the button (the keyboard's keys are named outside Game Mode).
+    in property <string> hint: "A or B, click or tap";
+    callback chosen();
+    callback backed();
+    callback clicked();
     // Gives the layer the keyboard (the main window's search box must not take typing meant for nothing).
     public function grab() { keys.focus(); }
 
@@ -18,8 +24,14 @@ export component DialogLayer inherits Rectangle {
     keys := FocusScope {
         focus-on-click: false;
         key-pressed(event) => {
-            if (event.text == Key.Return || event.text == " " || event.text == Key.Escape) {
-                root.pressed();
+            if (event.repeat) {
+                // A held key (Steam types a held A as repeated Returns): only its first press counts.
+                accept
+            } else if (event.text == Key.Return || event.text == " ") {
+                root.chosen();
+                accept
+            } else if (event.text == Key.Escape) {
+                root.backed();
                 accept
             } else {
                 // Arrows, letters: nothing here; above all, never the search box behind.
@@ -30,12 +42,12 @@ export component DialogLayer inherits Rectangle {
 
     // Above the key catcher, so every click and tap lands here (the card below has no touch area of its own).
     TouchArea {
-        clicked => { root.pressed(); }
+        clicked => { root.clicked(); }
     }
 
     // The note sits low on the screen, so the middle of the app behind can still be read.
     card := Rectangle {
-        width: min(root.width - root.pad * 2, max(line.preferred-width, button.width) + root.pad * 3);
+        width: min(root.width - root.pad * 2, max(line.preferred-width, button.width, hint.preferred-width) + root.pad * 3);
         height: line.preferred-height + button.height + hint.preferred-height + root.pad * 3;
         x: (root.width - self.width) / 2;
         y: max(root.pad, root.height * 0.72 - self.height / 2);
@@ -81,7 +93,7 @@ export component DialogLayer inherits Rectangle {
         }
 
         hint := Text {
-            text: "A or B, click or tap";
+            text: root.hint;
             color: Theme.list-text;
             font-size: root.font-px * 0.85;
             horizontal-alignment: center;

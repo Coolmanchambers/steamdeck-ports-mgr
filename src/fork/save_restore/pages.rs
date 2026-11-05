@@ -251,6 +251,7 @@ pub fn ask_page(f: &AskFacts) -> Page<RsAct> {
     p.options = vec![option("Yes, put them back", "Saves now go to Saves Backup > Restore Backups first", RsAct::Restore), option("No, keep my saves now", "Nothing changes", RsAct::Keep)];
     p.options[1].recommended = true;
     p.initial = Focus::Option(1);
+    p.fresh_focus = true;
     p.buttons = [None, None, None, None];
     p.b_does(&RsAct::Keep)
 }
@@ -411,6 +412,7 @@ mod tests {
         assert_eq!(p.facts, ["Internal storage > Dusk > saves"]);
         assert_eq!(p.options[0].detail, "Saves now go to Saves Backup > Restore Backups first");
         assert_eq!(action_at(&p, initial_focus(&p)), Some(RsAct::Keep));
+        assert!(p.fresh_focus, "starts on No every time, not where the last one was left");
         assert_eq!(p.back_hint, "No, keep my saves now");
         assert_eq!(ask_page(&AskFacts { when: "2026-10-21".into(), folders: vec!["x".into()], ..AskFacts::default() }).title, "Put back the saves from 2026-10-21?");
     }

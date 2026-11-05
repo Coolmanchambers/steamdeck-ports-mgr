@@ -198,8 +198,16 @@ fn empty_text(ui: &DeckReadyUi) -> String {
 }
 
 /// Recomputes the rows (filters, search, what the app has installed) and pushes them to the window,
-/// keeping the selection on the same entry when it is still shown.
+/// keeping the selection on the same entry when it is still shown. A rebuild (the background download, a search) that
+/// moves the selected row brings it into view; one that leaves it where it was does not touch the scroll.
 pub(crate) fn rebuild(app: &AppState) {
+    if rebuild_rows(app) {
+        scroll_to_selection(&app.window());
+    }
+}
+
+/// [`rebuild`] without the scroll: true when the selection is on another row number now.
+fn rebuild_rows(app: &AppState) -> bool {
     let ui = &app.deck_ready;
     let previous = ui.rows.borrow().get(ui.selected.get()).map(|r| r.id.clone());
     let rows = match ui.index.borrow().as_ref() {
@@ -222,8 +230,15 @@ pub(crate) fn rebuild(app: &AppState) {
     window.set_deck_ready_filters(view::filter_summary(&ui.filters.borrow()).into());
     window.set_deck_ready_empty_text(empty_text(ui).into());
     window.set_deck_ready_selected(if rows.is_empty() { -1 } else { selected as i32 });
+    let moved = selection_moved(ui.selected.get(), selected, rows.len());
     ui.selected.set(selected);
     *ui.rows.borrow_mut() = rows;
+    moved
+}
+
+/// True when a rebuild put the selection on another row number (the same port moved, or another port took over).
+fn selection_moved(before: usize, after: usize, rows: usize) -> bool {
+    rows > 0 && before != after
 }
 
 fn scroll_to_selection(window: &AppWindow) {
@@ -434,7 +449,8 @@ pub(crate) fn info_activate(d: &DeckReadyInfoDialog, index: i32) {
 /// The list behind follows a filter at once.
 fn refilter(app: &AppState) {
     app.deck_ready.selected.set(0);
-    rebuild(app);
+    // One scroll, always (two toggles of the trigger in one go would cancel out).
+    rebuild_rows(app);
     scroll_to_selection(&app.window());
 }
 
@@ -496,4 +512,30 @@ fn show_filters(app: &Rc<AppState>, router: &Router) {
         on_input: None,
     };
     show_page(app, router, page, handlers);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selection_moved;
+
+    #[test]
+    fn a_refresh_scrolls_only_when_the_selected_row_moved() {
+        assert!(selection_moved(3, 7, 20), "the download put rows above it: bring it into view");
+        assert!(selection_moved(12, 0, 5), "its port is gone: the first row, in view");
+        assert!(!selection_moved(4, 4, 20), "it stayed: the scroll is left alone");
+        assert!(!selection_moved(4, 0, 0), "nothing to show");
+    }
+
+    #[test]
+    fn the_keyboard_reaches_port_options_and_settings_like_x_and_y() {
+        let slint = include_str!("../../ui/app-window.slint");
+        let keys = &slint[slint.find("search-input := TextInput").expect("the search box's keys")..];
+        let line_of = |shortcut: &str| keys.lines().position(|l| l.contains(shortcut)).unwrap_or_else(|| panic!("no {shortcut}"));
+        let info = line_of("event.modifiers.control && event.text == \"i\"");
+        let settings = line_of("event.modifiers.control && event.text == \"p\"");
+        let lines: Vec<&str> = keys.lines().collect();
+        assert!(lines[info..info + 4].iter().any(|l| l.contains("root.info-requested()")), "Ctrl+I: Port options / Info");
+        assert!(lines[settings..settings + 4].iter().any(|l| l.contains("root.settings-requested()")), "Ctrl+P: Settings");
+        assert!(info < line_of("event.text == Key.UpArrow"), "before the Ctrl+W/A/S/D moves");
+    }
 }

@@ -295,6 +295,7 @@ fn the_card_pages_have_their_window_titles_and_safe_starting_places() {
     assert_eq!(action_at(&prog, initial_focus(&prog)), Some(Act::UseProgram(1)), "the cursor starts on the program in use");
     let un = uninstall_page(&p, None, None, &places);
     assert_eq!(action_at(&un, initial_focus(&un)), Some(Act::Back), "Keep it is where the cursor starts");
+    assert!(un.fresh_focus, "starts on Keep it every time, not where the last one was left");
     assert!(un.options.iter().any(|o| o.action == Act::UninstallYes && o.enabled));
     let own = uninstall_page(&PortFacts { user_managed: true, ..port() }, None, None, &places);
     assert!(own.options.iter().all(|o| o.action != Act::UninstallYes), "a port you added yourself is never deleted here");

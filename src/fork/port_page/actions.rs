@@ -176,6 +176,7 @@ pub fn extras_ask_page(name: &str) -> Page<Step> {
         recommended(option("No, leave it as it is", "Nothing is downloaded", Step::Back)),
     ];
     p.initial = Focus::Option(1);
+    p.fresh_focus = true;
     p.b_means("No")
 }
 
@@ -240,6 +241,7 @@ pub fn reset_ask_page(name: &str, played: &str) -> Page<Step> {
         recommended(option("No, keep it", "Nothing is changed", Step::Back)),
     ];
     p.initial = Focus::Option(1);
+    p.fresh_focus = true;
     p.b_means("No")
 }
 
@@ -389,6 +391,7 @@ mod tests {
         assert!(p.paragraphs[1].contains("replace any copies"));
         assert_eq!(p.options.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["Yes, install the extras", "No, leave it as it is"]);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(Step::Back), "replacing files is never the answer the cursor starts on");
+        assert!(p.fresh_focus, "starts on No every time, not where the last one was left");
         assert!(p.options[1].recommended && !p.options[0].recommended);
         assert_eq!(p.back_hint, "No");
     }
@@ -421,6 +424,7 @@ mod tests {
         assert_eq!(p.paragraphs, ["The play time is 2.1 h now for Dusklight. This cannot be undone."]);
         assert_eq!(p.options.iter().map(|o| (o.title.as_str(), o.action)).collect::<Vec<_>>(), [("Yes, reset it", Step::Yes), ("No, keep it", Step::Back)]);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(Step::Back));
+        assert!(p.fresh_focus, "starts on No every time, not where the last one was left");
         let long = reset_ask_page(NAMES[3], "2.1 h");
         assert_eq!(long.title, "Reset the play time?");
         assert!(long.paragraphs[0].contains(NAMES[3]), "the name is always in the text");
