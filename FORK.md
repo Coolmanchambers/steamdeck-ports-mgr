@@ -361,6 +361,63 @@ Files added by this fork:
 | 2026-11-04 | `ui/dialogs/chrome.slint`, `ui/dialogs/picker.slint`, `ui/dialogs/info.slint` | Navigation safety re-check: the dialogs' key handlers (`DialogNavKeyHandler`, the picker's search box, Info's `handle-nav-key`) ignore a repeated Return or Escape, so a held key that reaches an upstream dialog after the close guard acts only once (one guard each) |
 | 2026-11-04 | `README.md`, `STEAM_DECK.md` | Navigation safety: the keyboard table and the Home help name Ctrl+I (Info) and Ctrl+P (Settings) |
 | 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Navigation safety: the cursor is remembered and kept by item, an option by its title (`page::Place`, `place_at`, `find_place`); `PageHandle::update` and `starting_focus` find it again by title or start where the page says, never on another option that took its number |
+| 2026-11-04 | `src/core/installer.rs` | Data safety: the merge is `fork::update_merge::merge` (the user's files stay, replaced archives are kept, a failure puts everything back); `merge_into` and `extract` become test-only wrappers of it, `extract_guarded` and `guard_for` are new, `remove_existing` / `is_real_dir` get `#[allow(dead_code)]`; `install_extra` takes `saves_backup_dir`; new `port_dir` (never the Library itself) used by `install_port`, `install_extra`, `uninstall_port_keeping` and `is_installed`; `flatten_single_wrapper_folder` and `collect_files` fail on an unreadable entry instead of dropping it; tests |
+| 2026-11-04 | `src/core/save_backup.rs` | Data safety: `restore_after_install` moves what is at the save's place to Replaced by restore first (was deleted) and never replaces the game folder itself; `preserve_before_uninstall` renames an earlier kept copy to `<field>.<time>` (was deleted) and does not copy a save folder that leads through a link somewhere too broad; `zip_staging_dir` writes `<name>.zip.part` and renames it when complete; `run_global_backup` picks a free name (`<date>-2.zip`); the old same-day test now expects both files; tests |
+| 2026-11-04 | `src/core/jobs.rs` | Data safety: `run_extra_install` passes `saves_backup_dir` on to `install_extra` |
+| 2026-11-04 | `src/core/models.rs` | Data safety: `port_from_value` refuses a folder name that is empty or only `.`; test |
+| 2026-11-04 | `src/core/files.rs` | Data safety: `write_atomic` syncs the file before the rename and its folder after it; new `write_atomic_unsynced` for caches; test |
+| 2026-11-04 | `src/core/image_cache.rs` | Data safety: catalog images are written with `write_atomic_unsynced` (a cache) |
+
+## Data safety (2026-11-04 review)
+
+Section 1 of the full review of main `68a0677` (`docs/reviews/full-review-2026-11-04.md` in the project folder): places
+where the app could delete or overwrite saves, `.o2r` files, ROMs, keys or dumps, or lose a backup. D10 (moves to
+exFAT / FAT) was rejected in the review and is not changed.
+
+**Updates and extras keep the user's files (W2 / D1, decision 4; `src/fork/update_merge.rs`).** Before each file of a
+release goes into a port folder, what sits at the same place is looked at. The user's own data stays where it is and
+the release's copy goes to `.previous/<time>/<path>` in the port folder: a file under the port's save folder, a game
+file connected into the folder (`rom_library.json`) or named by its entry (including the generated `oot.o2r` /
+`mm.o2r`), and anything Kept files calls a ROM, key, dump or save file. An `.o2r` / `.otr` the release ships itself
+(`soh.o2r`) is updated: the old one goes to `<Saves Backup>/Replaced by update/<port folder>/<time>/<path>` first. A
+folder a release file replaces goes there too. A file with the same bytes is left alone. Program files are replaced
+as before. An update is never refused for a clash. The install wizard's Done page (or the update note) and the
+extras' result page say it in one line, for example "Kept your files: 2 files in the update had the same name as
+yours; yours are still in place." The extras' question adds "Your saves, game files, keys and dumps are never
+replaced". Limit: a release file named like a dump (`*boot*.bin`, `*bios*.bin`) that the user's folder already holds
+in another version stays the old one; the new one is in `.previous/`.
+
+**The merge rolls back (D7, F-D2, F-D3).** Replaced program files wait in `<Library>/_displaced_XXXXXX/` and are
+removed only once the whole release is in; any failure part way moves every file back (the release's files back to
+the staging folder) and says so. Files that could not go back are named and their folder kept. A release entry that
+cannot be read fails the install (it was skipped). A subfolder the user replaced with a link stays a link; the
+release's files go through it.
+
+**Restore and uninstall (D6, F-W1, D3, D4, W4, F-D1).** Putting kept saves back after a reinstall moves what is at
+the save's place to `<Saves Backup>/Replaced by restore/<port folder>/<time>/<field>` first (it was deleted); a "save
+folder" that is the game folder itself is never replaced. A second uninstall renames an earlier Pending Restore copy
+to `<field>.<time>` (it was deleted). Uninstall keeps save files by name (`.sav`, `.srm`, `.sl2`, `.dsv`, `.mcr`,
+`.gci`, or a name starting `save`) in Kept files, as "save file"; whole folders are still not kept (O1 ruling). A
+folder that cannot be read, or nested deeper than 32 levels, cancels the uninstall with "nothing was deleted" (the
+Uninstall page says so and disables the button). "Put your kept files back" writes every file as `<name>.dpm-restore`
+and renames it in. A save folder that leads through a link to a folder far too broad (`save_restore::folder_problem`)
+is not copied at uninstall; only the link goes. The Uninstall page says "saves are backed up" only when a save
+folder inside the port folder has files.
+
+**Backups (W1 / D5).** Back up saves names a second zip of the day `<date>-2.zip` (the first is never replaced) and
+every zip (this one and the pre-update one) is written as `<name>.zip.part` and renamed when complete; a failure
+removes the part file. Every reader looks for `.zip` only, so a part file is never taken for a backup; a
+`<date>-2.zip` still sorts and dates by its name in the cloud view.
+
+**Library guard (D2).** `installer::port_dir` refuses a folder name that is the Library itself (empty, `.`,
+`sub/..`) for install, extras, uninstall and "is installed"; the catalog parser refuses an empty or `.` folder.
+
+**Robustness (W5, D8, D9, D11).** A moved copy carries `.dpm-moved-from` until its move is recorded; a later move plan
+treats such a copy as stale (never "already there") and leaves it alone with a message. State files are synced
+before and after the rename; image caches are not. The Steam changes list is read, changed and written under one
+lock. The app updater stages both new files, syncs, swaps, and on a failure or INT/TERM/HUP during the swap puts the
+previous program back from `.previous/` (written beside the file, then renamed); BUILD_INFO is replaced the same way
+and only warned about.
 
 ## Theme quick wins (Codex review of 2026-11-02, section A)
 
@@ -1513,8 +1570,10 @@ before the folder goes, these are moved to `<Saves Backup>/Kept files/<port fold
 `.gdi`, `.toc`) and the tracks they name; keys (`*.keys`); BIOS, boot and flash dumps (`*bios*`, `*boot*`, `*flash*`,
 `scph*`, `sega_*`, `mpr-*`, `panafz*`, `*neogeo*`, `*kick*`); any other generic data file (`bin`, `img`, `zip`, `7z`, `dat`,
 `swf`, `md`) of 256 KB or more, as "maybe game data"; the
-`.previous/` folder of older versions. Links are never followed: removing the folder removes a link, not its target. A
-record of connected game files that cannot be read stops the uninstall before anything moves. A move that fails puts back
+`.previous/` folder of older versions; save files by name (`.sav`, `.srm`, `.sl2`, `.dsv`, `.mcr`, `.gci`, `save*`;
+data safety, 2026-11-04). Links are never followed: removing the folder removes a link, not its target. A
+record of connected game files that cannot be read, or a folder that cannot be read (or is nested deeper than 32
+levels), stops the uninstall before anything moves. A move that fails puts back
 what had moved (a half-made copy across drives is removed first) and cancels the uninstall with nothing deleted.
 
 Every uninstall entry (the Port page's card, the All ports row's Uninstall button through `open_uninstall_confirm_dialog`)
