@@ -228,11 +228,13 @@ fn the_report_is_taken_once_per_port_folder() {
     record(&dir, MergeReport::default());
     assert_eq!(take(&dir), None, "no stale line from an earlier merge");
     let s3 = MergeReport { saves_set_aside: Some(PathBuf::from("/b/Replaced by restore/game/stamp")), saves_put_back: true, ..MergeReport::default() };
-    assert_eq!(s3.line("update", &|p: &Path| p.display().to_string()).as_deref(), Some("Saves kept from an earlier uninstall were put back; the saves that were there were moved to /b/Replaced by restore/game first."));
+    // Places are built with `join`, so Windows puts backslashes in them; the test reads them with forward slashes.
+    let place = |p: &Path| p.display().to_string().replace('\\', "/");
+    assert_eq!(s3.line("update", &place).as_deref(), Some("Saves kept from an earlier uninstall were put back; the saves that were there were moved to /b/Replaced by restore/game first."));
     // Recheck 1: when the kept copy could not go back, the line never says it did.
     let failed = MergeReport { saves_put_back: false, ..s3 };
     assert_eq!(
-        failed.line("update", &|p: &Path| p.display().to_string()).as_deref(),
+        failed.line("update", &place).as_deref(),
         Some("Saves kept from an earlier uninstall could not be put back; they stay in /b/Pending Restore/game. The saves that were there were moved to /b/Replaced by restore/game.")
     );
     record(&dir, MergeReport { kept_yours: vec!["a.sav".into()], ..MergeReport::default() });
