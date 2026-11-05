@@ -453,6 +453,8 @@ fn gather(i: DiskInput) -> (DiskFacts, super::checkup_screen::PortSys) {
         .flatten()
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        // Data safety review: a release's copies of the user's files are not an older version.
+        .filter(|e| !e.file_name().to_string_lossy().starts_with(crate::fork::update_merge::UPDATE_COPIES))
         .map(|e| (e.file_name().to_string_lossy().into_owned(), crate::fork::save_restore::tree_size_capped(&e.path(), u64::MAX / 2, 50_000).0))
         .collect();
     previous.sort();

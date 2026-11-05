@@ -563,7 +563,8 @@ fn replace_stale(stale: &PortToMove, record: Option<&OldCopy>, port: Option<&Por
     let Some(port) = port else { return Err("it is not in the catalog any more, so its saves cannot be found; remove that old copy by hand".into()) };
     // Data safety review W5: a copy from a move that was cut short is never used, and never removed for the user.
     if record.is_none() && port_mover::unrecorded_copy(&stale.to) {
-        return Err(format!("{} is a copy from a move that was cut short, so it is left alone; remove it yourself (Desktop Mode), then move again", stale.to.display()));
+        eprintln!("ports folder: {} is a copy from a move that stopped part way; left alone", stale.to.display());
+        return Err("from a move that stopped part way; delete it in Desktop Mode, then try again".to_string());
     }
     let Some(record) = record else { return Err(format!("{} is no longer listed as an old copy, so it is left alone", stale.to.display())) };
     // The same guards as removing an old copy: protected folders, a game running from it, newer saves.

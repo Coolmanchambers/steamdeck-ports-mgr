@@ -29,7 +29,7 @@ fn home_dir() -> Option<PathBuf> {
 /// started the update) the text is saved for later instead, when it needs attention, and `None` returned.
 pub(crate) fn after_install(app: &Rc<AppState>, key: &str, tag: Option<&str>, launching: bool) -> Option<String> {
     let port = app.find_port(key)?;
-    let game_dir = crate::core::path_safety::safe_join(&app.paths.library_dir(), &port.folder).ok()?;
+    let game_dir = crate::core::installer::port_dir(&app.paths.library_dir(), &port.folder).ok()?; // data safety: never the Library
     let favorite = app.state.borrow().get(key).and_then(|i| i.favorite_exe.clone());
     let home = home_dir();
     let settings = ForkSettings::load(&app.paths.config_dir.join(FILE_NAME));

@@ -50,7 +50,7 @@ pub const UNREADABLE_RECORD: &str = "The game files record could not be read; no
 
 /// D4: part of the port folder could not be looked through, so nobody can say what in it is a game file.
 pub fn unreadable_folder(rel: &Path) -> String {
-    let place = if rel.as_os_str().is_empty() { "Its folder".to_string() } else { format!("The folder {} inside it", rel.display()) };
+    let place = if rel.as_os_str().is_empty() { "Its folder".to_string() } else { format!("The folder \"{}\" inside it", rel.display()) };
     format!("{place} could not be read all the way through; nothing was deleted.")
 }
 
@@ -166,7 +166,13 @@ impl KeepSummary {
 }
 
 fn versions_in(previous: &Path) -> usize {
-    fs::read_dir(previous).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).count()
+    // A release's copies of the user's files (`update_merge::UPDATE_COPIES`) are not an older version.
+    fs::read_dir(previous)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with(crate::fork::update_merge::UPDATE_COPIES))
+        .count()
 }
 
 /// The Kept files folder: `<Saves Backup>/Kept files`.
@@ -256,8 +262,28 @@ pub fn plan(port: &Port, dir: &Path, config_dir: Option<&Path>) -> Result<Vec<Ke
     Ok(out)
 }
 
+/// The cue sheets in `dir` (the update's check of one file, review C3).
+pub(crate) fn sheets_in(dir: &Path) -> Sheets {
+    let files: Vec<(String, PathBuf, u64)> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| (e.file_name().to_string_lossy().to_lowercase(), e.path(), e.metadata().map_or(0, |m| m.len())))
+        .filter(|(name, _, _)| SHEETS.contains(&ext_of(name)))
+        .collect();
+    Sheets::read(&files)
+}
+
+/// For an update only (review S1): a lowercase name `classify` calls a save that is surely one: a save extension, or a
+/// `save` name on generic data or with no extension. `save_icon.png` is a program file a release must update.
+pub(crate) fn save_like_for_update(name: &str) -> bool {
+    let ext = if name.contains('.') { ext_of(name) } else { "" };
+    SAVE_EXTS.contains(&ext) || (name.starts_with("save") && (ext.is_empty() || GENERIC.contains(&ext)))
+}
+
 /// What the cue sheets in one folder name: their lowercase text and stems.
-struct Sheets {
+pub(crate) struct Sheets {
     texts: Vec<String>,
     stems: Vec<String>,
 }
@@ -277,7 +303,7 @@ impl Sheets {
     }
 
     /// The sheet's text has the file's name (`FILE "Game (Track 1).bin" BINARY`), or the file shares the sheet's stem.
-    fn names(&self, name: &str) -> bool {
+    pub(crate) fn names(&self, name: &str) -> bool {
         self.texts.iter().any(|t| t.contains(name)) || self.stems.iter().any(|s| s == stem_of(name))
     }
 }
@@ -373,6 +399,11 @@ pub fn copy_then_remove(from: &Path, to: &Path) -> io::Result<()> {
         }
         return Err(e);
     }
+    // Review C5: the copy is on the disk (its files synced in `copy_tree`, its folder here) before the original goes.
+    #[cfg(unix)]
+    if let Some(dir) = to.parent().and_then(|d| fs::File::open(d).ok()) {
+        let _ = dir.sync_all();
+    }
     remove_copy(from)
 }
 
@@ -396,7 +427,11 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
         }
         return Ok(());
     }
-    fs::copy(from, to).map(|_| ())
+    fs::copy(from, to)?;
+    // Review C5: on the disk before the original is removed.
+    #[cfg(unix)]
+    fs::File::open(to)?.sync_all()?;
+    Ok(())
 }
 
 fn tree_bytes(path: &Path) -> io::Result<u64> {
@@ -734,6 +769,11 @@ pub fn restore_kept(set: &KeptSet, steps: &[RestoreStep], port_dir: &Path, backu
         // real name (W4: the new-file case wrote straight to the final name).
         let staged = to.with_file_name(format!("{}.dpm-restore", to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
         let put = |staged: &Path| {
+            // A leftover at the staged name (a killed run's half file, or a link) is removed first, so the copy never
+            // writes through a link into the user's files (removing a link never touches its target).
+            if fs::symlink_metadata(staged).is_ok_and(|m| m.is_file() || m.file_type().is_symlink()) {
+                fs::remove_file(staged)?;
+            }
             copy_checked(&from, staged).and_then(|()| fs::rename(staged, &to)).map_err(|e| {
                 let _ = fs::remove_file(staged);
                 e
@@ -1337,6 +1377,24 @@ mod restore_tests {
         restore_kept(&set, &[step], &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
         assert_eq!(fs::read(port.join("oot.o2r")).unwrap(), b"ARCHIVE");
         assert!(!port.join("oot.o2r.dpm-restore").exists());
+    }
+
+    // Review C1: a link left at the staged name is removed (never written through to its target).
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_the_staged_name_is_never_written_through() {
+        let tmp = tempfile::tempdir().unwrap();
+        kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        let port = tmp.path().join("Ports/soh");
+        let mine = tmp.path().join("mine.bin");
+        write(&mine, b"THE USER'S FILE");
+        fs::create_dir_all(&port).unwrap();
+        std::os::unix::fs::symlink(&mine, port.join("oot.o2r.dpm-restore")).unwrap();
+        let steps: Vec<_> = restore_plan(&set, &port).steps.into_iter().filter(|s| s.rel == Path::new("oot.o2r")).collect();
+        restore_kept(&set, &steps, &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
+        assert_eq!(fs::read(&mine).unwrap(), b"THE USER'S FILE");
+        assert_eq!(fs::read(port.join("oot.o2r")).unwrap(), b"ARCHIVE");
     }
 
     #[cfg(unix)]

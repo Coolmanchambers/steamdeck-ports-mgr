@@ -58,14 +58,23 @@ TMP_DIR="$(mktemp -d)" || fail "could not create a temporary folder"
 # (written beside the file, then renamed over it), and a file that was not there before is removed again.
 HAD=""
 SWAPPING=""
-rollback_program() {
+rollback_program() { # returns 1 when any file could not be put back (review C9)
+    rb=0
     for g in ports_launcher 7zzs; do
         rm -f "./.$g.new"
         case " $HAD " in
-            *" $g "*) cp -p ".previous/$g" "./.$g.restore" && mv -f "./.$g.restore" "./$g" ;;
-            *) rm -f "./$g" ;;
+            *" $g "*) { cp -p ".previous/$g" "./.$g.restore" && mv -f "./.$g.restore" "./$g"; } || rb=1 ;;
+            *) rm -f "./$g" || rb=1 ;;
         esac
     done
+    return $rb
+}
+rolled_back() { # $1 = what happened; says whether the previous version is back
+    if rollback_program; then
+        fail "$1, restored the previous version"
+    else
+        fail "$1, and the previous version could not be fully put back: copies of it are in .previous/"
+    fi
 }
 cleanup() {
     rm -f "./.ports_launcher.new" "./.7zzs.new" "./.ports_launcher.restore" "./.7zzs.restore"
@@ -73,9 +82,8 @@ cleanup() {
 }
 on_signal() {
     if [ -n "$SWAPPING" ]; then
-        rollback_program
         SWAPPING=""
-        fail "the update was stopped part way, restored the previous version"
+        rolled_back "the update was stopped part way"
     fi
     exit 130
 }
@@ -124,9 +132,8 @@ sync 2>/dev/null
 SWAPPING=1
 for f in ports_launcher 7zzs; do
     if ! mv -f "./.$f.new" "./$f"; then
-        rollback_program
         SWAPPING=""
-        fail "could not install $f, restored the previous version"
+        rolled_back "could not install $f"
     fi
 done
 SWAPPING=""

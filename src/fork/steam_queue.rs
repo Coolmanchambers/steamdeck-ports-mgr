@@ -599,6 +599,13 @@ fn queue_lock() -> std::sync::MutexGuard<'static, ()> {
     QUEUE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// `save` under the queue's lock, for the pages that write a changed list (review C7). The locked functions never call
+/// each other, so this cannot wait on itself.
+pub fn save_locked(path: &Path, queue: &SteamQueue) -> io::Result<()> {
+    let _held = queue_lock();
+    save(path, queue)
+}
+
 pub fn queue_changes(path: &Path, changes: Vec<QueuedChange>, game_mode: bool) -> Result<String, String> {
     if changes.is_empty() {
         return Err("Nothing is selected.".into());

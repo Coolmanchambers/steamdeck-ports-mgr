@@ -16,7 +16,7 @@ fn port(folder: &str) -> Port {
 
 fn guard(tmp: &Path, folder: &str) -> Guard {
     let dest = tmp.join("Library").join(folder);
-    Guard::protecting(Protect::for_port(&port(folder), &dest, None), &tmp.join("Saves Backup"), folder, &tmp.join("Library"), "2026-11-04_10-00-00")
+    Guard::protecting(Protect::for_port(&port(folder), &dest, None).unwrap(),&tmp.join("Saves Backup"), folder, &tmp.join("Library"), "2026-11-04_10-00-00")
 }
 
 fn plain_move(from: &Path, to: &Path) -> io::Result<()> {
@@ -53,7 +53,7 @@ fn a_merge_that_fails_part_way_puts_everything_back() {
         assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
     }
     assert!(!dest.join("sub").exists() && !dest.join("z.bin").exists(), "nothing of the release is left in the port folder");
-    assert!(!dest.join(PREVIOUS).join("2026-11-04_10-00-00").exists());
+    assert!(!dest.join(PREVIOUS).join("update-copies-2026-11-04_10-00-00").exists());
     assert!(fs::read_dir(tmp.path().join("Library")).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().starts_with("_displaced_")));
     assert_eq!(read(&src.join("a.bin")), "new a", "the release's files are back in the staging folder");
 }
@@ -133,11 +133,88 @@ fn the_plain_guard_replaces_everything() {
     assert!(report.is_empty());
 }
 
+// Review S1: a release's own `save*` program files are updated; a save extension or a `save` name on generic data is
+// still the user's. Review C3: a track a cue sheet names is the user's too.
+#[test]
+fn only_real_save_files_and_named_tracks_stay_the_users() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("Library").join("game");
+    let src = tmp.path().join("release");
+    for (name, mine, theirs) in [
+        ("save_icon.png", "old icon", "new icon"),
+        ("savemanager.lua", "old script", "new script"),
+        ("savegame.dat", "my save", "release save"),
+        ("slot.srm", "my srm", "release srm"),
+        ("SAVE1", "my save1", "release save1"),
+        ("disc/Game (Track 2).bin", "my track", "release track"),
+    ] {
+        put(&dest.join(name), mine.as_bytes());
+        put(&src.join(name), theirs.as_bytes());
+    }
+    put(&dest.join("disc/Game.cue"), b"FILE \"Game (Track 2).bin\" BINARY\n");
+    let report = merge(&src, &dest, &guard(tmp.path(), "game"), &mut plain_move).unwrap();
+    assert_eq!(read(&dest.join("save_icon.png")), "new icon");
+    assert_eq!(read(&dest.join("savemanager.lua")), "new script");
+    assert_eq!(read(&dest.join("savegame.dat")), "my save");
+    assert_eq!(read(&dest.join("slot.srm")), "my srm");
+    assert_eq!(read(&dest.join("SAVE1")), "my save1");
+    assert_eq!(read(&dest.join("disc/Game (Track 2).bin")), "my track");
+    let mut kept: Vec<String> = report.kept_yours.iter().map(|p| p.to_string_lossy().replace('\\', "/")).collect();
+    kept.sort();
+    assert_eq!(kept, ["SAVE1", "disc/Game (Track 2).bin", "savegame.dat", "slot.srm"]);
+}
+
+// Review C4: with a save folder that is the whole port folder, every file a release replaces is kept, not deleted.
+#[test]
+fn with_the_whole_folder_as_save_folder_every_replaced_file_is_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("Library").join("game");
+    let src = tmp.path().join("release");
+    put(&dest.join("progress.dat"), b"my progress");
+    put(&src.join("progress.dat"), b"release default");
+    let port = port_from_value(&serde_json::json!({"name": "n", "folder": "game", "source": "https://example.com/x.zip", "save": "."})).unwrap();
+    let g = Guard::protecting(Protect::for_port(&port, &dest, None).unwrap(), &tmp.path().join("Saves Backup"), "game", &tmp.path().join("Library"), "s");
+    let report = merge(&src, &dest, &g, &mut plain_move).unwrap();
+    assert_eq!(read(&dest.join("progress.dat")), "release default");
+    assert_eq!(read(&tmp.path().join("Saves Backup").join(REPLACED_BY_UPDATE).join("game").join("s").join("progress.dat")), "my progress");
+    assert_eq!(report.replaced, [PathBuf::from("progress.dat")]);
+}
+
+// Review C2: an unreadable record of connected game files refuses the guard (the install stops before anything changes).
+#[test]
+fn an_unreadable_record_refuses_the_guard() {
+    let tmp = tempfile::tempdir().unwrap();
+    put(&tmp.path().join("rom_library.json"), b"{ damaged");
+    assert!(Protect::for_port(&port("game"), &tmp.path().join("game"), Some(tmp.path())).is_err());
+}
+
+// Review C6: a move that fails after its copy landed is undone too (or named as stuck), never left behind.
+#[test]
+fn a_move_that_fails_after_landing_is_undone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("Library").join("game");
+    let src = tmp.path().join("release");
+    put(&src.join("new.bin"), b"new");
+    let mut mover = |from: &Path, to: &Path| -> io::Result<()> {
+        fs::rename(from, to)?;
+        Err(io::Error::other("failed after the rename"))
+    };
+    assert!(merge(&src, &dest, &guard(tmp.path(), "game"), &mut mover).is_err());
+    assert!(!dest.join("new.bin").exists(), "the landed file was moved back");
+    assert_eq!(read(&src.join("new.bin")), "new");
+}
+
 #[test]
 fn the_report_is_taken_once_per_port_folder() {
     let dir = PathBuf::from("/nowhere/take-once");
     record(&dir, MergeReport::default());
     assert_eq!(take(&dir), None, "an empty report is not recorded");
+    // Review S2: a newer merge with nothing to say clears an older merge's report.
+    record(&dir, MergeReport { kept_yours: vec!["old.sav".into()], ..MergeReport::default() });
+    record(&dir, MergeReport::default());
+    assert_eq!(take(&dir), None, "no stale line from an earlier merge");
+    let s3 = MergeReport { saves_set_aside: Some(PathBuf::from("/b/Replaced by restore/game/stamp")), ..MergeReport::default() };
+    assert_eq!(s3.line("update", &|p: &Path| p.display().to_string()).as_deref(), Some("Saves kept from an earlier uninstall were put back; the saves that were there were moved to /b/Replaced by restore/game first."));
     record(&dir, MergeReport { kept_yours: vec!["a.sav".into()], ..MergeReport::default() });
     assert_eq!(take(&dir).map(|r| r.kept_yours.len()), Some(1));
     assert_eq!(take(&dir), None);

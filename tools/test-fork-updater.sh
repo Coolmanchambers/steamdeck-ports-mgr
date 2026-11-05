@@ -113,7 +113,15 @@ rm -rf "$T/rel"; mkdir -p "$T/rel"; run_updater
 check "app reopened once it had finished closing" '[ "$(count_app)" = 1 ]'
 check "update-failed.txt explains" 'grep -q "download failed" "$T/app/update-failed.txt"'
 
-echo "== last log lines (case 5)"; tail -2 "$T/app/updater.log"
+echo "== 6. the swap fails half way (7zzs cannot be replaced), app already quit"
+# A read-only folder where 7zzs should be: mv can neither replace it nor move the file into it.
+make_app quit; rm -f "$T/app/7zzs"; mkdir -p "$T/app/7zzs/blocker"; chmod 555 "$T/app/7zzs"; make_release good; run_updater
+check "previous ports_launcher put back and reopened" 'cmp -s "$T/app/ports_launcher" "$T/bin/old" && [ "$(count_app)" = 1 ]'
+check "update-failed.txt explains" 'grep -q "could not install 7zzs" "$T/app/update-failed.txt"'
+check "no staged file left" '[ ! -e "$T/app/.ports_launcher.new" ] && [ ! -e "$T/app/.7zzs.new" ] && [ -d "$T/app/7zzs/blocker" ]'
+chmod 755 "$T/app/7zzs"
+
+echo "== last log lines (case 6)"; tail -2 "$T/app/updater.log"
 stop_all; rm -rf "$T"
 echo "RESULT: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

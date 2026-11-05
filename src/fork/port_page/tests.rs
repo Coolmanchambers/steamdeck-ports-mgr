@@ -389,6 +389,11 @@ fn the_uninstall_confirm_page_says_what_is_kept_and_where() {
     assert!(p.iter().any(|l| l.contains("are copied to Saves Backup first")), "{p:?}");
     let outside = SavesFacts { folders: vec![SaveFolder { path: "/home/deck/.local/share/soh".into(), source: SaveSource::Catalog, exists: true, files: 2, capped: false }], ..SavesFacts::default() };
     assert!(!uninstall_page(&port(), Some(&f), Some(&outside), &places).paragraphs[0].contains("saves are backed up"), "a save folder elsewhere is not copied");
+    // QA 4: with no Linux save folder known, the page says save files by name still go to Kept files (no contradiction).
+    let unknown = SavesFacts { unknown_on_linux: true, ..SavesFacts::default() };
+    let page = uninstall_page(&port(), Some(&f), Some(&unknown), &places);
+    assert!(page.facts.iter().any(|l| l.starts_with("No save folder is known for this port on Linux") && l.contains("go to Kept files")), "{:?}", page.facts);
+    assert!(!page.facts.iter().chain(&page.paragraphs).any(|l| l.contains("Saves are not kept")));
 
     let plain = uninstall_page(&port(), Some(&FilesFacts { dir: "/home/deck/Ports/dusk".into(), ..FilesFacts::default() }), Some(&saves), &places);
     assert!(plain.facts.iter().all(|l| !l.contains("Kept files")));

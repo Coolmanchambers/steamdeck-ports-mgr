@@ -828,7 +828,7 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
                 if record_blocked {
                     page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything until the record can be read. To go on, fix or remove rom_library.json in the app's config folder (Desktop Mode)."));
                 } else {
-                    page.fact(Mark::Problem, format!("{why} Uninstall stops before deleting anything while part of its folder cannot be read. Check the folder in Desktop Mode."));
+                    page.fact(Mark::Problem, format!("{} Check it in Desktop Mode.", why.replace("; nothing was deleted.", ", so Uninstall stops before deleting anything.")));
                 }
             } else if let Some(what) = &keeps {
                 let mut line = format!("{what} will be moved to Kept files");
@@ -851,7 +851,8 @@ pub fn uninstall_page(p: &PortFacts, files: Option<&FilesFacts>, saves: Option<&
         None => page.paragraphs.push("Its folder is deleted. Game files, keys and older versions in it are moved to Kept files first.".into()),
     }
     if !saves_kept {
-        page.fact(Mark::Problem, "Saves are not kept: no Linux save folder is known for this port. Copy any save inside its folder yourself first.");
+        // Fork (data safety review, QA 4): save files kept by name go to Kept files even here, so "not kept" was wrong.
+        page.fact(Mark::Problem, "No save folder is known for this port on Linux, so no save folder is copied first. Save files it holds by name (.sav, .srm and the like) go to Kept files; anything else, copy it yourself first.");
     } else if saves_inside == Some(false) {
         page.paragraphs.push("No saves were found inside its folder, so none are copied first. Save files it holds by name (.sav, .srm and the like) go to Kept files. Saves kept elsewhere are not touched.".into());
     } else {

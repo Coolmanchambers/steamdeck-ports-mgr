@@ -96,49 +96,50 @@ fn holds_anything(dir: &Path) -> bool {
 
 // Fork (data safety, D6): before a kept copy goes back, what is at the save's place now (the live saves, or files the
 // release put there) is moved to `<Saves Backup>/Replaced by restore/<folder>/<time>/<field>`, never deleted. A folder
-// with nothing but empty folders in it is just removed. False when it could not be moved: then nothing is restored.
-fn move_live_aside(dst: &Path, saves_backup_dir: &Path, folder_name: &str, field: &str) -> bool {
-    let Ok(meta) = fs::symlink_metadata(dst) else { return true };
+// with nothing but empty folders in it is just removed. `Err` when it could not be moved: then nothing is restored.
+// `Ok(Some(folder))`: the time-named folder that now holds what was there (review S3: the Done page says so).
+fn move_live_aside(dst: &Path, saves_backup_dir: &Path, folder_name: &str, field: &str) -> Result<Option<PathBuf>, ()> {
+    let Ok(meta) = fs::symlink_metadata(dst) else { return Ok(None) };
     if meta.is_dir() && !holds_anything(dst) {
-        return fs::remove_dir_all(dst).is_ok();
+        return fs::remove_dir_all(dst).map(|()| None).map_err(|_| ());
     }
     let base = crate::fork::uninstall_keep::replaced_dir_for(saves_backup_dir, folder_name);
     if !is_within(&base, saves_backup_dir) {
-        return false;
+        return Err(());
     }
-    let stamp_dir = crate::fork::uninstall_keep::unused_stamp_dir(&base, &crate::fork::update_merge::stamp()).join(field);
-    let to = if meta.is_dir() { stamp_dir } else { stamp_dir.join(dst.file_name().unwrap_or_default()) };
+    let stamp_dir = crate::fork::uninstall_keep::unused_stamp_dir(&base, &crate::fork::update_merge::stamp());
+    let to = if meta.is_dir() { stamp_dir.join(field) } else { stamp_dir.join(field).join(dst.file_name().unwrap_or_default()) };
     match crate::fork::uninstall_keep::move_path(dst, &to) {
         Ok(()) => {
             eprintln!("save restore: moved what was at {} to {} before putting the kept saves back", dst.display(), to.display());
-            true
+            Ok(Some(stamp_dir))
         }
         Err(e) => {
             eprintln!("save restore: could not move {} aside ({e}); the kept saves stay kept", dst.display());
-            false
+            Err(())
         }
     }
 }
 
-fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, dest_dir: &Path, folder_name: &str, field: &str) {
+fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, dest_dir: &Path, folder_name: &str, field: &str) -> Option<PathBuf> {
     let src = pending_restore_dir(saves_backup_dir, folder_name, field);
     if !is_within(&src, saves_backup_dir) || !src.exists() {
-        return;
+        return None;
     }
     // Fork: with no folder to restore into (no save field, or no known Linux location) the kept copy stays;
     // upstream deleted it here, losing the only copy of the saves.
     let Some(dst) = save_folder.and_then(|v| resolve_save_folder(v, dest_dir)) else {
         eprintln!("save restore: no save folder for {field} of {folder_name} here; kept {}", src.display());
-        return;
+        return None;
     };
     if !is_within(&dst, dest_dir) {
-        return;
+        return None;
     }
     // Fork (data safety, D6): a "save folder" that is the game folder itself ("save": ".") is never replaced: that would
     // replace the program just installed. The kept copy stays in Pending Restore.
     if is_within(dest_dir, &dst) {
         eprintln!("save restore: the save folder of {folder_name} is the game folder itself; kept {}", src.display());
-        return;
+        return None;
     }
     // Upstream (2026-10-30): a save that is a single file (`game.sav`) was kept as `<pending>/<name>` and goes
     // back to its place without touching the rest of the game folder. Fork: only when that file is all the kept
@@ -146,15 +147,16 @@ fn restore_after_install(save_folder: Option<&Value>, saves_backup_dir: &Path, d
     let only_entry = fs::read_dir(&src).map(|d| d.count() == 1).unwrap_or(false);
     let saved_file = dst.file_name().map(|name| src.join(name)).filter(|f| only_entry && f.is_file() && !dst.is_dir());
     // Fork (data safety, D6): what is at the place now is moved aside first, never deleted (upstream removed it).
-    let restored = move_live_aside(&dst, saves_backup_dir, folder_name, field)
-        && match saved_file {
-            Some(saved_file) => dst.parent().is_some_and(|parent| fs::create_dir_all(parent).is_ok()) && fs::copy(&saved_file, &dst).is_ok(),
-            None => copy_non_empty(&src, &dst).is_ok(),
-        };
+    let Ok(aside) = move_live_aside(&dst, saves_backup_dir, folder_name, field) else { return None };
+    let restored = match saved_file {
+        Some(saved_file) => dst.parent().is_some_and(|parent| fs::create_dir_all(parent).is_ok()) && fs::copy(&saved_file, &dst).is_ok(),
+        None => copy_non_empty(&src, &dst).is_ok(),
+    };
     if !restored {
-        return;
+        return aside;
     }
     let _ = fs::remove_dir_all(&src);
+    aside
 }
 
 #[must_use]
@@ -163,10 +165,13 @@ pub fn preserve_all_before_uninstall(port: &Port, saves_backup_dir: &Path, dest_
     results.iter().all(|&ok| ok)
 }
 
-pub fn restore_all_after_install(port: &Port, saves_backup_dir: &Path, dest_dir: &Path) {
+// Fork (data safety, review S3): returns the folder the saves that were in the way went to, when any did.
+pub fn restore_all_after_install(port: &Port, saves_backup_dir: &Path, dest_dir: &Path) -> Option<PathBuf> {
+    let mut aside = None;
     for (save_folder, field) in save_fields(port) {
-        restore_after_install(save_folder, saves_backup_dir, dest_dir, &port.folder, field);
+        aside = restore_after_install(save_folder, saves_backup_dir, dest_dir, &port.folder, field).or(aside);
     }
+    aside
 }
 
 fn unused_zip_path(dir: &Path, stamp: &str) -> Result<PathBuf, String> {

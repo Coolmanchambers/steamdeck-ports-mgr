@@ -4,7 +4,10 @@
 //! Before each file of the release goes in, what already sits at the same place is looked at:
 //! - **The user's own data** (a file under a save folder, a connected or required game file such as a generated
 //!   `oot.o2r`, or what `uninstall_keep::classify` calls a ROM, key, dump or save file): it stays where it is, and the
-//!   release's copy goes to `.previous/<time>/<path>` in the port folder instead. An update is never refused for this.
+//!   release's copy goes to `.previous/update-copies-<time>/<path>` in the port folder instead. An update is never
+//!   refused for a clash; an unreadable record of connected game files stops it before anything changes. A save
+//!   extension, or `save` on generic data, counts as a save here (`save_icon.png` is a program file). With a save
+//!   folder that is the whole port folder (`"save": "."`), every file a release replaces is kept as below.
 //! - **Other protected files** (an `.o2r` / `.otr` archive the release ships itself, like `soh.o2r`): the old file is
 //!   moved to `<Saves Backup>/Replaced by update/<port folder>/<time>/<path>` and the release's copy goes in. A folder
 //!   that a release file replaces goes there too.
@@ -31,6 +34,10 @@ use std::sync::Mutex;
 /// The folder under Saves Backup that holds files an update replaced.
 pub const REPLACED_BY_UPDATE: &str = "Replaced by update";
 
+/// The start of the `.previous/` folder that holds a release's copies of the user's files (`update-copies-<time>`);
+/// it is not an older version, so the Port page leaves it out of that list.
+pub const UPDATE_COPIES: &str = "update-copies-";
+
 /// What counts as the user's own data in one port folder.
 #[derive(Debug, Clone, Default)]
 pub struct Protect {
@@ -56,24 +63,24 @@ fn within(path: &Path, base: &Path) -> bool {
 
 impl Protect {
     /// The port's saves, required and generated game files, and the files connected into `port_dir` (read from
-    /// `rom_library.json` in `config_dir`). A record that cannot be read is logged and counts as no connections: an
-    /// update is never refused for it, and the name rules still protect ROMs, keys, dumps and archives.
-    pub fn for_port(port: &Port, port_dir: &Path, config_dir: Option<&Path>) -> Protect {
+    /// `rom_library.json` in `config_dir`). A record that cannot be read is an error (`UNREADABLE_RECORD`): without
+    /// it nobody can say which files are the user's, so the install stops before anything changes, as an uninstall does.
+    pub fn for_port(port: &Port, port_dir: &Path, config_dir: Option<&Path>) -> Result<Protect, String> {
         let saves = [port.save.as_ref(), port.save2.as_ref()].into_iter().flatten().filter_map(|v| resolve_save_folder(v, port_dir)).collect();
-        let (names, connected) = match uninstall_keep::known_game_files(port, port_dir, config_dir) {
-            Ok(found) => found,
-            Err(e) => {
-                eprintln!("update merge: {e} ({}); connected game files are protected by name only", port.folder);
-                uninstall_keep::known_game_files(port, port_dir, None).unwrap_or_default()
-            }
-        };
-        Protect { saves, names, connected }
+        let (names, connected) = uninstall_keep::known_game_files(port, port_dir, config_dir)?;
+        Ok(Protect { saves, names, connected })
+    }
+
+    /// A save folder that is the whole port folder (or holds it): `"save": "."`. Then any file may be a save, and the
+    /// pre-update zip skips it (it would copy the whole game), so every replaced file is kept instead (review C4).
+    fn saves_hold_the_folder(&self, port_dir: &Path) -> bool {
+        self.saves.iter().any(|s| is_within(port_dir, s))
     }
 
     /// The file at `there` is the user's own and must stay.
     fn user_data(&self, there: &Path, port_dir: &Path) -> bool {
-        // A save that is the whole game folder ("save": ".") would make every file a save; that one is backed up as a
-        // zip before the update instead.
+        // A save that is the whole game folder would make every file a save; those files are kept in Replaced by update
+        // when replaced instead (`saves_hold_the_folder`).
         if self.saves.iter().any(|s| !is_within(port_dir, s) && within(there, s)) {
             return true;
         }
@@ -85,7 +92,15 @@ impl Protect {
             return true;
         }
         let size = fs::metadata(there).map_or(0, |m| m.len());
-        matches!(uninstall_keep::classify(&name, size, false), Some(KeepKind::Rom | KeepKind::Key | KeepKind::Dump | KeepKind::Save))
+        let named_by_sheet = there.parent().is_some_and(|dir| uninstall_keep::sheets_in(dir).names(&name));
+        match uninstall_keep::classify(&name, size, named_by_sheet) {
+            Some(KeepKind::Rom | KeepKind::Key | KeepKind::Dump) => true,
+            // Review S1: `save*` alone is too broad for an update (`save_icon.png`, `savemanager.lua` are program files
+            // a release must be able to update). A save file here has a save extension, or a `save` name on generic data
+            // (`savegame.dat`, `SAVE1.bin`) or no extension; the uninstall keeps the broad rule.
+            Some(KeepKind::Save) => uninstall_keep::save_like_for_update(&name),
+            _ => false,
+        }
     }
 }
 
@@ -131,6 +146,9 @@ pub struct MergeReport {
     /// Old files (and folders) moved to [`MergeReport::replaced_dir`] before the release's copy went in.
     pub replaced: Vec<PathBuf>,
     pub replaced_dir: Option<PathBuf>,
+    /// Review S3: saves kept from an earlier uninstall went back, and what was at their place (newer saves) was moved
+    /// to this folder (`<Saves Backup>/Replaced by restore/<port folder>/<time>`) first.
+    pub saves_set_aside: Option<PathBuf>,
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {
@@ -139,20 +157,25 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 
 impl MergeReport {
     pub fn is_empty(&self) -> bool {
-        self.kept_yours.is_empty() && self.replaced.is_empty()
+        self.kept_yours.is_empty() && self.replaced.is_empty() && self.saves_set_aside.is_none()
     }
 
-    /// One plain fact for the Done page; `what` is "update" or "extras". `None` when nothing was set aside.
+    /// One plain fact for the Done page; `what` is "update" or "extras". `None` when nothing was set aside. Places
+    /// stop at the port's folder in Saves Backup (the time-named folder inside is not spelled out).
     pub fn line(&self, what: &str, place: &dyn Fn(&Path) -> String) -> Option<String> {
+        let port_place = |dir: &Path| place(dir.parent().unwrap_or(dir));
         let mut parts = Vec::new();
         if !self.kept_yours.is_empty() {
             let n = self.kept_yours.len();
-            let (verb, yours) = if n == 1 { ("had", "yours is") } else { ("had", "yours are") };
-            parts.push(format!("Kept your files: {} in the {what} {verb} the same name as yours; {yours} still in place.", plural(n, "file", "files")));
+            let yours = if n == 1 { "yours is" } else { "yours are" };
+            parts.push(format!("Kept your files: {} in the {what} had the same name as yours; {yours} still in place.", plural(n, "file", "files")));
         }
         if let (false, Some(dir)) = (self.replaced.is_empty(), &self.replaced_dir) {
             let n = self.replaced.len();
-            parts.push(format!("{} replaced by the {what} {} kept in {}.", plural(n, "older file", "older files"), if n == 1 { "is" } else { "are" }, place(dir)));
+            parts.push(format!("{} replaced by the {what} {} kept in {}.", plural(n, "older file", "older files"), if n == 1 { "is" } else { "are" }, port_place(dir)));
+        }
+        if let Some(dir) = &self.saves_set_aside {
+            parts.push(format!("Saves kept from an earlier uninstall were put back; the saves that were there were moved to {} first.", port_place(dir)));
         }
         (!parts.is_empty()).then(|| parts.join(" "))
     }
@@ -189,7 +212,13 @@ impl Run<'_> {
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent)?;
         }
-        (self.mover)(from, to)?;
+        if let Err(e) = (self.mover)(from, to) {
+            // Review C6: a move that failed after something landed at `to` is undone (or named as stuck) too.
+            if fs::symlink_metadata(to).is_ok() {
+                self.journal.push(Done::Moved { from: from.to_path_buf(), to: to.to_path_buf() });
+            }
+            return Err(e);
+        }
         self.journal.push(Done::Moved { from: from.to_path_buf(), to: to.to_path_buf() });
         Ok(())
     }
@@ -204,7 +233,7 @@ impl Run<'_> {
     fn previous_dir(&mut self) -> PathBuf {
         let port_dir = self.port_dir.clone();
         let stamp = self.guard.stamp.clone();
-        self.previous.get_or_insert_with(|| unique_dir(&port_dir.join(PREVIOUS), &stamp)).clone()
+        self.previous.get_or_insert_with(|| unique_dir(&port_dir.join(PREVIOUS), &format!("{UPDATE_COPIES}{stamp}"))).clone()
     }
 
     fn replaced_dir(&mut self) -> PathBuf {
@@ -217,7 +246,8 @@ impl Run<'_> {
     /// Replaced by update; anything else waits in the displaced folder.
     fn clear(&mut self, there: &Path, rel: &Path) -> io::Result<()> {
         let meta = fs::symlink_metadata(there)?;
-        let keep = self.guard.protect.is_some() && ((meta.is_dir() && !meta.file_type().is_symlink()) || protected_archive(there) || self.user_data(there));
+        let keep = self.guard.protect.as_ref().is_some_and(|p| p.saves_hold_the_folder(&self.port_dir))
+            || (self.guard.protect.is_some() && ((meta.is_dir() && !meta.file_type().is_symlink()) || protected_archive(there) || self.user_data(there)));
         if keep {
             let to = self.replaced_dir().join(rel);
             self.mv(there, &to)?;
@@ -342,6 +372,9 @@ static REPORTS: Mutex<Vec<(PathBuf, MergeReport)>> = Mutex::new(Vec::new());
 
 /// Called by the installer (worker thread) when a merge into `port_dir` set something aside.
 pub fn record(port_dir: &Path, report: MergeReport) {
+    let mut all = REPORTS.lock().unwrap_or_else(|e| e.into_inner());
+    // Review S2: an earlier merge's report never outlives a newer merge into the same folder.
+    all.retain(|(d, _)| d != port_dir);
     if report.is_empty() {
         return;
     }
@@ -351,8 +384,6 @@ pub fn record(port_dir: &Path, report: MergeReport) {
     for r in &report.replaced {
         eprintln!("update merge: moved the old {} of {} to {}", r.display(), port_dir.display(), report.replaced_dir.as_deref().unwrap_or(Path::new("?")).display());
     }
-    let mut all = REPORTS.lock().unwrap_or_else(|e| e.into_inner());
-    all.retain(|(d, _)| d != port_dir);
     all.push((port_dir.to_path_buf(), report));
 }
 

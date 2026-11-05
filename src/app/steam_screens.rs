@@ -335,14 +335,14 @@ fn show_waiting(app: &Rc<AppState>, router: &Router) {
                 let Some(change) = queue.entries.get(i) else { return };
                 let mut changed = queue.clone();
                 changed.remove(i);
-                let yes: Back = Rc::new(move |app, router| match steam_queue::save(&queue_path(app), &changed) {
+                let yes: Back = Rc::new(move |app, router| match steam_queue::save_locked(&queue_path(app), &changed) {
                     Ok(()) => show_waiting(app, router),
                     Err(e) => notice(app, router, WAITING, "Could not drop the change", &format!("The list of Steam changes waiting could not be saved ({e})."), Rc::new(show_waiting)),
                 });
                 ask(app, router, steam_pages::drop_page(change), yes, again.clone());
             }
             SteamAct::ClearAll => {
-                let yes: Back = Rc::new(|app, router| match steam_queue::save(&queue_path(app), &steam_queue::SteamQueue::default()) {
+                let yes: Back = Rc::new(|app, router| match steam_queue::save_locked(&queue_path(app), &steam_queue::SteamQueue::default()) {
                     Ok(()) => fresh_list()(app, router),
                     Err(e) => notice(app, router, WAITING, "Could not clear the changes", &format!("The list of Steam changes waiting could not be saved ({e})."), Rc::new(show_waiting)),
                 });

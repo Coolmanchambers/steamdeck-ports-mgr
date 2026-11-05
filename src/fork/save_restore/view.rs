@@ -30,6 +30,11 @@ pub fn when(backup: &Backup) -> String {
         && name[..10].bytes().all(|c| c.is_ascii_digit() || c == b'-')
         && name[11..19].bytes().all(|c| c.is_ascii_digit() || c == b'-');
     if !stamp_like {
+        // A second "Back up saves" of the day (`2026-11-04-2`, data safety review) reads "2026-11-04 (2)".
+        let day_like = name.is_ascii() && b.len() > 11 && b[4] == b'-' && b[7] == b'-' && b[10] == b'-' && name[..10].bytes().all(|c| c.is_ascii_digit() || c == b'-');
+        if let Some(n) = day_like.then(|| &name[11..]).filter(|n| n.bytes().all(|c| c.is_ascii_digit())) {
+            return format!("{} ({n})", &name[..10]);
+        }
         return name.to_string();
     }
     let time = name[11..19].replace('-', ":");
@@ -63,6 +68,8 @@ mod tests {
         assert_eq!(when(&backup("2026-10-21_14-05-00", BackupKind::BeforeUpdate)), "2026-10-21 14:05:00");
         assert_eq!(when(&backup("2026-10-21_14-05-00-2", BackupKind::BeforeUpdate)), "2026-10-21 14:05:00 (2)");
         assert_eq!(when(&backup("2026-10-21", BackupKind::AllPorts)), "2026-10-21");
+        assert_eq!(when(&backup("2026-10-21-2", BackupKind::AllPorts)), "2026-10-21 (2)", "a second backup that day");
+        assert_eq!(when(&backup("2026-10-21-cloud", BackupKind::AllPorts)), "2026-10-21-cloud");
         assert_eq!(when(&backup("odd name", BackupKind::AllPorts)), "odd name");
     }
 }

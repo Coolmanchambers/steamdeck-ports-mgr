@@ -367,6 +367,7 @@ Files added by this fork:
 | 2026-11-04 | `src/core/models.rs` | Data safety: `port_from_value` refuses a folder name that is empty or only `.`; test |
 | 2026-11-04 | `src/core/files.rs` | Data safety: `write_atomic` syncs the file before the rename and its folder after it; new `write_atomic_unsynced` for caches; test |
 | 2026-11-04 | `src/core/image_cache.rs` | Data safety: catalog images are written with `write_atomic_unsynced` (a cache) |
+| 2026-11-04 | `src/core/installer.rs`, `src/core/save_backup.rs` | Data safety review fixes: `guard_for` returns a `Result` and runs first in `apply_archive` and `install_extra` (an unreadable game files record stops the install, nothing changed); `restore_after_install` / `restore_all_after_install` return where the saves in the way went, which `apply_archive` puts in the merge report; upstream's `save: "."` test checks no update zip was made (the replaced `game.exe` is kept in Replaced by update); tests |
 
 ## Data safety (2026-11-04 review)
 
@@ -376,38 +377,49 @@ exFAT / FAT) was rejected in the review and is not changed.
 
 **Updates and extras keep the user's files (W2 / D1, decision 4; `src/fork/update_merge.rs`).** Before each file of a
 release goes into a port folder, what sits at the same place is looked at. The user's own data stays where it is and
-the release's copy goes to `.previous/<time>/<path>` in the port folder: a file under the port's save folder, a game
-file connected into the folder (`rom_library.json`) or named by its entry (including the generated `oot.o2r` /
-`mm.o2r`), and anything Kept files calls a ROM, key, dump or save file. An `.o2r` / `.otr` the release ships itself
-(`soh.o2r`) is updated: the old one goes to `<Saves Backup>/Replaced by update/<port folder>/<time>/<path>` first. A
-folder a release file replaces goes there too. A file with the same bytes is left alone. Program files are replaced
-as before. An update is never refused for a clash. The install wizard's Done page (or the update note) and the
-extras' result page say it in one line, for example "Kept your files: 2 files in the update had the same name as
-yours; yours are still in place." The extras' question adds "Your saves, game files, keys and dumps are never
-replaced". Limit: a release file named like a dump (`*boot*.bin`, `*bios*.bin`) that the user's folder already holds
-in another version stays the old one; the new one is in `.previous/`.
+the release's copy goes to `.previous/update-copies-<time>/<path>` in the port folder (left out of the Port page's
+older versions list): a file under the port's save folder, a game file connected into the folder
+(`rom_library.json`) or named by its entry (including the generated `oot.o2r` / `mm.o2r`), a ROM, key or dump as Kept
+files names them (a `.bin` track a cue sheet beside it names counts as a ROM), and a save file: a save extension
+(`.sav`, `.srm`, `.sl2`, `.dsv`, `.mcr`, `.gci`) or a `save` name on generic data or with no extension (`savegame.dat`,
+`SAVE1`). A release's own `save_icon.png` or `savemanager.lua` is updated as a program file. An `.o2r` / `.otr` the
+release ships itself (`soh.o2r`) is updated: the old one goes to
+`<Saves Backup>/Replaced by update/<port folder>/<time>/<path>` first. A folder a release file replaces goes there
+too, and so does every replaced file of a port whose save folder is the whole port folder (`"save": "."`: any file may
+be a save, and the pre-update zip skips such a folder). A file with the same bytes is left alone. Program files are
+replaced as before. An update is never refused for a clash, but a record of connected game files that cannot be read
+stops it before anything changes (as it stops an uninstall). The install wizard's Done page (or the update note) and
+the extras' result page say it in one line, for example "Kept your files: 2 files in the update had the same name as
+yours; yours are still in place.", naming places down to the port's folder in Saves Backup; when the update put
+back saves kept by an earlier uninstall, the line says where the saves that were there went. The extras' question
+adds "Your saves, game files, keys and dumps are never replaced". Limit: a release file named like a dump
+(`*boot*.bin`, `*bios*.bin`) that the user's folder already holds in another version stays the old one; the new one
+is in `.previous/update-copies-<time>/`.
 
 **The merge rolls back (D7, F-D2, F-D3).** Replaced program files wait in `<Library>/_displaced_XXXXXX/` and are
 removed only once the whole release is in; any failure part way moves every file back (the release's files back to
-the staging folder) and says so. Files that could not go back are named and their folder kept. A release entry that
+the staging folder) and says so, including a move that failed after its copy landed. Files that could not go back
+are named and their folder kept. A move across drives syncs the copy and its folder before the original is removed. A release entry that
 cannot be read fails the install (it was skipped). A subfolder the user replaced with a link stays a link; the
 release's files go through it.
 
 **Restore and uninstall (D6, F-W1, D3, D4, W4, F-D1).** Putting kept saves back after a reinstall moves what is at
 the save's place to `<Saves Backup>/Replaced by restore/<port folder>/<time>/<field>` first (it was deleted); a "save
 folder" that is the game folder itself is never replaced. A second uninstall renames an earlier Pending Restore copy
-to `<field>.<time>` (it was deleted). Uninstall keeps save files by name (`.sav`, `.srm`, `.sl2`, `.dsv`, `.mcr`,
-`.gci`, or a name starting `save`) in Kept files, as "save file"; whole folders are still not kept (O1 ruling). A
-folder that cannot be read, or nested deeper than 32 levels, cancels the uninstall with "nothing was deleted" (the
-Uninstall page says so and disables the button). "Put your kept files back" writes every file as `<name>.dpm-restore`
-and renames it in. A save folder that leads through a link to a folder far too broad (`save_restore::folder_problem`)
-is not copied at uninstall; only the link goes. The Uninstall page says "saves are backed up" only when a save
-folder inside the port folder has files.
+to `<field>.<time>` (it was deleted); those renamed copies are not listed anywhere in the app yet (find them in
+`Saves Backup/Pending Restore/<port folder>/` in Desktop Mode). Uninstall keeps save files by name (`.sav`, `.srm`,
+`.sl2`, `.dsv`, `.mcr`, `.gci`, or any name starting `save`) in Kept files, as "save file"; whole folders are still
+not kept (O1 ruling). A folder that cannot be read, or nested deeper than 32 levels, cancels the uninstall with
+"nothing was deleted" (the Uninstall page says so and disables the button). "Put your kept files back" writes every
+file as `<name>.dpm-restore` (a file or link already at that name is removed first, never written through) and renames
+it in. A save folder that leads through a link to a folder far too broad (`save_restore::folder_problem`) is not
+copied at uninstall; only the link goes. The Uninstall page says "saves are backed up" only when a save folder inside
+the port folder has files; with no Linux save folder known it says save files by name still go to Kept files.
 
 **Backups (W1 / D5).** Back up saves names a second zip of the day `<date>-2.zip` (the first is never replaced) and
 every zip (this one and the pre-update one) is written as `<name>.zip.part` and renamed when complete; a failure
 removes the part file. Every reader looks for `.zip` only, so a part file is never taken for a backup; a
-`<date>-2.zip` still sorts and dates by its name in the cloud view.
+`<date>-2.zip` still sorts and dates by its name in the cloud view, and Restore saves shows it as "2026-11-04 (2)".
 
 **Library guard (D2).** `installer::port_dir` refuses a folder name that is the Library itself (empty, `.`,
 `sub/..`) for install, extras, uninstall and "is installed"; the catalog parser refuses an empty or `.` folder.
@@ -415,9 +427,10 @@ removes the part file. Every reader looks for `.zip` only, so a part file is nev
 **Robustness (W5, D8, D9, D11).** A moved copy carries `.dpm-moved-from` until its move is recorded; a later move plan
 treats such a copy as stale (never "already there") and leaves it alone with a message. State files are synced
 before and after the rename; image caches are not. The Steam changes list is read, changed and written under one
-lock. The app updater stages both new files, syncs, swaps, and on a failure or INT/TERM/HUP during the swap puts the
-previous program back from `.previous/` (written beside the file, then renamed); BUILD_INFO is replaced the same way
-and only warned about.
+lock (the Waiting changes page's drop and clear too). The app updater stages both new files, syncs, swaps, and on a
+failure or INT/TERM/HUP during the swap puts the previous program back from `.previous/` (written beside the file,
+then renamed); `update-failed.txt` says whether that worked or that copies are in `.previous/`. BUILD_INFO is replaced
+the same way and only warned about. `tools/test-fork-updater.sh` case 6 makes the swap fail half way.
 
 ## Theme quick wins (Codex review of 2026-11-02, section A)
 
