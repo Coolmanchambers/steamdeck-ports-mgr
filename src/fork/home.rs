@@ -496,14 +496,20 @@ impl List {
     /// UI polish F-U2: the hint line along the bottom of this list, one style for all three (`HINT_GAP` between the
     /// parts, as on the guided pages). Home: `hints` for the focused tile. Deck-ready and All ports (the big-mode card
     /// grid): the buttons that act there, then B (`back`, from `back_hint`) and the list switch. Tab is a keyboard key,
-    /// so only the windowed lists name it.
-    pub fn hint_line(self, focused: Option<TileKind>, view: View, back: &str, big_mode: bool) -> String {
+    /// so only the windowed lists name it. `home_button`: the "< Home" button has the cursor (Up from the first row), so
+    /// A goes Home and X does nothing there. `empty`: All ports shows nothing (a search with no match), so no A or X
+    /// (Deck-ready keeps its A: there it loads the list).
+    pub fn hint_line(self, focused: Option<TileKind>, view: View, back: &str, big_mode: bool, home_button: bool, empty: bool) -> String {
         let lists = if big_mode { "L1/R1 Lists" } else { "L1/R1 / Tab Lists" };
-        let parts: Vec<&str> = match self {
-            List::Home => return hints(focused, view),
-            List::DeckReady => vec!["A Install / Play", "X Info", "D-pad Move", "Y Filters", back, lists],
-            List::AllPorts => vec!["A Play", "X Options", "D-pad Move", "Y Settings", back, lists],
+        let (a, x) = match (self, home_button, empty) {
+            (List::Home, ..) => return hints(focused, view),
+            (_, true, _) => ("A Home", ""),
+            (List::AllPorts, false, true) => ("", ""),
+            (List::DeckReady, ..) => ("A Install / Play", "X Info"),
+            (List::AllPorts, ..) => ("A Play", "X Options"),
         };
+        let y = if self == List::DeckReady { "Y Filters" } else { "Y Settings" };
+        let parts = vec![a, x, "D-pad Move", y, back, lists];
         parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(crate::fork::page::HINT_GAP)
     }
 
@@ -716,9 +722,9 @@ mod tests {
             for (searching, from_add) in [(true, false), (false, true), (false, false)] {
                 let back = list.back_hint(searching, from_add, true);
                 assert!(back.starts_with("B ") && !back.contains("Esc"), "{list:?}: {back}");
-                let line = list.hint_line(None, View::Posters, &back, true);
+                let line = list.hint_line(None, View::Posters, &back, true, false, false);
                 assert!(!line.contains("Esc") && !line.contains("Tab"), "{list:?}: {line}");
-                let windowed = list.hint_line(None, View::Posters, &list.back_hint(searching, from_add, false), false);
+                let windowed = list.hint_line(None, View::Posters, &list.back_hint(searching, from_add, false), false, false, false);
                 assert!(windowed.contains("B / Esc") && windowed.contains("Tab"), "windowed keeps the keys: {windowed}");
             }
         }
@@ -746,6 +752,11 @@ mod tests {
         };
         assert!(clipped(app, "search-clip"), "the main search box is clipped");
         assert!(clipped(picker, "picker-clip"), "the picker's search box is clipped");
+        // Review fix: TextInput does not scroll itself, so both boxes slide the text to keep the cursor in view.
+        for (name, src, clip) in [("app-window", app, "search-clip"), ("picker", picker, "picker-clip")] {
+            assert!(src.contains("cursor-position-changed(pos) =>"), "{name}: follows the cursor");
+            assert!(src.contains(&format!("x: min(0px, max({clip}.width - self.width, {clip}.scroll-x));")), "{name}: slides inside the clip");
+        }
         let deck = include_str!("../../ui/fork/deck-ready.slint");
         assert!(deck.contains("text: root.hint-text;") && !deck.contains("B / Esc"), "Deck-ready's hints come from Rust");
     }
@@ -765,16 +776,22 @@ mod tests {
     #[test]
     fn the_three_lists_share_one_hint_style() {
         let gap = crate::fork::page::HINT_GAP;
-        assert_eq!(List::Home.hint_line(Some(TileKind::Port), View::Posters, "", true), hints(Some(TileKind::Port), View::Posters));
-        let grid = List::AllPorts.hint_line(None, View::Posters, "B Home", true);
+        assert_eq!(List::Home.hint_line(Some(TileKind::Port), View::Posters, "", true, false, false), hints(Some(TileKind::Port), View::Posters));
+        let grid = List::AllPorts.hint_line(None, View::Posters, "B Home", true, false, false);
         assert_eq!(grid, ["A Play", "X Options", "D-pad Move", "Y Settings", "B Home", "L1/R1 Lists"].join(gap));
-        let deck = List::DeckReady.hint_line(None, View::Posters, "B Clear search", true);
+        // Review fix: the "< Home" button has the cursor (Up from the first row): A goes Home, X does nothing there.
+        assert_eq!(List::AllPorts.hint_line(None, View::Posters, "B Home", true, true, false), ["A Home", "D-pad Move", "Y Settings", "B Home", "L1/R1 Lists"].join(gap));
+        assert_eq!(List::DeckReady.hint_line(None, View::Posters, "B Home", true, true, false), ["A Home", "D-pad Move", "Y Filters", "B Home", "L1/R1 Lists"].join(gap));
+        // An empty grid (a search with no match) names no A or X; an empty Deck-ready keeps A (it loads the list).
+        assert_eq!(List::AllPorts.hint_line(None, View::Posters, "B Clear search", true, false, true), ["D-pad Move", "Y Settings", "B Clear search", "L1/R1 Lists"].join(gap));
+        assert!(List::DeckReady.hint_line(None, View::Posters, "B Home", true, false, true).starts_with("A Install / Play"));
+        let deck = List::DeckReady.hint_line(None, View::Posters, "B Clear search", true, false, false);
         assert_eq!(deck, ["A Install / Play", "X Info", "D-pad Move", "Y Filters", "B Clear search", "L1/R1 Lists"].join(gap));
         for line in [grid, deck, hints(Some(TileKind::Port), View::List)] {
             assert!(line.contains(gap) && !line.contains("     "), "one gap style: {line}");
             assert!(line.chars().count() < 110, "one line at 1280 px: {line}");
         }
-        assert!(!List::AllPorts.hint_line(None, View::Posters, "", true).contains(&format!("{gap}{gap}")), "an empty B part leaves no double gap");
+        assert!(!List::AllPorts.hint_line(None, View::Posters, "", true, false, false).contains(&format!("{gap}{gap}")), "an empty B part leaves no double gap");
     }
 
     #[test]

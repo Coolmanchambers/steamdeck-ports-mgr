@@ -33,18 +33,22 @@ impl ThemeColors {
         border: rgb(0x56, 0x62, 0x73),
     };
 
-    // Fork (UI polish U3): the colour for text on a selected row. The theme's `selected_text` when it reads at 4.5:1
-    // on `selected_background`, else whichever of the theme's own list colours reads best there (the fork's
-    // arc-dark: white on #5294e2 is 3.1:1, #191f27 is 5.3:1). Derived, so every downloaded theme adapts by itself;
-    // `selected_text` itself is left alone (it also draws the old dialogs' cursor outline and chips).
+    // Fork (UI polish U3): the colour for text on a selected row, always 4.5:1 or better on `selected_background`.
+    // In order: the theme's `selected_text` when it reads; else the better of its list colours when that reads (the
+    // fork's arc-dark: white on #5294e2 is 3.1:1, #191f27 is 5.3:1); else black or white, whichever reads better
+    // (one of them always reaches 4.5:1). Derived, so the downloaded themes need no edit; `selected_text` itself is
+    // left alone (it also draws the old dialogs' cursor outline and chips).
     pub fn selected_ink(&self) -> Color {
-        if contrast(self.selected_text, self.selected_background) >= 4.5 {
+        let bg = self.selected_background;
+        if contrast(self.selected_text, bg) >= 4.5 {
             return self.selected_text;
         }
-        [self.list_background, self.list_text, self.selected_text]
-            .into_iter()
-            .max_by(|a, b| contrast(*a, self.selected_background).total_cmp(&contrast(*b, self.selected_background)))
-            .unwrap_or(self.selected_text)
+        let better = |a: Color, b: Color| if contrast(a, bg) >= contrast(b, bg) { a } else { b };
+        let list = better(self.list_background, self.list_text);
+        if contrast(list, bg) >= 4.5 {
+            return list;
+        }
+        better(rgb(0, 0, 0), rgb(0xff, 0xff, 0xff))
     }
 }
 
@@ -380,8 +384,8 @@ mod tests {
         }
 
         // UI polish U3: text on a selected row reads at 4.5:1 in the fork's palette and in every theme the app
-        // ships (themes.json is upstream's file, so this also covers the themes downloaded later, as far as they
-        // keep a list colour that reads on their selection).
+        // ships, with no exception (themes.json is upstream's file; the black-or-white last step covers themes
+        // downloaded later too).
         #[test]
         fn text_on_a_selected_row_reads_in_every_shipped_theme() {
             let t = ThemeColors::FALLBACK;
@@ -394,17 +398,32 @@ mod tests {
             let mut cfg = ThemeConfig::default();
             load(&path, &mut cfg, FORK_THEME);
             let _ = fs::remove_file(&path);
+            assert!(cfg.themes.len() > 50, "the shipped themes were loaded ({})", cfg.themes.len());
+            let mut bad = Vec::new();
             for (name, theme) in &cfg.themes {
-                let best = [theme.list_background, theme.list_text, theme.selected_text]
-                    .into_iter()
-                    .map(|c| contrast(c, theme.selected_background))
-                    .fold(0.0, f64::max);
                 let ink = contrast(theme.selected_ink(), theme.selected_background);
-                assert!(
-                    ink >= 4.5 || (ink - best).abs() < 1e-9,
-                    "{name}: selected-ink reads at {ink:.2}:1 though a theme colour reaches {best:.2}:1"
-                );
+                if ink < 4.5 {
+                    bad.push(format!("{name}: {ink:.2}:1"));
+                }
             }
+            assert!(bad.is_empty(), "selected-ink under 4.5:1 in: {}", bad.join(", "));
+        }
+
+        // The last step: a theme whose own colours cannot read on its selection (paimon-like) gets black or white.
+        #[test]
+        fn a_theme_with_no_readable_colour_gets_black_or_white() {
+            let mut t = ThemeColors::FALLBACK;
+            t.selected_background = rgb(0xf0, 0xa0, 0xc0);
+            t.selected_text = rgb(0xff, 0xff, 0xff);
+            t.list_background = rgb(0xf8, 0xd8, 0xe8);
+            t.list_text = rgb(0xc0, 0x60, 0x90);
+            assert_eq!(t.selected_ink(), rgb(0, 0, 0));
+            assert!(contrast(t.selected_ink(), t.selected_background) >= 4.5);
+            t.selected_background = rgb(0x30, 0x10, 0x40);
+            t.selected_text = rgb(0x50, 0x30, 0x60);
+            t.list_background = rgb(0x20, 0x10, 0x30);
+            t.list_text = rgb(0x60, 0x40, 0x70);
+            assert_eq!(t.selected_ink(), rgb(0xff, 0xff, 0xff));
         }
 
         #[test]
@@ -427,6 +446,19 @@ mod tests {
             ];
             let mut bad = Vec::new();
             for (file, src) in files {
+                // An opacity on the same element as selected-ink text must be full on the selected row (0.6 took the
+                // ink to 2.7:1).
+                let lines: Vec<&str> = src.lines().collect();
+                for (n, line) in lines.iter().enumerate() {
+                    if line.trim_start().starts_with("color:") && line.contains("Theme.selected-ink") {
+                        for next in lines.iter().skip(n + 1).take(4).take_while(|l| !l.contains('}')) {
+                            let next = next.trim_start();
+                            if next.starts_with("opacity:") && !(next.contains("selected") && next.contains("? 1.0")) {
+                                bad.push(format!("{file}:{}: {next}", n + 1));
+                            }
+                        }
+                    }
+                }
                 for (n, line) in src.lines().enumerate() {
                     let l = line.trim_start();
                     let text_colour = ["color:", "ink:", "selection-foreground-color:", "fill:"].iter().any(|p| l.starts_with(p));

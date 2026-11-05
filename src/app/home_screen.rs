@@ -240,7 +240,10 @@ pub(crate) fn push_list_hint(app: &AppState) {
     let big = window.get_big_mode();
     let list = current_list(app);
     let back = list.back_hint(searching, app.home.from_add_port.get().is_some(), big);
-    window.set_list_hint(list.hint_line(focused_kind(app), app.home.view.get(), &back, big).into());
+    // Review fix: A goes Home while the "< Home" button has the cursor; an empty All ports names no A or X.
+    let home_button = app.home.list_button.get() && !app.home.is_active();
+    let empty = if big { app.grid_nav.displayed_installed.borrow().is_empty() } else { app.windowed_nav.displayed_windowed.borrow().is_empty() };
+    window.set_list_hint(list.hint_line(focused_kind(app), app.home.view.get(), &back, big, home_button, empty).into());
     window.set_list_back_hint(back.into());
     window.set_list_home_focused(app.home.list_button.get() && !app.home.is_active());
 }

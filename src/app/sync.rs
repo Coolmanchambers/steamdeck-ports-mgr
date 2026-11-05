@@ -27,7 +27,7 @@ pub(crate) fn launch_self_update(app: &Rc<AppState>, router: &Rc<RefCell<Gamepad
         Err(e) => {
             eprintln!("self-update: the updater could not be started: {e}");
             // Fork (UI polish U7): a page with an OK button and a hint bar, not the old message dialog.
-            super::page_dialog::show_message(app, router, "", "Could not update the app", "The updater could not be started, so nothing was changed. Try again later, or download the newest version from the project page.");
+            super::page_dialog::show_message(app, router, "App update", "Could not update the app", "The updater could not be started, so nothing was changed. Try again later, or download the newest version from the project page.");
         }
     }
 }

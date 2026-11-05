@@ -597,7 +597,8 @@ pub enum MessageAct {
 /// button and no hint. `heading` names the window and goes top left (a port's name, say); paragraphs split at blank
 /// lines.
 pub fn message_page(heading: &str, title: &str, text: &str) -> Page<MessageAct> {
-    let window_title = if heading.is_empty() { title.to_string() } else { format!("{heading}: {title}") };
+    // The window bar shows the heading, the page the title (review: the same words twice read as a mistake).
+    let window_title = if heading.is_empty() { title.to_string() } else { heading.to_string() };
     let mut p = Page { window_title, large: true, header: heading.to_string(), title: title.to_string(), ..Page::default() };
     p.paragraphs = text.split("\n\n").map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect();
     p.options.push(PageOption { title: "OK".to_string(), detail: String::new(), choice: None, enabled: true, recommended: true, action: MessageAct::Ok });
@@ -635,7 +636,7 @@ mod tests {
     #[test]
     fn a_message_page_has_one_ok_button_and_a_hint() {
         let p = message_page("Dusklight", "Could not start it", "First sentence.\n\nSecond one.");
-        assert_eq!(p.window_title, "Dusklight: Could not start it");
+        assert_eq!((p.window_title.as_str(), p.title.as_str()), ("Dusklight", "Could not start it"), "the bar and the page do not repeat each other");
         assert_eq!(p.paragraphs, ["First sentence.", "Second one."]);
         assert_eq!(p.options.len(), 1);
         assert_eq!(action_at(&p, initial_focus(&p)), Some(MessageAct::Ok));

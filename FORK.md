@@ -374,6 +374,7 @@ Files added by this fork:
 | 2026-11-04 | `ui/app-window.slint` | UI polish: the windowed list's selected row text and same-game chip in `selected-ink` (U3); `list-hint` and `list-empty-text`; the big-mode grid's hint line along its bottom and its search-aware empty text; the windowed list's empty text; big mode's All ports title line without hints (F-U2, U4); Home's placeholder "Type to search your ports..." in big mode (decision 1a); the search text keeps the clock's width free (U6); Deck-ready's hints from `list-hint` |
 | 2026-11-04 | `src/app/state.rs` | UI polish: `toggle_fullscreen` pushes the lists' hints again (F-U1); `rebuild_grid` and `rebuild_windowed` set the search-aware empty text (U4) (1 line each) |
 | 2026-11-04 | `src/app/sync.rs` | UI polish U7: "Could not update the app" is a one-button page (`page_dialog::show_message`); the `open_message_dialog` import is removed |
+| 2026-11-04 | `ui/app-window.slint`, `ui/dialogs/picker.slint` | UI polish review: the search text box sits in a clipped room and slides to keep the cursor in view (`scroll-x`, `cursor-position-changed`); the same-game note is full strength on the selected row; big mode's lists share Home's 6 px bottom margin and the grid's hint line is sized as Home's |
 | 2026-11-04 | `src/app/install_launch.rs` | UI polish U7: "This port is being installed" is a one-button page ("Not ready to start"); the `open_message_dialog` import is removed |
 
 ## Data safety (2026-11-04 review)
@@ -527,15 +528,19 @@ answer is first starts on it every time (`Page::fresh_focus`).
 
 Section 4 of the 2026-11-04 full review, with Fable's checked fixes and Tim's decisions 1-3.
 - **Text on a selected row reads (U3).** White on the selection blue was 3.1:1. A derived colour, `selected-ink`
-  (`ThemeColors::selected_ink`), draws text on selected rows: the theme's `selected_text` when it reaches 4.5:1 on
-  `selected_background`, else whichever of the theme's list colours reads best there (the fork's arc-dark: `#191f27`,
-  5.3:1). Every downloaded theme adapts by itself; `themes.json` and `selected_text` are untouched (`selected_text`
-  still draws the old dialogs' cursor outline). Used on the All ports rows, Deck-ready rows (and their chips), the
-  old dialogs' selected button and picker rows, the folder picker, and Info's selected text. Tests: the Rust and Slint
-  values in step, 4.5:1 in every shipped theme where a theme colour can reach it, no text colour on a selected row left
-  in `selected-text`.
+  (`ThemeColors::selected_ink`), draws text on selected rows, in three steps: the theme's `selected_text` when it
+  reaches 4.5:1 on `selected_background`; else the better of its list colours when that does (the fork's arc-dark:
+  `#191f27`, 5.3:1); else black or white, whichever reads better (one always reaches 4.5:1; 19 of the shipped themes,
+  paimon or trans for example, get there only this way). `themes.json` and `selected_text` are untouched
+  (`selected_text` still draws the old dialogs' cursor outline). Used on the All ports rows, Deck-ready rows (and
+  their chips), the old dialogs' selected button and picker rows, the folder picker, and Info's selected text; a
+  faded line on a selected row (the same-game note, the folder picker's details) is drawn at full strength there.
+  Tests: the Rust and Slint values in step, 4.5:1 in every shipped theme with no exception, no text colour on a
+  selected row left in `selected-text`, no fade on selected-ink text.
 - **No Esc or Tab on the Deck (F-U1).** In big mode (Game Mode) the lists' B hint reads "B Home" / "B Clear search" /
-  "B Add a port"; windowed it keeps "B / Esc". The hints are pushed again when the mode changes.
+  "B Add a port"; windowed it keeps "B / Esc". The hints are pushed again when the mode changes. While the "< Home"
+  button has the cursor (Up from the first row) the line says "A Home" and leaves X out; an empty All ports (a search
+  with no match) names no A or X.
 - **One hint line for the three lists (F-U2).** `List::hint_line` builds Home's, Deck-ready's and All ports' hints in one
   style (`HINT_GAP` between the parts). The big-mode card grid gets the same line along its bottom (A Play, X Options,
   D-pad Move, Y Settings, B, L1/R1 Lists), and its title line now reads "Deck Ports Manager  ›  All ports".
@@ -547,15 +552,19 @@ Section 4 of the 2026-11-04 full review, with Fable's checked fixes and Tim's de
   is about two lines tall (title, then its lines side by side) instead of a third of the screen. (A flag on the page,
   not on `page::Card`, so the dozen pages that build a card are untouched.)
 - **Messages as pages (U7).** `page::message_page` and `page_dialog::show_message`: a message with one OK button and a
-  hint bar (A or B close it), falling back to the old dialog if the page window cannot be made. Converted: "Could not
-  update the app", Deck-ready's two "Nothing was added" messages, and "This port is being installed" (Play while it
-  installs). Left for later (each needs its own look at what follows it): Deck-ready's third "Nothing was added" (inside
+  hint bar (A or B close it), falling back to the old dialog if the page window cannot be made; the window bar shows
+  the heading and the page the title, so the words are not repeated. Converted: "Could not update the app" (from
+  Settings > Updates it takes the Settings page's window and OK lands on the main window, as the old dialog did),
+  Deck-ready's two "Nothing was added" messages, and "This port is being installed" (Play while it installs). Left for later (each needs its own look at what follows it): Deck-ready's third "Nothing was added" (inside
   the install wizard's prepare step), Tools with no tools (upstream `dialogs.rs`), the Play update result
   (`events.rs`), Import ports, Game files, Restore saves and Ports folder notes (their `message` wrappers are reached
   from inside page flows), the Port page's text dialog, and the versioned update message. Upstream's `simple.slint`
   is untouched.
 - **The clock never covers the search text (U6).** The main search box and the picker's search box keep the clock's
-  width free on the right (the clock is always laid out, hidden when off, so its width can be measured).
+  width free on the right (the clock is always laid out, hidden when off, so its width can be measured). Each text box
+  sits in a clipped room and slides left as the cursor moves past its edge (`cursor-position-changed`, as std-widgets'
+  LineEdit does), so long text stays readable around the cursor. In big mode the lists share Home's small bottom
+  margin, and the grid's hint line is sized as Home's, so the three hint lines sit at about the same height.
 - **Deck-ready wording (F-U3, F-U4).** "Off in catalog" is "Not in All ports"; a row with no known system leaves it out
   instead of "Unknown system".
 - **Game Mode's Home search (Tim's decision 1a).** In big mode Home's search box says "Type to search your ports..."

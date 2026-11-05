@@ -342,7 +342,9 @@ export component AppWindow inherits Window {
                     padding: content-margin;
                     // Fork (home view): full-screen Home runs down to the bottom edge (the hint line sits there), so the margin
                     // under it is small and the zero-height footer row below does not add a spacing.
-                    padding-bottom: root.big-mode && root.home-mode ? 6px / Theme.scale-factor : content-margin;
+                    // Fork (UI polish review): the same small margin under the other big-mode lists, so the three hint
+                    // lines sit at about the same height.
+                    padding-bottom: root.big-mode ? 6px / Theme.scale-factor : content-margin;
                     spacing: content-margin;
 
                     Rectangle {
@@ -388,9 +390,20 @@ export component AppWindow inherits Window {
                                     clip: true;
                                     horizontal-stretch: 1;
                                     min-width: 0px;
+                                    // Review fix: the text box is as wide as its text and slides left so the cursor stays in
+                                    // view (as std-widgets' LineEdit does); TextInput does not scroll itself.
+                                    property <length> scroll-x: 0px;
                                 search-input := TextInput {
-                                    width: search-clip.width;
+                                    x: min(0px, max(search-clip.width - self.width, search-clip.scroll-x));
+                                    width: max(search-clip.width, self.preferred-width + self.text-cursor-width);
                                     height: search-clip.height;
+                                    cursor-position-changed(pos) => {
+                                        if (pos.x + search-clip.scroll-x < 0px) {
+                                            search-clip.scroll-x = -pos.x;
+                                        } else if (pos.x + search-clip.scroll-x > search-clip.width - self.text-cursor-width) {
+                                            search-clip.scroll-x = search-clip.width - self.text-cursor-width - pos.x;
+                                        }
+                                    }
                                     color: Theme.search-text;
                                     font-size: search-font-px;
                                     vertical-alignment: center;
@@ -480,7 +493,7 @@ export component AppWindow inherits Window {
                             }
 
                             if search-input.text.is-empty: Text {
-                                width: search-input.width;
+                                width: search-clip.width;
                                 overflow: elide;
                                 // Fork (UI polish, Tim's decision 1a): Game Mode's Home searches the installed ports only, so it says "your ports".
                                 text: root.deck-ready-mode ? @tr("Search Deck-ready...") : root.home-mode ? (root.big-mode ? @tr("Type to search your ports...") : @tr("Type to search all ports...")) : root.placeholder-text;
@@ -509,7 +522,8 @@ export component AppWindow inherits Window {
                             transform-rotation: root.sway-angle;
 
                             // Fork (UI polish F-U2): the same hint line as Deck-ready along the bottom (A, X and Y were never shown).
-                            property <length> grid-hint-h: root.list-hint == "" ? 0px : item-font-px * 2.0;
+                            // Sized as Home's hint line (its text is the item font x 1.15 x 0.85, its line twice that font).
+                            property <length> grid-hint-h: root.list-hint == "" ? 0px : item-font-px * 2.3;
                             CardGrid {
                                 width: 100%;
                                 height: parent.height - parent.grid-hint-h;
@@ -531,8 +545,8 @@ export component AppWindow inherits Window {
 
                             // Fork (UI polish U4): says why the grid is empty (a search found nothing), at the list's text size.
                             if root.card-rows.length == 0: Text {
-                                x: content-margin;
-                                width: parent.width - content-margin * 2;
+                                x: 0px;
+                                width: parent.width;
                                 height: parent.height - parent.grid-hint-h;
                                 text: root.list-empty-text;
                                 color: Theme.list-text;
@@ -549,7 +563,7 @@ export component AppWindow inherits Window {
                                 height: parent.grid-hint-h;
                                 text: root.list-hint;
                                 color: Theme.list-text;
-                                font-size: item-font-px * 0.95;
+                                font-size: item-font-px * 0.98;
                                 vertical-alignment: center;
                                 overflow: elide;
                             }
@@ -675,7 +689,8 @@ export component AppWindow inherits Window {
                                         text: item.same-game-note;
                                         overflow: elide;
                                         color: index == root.selected-index ? Theme.selected-ink : Theme.list-text;
-                                        opacity: 0.6;
+                                        // UI polish review: full strength on the selected row, so the ink keeps its 4.5:1.
+                                        opacity: index == root.selected-index ? 1.0 : 0.6;
                                         font-size: item-font-px * 0.85;
                                         vertical-alignment: center;
                                         x: text-margin + min(name-text.preferred-width, name-text.width) + row-spacing * 2;

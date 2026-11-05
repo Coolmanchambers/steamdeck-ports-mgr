@@ -143,7 +143,8 @@ export component FolderPickerDialog inherits Window {
                         height: parent.height;
                         text: row.label;
                         color: parent.is-selected ? Theme.selected-ink : Theme.list-text;
-                        opacity: row.heading ? 0.7 : (row.enabled ? 1.0 : 0.6);
+                        // UI polish review: full strength on the selected row, so the ink keeps its 4.5:1.
+                        opacity: parent.is-selected ? 1.0 : (row.heading ? 0.7 : (row.enabled ? 1.0 : 0.6));
                         font-size: row.heading ? root.small-font-px : root.item-font-px;
                         font-weight: row.heading ? 700 : 400;
                         vertical-alignment: row.heading ? bottom : center;
@@ -156,7 +157,7 @@ export component FolderPickerDialog inherits Window {
                         height: parent.height;
                         text: row.detail;
                         color: parent.is-selected ? Theme.selected-ink : Theme.list-text;
-                        opacity: 0.75;
+                        opacity: parent.is-selected ? 1.0 : 0.75;
                         font-size: root.small-font-px;
                         horizontal-alignment: right;
                         vertical-alignment: center;

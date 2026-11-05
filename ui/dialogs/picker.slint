@@ -217,16 +217,25 @@ export component SearchListDialog inherits Window {
                 y: 0px;
                 width: search-box.width - text-margin * 2 - search-box.clock-room;
                 height: search-box.height;
+                // Review fix: the text box is as wide as its text and slides left so the cursor stays in view.
+                property <length> scroll-x: 0px;
             search-input := TextInput {
                 color: Theme.search-text;
                 font-size: search-font-px;
                 vertical-alignment: center;
                 single-line: true;
                 input-type: root.password ? InputType.password : InputType.text;
-                x: 0px;
+                x: min(0px, max(picker-clip.width - self.width, picker-clip.scroll-x));
                 y: 0px;
-                width: picker-clip.width;
+                width: max(picker-clip.width, self.preferred-width + self.text-cursor-width);
                 height: picker-clip.height;
+                cursor-position-changed(pos) => {
+                    if (pos.x + picker-clip.scroll-x < 0px) {
+                        picker-clip.scroll-x = -pos.x;
+                    } else if (pos.x + picker-clip.scroll-x > picker-clip.width - self.text-cursor-width) {
+                        picker-clip.scroll-x = picker-clip.width - self.text-cursor-width - pos.x;
+                    }
+                }
                 edited => { root.search-changed(self.text); }
                 key-pressed(event) => {
                     // Fork: a held Return or Escape acts once (navigation safety review).
