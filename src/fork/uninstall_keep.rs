@@ -682,6 +682,18 @@ pub struct RestorePlan {
     pub steps: Vec<RestoreStep>,
     /// Kept files whose place in the port folder holds the same bytes already: left as they are.
     pub already: usize,
+    /// Kept files that cannot go back: a folder (or a link) is at their place in the port folder now. They stay in Kept
+    /// files, and the pages say how many.
+    pub skipped: usize,
+}
+
+/// "1 kept file stays in Kept files: ..." for a page, or `None` when nothing was left out.
+pub fn skipped_words(n: usize) -> Option<String> {
+    match n {
+        0 => None,
+        1 => Some("1 kept file stays in Kept files: a folder or a link is at its place in the port's folder".to_string()),
+        n => Some(format!("{n} kept files stay in Kept files: a folder or a link is at their place in the port's folder")),
+    }
 }
 
 /// True when both files hold the same bytes, read in blocks (game files are big). A file that cannot be read counts as
@@ -722,11 +734,18 @@ fn read_full(f: &mut fs::File, buf: &mut [u8]) -> io::Result<usize> {
 /// one) is left alone.
 pub fn restore_plan(set: &KeptSet, port_dir: &Path) -> RestorePlan {
     let mut plan = RestorePlan::default();
-    for f in set.files.iter().filter(|f| !through_a_link(port_dir, &f.rel)) {
+    for f in &set.files {
+        if through_a_link(port_dir, &f.rel) {
+            plan.skipped += 1;
+            continue;
+        }
         let (kept, there) = (set.dir.join(&f.rel), port_dir.join(&f.rel));
         let replaces = match fs::metadata(&there) {
             Err(_) => false,
-            Ok(m) if !m.is_file() => continue,
+            Ok(m) if !m.is_file() => {
+                plan.skipped += 1;
+                continue;
+            }
             Ok(m) if m.len() == fs::metadata(&kept).map_or(f.size, |k| k.len()) && same_bytes(&kept, &there) => {
                 plan.already += 1;
                 continue;
@@ -745,6 +764,8 @@ pub struct Restored {
     pub backed_up: usize,
     /// Where the replaced files went (`None` when none were).
     pub backup_dir: Option<PathBuf>,
+    /// Planned files left in Kept files because something (a folder, a link, a file) took their place since the plan.
+    pub skipped: usize,
 }
 
 fn copy_checked(from: &Path, to: &Path) -> io::Result<()> {
@@ -767,6 +788,7 @@ pub fn restore_kept(set: &KeptSet, steps: &[RestoreStep], port_dir: &Path, backu
     let backup_dir = backup_base.join(stamp);
     for step in steps {
         if !plain_relative(&step.rel) || through_a_link(port_dir, &step.rel) {
+            done.skipped += 1;
             continue;
         }
         let (from, to) = (set.dir.join(&step.rel), port_dir.join(&step.rel));
@@ -792,6 +814,7 @@ pub fn restore_kept(set: &KeptSet, steps: &[RestoreStep], port_dir: &Path, backu
             put(&staged).map_err(|e| failed("Could not put back", e))?;
         } else {
             if fs::symlink_metadata(&to).is_ok() {
+                done.skipped += 1;
                 continue;
             }
             put(&staged).map_err(|e| failed("Could not put back", e))?;
@@ -1364,6 +1387,28 @@ mod restore_tests {
         assert!(!tmp.path().join("Ports/escape.bin").exists());
     }
 
+    // F-W3: a kept file whose place is a folder now is counted (it used to be left out with no word), and so is one whose
+    // place was taken between the plan and the copy.
+    #[test]
+    fn a_kept_file_whose_place_is_a_folder_now_is_counted_as_left_in_kept_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        kept(tmp.path(), "2026-10-31_10-00-00");
+        let set = newest_kept(tmp.path(), "soh").unwrap();
+        let port = tmp.path().join("Ports/soh");
+        fs::create_dir_all(port.join("prod.keys")).unwrap();
+        let plan = restore_plan(&set, &port);
+        assert_eq!(plan.steps.len(), 2, "oot.o2r and the rom still go back");
+        assert_eq!(plan.skipped, 1);
+        assert_eq!(skipped_words(plan.skipped).as_deref(), Some("1 kept file stays in Kept files: a folder or a link is at its place in the port's folder"));
+        assert_eq!(skipped_words(0), None);
+        assert!(skipped_words(2).unwrap().starts_with("2 kept files stay in Kept files"));
+        // The rom's place is taken after the plan was made: left alone and counted.
+        write(&port.join("roms/zelda.z64"), b"NEW");
+        let done = restore_kept(&set, &plan.steps, &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
+        assert_eq!((done.copied, done.skipped), (1, 1));
+        assert_eq!(fs::read(port.join("roms/zelda.z64")).unwrap(), b"NEW", "never overwritten without a copy aside");
+    }
+
     // W4: a missing file goes back through the `.dpm-restore` name too, so a stop part way never leaves half a file
     // under the real name. Here the staged name is blocked (a folder sits there): the copy fails and the real name
     // stays empty (written straight to the real name, it would have gone through).
@@ -1417,6 +1462,7 @@ mod restore_tests {
         std::os::unix::fs::symlink(mine.join("zelda.z64"), port.join("prod.keys")).unwrap();
         let plan = restore_plan(&set, &port);
         assert_eq!(plan.steps.iter().map(|s| s.rel.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["oot.o2r"]);
+        assert_eq!(plan.skipped, 2, "the two behind links are counted, not dropped silently");
         restore_kept(&set, &plan.steps, &port, &replaced_dir_for(tmp.path(), "soh"), "s").unwrap();
         assert_eq!(fs::read(mine.join("zelda.z64")).unwrap(), b"THE USER'S OWN ROM");
     }

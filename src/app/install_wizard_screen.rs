@@ -553,6 +553,10 @@ fn kept_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
     let Some(set) = uninstall_keep::newest_kept(&backups, &port.folder) else { return game_files_step(app, router, flow) };
     let plan = uninstall_keep::restore_plan(&set, &port_dir);
     if plan.steps.is_empty() {
+        // Nothing to ask, but files that cannot go back are still said on the last page.
+        if let Some(words) = uninstall_keep::skipped_words(plan.skipped) {
+            flow.notes.borrow_mut().push((Mark::Skipped, words));
+        }
         return game_files_step(app, router, flow);
     }
     let places = Places::system();
@@ -564,6 +568,7 @@ fn kept_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
         files: plan.steps.iter().map(|s| (s.rel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), uninstall_keep::kind_words(&s.kind).to_string())).collect(),
         replaces: plan.steps.iter().filter(|s| s.replaces).count(),
         already: plan.already,
+        skipped: plan.skipped,
         kept_place: human_path(&uninstall_keep::kept_root(&backups), &places),
         replaced_place: human_path(&replaced.join(&stamp), &places),
     };
@@ -585,6 +590,7 @@ fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninst
     let (app, router, flow) = (app.clone(), router.clone(), flow.clone());
     when_done(move || {
         let Some(result) = job.take() else { return false };
+        let mut left: Option<String> = None;
         let note = match result.and_then(|r| r) {
             Ok(done) => {
                 eprintln!("install wizard: put back {} kept file(s), {} copied aside first", done.copied, done.backed_up);
@@ -592,6 +598,7 @@ fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninst
                 if let Some(dir) = &done.backup_dir {
                     line.push_str(&format!("; {} already there went to {} first", done.backed_up, human_path(dir, &Places::system())));
                 }
+                left = uninstall_keep::skipped_words(done.skipped);
                 (Mark::Done, line)
             }
             Err(e) => {
@@ -600,6 +607,8 @@ fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninst
             }
         };
         flow.notes.borrow_mut().push(note);
+        // F-W3: files whose place was taken stay in Kept files; the last page says so.
+        flow.notes.borrow_mut().extend(left.map(|words| (Mark::Skipped, words)));
         game_files_step(&app, &router, &flow);
         true
     });

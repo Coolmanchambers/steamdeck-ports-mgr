@@ -406,6 +406,8 @@ pub struct KeptOffer {
     pub replaces: usize,
     /// Kept files that are in the port folder already, byte for byte: left as they are, not listed.
     pub already: usize,
+    /// Kept files that cannot go back (a folder or a link is at their place): they stay in Kept files.
+    pub skipped: usize,
     /// Where they are kept and where replaced files go, the human way.
     pub kept_place: String,
     pub replaced_place: String,
@@ -423,6 +425,9 @@ pub fn kept_page(name: &str, art: &Option<ArtRef>, offer: &KeptOffer) -> Page<Wi
     }
     if offer.already > 0 {
         p.fact(Mark::Done, format!("{} already there, left as {}", offer.already, if offer.already == 1 { "it is" } else { "they are" }));
+    }
+    if let Some(words) = crate::fork::uninstall_keep::skipped_words(offer.skipped) {
+        p.fact(Mark::Skipped, words);
     }
     if offer.replaces > 0 {
         let what = if offer.replaces == 1 { "1 of them is".to_string() } else { format!("{} of them are", offer.replaces) };
@@ -580,6 +585,7 @@ mod tests {
             files: (0..7).map(|i| (format!("file{i}.o2r"), "game file".to_string())).collect(),
             replaces: 2,
             already: 1,
+            skipped: 3,
             kept_place: "Internal storage > Saves Backup > Kept files".into(),
             replaced_place: "Internal storage > Saves Backup > Replaced by restore > soh > 2026-11-01_12-00-00".into(),
         };
@@ -857,6 +863,7 @@ mod tests {
             files: vec![("oot.o2r".into(), "game file".into()), ("prod.keys".into(), "key".into())],
             replaces: 1,
             already: 0,
+            skipped: 0,
             kept_place: "Internal storage > Saves Backup > Kept files".into(),
             replaced_place: "Internal storage > Saves Backup > Replaced by restore > soh > 2026-11-01_12-00-00".into(),
         };
@@ -874,7 +881,10 @@ mod tests {
         assert_eq!(action_at(&none, initial_focus(&none)), Some(WizAct::PutBack));
         let some_there = kept_page("X", &None, &KeptOffer { replaces: 0, already: 2, ..offer.clone() });
         assert_eq!((some_there.facts[2].as_str(), some_there.mark_of(2)), ("2 already there, left as they are", Mark::Done));
-        assert_eq!(kept_page("X", &None, &KeptOffer { replaces: 0, already: 1, ..offer }).facts[2], "1 already there, left as it is");
+        assert_eq!(kept_page("X", &None, &KeptOffer { replaces: 0, already: 1, ..offer.clone() }).facts[2], "1 already there, left as it is");
+        // F-W3: files that cannot go back are named as staying in Kept files.
+        let blocked = kept_page("X", &None, &KeptOffer { replaces: 0, skipped: 1, ..offer });
+        assert_eq!((blocked.facts[2].as_str(), blocked.mark_of(2)), ("1 kept file stays in Kept files: a folder or a link is at its place in the port's folder", Mark::Skipped));
     }
 
     #[test]
