@@ -11,7 +11,7 @@
 //! `must_hash`) is not changed by this: it still ignores title-only slots.
 
 use crate::core::models::Port;
-use crate::fork::port_mover::game_files::{files_by_name, missing_in, reaches_file, GameFiles, SEARCH_DEPTH};
+use crate::fork::port_mover::game_files::{files_by_name, is_a_file, missing_in, reaches_file, GameFiles, SEARCH_DEPTH};
 use crate::fork::rom_library::requirements::generated_archives;
 use crate::fork::rom_library::title::{is_disc_image_extension, is_game_image_extension, needs_cue, significant_words, stem_has_words};
 use crate::fork::rom_library::{load_local_entries, RomSpec, Slot};
@@ -54,7 +54,7 @@ fn title_in_folder(slot: &Slot, present: &[(String, PathBuf)]) -> bool {
                         return false;
                     }
                 }
-                stem_has_words(stem, &words) && std::fs::metadata(path).is_ok()
+                stem_has_words(stem, &words) && is_a_file(path)
             })
     })
 }

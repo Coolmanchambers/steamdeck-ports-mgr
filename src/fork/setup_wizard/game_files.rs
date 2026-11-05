@@ -58,11 +58,15 @@ impl Results {
             out.total += 1;
             if in_folder.contains(row.port.key()) {
                 out.in_folder += 1;
-            } else if row.connected || matches!(row.status, PortStatus::Found | PortStatus::Ambiguous) {
+                continue;
+            }
+            // Counted whatever the row's status: a port with some files found and others not (a partial row) can still be
+            // connected for the ones found.
+            if connectable.contains(row.port.key()) {
+                out.connectable += 1;
+            }
+            if row.connected || matches!(row.status, PortStatus::Found | PortStatus::Ambiguous) {
                 out.found += 1;
-                if connectable.contains(row.port.key()) {
-                    out.connectable += 1;
-                }
             } else {
                 out.missing.push((row.port.display_name().to_string(), first_missing(row)));
             }
@@ -172,6 +176,19 @@ mod tests {
         assert_eq!(r.have(), 2);
         assert_eq!(r.headline(), "Found game files for 2 of 3 ports.");
         assert_eq!(r.missing.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["Crash Port"], "Kart Port is not listed as missing");
+    }
+
+    // Review (W7): a port Connect them now can do counts as connectable whatever its row's status (a partial row: some
+    // files found, others not), but never one whose files are already in its folder. The rerun reads this count.
+    #[test]
+    fn a_partial_row_still_counts_as_connectable_and_keeps_the_rerun_step_to_do() {
+        let (_tmp, report, _) = world();
+        let can: HashSet<String> = ["KartPort".to_string(), "ZeldaPort".to_string()].into_iter().collect();
+        let r = Results::from_report(&report, &["ZeldaPort".to_string()].into_iter().collect(), &can);
+        assert_eq!((r.in_folder, r.found, r.connectable), (1, 0, 1), "Kart's row is not Found, Zelda's files are in its folder: {r:?}");
+        let facts = super::super::rerun::Facts { installed: 3, game_files_needed: 2, rom_folder: Some("roms".into()), game_files_found: Some((r.have(), r.total)), game_files_connectable: r.connectable, ..Default::default() };
+        let lines = super::super::rerun::lines(&facts, &super::super::rerun::Progress::default());
+        assert_eq!(lines[2].state, super::super::rerun::State::Pending);
     }
 
     #[test]

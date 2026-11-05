@@ -573,16 +573,16 @@ fn kept_step(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>) {
         replaced_place: human_path(&replaced.join(&stamp), &places),
     };
     let page = wiz::kept_page(&flow.name, &flow.art, &offer);
-    let (f, set, steps) = (flow.clone(), Rc::new(set), Rc::new(plan.steps));
+    let (f, set, steps, planned_skips) = (flow.clone(), Rc::new(set), Rc::new(plan.steps), plan.skipped);
     let on_action = move |app: &Rc<AppState>, router: &Router, act: WizAct| match act {
-        WizAct::PutBack => put_back(app, router, &f, set.clone(), steps.clone(), port_dir.clone(), replaced.clone(), stamp.clone()),
+        WizAct::PutBack => put_back(app, router, &f, set.clone(), steps.clone(), planned_skips, port_dir.clone(), replaced.clone(), stamp.clone()),
         _ => game_files_step(app, router, &f),
     };
     show_page(app, router, page, handlers(on_action, WizAct::KeepLater));
 }
 
 #[allow(clippy::too_many_arguments)]
-fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninstall_keep::KeptSet>, plan: Rc<Vec<uninstall_keep::RestoreStep>>, port_dir: PathBuf, replaced: PathBuf, stamp: String) {
+fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninstall_keep::KeptSet>, plan: Rc<Vec<uninstall_keep::RestoreStep>>, planned_skips: usize, port_dir: PathBuf, replaced: PathBuf, stamp: String) {
     let page = wiz::working_page(&flow.name, &flow.art, "Putting your files back", "Copying them from Kept files. Big files take a while.");
     show_page(app, router, page, handlers(|_, _, _| {}, WizAct::KeepLater));
     let (s, p) = ((*set).clone(), (*plan).clone());
@@ -598,7 +598,8 @@ fn put_back(app: &Rc<AppState>, router: &Router, flow: &Rc<Flow>, set: Rc<uninst
                 if let Some(dir) = &done.backup_dir {
                     line.push_str(&format!("; {} already there went to {} first", done.backed_up, human_path(dir, &Places::system())));
                 }
-                left = uninstall_keep::skipped_words(done.skipped);
+                // Both kinds: left out when the page was made, and taken meanwhile.
+                left = uninstall_keep::skipped_words(done.skipped + planned_skips);
                 (Mark::Done, line)
             }
             Err(e) => {

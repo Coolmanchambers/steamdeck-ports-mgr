@@ -124,6 +124,8 @@ struct SysInput {
     favorites: HashMap<String, String>,
     /// The installed ports that were ever played (a game never run has no saves to miss yet).
     played: HashSet<String>,
+    /// The ports installing or updating when the look started (their folder is half way).
+    installing: HashSet<String>,
     /// The folder names of every catalog port (a switch cut short counts only when its new copy is one of them).
     catalog_folders: Vec<String>,
     home: Option<PathBuf>,
@@ -145,7 +147,7 @@ struct SysFacts {
     saves: Vec<Named>,
     saves_known: usize,
     stopped_restores: Vec<Named>,
-    unfinished_moves: Vec<String>,
+    unfinished_moves: Vec<Named>,
     old_copies: Result<Vec<CopyFact>, String>,
     backup_days: Option<u64>,
     backup_missed: Vec<String>,
@@ -218,6 +220,7 @@ fn sys_input_for(app: &AppState, scope: Option<&str>) -> SysInput {
         all_installed,
         favorites,
         played,
+        installing: app.install_runtime.installing.borrow().iter().cloned().collect(),
         catalog_folders: app.catalog.borrow().iter().map(|p| p.folder.clone()).collect(),
         home: home_dir(),
         library: app.paths.library_dir(),
@@ -242,14 +245,16 @@ fn sys_gather(i: SysInput) -> SysFacts {
         checkup::QUEUE_UNREADABLE.to_string()
     });
     let steam_found = i.home.as_deref().is_some_and(|h| !crate::fork::port_mover::steam::device_accounts(h).is_empty());
-    // Every installed port's shortcuts are read, so one port's checkup knows whether Steam is in use at all (W8); the
-    // facts keep only the ports being checked.
-    let all_shortcuts = match i.home.as_deref() {
-        Some(h) => steam_icons::diagnose(h, &i.library, &i.config_dir, &i.all_installed),
+    let shortcuts = match i.home.as_deref() {
+        Some(h) => steam_icons::diagnose(h, &i.library, &i.config_dir, &i.installed),
         None => Err("Could not find your home folder".to_string()),
     };
-    let any_in_steam = all_shortcuts.as_ref().is_ok_and(|s| !s.is_empty());
-    let shortcuts = all_shortcuts.map(|s| s.into_iter().filter(|f| i.installed.iter().any(|p| p.key() == f.port_key)).collect());
+    // One port's checkup asks whether any port is in Steam at all (W8): an owner match only, no icons looked at.
+    let any_in_steam = match (i.home.as_deref(), &shortcuts) {
+        (_, Ok(s)) if !s.is_empty() => true,
+        (Some(h), Ok(_)) if i.installed.len() < i.all_installed.len() => steam_icons::any_shortcut_of(h, &i.library, &i.config_dir, &i.all_installed).unwrap_or(false),
+        _ => false,
+    };
     let here = folder == Folder::Here;
     let programs = if here { program_facts(&i) } else { ProgramFacts::default() };
     let files = if here { game_files_missing(&i) } else { Vec::new() };
@@ -263,7 +268,7 @@ fn sys_gather(i: SysInput) -> SysFacts {
         let now = chrono::Utc::now().timestamp();
         newest.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| crate::fork::settings_menu::days_ago(d.as_secs() as i64, now))
     };
-    let backup_missed = crate::fork::backup_last_run::missed_by_newest(&global, newest);
+    let backup_missed = crate::fork::backup_last_run::missed_by_newest(&global);
     let skips = checkup::skips_from_json(ForkSettings::load(&i.settings_path).get(KEY_SKIPS));
     SysFacts { folder, steam_found, queue, shortcuts, any_in_steam, programs, files, saves, saves_known, stopped_restores, unfinished_moves, old_copies, backup_days, backup_missed, skips }
 }
@@ -274,7 +279,8 @@ fn sys_gather(i: SysInput) -> SysFacts {
 fn program_facts(i: &SysInput) -> ProgramFacts {
     use crate::core::executable_detect::resolve_executable;
     let mut out = ProgramFacts::default();
-    for p in &i.installed {
+    // A port installing or updating right now is half there: its program may be missing for a moment.
+    for p in i.installed.iter().filter(|p| !i.installing.contains(p.key())) {
         let Ok(dir) = crate::core::path_safety::safe_join(&i.library, &p.folder) else { continue };
         let favorite_works = i.favorites.get(p.key()).and_then(|f| crate::core::path_safety::safe_join(&dir, f).ok()).is_some_and(|f| f.exists());
         if favorite_works {
@@ -285,8 +291,11 @@ fn program_facts(i: &SysInput) -> ProgramFacts {
         if named_by_catalog && resolve_executable(p.executable.as_ref(), &dir).is_ok_and(|exe| exe.is_file()) {
             continue;
         }
-        let Ok(found) = checkup::shallow_programs(&dir) else { continue };
+        let Ok(walk) = checkup::program_walk(&dir) else { continue };
+        let found = walk.found;
         match (named_by_catalog, found.len()) {
+            // The bounded walk stopped before the end: "none here" is not known (Play looks further), so nothing is said.
+            (_, 0) if !walk.complete => {}
             (_, 0) => out.none.push(named(p)),
             (true, _) => out.gone.push(named(p)),
             (false, 1) => {}
@@ -353,9 +362,9 @@ fn saves_not_found(i: &SysInput) -> (Vec<Named>, usize) {
 
 /// The switches cut short (the app closed between the ports folder setting and Steam) whose new copy is in use: what
 /// Settings > Ports folder offers to finish. A read of the records.
-fn unfinished_switches(i: &SysInput) -> Vec<String> {
+fn unfinished_switches(i: &SysInput) -> Vec<Named> {
     let active: Vec<PathBuf> = i.catalog_folders.iter().filter_map(|f| crate::core::path_safety::safe_join(&i.library, f).ok()).collect();
-    old_copies::load(&i.config_dir).unwrap_or_default().into_iter().filter(|o| !o.switched && active.contains(&o.new_path)).map(|o| o.name).collect()
+    old_copies::load(&i.config_dir).unwrap_or_default().into_iter().filter(|o| !o.switched && active.contains(&o.new_path)).map(|o| Named::new(&o.port_key, &o.name)).collect()
 }
 
 /// Each kept old copy and what it needs. Read only: `readiness_now`, which notes a first sighting in the record, is not
@@ -367,7 +376,7 @@ fn old_copy_facts(i: &SysInput) -> Result<Vec<CopyFact>, String> {
         .iter()
         .map(|c| {
             let state = if std::fs::symlink_metadata(&c.old_path).is_err() { CopyState::Gone } else { CopyState::of(old_copies::readiness_read_only(c, &home, &i.config_dir)) };
-            CopyFact { name: c.name.clone(), state }
+            CopyFact { key: c.port_key.clone(), name: c.name.clone(), state }
         })
         .collect())
 }
@@ -1042,6 +1051,7 @@ mod tests {
             installed,
             favorites: HashMap::new(),
             played: HashSet::new(),
+            installing: HashSet::new(),
             catalog_folders: Vec::new(),
             home: Some(root.join("home")),
             library: root.join("Library"),
@@ -1151,8 +1161,32 @@ mod tests {
         assert_eq!(f.none, vec![Named::new("empty", "empty"), Named::new("bare", "bare")], "nothing to start at all");
         let facts = assemble(&AppPart { installed: Vec::new(), updates: Vec::new(), cloud_problem: false, cloud_ok: false, game_mode: false }, sys_gather(i));
         let Outcome::Problem(p) = checkup::check(Check::Programs, &facts) else { panic!("a problem") };
-        assert_eq!((p.mark, p.summary.as_str()), (crate::fork::page::Mark::Problem, "Missing for empty and bare; not chosen for gone"));
+        assert_eq!((p.mark, p.summary.as_str()), (crate::fork::page::Mark::Problem, "Missing for empty and bare; program gone for gone"));
         assert_eq!((p.fix, p.fix_label.as_str()), (Fix::InstallAgain("empty".into()), "Install empty again"));
+    }
+
+    // Review: the bounded walk that stops before the end says nothing (Play's own search would go on), and a port being
+    // installed is not looked at.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_walk_cut_short_or_a_port_installing_is_never_called_no_program() {
+        let root = tempfile::tempdir().unwrap();
+        let big = root.path().join("Library").join("big");
+        std::fs::create_dir_all(big.join("a_data")).unwrap();
+        for n in 0..4001 {
+            std::fs::write(big.join("a_data").join(format!("f{n}.dat")), b"").unwrap();
+        }
+        let deep = root.path().join("Library").join("deep").join("1").join("2").join("3").join("4").join("5");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("game.sh"), b"#!/bin/sh\n").unwrap();
+        std::fs::create_dir_all(root.path().join("Library").join("busy")).unwrap();
+        let mut i = input(root.path(), vec![port("big"), port("deep"), port("busy")]);
+        assert!(!checkup::program_walk(&big).unwrap().complete);
+        i.installing.insert("busy".to_string());
+        let f = program_facts(&i);
+        assert!(f.none.is_empty() && f.gone.is_empty() && f.to_choose.is_empty(), "{:?}", f.none);
+        i.installing.clear();
+        assert_eq!(program_facts(&i).none, vec![Named::new("busy", "busy")], "once installed, an empty folder is no program");
     }
 
     // W9: a restore that stopped part way shows on the Saves line, read without touching anything.
@@ -1218,7 +1252,7 @@ mod tests {
         std::fs::write(config.join(old_copies::FILE_NAME), file.to_string()).unwrap();
         let mut i = input(root.path(), Vec::new());
         i.catalog_folders = vec!["a".into(), "b".into(), "c".into()];
-        assert_eq!(unfinished_switches(&i), vec!["a".to_string()], "only the one cut short whose new copy is in the ports folder");
+        assert_eq!(unfinished_switches(&i), vec![Named::new("a", "a")], "only the one cut short whose new copy is in the ports folder");
     }
 
     #[test]

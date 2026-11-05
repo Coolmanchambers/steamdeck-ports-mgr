@@ -33,6 +33,11 @@ fn queued(port: &str, kind: QueuedKind) -> QueuedFact {
     QueuedFact { port_key: port.into(), name: port.to_uppercase(), kind }
 }
 
+/// An old copy of the port keyed by its name in lower case.
+fn copy(name: &str, state: CopyState) -> CopyFact {
+    CopyFact { key: name.to_lowercase(), name: name.into(), state }
+}
+
 fn problem_of(o: Outcome) -> Problem {
     match o {
         Outcome::Problem(p) => p,
@@ -103,7 +108,7 @@ fn a_gone_folder_a_file_in_its_place_and_a_cut_short_move_each_say_so() {
     f.folder = Folder::NotAFolder;
     assert!(problem_of(check(Check::PortsFolder, &f)).summary.contains("not a folder"));
     f.folder = Folder::Here;
-    f.unfinished_moves = vec!["Dusklight".into(), "SoH".into()];
+    f.unfinished_moves = vec![Named::new("dusk", "Dusklight"), Named::new("soh", "SoH")];
     let p = problem_of(check(Check::PortsFolder, &f));
     assert_eq!((p.mark, p.fix.clone()), (Mark::ToDo, Fix::PortsFolderMenu));
     assert_eq!(p.summary, "A move did not finish: Dusklight and SoH");
@@ -238,15 +243,15 @@ fn programs_missing_files_and_saves_name_their_ports_and_fixes() {
 #[test]
 fn old_copies_say_what_each_needs_and_wait_unless_one_can_be_acted_on() {
     let mut f = fine();
-    f.old_copies = Ok(vec![CopyFact { name: "Dusklight".into(), state: CopyState::StartOnce }]);
+    f.old_copies = Ok(vec![copy("Dusklight", CopyState::StartOnce)]);
     let p = problem_of(check(Check::OldCopies, &f));
     assert_eq!(p.summary, "Start Dusklight once, from here or from Steam");
     assert_eq!(p.mark, Mark::Waiting, "nothing to do yet");
     f.old_copies = Ok(vec![
-        CopyFact { name: "A".into(), state: CopyState::Ready },
-        CopyFact { name: "B".into(), state: CopyState::StartOnce },
-        CopyFact { name: "C".into(), state: CopyState::WaitingForSteam },
-        CopyFact { name: "D".into(), state: CopyState::Gone },
+        copy("A", CopyState::Ready),
+        copy("B", CopyState::StartOnce),
+        copy("C", CopyState::WaitingForSteam),
+        copy("D", CopyState::Gone),
     ]);
     let p = problem_of(check(Check::OldCopies, &f));
     assert_eq!(p.summary, "4 old copies kept: 1 ready to remove, 1 to start once, 1 waiting for Steam, 1 already gone");
@@ -508,7 +513,7 @@ fn nudges_and_things_that_cannot_be_done_now_show_in_the_checkup_but_do_not_rais
     f.saves = vec![named("soh")];
     f.backup_days = Some(40);
     found_saves(&mut f);
-    f.old_copies = Ok(vec![CopyFact { name: "A".into(), state: CopyState::StartOnce }]);
+    f.old_copies = Ok(vec![copy("A", CopyState::StartOnce)]);
     let r = run(&f);
     assert_eq!(r.problem_count(), 3, "saves not found, an old backup, an old copy waiting for a first start");
     assert!(r.problems().iter().all(|(_, p)| p.advisory), "all three are nudges or waiting");
@@ -529,7 +534,7 @@ fn nudges_and_things_that_cannot_be_done_now_show_in_the_checkup_but_do_not_rais
     assert_eq!((tile.title.as_str(), tile.mark), ("Fix 1 problem", Mark::Problem));
     // An old copy that can be removed is something to do now.
     f.files.clear();
-    f.old_copies = Ok(vec![CopyFact { name: "A".into(), state: CopyState::Ready }]);
+    f.old_copies = Ok(vec![copy("A", CopyState::Ready)]);
     assert_eq!(run(&f).home_tile().unwrap().note, "Old copies");
     // Steam changes in Game Mode cannot be finished here: shown, no tile.
     let mut g = fine();
@@ -772,7 +777,7 @@ fn two_with_problems() -> Facts {
         saves: vec![named("dusk")],
         updates: vec![named("soh"), named("dusk")],
         queue: Ok(vec![queued("dusk", QueuedKind::Add)]),
-        old_copies: Ok(vec![CopyFact { name: "DUSK".into(), state: CopyState::Ready }]),
+        old_copies: Ok(vec![CopyFact { key: "dusk".into(), name: "DUSK".into(), state: CopyState::Ready }]),
         backup_days: Some(90),
         saves_known: 2,
         ..Facts::default()
@@ -789,7 +794,7 @@ fn the_port_filter_keeps_only_that_ports_facts() {
     assert_eq!(f.updates, vec![named("dusk")]);
     assert_eq!(f.queue.as_ref().unwrap().len(), 1);
     assert_eq!(f.shortcuts.as_ref().unwrap().iter().map(|s| s.port_key.as_str()).collect::<Vec<_>>(), ["dusk"]);
-    assert_eq!(f.old_copies.as_ref().unwrap().len(), 1, "old copies match by the port's name");
+    assert_eq!(f.old_copies.as_ref().unwrap().len(), 1, "old copies match by the port's key");
     assert_eq!((f.backup_days, f.saves_known), (None, 0), "the all-ports backup is not about one port");
     let soh = two_with_problems().only_port("soh");
     assert!(soh.old_copies.as_ref().unwrap().is_empty() && soh.queue.as_ref().unwrap().is_empty());
@@ -859,7 +864,7 @@ fn a_ports_own_unfinished_switch_shows_in_its_fix_problems() {
     let mut f = fine();
     f.installed = vec![Named::new("soh", "Ship of Harkinian"), Named::new("dusk", "Dusklight")];
     f.shortcuts = Ok(vec![ok_icon("soh"), ok_icon("dusk")]);
-    f.unfinished_moves = vec!["Dusklight".into()];
+    f.unfinished_moves = vec![Named::new("dusk", "Dusklight")];
     let dusk = run_for_port(&f, "dusk");
     assert_eq!(dusk.items[0].0, Check::PortsFolder, "it leads");
     let p = problem_of(dusk.outcome(Check::PortsFolder).unwrap().clone());
@@ -868,6 +873,14 @@ fn a_ports_own_unfinished_switch_shows_in_its_fix_problems() {
     let soh = run_for_port(&f, "soh");
     assert!(soh.outcome(Check::PortsFolder).is_none(), "another port's switch is not this port's line");
     assert_eq!(soh.summary(), "Everything looks fine");
+    // Matched by key, not by the shown name: a record whose name differs (renamed in the catalog) still counts, and
+    // another port with the same name does not.
+    f.unfinished_moves = vec![Named::new("dusk", "Dusklight (old name)")];
+    assert!(run_for_port(&f, "dusk").outcome(Check::PortsFolder).is_some());
+    f.unfinished_moves = vec![Named::new("other", "Dusklight")];
+    assert!(run_for_port(&f, "dusk").outcome(Check::PortsFolder).is_none());
+    f.old_copies = Ok(vec![CopyFact { key: "other".into(), name: "Dusklight".into(), state: CopyState::Ready }]);
+    assert!(run_for_port(&f, "dusk").outcome(Check::OldCopies).is_some_and(|o| !o.is_problem()), "another port's old copy of the same name");
 }
 
 // W10: a port with no program at all, and one whose catalog program is gone.
@@ -888,13 +901,13 @@ fn a_port_with_no_program_is_red_and_offers_to_install_it_again() {
     g.program_gone = vec![named("soh")];
     g.programs = vec![named("abuse")];
     let p = problem_of(check(Check::Programs, &g));
-    assert_eq!((p.mark, p.summary.as_str()), (Mark::Problem, "Not chosen for SOH and ABUSE"));
+    assert_eq!((p.mark, p.summary.as_str()), (Mark::Problem, "Program gone for SOH; not chosen for ABUSE"));
     assert_eq!((p.fix.clone(), p.fix_label.as_str()), (Fix::PickProgram("soh".into()), "Choose the program for SOH"));
     assert_eq!(p.detail, vec![PROGRAM_GONE_DETAIL.to_string()]);
-    // Both: the line names both, the port that cannot start at all is fixed first.
+    // All three: the line names each, the port that cannot start at all is fixed first.
     g.no_program = vec![named("dusk")];
     let p = problem_of(check(Check::Programs, &g));
-    assert_eq!(p.summary, "Missing for DUSK; not chosen for SOH and ABUSE");
+    assert_eq!(p.summary, "Missing for DUSK; program gone for SOH; not chosen for ABUSE");
     assert_eq!(p.fix, Fix::InstallAgain("dusk".into()));
     assert_eq!(p.ports, vec!["dusk", "soh", "abuse"]);
     // Only a question to answer stays a to-do, as before.
@@ -912,13 +925,16 @@ fn a_restore_that_stopped_part_way_shows_on_the_saves_line() {
     let mut f = fine();
     f.stopped_restores = vec![named("soh")];
     let p = problem_of(check(Check::Saves, &f));
-    assert_eq!((p.summary.as_str(), p.fix.clone(), p.fix_label.as_str()), ("A restore of SOH stopped part way", Fix::StoppedRestore("soh".into()), "Look at the restore of SOH"));
+    // A finished restore keeps its set-aside folder too: the words never say it failed.
+    assert_eq!((p.summary.as_str(), p.fix.clone(), p.fix_label.as_str()), ("Saves from before a restore of SOH are kept beside its save folder", Fix::StoppedRestore("soh".into()), "Look at the restore of SOH"));
     assert!(p.advisory, "the app never removes what it left: a reminder, not a tile");
     f.saves = vec![named("dusk")];
     let p = problem_of(check(Check::Saves, &f));
-    assert_eq!(p.summary, "A restore of SOH stopped part way; not found for DUSK");
+    assert_eq!(p.summary, "Saves from before a restore of SOH are kept beside its save folder; not found for DUSK");
     assert_eq!(p.ports, vec!["soh", "dusk"]);
-    assert_eq!(problem_of(run_for_port(&f, "soh").outcome(Check::Saves).unwrap().clone()).summary, "A restore of SOH stopped part way");
+    assert_eq!(problem_of(run_for_port(&f, "soh").outcome(Check::Saves).unwrap().clone()).summary, "Saves from before a restore of SOH are kept beside its save folder");
+    let two = Facts { stopped_restores: vec![named("soh"), named("dusk")], ..fine() };
+    assert_eq!(problem_of(check(Check::Saves, &two)).summary, "Saves from before a restore of SOH and DUSK are kept beside their save folders");
     assert_eq!(problem_of(run_for_port(&f, "dusk").outcome(Check::Saves).unwrap().clone()).summary, "Not found for DUSK");
 }
 

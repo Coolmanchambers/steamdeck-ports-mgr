@@ -180,7 +180,7 @@ pub fn missing_in(present: &[(String, PathBuf)], files: &GameFiles) -> Vec<Strin
         .iter()
         .filter(|req| {
             let connected = files.mappings.iter().any(|m| m.slot == req.slot_id && reaches_file(m));
-            let in_folder = present.iter().any(|(name, path)| req.names.contains(name) && fs::metadata(path).is_ok());
+            let in_folder = present.iter().any(|(name, path)| req.names.contains(name) && is_a_file(path));
             !connected && !in_folder
         })
         .map(|req| req.names.first().cloned().unwrap_or_else(|| req.label.clone()))
@@ -191,7 +191,12 @@ pub fn missing_in(present: &[(String, PathBuf)], files: &GameFiles) -> Vec<Strin
 /// original), or the original itself for "use original". A link to an SD card that is out, or a deleted file, does not.
 /// Only whether it is there: a changed size or date (the full health check) still counts, the port can read it.
 pub fn reaches_file(m: &Mapping) -> bool {
-    fs::metadata(m.dest.as_ref().unwrap_or(&m.source)).is_ok()
+    is_a_file(m.dest.as_ref().unwrap_or(&m.source))
+}
+
+/// A file there (a link is followed): never a folder of that name, never a link to nothing.
+pub(crate) fn is_a_file(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|m| m.is_file())
 }
 
 /// Files (relative to the port folder) the verify step must always read back: copies of game files

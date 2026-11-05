@@ -305,6 +305,8 @@ impl CopyState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyFact {
+    /// The port's key (one port's checkup keeps its own by it).
+    pub key: String,
     pub name: String,
     pub state: CopyState,
 }
@@ -317,8 +319,8 @@ pub struct Facts {
     /// The ports that are installed.
     pub installed: Vec<Named>,
     pub folder: Folder,
-    /// Ports whose switch to a new folder was cut short (their names).
-    pub unfinished_moves: Vec<String>,
+    /// Ports whose switch to a new folder was cut short.
+    pub unfinished_moves: Vec<Named>,
     /// A Steam account folder was found on this device.
     pub steam_found: bool,
     pub queue: Result<Vec<QueuedFact>, String>,
@@ -338,7 +340,8 @@ pub struct Facts {
     pub files: Vec<(Named, FilesState)>,
     /// Ports whose saves the app could not find.
     pub saves: Vec<Named>,
-    /// Ports with a restore of saves that stopped part way (a hidden folder left beside a save folder).
+    /// Ports with a hidden folder a restore of saves left beside a save folder (the saves from before it, kept when it
+    /// finished or when it stopped part way, or an unfinished copy).
     pub stopped_restores: Vec<Named>,
     pub old_copies: Result<Vec<CopyFact>, String>,
     /// Ports with an update waiting.
@@ -448,17 +451,16 @@ impl Check {
 
 impl Facts {
     /// The same facts with everything that is about another port left out: the one port's Steam changes, shortcuts,
-    /// program question, game files, saves, old copies (by its name: their records carry no key) and update. The ports
-    /// folder and the skips stay as they are; the all-ports backup facts are emptied (they are not about one port).
+    /// program question, game files, saves, old copies, unfinished switch and update, all by its key. The ports folder
+    /// and the skips stay as they are; the all-ports backup facts are emptied (they are not about one port).
     pub fn only_port(&self, key: &str) -> Facts {
-        let name = self.installed.iter().find(|n| n.key == key).map(|n| n.name.clone());
         let mine = |n: &Named| n.key == key;
         Facts {
             game_mode: self.game_mode,
             installed: self.installed.iter().filter(|n| mine(n)).cloned().collect(),
             folder: self.folder,
-            // F-W2: the port's own switch cut short (the records carry its name, not its key).
-            unfinished_moves: self.unfinished_moves.iter().filter(|m| name.as_deref() == Some(m.as_str())).cloned().collect(),
+            // F-W2: the port's own switch cut short.
+            unfinished_moves: self.unfinished_moves.iter().filter(|n| mine(n)).cloned().collect(),
             steam_found: self.steam_found,
             queue: self.queue.as_ref().map(|q| q.iter().filter(|e| e.port_key == key).cloned().collect()).map_err(Clone::clone),
             shortcuts: self.shortcuts.as_ref().map(|s| s.iter().filter(|f| f.port_key == key).cloned().collect()).map_err(Clone::clone),
@@ -470,7 +472,7 @@ impl Facts {
             files: self.files.iter().filter(|(n, _)| mine(n)).cloned().collect(),
             saves: self.saves.iter().filter(|n| mine(n)).cloned().collect(),
             stopped_restores: self.stopped_restores.iter().filter(|n| mine(n)).cloned().collect(),
-            old_copies: self.old_copies.as_ref().map(|c| c.iter().filter(|c| name.as_deref() == Some(c.name.as_str())).cloned().collect()).map_err(Clone::clone),
+            old_copies: self.old_copies.as_ref().map(|c| c.iter().filter(|c| c.key == key).cloned().collect()).map_err(Clone::clone),
             updates: self.updates.iter().filter(|n| mine(n)).cloned().collect(),
             backup_days: None,
             backup_missed: Vec::new(),
@@ -615,11 +617,12 @@ fn ports_folder(f: &Facts) -> Outcome {
         Folder::NotAFolder => problem(Mark::Problem, "Something that is not a folder has its name.".into(), all, Fix::PortsFolderGone, "Find the ports folder"),
         Folder::Here if !f.unfinished_moves.is_empty() => {
             // The same words as the Ports folder page's card.
-            let label = match f.unfinished_moves.as_slice() {
+            let moves: Vec<String> = f.unfinished_moves.iter().map(|n| n.name.clone()).collect();
+            let label = match moves.as_slice() {
                 [one] => crate::fork::rom_screens::util::ellipsize(&format!("Finish switching {one}"), 40),
                 many => format!("Finish switching {} ports", many.len()),
             };
-            problem(Mark::ToDo, format!("A move did not finish: {}", names(&f.unfinished_moves)), Vec::new(), Fix::PortsFolderMenu, &label)
+            problem(Mark::ToDo, format!("A move did not finish: {}", names(&moves)), Vec::new(), Fix::PortsFolderMenu, &label)
         }
         Folder::Here => Outcome::Ok("Found".to_string()),
     }
@@ -776,21 +779,24 @@ fn steam_shortcuts(f: &Facts) -> Outcome {
 }
 
 /// What the step page says about a port with no program to start, or one whose usual program is gone (W10).
-pub const NO_PROGRAM_DETAIL: &str = "No program to start is in its folder. Part of the port is missing; installing it again puts it back.";
+pub const NO_PROGRAM_DETAIL: &str = "There is no program to start in its folder. Part of the port is missing; installing it again puts it back.";
 pub const PROGRAM_GONE_DETAIL: &str = "The program it usually starts is not there. Another program in its folder can start it.";
 
 fn programs(f: &Facts) -> Outcome {
-    // A port the catalog's program is gone from has nothing remembered either: it is chosen like an unanswered question.
+    // A port whose catalog program is gone is fixed by choosing another one, like an unanswered question.
     let to_choose: Vec<Named> = f.program_gone.iter().chain(&f.programs).cloned().collect();
     if f.no_program.is_empty() && to_choose.is_empty() {
         return Outcome::Ok("Nothing to choose".to_string());
     }
-    // The same words as the Game files line: "Missing for A; not chosen for B".
-    let summary = match (f.no_program.is_empty(), to_choose.is_empty()) {
-        (false, true) => format!("Missing for {}", named_list(&f.no_program)),
-        (false, false) => format!("Missing for {}; not chosen for {}", named_list(&f.no_program), named_list(&to_choose)),
-        _ => format!("Not chosen for {}", named_list(&to_choose)),
-    };
+    // The same pattern as the Game files line: "Missing for A; program gone for B; not chosen for C".
+    let mut parts: Vec<String> = Vec::new();
+    for (list, words) in [(&f.no_program, "missing for"), (&f.program_gone, "program gone for"), (&f.programs, "not chosen for")] {
+        if !list.is_empty() {
+            parts.push(format!("{words} {}", named_list(list)));
+        }
+    }
+    let joined = parts.join("; ");
+    let summary = joined[..1].to_uppercase() + &joined[1..];
     let mut detail = Vec::new();
     if !f.no_program.is_empty() {
         detail.push(NO_PROGRAM_DETAIL.to_string());
@@ -824,9 +830,11 @@ fn game_files(f: &Facts) -> Outcome {
 }
 
 fn saves(f: &Facts) -> Outcome {
-    // W9: a restore that stopped part way comes first; Restore saves explains it (the app never removes what it left).
+    // W9: what a restore left beside a save folder comes first; Restore saves explains it (the app never removes it).
+    // A restore that finished also keeps the folder it set aside, so the words do not say the restore failed.
     if let Some(first) = f.stopped_restores.first() {
-        let mut summary = format!("A restore of {} stopped part way", named_list(&f.stopped_restores));
+        let whose = if f.stopped_restores.len() == 1 { "its save folder" } else { "their save folders" };
+        let mut summary = format!("Saves from before a restore of {} are kept beside {whose}", named_list(&f.stopped_restores));
         if !f.saves.is_empty() {
             summary.push_str(&format!("; not found for {}", named_list(&f.saves)));
         }
@@ -930,24 +938,46 @@ fn backups(f: &Facts) -> Outcome {
 /// that stops after `MAX_WALK` entries and `MAX_DEPTH` folders, so a huge game folder (discs, bundled Java) never makes
 /// the checkup slow. `Err` when the folder cannot be read.
 pub fn shallow_programs(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
+    program_walk(dir).map(|w| w.found)
+}
+
+/// What [`program_walk`] found, and whether it looked at the whole folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramWalk {
+    /// The programs at the shallowest depth that has any.
+    pub found: Vec<std::path::PathBuf>,
+    /// False when the walk stopped at `MAX_WALK` entries or left a folder `MAX_DEPTH` deep unread: "none found" then says
+    /// nothing (Play's own search has no limit, so a program may be further in).
+    pub complete: bool,
+}
+
+/// [`shallow_programs`] with whether the walk was complete.
+pub fn program_walk(dir: &std::path::Path) -> Result<ProgramWalk, String> {
     const MAX_WALK: usize = 4000;
     const MAX_DEPTH: usize = 5;
     std::fs::read_dir(dir).map_err(|e| e.to_string())?;
     let mut found: Vec<std::path::PathBuf> = Vec::new();
     let mut seen = 0usize;
+    let mut complete = true;
     let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(dir.to_path_buf(), 0)];
-    while let Some((d, depth)) = stack.pop() {
+    'walk: while let Some((d, depth)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for entry in entries.flatten() {
             seen += 1;
             if seen > MAX_WALK {
-                break;
+                complete = false;
+                break 'walk;
             }
             let path = entry.path();
             let Ok(t) = entry.file_type() else { continue };
             if t.is_dir() {
-                if depth + 1 < MAX_DEPTH && entry.file_name() != ".previous" {
+                if entry.file_name() == ".previous" {
+                    continue;
+                }
+                if depth + 1 < MAX_DEPTH {
                     stack.push((path, depth + 1));
+                } else {
+                    complete = false;
                 }
             } else if t.is_file() {
                 let name = entry.file_name().to_string_lossy().to_lowercase();
@@ -957,7 +987,7 @@ pub fn shallow_programs(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>
             }
         }
     }
-    Ok(crate::fork::program_detect::shallowest(dir, found))
+    Ok(ProgramWalk { found: crate::fork::program_detect::shallowest(dir, found), complete })
 }
 
 #[cfg(target_os = "linux")]

@@ -39,8 +39,8 @@ fn record_last_run(global_dir: &std::path::Path, ports: &[(String, crate::core::
         return;
     }
     let missed = ports.iter().filter(|(_, o)| matches!(o, crate::core::save_backup::PortBackup::Failed(_))).map(|(n, _)| n.clone()).collect();
-    let run = crate::fork::backup_last_run::LastRun { date: chrono::Local::now().format("%Y-%m-%d").to_string(), at: crate::fork::backup_last_run::now_secs(), missed };
-    if let Err(e) = crate::fork::backup_last_run::write(global_dir, &run) {
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    if let Err(e) = crate::fork::backup_last_run::write(global_dir, &date, crate::fork::backup_last_run::now_secs(), missed) {
         eprintln!("save backup: could not note which ports were missed ({e})");
     }
 }

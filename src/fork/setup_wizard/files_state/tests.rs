@@ -96,9 +96,24 @@ fn a_connection_whose_file_is_gone_does_not_count() {
     let dir = tmp.path().join("dusklight");
     write(&dir.join("x.AppImage"), b"x");
     // "Use original" on an SD card that is out: the record is there, the file is not.
-    connect(tmp.path(), &dusk());
+    let original = connect(tmp.path(), &dusk());
     assert_eq!(files_state(&dusk(), &dir, tmp.path()), FilesState::Unverifiable, "a dead connection is not 'all there'");
     assert!(in_folder_keys([(&dusk(), dir.clone())].into_iter(), tmp.path()).is_empty());
+    // A folder of that name is not the file either.
+    std::fs::create_dir_all(&original).unwrap();
+    assert_eq!(files_state(&dusk(), &dir, tmp.path()), FilesState::Unverifiable, "a folder is not a game file");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_named_like_the_file_that_leads_to_a_folder_is_not_the_file() {
+    let tmp = temp_dir();
+    let dir = tmp.path().join("zelda");
+    let p = port("Zelda", "zelda", &["n64"], "Required files: oot.z64 (CRC32: 12345678)");
+    std::fs::create_dir_all(tmp.path().join("a folder")).unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("a folder"), dir.join("oot.z64")).unwrap();
+    assert_eq!(files_state(&p, &dir, tmp.path()), FilesState::Missing);
 }
 
 #[test]

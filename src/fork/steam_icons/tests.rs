@@ -194,6 +194,16 @@ fn diagnose_lists_each_shortcut_of_a_port_and_the_longest_folder_wins() {
     assert!(matches!(findings[2].state, IconState::Quoted { exists: false, .. }));
     assert_eq!((findings[0].account_id, findings[0].shortcut_name.as_str()), (1234, "Zelda shortcut"));
     assert!(findings[0].describe().starts_with("Zelda Port: icon is fine"));
+    // Review W8: the owner match alone, for one port's Fix problems.
+    assert_eq!(any_shortcut_of(&w.home, &w.library, &w.config, &ports), Ok(true));
+    assert_eq!(any_shortcut_of(&w.home, &w.library, &w.config, &[port("Nobody", false)]), Ok(false), "Chiaki belongs to no port");
+}
+
+#[test]
+fn any_shortcut_of_says_could_not_tell_for_an_unreadable_file() {
+    let w = World::new("any_unreadable");
+    put(&w.vdf, b"not a vdf at all");
+    assert!(any_shortcut_of(&w.home, &w.library, &w.config, &[port("Zelda", false)]).is_err());
 }
 
 #[test]

@@ -252,6 +252,26 @@ pub fn diagnose(home: &Path, library_dir: &Path, config_dir: &Path, ports: &[Por
     Ok(out)
 }
 
+/// Whether any Steam shortcut (all accounts) belongs to one of `ports`: [`diagnose`]'s owner match only, without looking at
+/// icons or writing a log line. One port's Fix problems asks it of every port (review W8). An unreadable shortcuts file is
+/// an error, as in `diagnose`.
+pub fn any_shortcut_of(home: &Path, library_dir: &Path, config_dir: &Path, ports: &[Port]) -> Result<bool, String> {
+    let dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().map(|(i, p)| (i, library_dir.join(&p.folder))).collect();
+    let records = old_copies::load(config_dir).unwrap_or_default();
+    let old_dirs: Vec<(usize, PathBuf)> = ports.iter().enumerate().flat_map(|(i, p)| records.iter().filter(move |r| r.switched && r.port_key == p.key()).map(move |r| (i, r.old_path.clone()))).collect();
+    let route_list = routes(&dirs, &old_dirs);
+    for account in device_accounts(home) {
+        if !account.shortcuts.exists() {
+            continue;
+        }
+        let file = ShortcutsFile::load(&account.shortcuts).map_err(|e| format!("Could not read the Steam shortcuts of {}: {e}", account.label))?;
+        if shortcuts::list(&file.doc).iter().any(|s| owner_of(Path::new(s.exe_path()), &route_list).is_some()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Where a replacement icon comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
