@@ -401,6 +401,8 @@ impl AppState {
             let query = self.windowed_nav.search_query.borrow().clone();
             self.rebuild_windowed(&query);
         }
+        // Fork (UI polish): an install or uninstall can empty or fill the list; its hint line follows.
+        super::home_screen::push_list_hint(self);
     }
 
     fn apply_live_mode(&self, big_mode: bool) {
