@@ -12,16 +12,22 @@ fn dusk() -> Port {
     port("Twilight Princess", "dusklight", &["gc"], DUSK_TEXT)
 }
 
-fn connect(config: &Path, port: &Port) {
+/// Records a "use original" connection of the port's first slot to `config/roms/tp.rvz` (the file itself is not made).
+fn connect(config: &Path, port: &Port) -> PathBuf {
+    connect_with(config, port, Method::UseInPlace, config.join("roms/tp.rvz"), None)
+}
+
+fn connect_with(config: &Path, port: &Port, method: Method, source: PathBuf, dest: Option<PathBuf>) -> PathBuf {
     let slot = parse_instructions(&port.instructions).slots[0].id();
     let mut store = RomLibraryStore::load(&config.join("rom_library.json")).unwrap();
+    let read = dest.clone().unwrap_or_else(|| source.clone());
     store
         .record(Mapping {
             port_key: port.key().to_string(),
             slot,
-            method: Method::UseInPlace,
-            source: PathBuf::from("/roms/tp.rvz"),
-            dest: None,
+            method,
+            source,
+            dest,
             size: 1,
             mtime_ms: 0,
             crc32: None,
@@ -29,6 +35,7 @@ fn connect(config: &Path, port: &Port) {
             connected_at: String::new(),
         })
         .unwrap();
+    read
 }
 
 #[test]
@@ -77,9 +84,52 @@ fn a_connection_recorded_for_the_slot_counts_whatever_is_in_the_folder() {
     let dir = tmp.path().join("dusklight");
     write(&dir.join("x.AppImage"), b"x");
     assert_eq!(files_state(&dusk(), &dir, tmp.path()), FilesState::Unverifiable);
-    connect(tmp.path(), &dusk());
+    let original = connect(tmp.path(), &dusk());
+    write(&original, b"disc");
     assert_eq!(files_state(&dusk(), &dir, tmp.path()), FilesState::Have);
     assert!(in_folder_keys([(&dusk(), dir)].into_iter(), tmp.path()).contains(dusk().key()));
+}
+
+#[test]
+fn a_connection_whose_file_is_gone_does_not_count() {
+    let tmp = temp_dir();
+    let dir = tmp.path().join("dusklight");
+    write(&dir.join("x.AppImage"), b"x");
+    // "Use original" on an SD card that is out: the record is there, the file is not.
+    connect(tmp.path(), &dusk());
+    assert_eq!(files_state(&dusk(), &dir, tmp.path()), FilesState::Unverifiable, "a dead connection is not 'all there'");
+    assert!(in_folder_keys([(&dusk(), dir.clone())].into_iter(), tmp.path()).is_empty());
+}
+
+#[test]
+fn a_named_file_connected_by_a_copy_counts_only_while_the_copy_is_there() {
+    let tmp = temp_dir();
+    let dir = tmp.path().join("zelda");
+    let p = port("Zelda", "zelda", &["n64"], "Required files: oot.z64 (CRC32: 12345678)");
+    write(&dir.join("readme.txt"), b"x");
+    // The copy has another name than the catalog's, so only the connection can say it is there.
+    let copy = connect_with(tmp.path(), &p, Method::Copy, tmp.path().join("roms/Zelda (USA).z64"), Some(dir.join("baserom.z64")));
+    assert_eq!(files_state(&p, &dir, tmp.path()), FilesState::Missing, "the copy was deleted (never made here)");
+    assert_eq!(crate::fork::port_mover::game_files::required_not_found(&dir, &GameFiles::for_port(&p, tmp.path())), vec!["oot.z64".to_string()]);
+    write(&copy, b"rom");
+    assert_eq!(files_state(&p, &dir, tmp.path()), FilesState::Have, "the copy is there; its original may be gone");
+    assert!(crate::fork::port_mover::game_files::required_not_found(&dir, &GameFiles::for_port(&p, tmp.path())).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_an_original_that_is_gone_does_not_count() {
+    let tmp = temp_dir();
+    let dir = tmp.path().join("zelda");
+    let p = port("Zelda", "zelda", &["n64"], "Required files: oot.z64 (CRC32: 12345678)");
+    let original = tmp.path().join("sd/Zelda (USA).z64");
+    write(&original, b"rom");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::os::unix::fs::symlink(&original, dir.join("baserom.z64")).unwrap();
+    connect_with(tmp.path(), &p, Method::Symlink, original.clone(), Some(dir.join("baserom.z64")));
+    assert_eq!(files_state(&p, &dir, tmp.path()), FilesState::Have);
+    std::fs::remove_file(&original).unwrap();
+    assert_eq!(files_state(&p, &dir, tmp.path()), FilesState::Missing, "the link is there but reaches nothing");
 }
 
 #[test]

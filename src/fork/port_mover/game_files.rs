@@ -179,12 +179,19 @@ pub fn missing_in(present: &[(String, PathBuf)], files: &GameFiles) -> Vec<Strin
         .required
         .iter()
         .filter(|req| {
-            let connected = files.mappings.iter().any(|m| m.slot == req.slot_id);
+            let connected = files.mappings.iter().any(|m| m.slot == req.slot_id && reaches_file(m));
             let in_folder = present.iter().any(|(name, path)| req.names.contains(name) && fs::metadata(path).is_ok());
             !connected && !in_folder
         })
         .map(|req| req.names.first().cloned().unwrap_or_else(|| req.label.clone()))
         .collect()
+}
+
+/// A recorded connection counts only while the file the port reads is there: its link or copy (a link is followed to its
+/// original), or the original itself for "use original". A link to an SD card that is out, or a deleted file, does not.
+/// Only whether it is there: a changed size or date (the full health check) still counts, the port can read it.
+pub fn reaches_file(m: &Mapping) -> bool {
+    fs::metadata(m.dest.as_ref().unwrap_or(&m.source)).is_ok()
 }
 
 /// Files (relative to the port folder) the verify step must always read back: copies of game files

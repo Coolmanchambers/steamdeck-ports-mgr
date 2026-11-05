@@ -11,7 +11,7 @@
 //! `must_hash`) is not changed by this: it still ignores title-only slots.
 
 use crate::core::models::Port;
-use crate::fork::port_mover::game_files::{files_by_name, missing_in, GameFiles, SEARCH_DEPTH};
+use crate::fork::port_mover::game_files::{files_by_name, missing_in, reaches_file, GameFiles, SEARCH_DEPTH};
 use crate::fork::rom_library::requirements::generated_archives;
 use crate::fork::rom_library::title::{is_disc_image_extension, is_game_image_extension, needs_cue, significant_words, stem_has_words};
 use crate::fork::rom_library::{load_local_entries, RomSpec, Slot};
@@ -60,7 +60,8 @@ fn title_in_folder(slot: &Slot, present: &[(String, PathBuf)]) -> bool {
 }
 
 fn state_for(spec: &RomSpec, files: &GameFiles, dir: &Path) -> FilesState {
-    let connected = |s: &Slot| files.mappings.iter().any(|m| m.slot == s.id());
+    // A connection counts only while the file it gives the port is there (an SD card that is out, a deleted file: not).
+    let connected = |s: &Slot| files.mappings.iter().any(|m| m.slot == s.id() && reaches_file(m));
     let needed: Vec<&Slot> = spec.requirement.slots.iter().filter(|s| !s.optional).collect();
     let vague: Vec<&Slot> = needed.iter().copied().filter(|s| s.is_vague()).collect();
     if files.required.is_empty() && vague.is_empty() {
