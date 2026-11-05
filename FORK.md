@@ -368,6 +368,13 @@ Files added by this fork:
 | 2026-11-04 | `ui/dialogs/chrome.slint`, `ui/dialogs/picker.slint`, `ui/dialogs/info.slint` | Navigation safety re-check: the dialogs' key handlers (`DialogNavKeyHandler`, the picker's search box, Info's `handle-nav-key`) ignore a repeated Return or Escape, so a held key that reaches an upstream dialog after the close guard acts only once (one guard each) |
 | 2026-11-04 | `README.md`, `STEAM_DECK.md` | Navigation safety: the keyboard table and the Home help name Ctrl+I (Info) and Ctrl+P (Settings) |
 | 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Navigation safety: the cursor is remembered and kept by item, an option by its title (`page::Place`, `place_at`, `find_place`); `PageHandle::update` and `starting_focus` find it again by title or start where the page says, never on another option that took its number |
+| 2026-11-04 | `src/ui/theme.rs`, `ui/shared.slint` | UI polish U3: `ThemeColors::selected_ink` (text on a selected row, 4.5:1) and the WCAG `contrast` moved out of the tests; `Theme.selected-ink` (`#191f27`, the fork default) in step; tests for every shipped theme and for the Slint files |
+| 2026-11-04 | `src/app/dialogs.rs` | UI polish U3: `push_colors` sets `selected-ink` (1 line) |
+| 2026-11-04 | `ui/dialogs/chrome.slint`, `ui/dialogs/picker.slint`, `ui/dialogs/info.slint` | UI polish U3: the selected button's label, the picker's selected row and Info's selected text use `selected-ink` (one line each). U6: the picker's placeholder and search box stop short of the clock (`clock-room`; the clock is laid out always, `visible` when on) |
+| 2026-11-04 | `ui/app-window.slint` | UI polish: the windowed list's selected row text and same-game chip in `selected-ink` (U3); `list-hint` and `list-empty-text`; the big-mode grid's hint line along its bottom and its search-aware empty text; the windowed list's empty text; big mode's All ports title line without hints (F-U2, U4); Home's placeholder "Type to search your ports..." in big mode (decision 1a); the search text keeps the clock's width free (U6); Deck-ready's hints from `list-hint` |
+| 2026-11-04 | `src/app/state.rs` | UI polish: `toggle_fullscreen` pushes the lists' hints again (F-U1); `rebuild_grid` and `rebuild_windowed` set the search-aware empty text (U4) (1 line each) |
+| 2026-11-04 | `src/app/sync.rs` | UI polish U7: "Could not update the app" is a one-button page (`page_dialog::show_message`); the `open_message_dialog` import is removed |
+| 2026-11-04 | `src/app/install_launch.rs` | UI polish U7: "This port is being installed" is a one-button page ("Not ready to start"); the `open_message_dialog` import is removed |
 
 ## Data safety (2026-11-04 review)
 
@@ -515,6 +522,45 @@ answer is first starts on it every time (`Page::fresh_focus`).
   (`page::move_focus_in_rows`). A test ties the row count the window draws with to the one the D-pad reads.
 - Not changed: N11 (Tim: no change). F-N2 (does Steam's desktop layout also type arrow keys, so one D-pad press
   moves twice in Desktop Mode?) is checked on the Deck first; arrows join the one-press filter only if it is real.
+
+## UI polish (2026-11-04 review)
+
+Section 4 of the 2026-11-04 full review, with Fable's checked fixes and Tim's decisions 1-3.
+- **Text on a selected row reads (U3).** White on the selection blue was 3.1:1. A derived colour, `selected-ink`
+  (`ThemeColors::selected_ink`), draws text on selected rows: the theme's `selected_text` when it reaches 4.5:1 on
+  `selected_background`, else whichever of the theme's list colours reads best there (the fork's arc-dark: `#191f27`,
+  5.3:1). Every downloaded theme adapts by itself; `themes.json` and `selected_text` are untouched (`selected_text`
+  still draws the old dialogs' cursor outline). Used on the All ports rows, Deck-ready rows (and their chips), the
+  old dialogs' selected button and picker rows, the folder picker, and Info's selected text. Tests: the Rust and Slint
+  values in step, 4.5:1 in every shipped theme where a theme colour can reach it, no text colour on a selected row left
+  in `selected-text`.
+- **No Esc or Tab on the Deck (F-U1).** In big mode (Game Mode) the lists' B hint reads "B Home" / "B Clear search" /
+  "B Add a port"; windowed it keeps "B / Esc". The hints are pushed again when the mode changes.
+- **One hint line for the three lists (F-U2).** `List::hint_line` builds Home's, Deck-ready's and All ports' hints in one
+  style (`HINT_GAP` between the parts). The big-mode card grid gets the same line along its bottom (A Play, X Options,
+  D-pad Move, Y Settings, B, L1/R1 Lists), and its title line now reads "Deck Ports Manager  ›  All ports".
+- **An empty All ports says why (U4).** A search with no match says "No installed port matches "x". Press B to clear the
+  search." on the grid (windowed: "No port matches ... B or Esc"); the windowed list, which showed nothing, says the same.
+- **Backup title by counts (U2).** "Saves backed up for 1 of 10 ports" when the app could not find some ports' saves
+  ("Most saves are backed up" showed at 1 of 10), and "No saves were backed up" when it found none of them.
+- **Port options shows more cards (U8).** `Page::compact_card`, set only by the Port page's first page: the cover card
+  is about two lines tall (title, then its lines side by side) instead of a third of the screen. (A flag on the page,
+  not on `page::Card`, so the dozen pages that build a card are untouched.)
+- **Messages as pages (U7).** `page::message_page` and `page_dialog::show_message`: a message with one OK button and a
+  hint bar (A or B close it), falling back to the old dialog if the page window cannot be made. Converted: "Could not
+  update the app", Deck-ready's two "Nothing was added" messages, and "This port is being installed" (Play while it
+  installs). Left for later (each needs its own look at what follows it): Deck-ready's third "Nothing was added" (inside
+  the install wizard's prepare step), Tools with no tools (upstream `dialogs.rs`), the Play update result
+  (`events.rs`), Import ports, Game files, Restore saves and Ports folder notes (their `message` wrappers are reached
+  from inside page flows), the Port page's text dialog, and the versioned update message. Upstream's `simple.slint`
+  is untouched.
+- **The clock never covers the search text (U6).** The main search box and the picker's search box keep the clock's
+  width free on the right (the clock is always laid out, hidden when off, so its width can be measured).
+- **Deck-ready wording (F-U3, F-U4).** "Off in catalog" is "Not in All ports"; a row with no known system leaves it out
+  instead of "Unknown system".
+- **Game Mode's Home search (Tim's decision 1a).** In big mode Home's search box says "Type to search your ports..."
+  (it searches the installed ports there); windowed keeps "all ports".
+- Not changed: U5 (Steam icons pages, Tim's Deck run first), N11 (Tim: no change).
 
 ## Guided pages: one window (`src/app/page_dialog.rs`)
 
