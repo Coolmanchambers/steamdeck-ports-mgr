@@ -572,8 +572,10 @@ export component SetupWizardDialog inherits Window {
     in property <int> input-focus: -1;
     in property <[WizardOption]> options: [];
     in property <string> footnote: "";
-    // The controller hint bar along the bottom ("A Choose · B Back · D-pad Move"), from fork::page::hints.
+    // The controller hint bar along the bottom ("A Choose · B Back · D-pad Move"), from fork::page::hints, and the same
+    // bar for when the body is longer than the window (the D-pad also scrolls it; fork::page::scroll_hints).
     in property <string> hint-text: "";
+    in property <string> hint-scroll-text: "";
     // The footer, left to right: left (Back), middle (Skip), extra (Close the wizard in a rerun), right
     // (the primary Next or Finish). An empty text hides the button.
     in property <string> left-text: "";
@@ -592,6 +594,8 @@ export component SetupWizardDialog inherits Window {
     // The focus number that is selected, and the option it belongs to (-1 when a button is selected).
     in property <int> selected-index: -1;
     in property <int> selected-option: -1;
+    // The tile that is selected (-1 when none): it is scrolled into view like an option.
+    in property <int> selected-tile: -1;
 
     callback option-requested(int);
     callback tile-requested(int);
@@ -626,6 +630,17 @@ export component SetupWizardDialog inherits Window {
     // The focus ring: thick enough to find at a glance on a 7 inch screen.
     property <length> ring: max(3px, 4px / Theme.scale-factor);
     property <length> hint-h: root.hint-text == "" ? 0px : root.item-font-px * 2.0;
+    // The body is longer than its window: the D-pad scrolls it where the cursor cannot move on (scroll-body).
+    property <bool> body-overflows: body.content-height > body.height + 1px;
+
+    // The covers: their size, and how many are drawn to a row. The page window reads `tiles-per-row` so the D-pad moves
+    // between the rows as they are drawn (src/app/page_dialog.rs, fork::page::move_focus_in_rows).
+    // Three choices under the covers (Which port is this?) need the room: the covers are a little smaller.
+    property <length> tile-cover-h: root.large ? root.height * (root.options.length >= 3 ? 0.16 : 0.2) : root.row-height * 3.4;
+    property <length> tile-w: root.tile-cover-h * (root.large && root.options.length >= 3 ? 1.07 : 0.85);
+    property <length> tile-h: root.tile-cover-h + root.body-font * 3.6;
+    out property <int> tiles-per-row: max(1, Math.floor((body.width - root.gutter) / (root.tile-w + root.spacing)));
+    property <length> tiles-height: root.tiles.length > 0 ? Math.ceil(root.tiles.length / root.tiles-per-row) * (root.tile-h + root.spacing) : 0px;
 
     // A pointer that merely rests where a page opened must not take the highlight from the controller
     // or the keyboard. The first pointer event after the page opens only records where the pointer is;
@@ -665,6 +680,7 @@ export component SetupWizardDialog inherits Window {
         if (root.selected-option >= 0) {
             root.reveal(root.selected-option);
         }
+        root.reveal-other();
         if (root.has-input && root.selected-index == root.input-focus) {
             text-in.focus();
         } else {
@@ -679,6 +695,7 @@ export component SetupWizardDialog inherits Window {
         } else {
             key-handler.focus();
         }
+        root.reveal-other();
     }
 
     // Keep the focused option in view when the body scrolls.
@@ -690,12 +707,38 @@ export component SetupWizardDialog inherits Window {
     function reveal(index: int) {
         // The options start below the paragraphs and the summary card.
         let top = opts-box.y + index * (root.option-height + root.spacing);
-        let bottom = top + root.option-height;
+        root.reveal-span(top, top + root.option-height);
+    }
+    // A focused tile or text box is brought into view too, not only an option.
+    function reveal-other() {
+        if (root.selected-tile >= 0 && root.selected-tile < root.tiles.length) {
+            // The covers sit right above the options.
+            let top = opts-box.y - root.spacing - root.tiles-height + Math.floor(root.selected-tile / root.tiles-per-row) * (root.tile-h + root.spacing);
+            root.reveal-span(top, top + root.tile-h);
+        } else if (root.has-input && root.selected-index == root.input-focus) {
+            root.reveal-span(input-box.y, input-box.y + input-box.height);
+        }
+    }
+    function reveal-span(top: length, bottom: length) {
         if (top + body.content-y < 0px) {
             body.content-y = -top;
         } else if (bottom + body.content-y > body.height) {
             body.content-y = body.height - bottom;
         }
+    }
+    // The D-pad where the cursor cannot move on (the top or bottom of the page, or one button only): the body scrolls a
+    // step that way when it is longer than its window. False when there is nothing more to scroll.
+    public function scroll-body(dir: int) -> bool {
+        if (!root.body-overflows || dir == 0) {
+            return false;
+        }
+        let lowest = body.height - body.content-height;
+        let next = max(lowest, min(0px, body.content-y - dir * root.option-height * 2));
+        if (next == body.content-y) {
+            return false;
+        }
+        body.content-y = next;
+        return true;
     }
 
     key-handler := FocusScope {
@@ -955,17 +998,13 @@ export component SetupWizardDialog inherits Window {
                         border-px: root.border-px;
                     }
                     if root.tiles.length > 0: Rectangle {
-                        // Three choices under the covers (Which port is this?) need the room: the covers are a little smaller.
-                        property <length> cover-h: root.large ? root.height * (root.options.length >= 3 ? 0.16 : 0.2) : root.row-height * 3.4;
-                        property <length> tile-w: self.cover-h * (root.large && root.options.length >= 3 ? 1.07 : 0.85);
-                        property <length> tile-h: self.cover-h + root.body-font * 3.6;
-                        property <float> per-row: max(1, Math.floor((body.width - root.gutter) / (self.tile-w + root.spacing)));
-                        height: Math.ceil(root.tiles.length / self.per-row) * (self.tile-h + root.spacing);
+                        // Sized at the top of the component (tile-w, tile-h, tiles-per-row), which the D-pad and reveal-other use.
+                        height: root.tiles-height;
                         for t[i] in root.tiles: TileBox {
-                            x: Math.mod(i, parent.per-row) * (parent.tile-w + root.spacing);
-                            y: Math.floor(i / parent.per-row) * (parent.tile-h + root.spacing);
-                            width: parent.tile-w;
-                            height: parent.tile-h;
+                            x: Math.mod(i, root.tiles-per-row) * (root.tile-w + root.spacing);
+                            y: Math.floor(i / root.tiles-per-row) * (root.tile-h + root.spacing);
+                            width: root.tile-w;
+                            height: root.tile-h;
                             tile: t;
                             selected: t.focus >= 0 && root.selected-index == t.focus;
                             font-size: root.body-font;
@@ -1099,7 +1138,7 @@ export component SetupWizardDialog inherits Window {
                     x: root.gutter;
                     width: parent.width - root.gutter * 2;
                     height: parent.height;
-                    text: root.hint-text;
+                    text: root.body-overflows && root.hint-scroll-text != "" ? root.hint-scroll-text : root.hint-text;
                     color: Theme.list-text;
                     font-size: root.item-font-px;
                     horizontal-alignment: center;

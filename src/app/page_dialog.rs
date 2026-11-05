@@ -247,17 +247,20 @@ fn fill<A: Clone>(d: &SetupWizardDialog, page: &Page<A>) {
     d.set_page_title(page.title.clone().into());
     d.set_has_input(page.input.is_some());
     d.set_hint_text(page::hints(page).into());
+    d.set_hint_scroll_text(page::scroll_hints(page).into());
     fill_body(d, page);
 }
 
-/// Marks focus number `n` as selected: the window draws it, and scrolls to it when it is an option.
+/// Marks focus number `n` as selected: the window draws it, and scrolls to it (an option, a tile or the text box).
 fn select<A: Clone>(d: &SetupWizardDialog, page: &Page<A>, focus: &Cell<usize>, n: usize) {
     focus.set(n);
-    let option = match page::focus_at(page, n) {
-        Some(Focus::Option(i)) => i as i32,
-        _ => -1,
+    let (option, tile) = match page::focus_at(page, n) {
+        Some(Focus::Option(i)) => (i as i32, -1),
+        Some(Focus::Tile(i)) => (-1, i as i32),
+        _ => (-1, -1),
     };
     d.set_selected_option(option);
+    d.set_selected_tile(tile);
     d.set_selected_index(n as i32);
 }
 
@@ -373,10 +376,15 @@ impl<A: Clone + 'static> Binding for Bound<A> {
 
     fn move_by(&self, dx: i32, dy: i32) {
         let page = page_now(&self.cur);
-        let next = page::move_focus(&page, self.focus.get(), dx, dy);
-        if let Some(d) = self.weak.upgrade() {
-            select(&d, &page, &self.focus, next);
+        let Some(d) = self.weak.upgrade() else { return };
+        // The tiles move by the rows the window draws them in.
+        let per_row = d.get_tiles_per_row().max(1) as usize;
+        let next = page::move_focus_in_rows(&page, self.focus.get(), dx, dy, per_row);
+        if scrolls_instead(self.focus.get(), next, dy) {
+            // Up or Down where the cursor cannot move on: a long body scrolls that way instead.
+            d.invoke_scroll_body(dy.signum());
         }
+        select(&d, &page, &self.focus, next);
     }
 
     fn activate(&self) {
@@ -690,6 +698,11 @@ impl<A: Clone + 'static> PageHandle<A> {
     }
 }
 
+/// Up or Down left the cursor where it was (an edge, or one thing to choose): the body scrolls instead, when it can.
+fn scrolls_instead(before: usize, after: usize, dy: i32) -> bool {
+    dy != 0 && before == after
+}
+
 /// Where the cursor goes when a page on screen is drawn again: the same item, found by [`page::find_place`] (so "Update
 /// now" added in front after a check never takes the cursor that was on "Look for an update now"), else the page's start.
 fn focus_after_update<A>(old: Option<&Place>, page: &Page<A>) -> usize {
@@ -791,6 +804,31 @@ mod tests {
                 assert!(repeat < keys.find(key).unwrap(), "{key} is checked after the repeat guard");
             }
         }
+    }
+
+    #[test]
+    fn the_tiles_are_drawn_by_the_same_row_count_the_d_pad_reads() {
+        let slint = include_str!("../../ui/fork/setup-wizard.slint");
+        assert!(slint.contains("out property <int> tiles-per-row:"), "the window gives its row count (read by move_by)");
+        let tiles = &slint[slint.find("for t[i] in root.tiles: TileBox").expect("the tiles")..];
+        let tiles = &tiles[..tiles.find("clicked =>").unwrap()];
+        assert!(tiles.contains("x: Math.mod(i, root.tiles-per-row)"), "columns by that count");
+        assert!(tiles.contains("y: Math.floor(i / root.tiles-per-row)"), "rows by that count");
+        assert_eq!(slint.matches("per-row: max(").count(), 1, "one row count, not a second one");
+    }
+
+    #[test]
+    fn a_focused_tile_or_text_box_is_scrolled_into_view_and_the_d_pad_scrolls_a_long_body() {
+        let slint = include_str!("../../ui/fork/setup-wizard.slint");
+        let changed = &slint[slint.find("changed selected-index =>").unwrap()..];
+        assert!(changed[..changed.find("\n    }").unwrap()].contains("root.reveal-other()"));
+        let other = &slint[slint.find("function reveal-other()").unwrap()..];
+        let other = &other[..other.find("function reveal-span").unwrap()];
+        assert!(other.contains("root.selected-tile") && other.contains("input-box.y"));
+        assert!(slint.contains("public function scroll-body(dir: int) -> bool"));
+        assert!(scrolls_instead(3, 3, 1) && scrolls_instead(0, 0, -1), "Up or Down that cannot move: scroll");
+        assert!(!scrolls_instead(3, 4, 1), "the cursor moved: no scroll");
+        assert!(!scrolls_instead(3, 3, 0), "Left or Right never scroll");
     }
 
     #[test]

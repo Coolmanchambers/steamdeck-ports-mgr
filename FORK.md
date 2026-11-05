@@ -415,6 +415,15 @@ answer is first starts on it every time (`Page::fresh_focus`).
 - **Keyboard for X and Y (N6).** Ctrl+I opens Port options / Info for the selection, Ctrl+P opens Settings, beside
   Ctrl+L and Ctrl+Y.
 - **The dim layer's hint names the keys (F-N3)** outside Game Mode: "A or B, Enter or Esc, click or tap".
+- **The D-pad scrolls a long page (C4).** Up or Down where the cursor cannot move on (the top or the bottom of the
+  page, or a page with one button, such as a page read in Game Mode) scrolls the body a step that way when it is longer
+  than its window (`scroll-body` in `ui/fork/setup-wizard.slint`). The hint bar says so then: "D-pad Move, Scroll", or
+  "D-pad Scroll" when nothing else can take the cursor (`page::scroll_hints`).
+- **A focused tile or text box comes into view (C2),** not only an option (`reveal-other`).
+- **Tiles move by the row they are drawn in (C3).** The window works out how many covers fit a row
+  (`tiles-per-row`, read by `page_dialog`); Down goes to the cover below (the nearest one in that row when that one
+  cannot be chosen), Down from the last row to the options, Up from the first option to the last row of covers
+  (`page::move_focus_in_rows`). A test ties the row count the window draws with to the one the D-pad reads.
 - Not changed: N11 (Tim: no change). F-N2 (does Steam's desktop layout also type arrow keys, so one D-pad press
   moves twice in Desktop Mode?) is checked on the Deck first; arrows join the one-press filter only if it is real.
 

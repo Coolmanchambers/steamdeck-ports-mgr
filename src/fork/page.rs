@@ -395,6 +395,17 @@ pub fn hints<A>(page: &Page<A>) -> String {
     parts.join(HINT_GAP)
 }
 
+/// The hint bar when the page's body is longer than its window: there the D-pad also scrolls it, where the cursor
+/// cannot move on (the window picks this bar or [`hints`] as the body fits or not).
+pub fn scroll_hints<A>(page: &Page<A>) -> String {
+    let bar = hints(page);
+    if bar.contains("D-pad Move") {
+        bar.replace("D-pad Move", "D-pad Move, Scroll")
+    } else {
+        format!("{bar}{HINT_GAP}D-pad Scroll")
+    }
+}
+
 /// Between two hints in the bar.
 pub const HINT_GAP: &str = "   \u{b7}   ";
 
@@ -520,15 +531,26 @@ pub fn initial_focus<A>(page: &Page<A>) -> usize {
     focus_number(page, wanted)
 }
 
-/// The D-pad. The page is a column: a row of tiles you can choose, the options, the buttons. Up and down move
-/// between those groups and along the options (down from the last option drops to the primary button, down
-/// from a tile goes to the first option); left and right move along the tiles and along the buttons. It never
-/// lands on text or a disabled option, and stays put at an edge.
+/// The D-pad, with the tiles as one row (see [`move_focus_in_rows`]).
 pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize {
+    move_focus_in_rows(page, current, dx, dy, usize::MAX)
+}
+
+/// The D-pad. The page is a column: the tiles you can choose (drawn `per_row` to a row), the options, the buttons. Up
+/// and down move between those groups, between the rows of tiles (to the tile nearest the same column) and along the
+/// options (down from the last option drops to the primary button, down from the last row of tiles goes to the first
+/// option, up from the first option to the last row of tiles); left and right move along the tiles and along the
+/// buttons. It never lands on text or a disabled option, and stays put at an edge.
+pub fn move_focus_in_rows<A>(page: &Page<A>, current: usize, dx: i32, dy: i32, per_row: usize) -> usize {
     let items = focusables(page);
     let Some(here) = items.get(current).copied() else { return initial_focus(page) };
     let index_of = |f: Focus| items.iter().position(|x| *x == f);
     let tiles = tile_indexes(page);
+    let per_row = per_row.max(1);
+    // The choosable tile in drawn row `r` nearest column `col` (the left one on a tie).
+    let in_row = |r: usize, col: usize| tiles.iter().filter(|t| **t / per_row == r).min_by_key(|t| (**t % per_row).abs_diff(col)).map(|t| Focus::Tile(*t));
+    let last_row = page.tiles.len().saturating_sub(1) / per_row;
+    let last_tiles = || (0..=last_row).rev().find_map(|r| in_row(r, 0));
     let enabled = enabled_options(page);
     let row = footer_row(page);
     let to_buttons = || page.primary.map(Focus::Button).filter(|f| row.contains(f)).or_else(|| row.iter().rev().find(|f| **f != Focus::ShowApp).copied()).or_else(|| row.last().copied());
@@ -540,17 +562,17 @@ pub fn move_focus<A>(page: &Page<A>, current: usize, dx: i32, dy: i32) -> usize 
             let at = tiles.iter().position(|t| *t == i).unwrap_or(0) as i32 + dx.signum();
             (at >= 0).then(|| tiles.get(at as usize)).flatten().map(|t| Focus::Tile(*t))
         }
-        Focus::Tile(_) if dy < 0 => input,
-        Focus::Tile(_) if dy > 0 => enabled.first().map(|o| Focus::Option(*o)).or_else(to_buttons),
+        Focus::Tile(i) if dy < 0 => (0..i / per_row).rev().find_map(|r| in_row(r, i % per_row)).or(input),
+        Focus::Tile(i) if dy > 0 => (i / per_row + 1..=last_row).find_map(|r| in_row(r, i % per_row)).or_else(|| enabled.first().map(|o| Focus::Option(*o))).or_else(to_buttons),
         Focus::Option(i) if dy > 0 => match enabled.iter().find(|o| **o > i) {
             Some(next) => Some(Focus::Option(*next)),
             None => to_buttons(),
         },
         Focus::Option(i) if dy < 0 => match enabled.iter().rev().find(|o| **o < i) {
             Some(prev) => Some(Focus::Option(*prev)),
-            None => tiles.first().map(|t| Focus::Tile(*t)).or(input),
+            None => last_tiles().or(input),
         },
-        Focus::Button(_) | Focus::ShowApp if dy < 0 => enabled.last().map(|o| Focus::Option(*o)).or_else(|| tiles.first().map(|t| Focus::Tile(*t))).or(input),
+        Focus::Button(_) | Focus::ShowApp if dy < 0 => enabled.last().map(|o| Focus::Option(*o)).or_else(last_tiles).or(input),
         Focus::Button(_) | Focus::ShowApp if dx != 0 => {
             let at = row.iter().position(|f| *f == here).unwrap_or(0) as i32;
             let next = at + dx.signum();
@@ -824,6 +846,36 @@ mod tests {
         r.primary = None;
         r.buttons[RIGHT] = None;
         assert_eq!(focus_at(&r, move_focus(&r, 0, 0, 1)), Some(Focus::Button(LEFT)));
+    }
+
+    #[test]
+    fn a_long_page_says_the_d_pad_scrolls_it() {
+        let p = card_page();
+        assert!(scroll_hints(&p).contains("D-pad Move, Scroll"), "{}", scroll_hints(&p));
+        // One button only (a page read in Game Mode): the D-pad cannot move, it only scrolls.
+        let mut one = Page::<Act>::default();
+        one.buttons[LEFT] = Some(PageButton { label: "Back".into(), action: Act::Details });
+        assert!(!hints(&one).contains("D-pad"));
+        assert!(scroll_hints(&one).ends_with("D-pad Scroll"), "{}", scroll_hints(&one));
+    }
+
+    #[test]
+    fn tiles_move_by_the_row_the_window_draws() {
+        // Seven tiles, three to a row: 0 1 2 / 3 4 5 / 6. Tile 4 can only be shown.
+        let mut p = card_page();
+        p.tiles = (0..7).map(|i| if i == 4 { Tile::shown(None, "shown") } else { Tile::choice(None, format!("t{i}"), Act::Details) }).collect();
+        let at = |f: Focus| focus_number(&p, f);
+        let go = |from: Focus, dx: i32, dy: i32| focus_at(&p, move_focus_in_rows(&p, at(from), dx, dy, 3));
+        assert_eq!(go(Focus::Tile(1), 0, 1), Some(Focus::Tile(3)), "below 1 is 4, which cannot be chosen: the nearest in that row, on the left");
+        assert_eq!(go(Focus::Tile(2), 0, 1), Some(Focus::Tile(5)), "the tile drawn below");
+        assert_eq!(go(Focus::Tile(5), 0, 1), Some(Focus::Tile(6)), "the last row has one tile");
+        assert_eq!(go(Focus::Tile(6), 0, 1), Some(Focus::Option(0)), "below the last row: the options");
+        assert_eq!(go(Focus::Tile(5), 0, -1), Some(Focus::Tile(2)));
+        assert_eq!(go(Focus::Tile(2), 0, -1), Some(Focus::Tile(2)), "the top row, no text box: stays");
+        assert_eq!(go(Focus::Option(0), 0, -1), Some(Focus::Tile(6)), "up from the options: the last row");
+        assert_eq!(go(Focus::Tile(2), 1, 0), Some(Focus::Tile(3)), "right runs on along the tiles");
+        // One row (the old behavior): down from any tile goes to the options.
+        assert_eq!(focus_at(&p, move_focus(&p, at(Focus::Tile(2)), 0, 1)), Some(Focus::Option(0)));
     }
 
     fn updates(ready: bool) -> Page<Act> {
