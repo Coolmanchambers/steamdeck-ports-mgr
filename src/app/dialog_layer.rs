@@ -312,6 +312,17 @@ mod tests {
     }
 
     #[test]
+    fn a_held_return_or_escape_does_nothing_more_on_the_main_window() {
+        let slint = include_str!("../../ui/app-window.slint");
+        let keys = &slint[slint.find("search-input := TextInput").expect("the main window's keys")..];
+        for branch in ["} else if (event.text == Key.Escape) {", "} else if (event.text == Key.Return) {"] {
+            let at = &keys[keys.find(branch).unwrap_or_else(|| panic!("{branch}"))..];
+            let body = &at[..at.find("accept").unwrap()];
+            assert!(body.contains("if (!event.repeat)"), "{branch} ignores repeats");
+        }
+    }
+
+    #[test]
     fn the_layer_names_the_keys_outside_game_mode() {
         assert_eq!(layer_hint(true), "A or B, click or tap");
         assert!(layer_hint(false).contains("Enter or Esc"));

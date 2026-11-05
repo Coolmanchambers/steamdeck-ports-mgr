@@ -103,6 +103,8 @@ thread_local! {
     static HELD: RefCell<Held> = RefCell::new(Held::default());
     /// A pad press is being dispatched: a callback it reaches is the pad's, not a key's.
     static PAD_DISPATCH: Cell<bool> = const { Cell::new(false) };
+    /// When a page or dialog last closed ([`note_closed`]).
+    static CLOSED_AT: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
 fn allow(source: Source, press: Press) -> bool {
@@ -137,8 +139,39 @@ pub fn not_a_key<R>(f: impl FnOnce() -> R) -> R {
     while_pad(f)
 }
 
+/// How long after a page or dialog closes a Return or Escape on the main window or an upstream dialog is not taken.
+/// A held key keeps typing while the window under it changes, and the first key a newly focused window gets may not be
+/// flagged as a repeat (X11), so `event.repeat` alone cannot stop it. Short enough that a person (or the smoke test,
+/// which types keys 150 ms apart) is never slowed.
+pub const CLOSE_GUARD: Duration = Duration::from_millis(120);
+
+/// True while `now` is within [`CLOSE_GUARD`] of the last close.
+pub fn just_closed(closed_at: Option<Instant>, now: Instant) -> bool {
+    closed_at.and_then(|at| now.checked_duration_since(at)).is_some_and(|d| d < CLOSE_GUARD)
+}
+
+/// A page or dialog has just closed (`close_current_dialog`, `page_dialog::park`).
+pub fn note_closed() {
+    CLOSED_AT.with(|c| c.set(Some(Instant::now())));
+}
+
 /// The keyboard side: Return (choose) or Escape (back) that is about to act. Always true for the pad's own press.
+/// Dropped right after a page or dialog closed ([`CLOSE_GUARD`]): a held key that closed it must not act on what is
+/// under it. The guided page window asks [`key_on_page`] instead.
 pub fn key(press: Press) -> bool {
+    if PAD_DISPATCH.with(Cell::get) {
+        return true;
+    }
+    if just_closed(CLOSED_AT.with(Cell::get), Instant::now()) {
+        eprintln!("input: dropped a {press:?} key that came right after a page or dialog closed");
+        return false;
+    }
+    allow(Source::Key, press)
+}
+
+/// [`key`] for the guided page window: no close guard (one page hands over to the next through a close, and the page
+/// ignores a held key's repeats itself).
+pub fn key_on_page(press: Press) -> bool {
     PAD_DISPATCH.with(Cell::get) || allow(Source::Key, press)
 }
 
@@ -268,5 +301,19 @@ mod tests {
         assert!(pad(Press::Back), "the pad's B");
         assert!(while_pad(|| key(Press::Back)), "the dialog's close callback it reaches counts");
         assert!(!key(Press::Back), "while Steam's Escape for the same press is dropped");
+    }
+
+    #[test]
+    fn a_held_key_cannot_act_on_what_is_under_a_page_that_just_closed() {
+        let t = Instant::now();
+        assert!(!just_closed(None, t), "nothing closed yet");
+        assert!(just_closed(Some(t), t + ms(30)), "the held Escape's next key, 30 ms after the close");
+        assert!(!just_closed(Some(t), t + CLOSE_GUARD), "after the guard a key counts again");
+        assert!(!just_closed(Some(t + ms(5)), t), "a clock that seems to go back never drops a key");
+        assert!(CLOSE_GUARD < ms(150), "the smoke test types keys 150 ms apart");
+        note_closed();
+        assert!(!key(Press::Back), "the main window's Escape right after the close is dropped");
+        assert!(key_on_page(Press::Back), "the next guided page still takes its keys");
+        assert!(while_pad(|| key(Press::Choose)), "and the pad is never held back");
     }
 }

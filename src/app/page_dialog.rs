@@ -154,7 +154,7 @@ thread_local! {
     static HOST: RefCell<Host> = RefCell::new(Host::default());
     /// The page window itself, with its serial.
     static WIN: RefCell<Option<(u64, SetupWizardDialog)>> = const { RefCell::new(None) };
-    /// Where the cursor was on pages shown (page key, focus number), newest last. Kept across hand-offs to other
+    /// Where the cursor was on pages shown (page key, the item as a `Place`: an option with its title), newest last. Kept across hand-offs to other
     /// screens; forgotten when the guided pages end (the page window goes and nothing else is open).
     static HISTORY: RefCell<Vec<(String, Place)>> = const { RefCell::new(Vec::new()) };
 }
@@ -342,7 +342,20 @@ struct Bound<A> {
     weak: slint::Weak<SetupWizardDialog>,
     cur: Current<A>,
     focus: Rc<Cell<usize>>,
+    wanted: Wanted,
     handlers: Handlers<A>,
+}
+
+/// The place the user last put the cursor on (a move, a hover, the text box). A redraw finds it again; while it is there
+/// but disabled (a check running) the cursor waits on Back and this is kept, so it goes back once it is enabled again.
+type Wanted = Rc<RefCell<Option<Place>>>;
+
+impl<A: Clone> Bound<A> {
+    /// The user put the cursor on focus number `n`.
+    fn pick(&self, d: &SetupWizardDialog, page: &Page<A>, n: usize) {
+        select(d, page, &self.focus, n);
+        *self.wanted.borrow_mut() = page::place_at(page, n);
+    }
 }
 
 impl<A: Clone + 'static> Binding for Bound<A> {
@@ -370,7 +383,7 @@ impl<A: Clone + 'static> Binding for Bound<A> {
 
     fn hover(&self, n: i32) {
         if let (Some(d), true) = (self.weak.upgrade(), n >= 0) {
-            select(&d, &page_now(&self.cur), &self.focus, n as usize);
+            self.pick(&d, &page_now(&self.cur), n as usize);
         }
     }
 
@@ -384,7 +397,7 @@ impl<A: Clone + 'static> Binding for Bound<A> {
             // Up or Down where the cursor cannot move on: a long body scrolls that way instead.
             d.invoke_scroll_body(dy.signum());
         }
-        select(&d, &page, &self.focus, next);
+        self.pick(&d, &page, next);
     }
 
     fn activate(&self) {
@@ -395,7 +408,7 @@ impl<A: Clone + 'static> Binding for Bound<A> {
         } else if page::focus_at(&page, self.focus.get()) == Some(Focus::Input) {
             let next = page::move_focus(&page, self.focus.get(), 0, 1);
             if let Some(d) = self.weak.upgrade() {
-                select(&d, &page, &self.focus, next);
+                self.pick(&d, &page, next);
             }
         } else if let Some(action) = page::action_at(&page, self.focus.get()) {
             (self.handlers.on_action)(&self.app, &self.router, action);
@@ -412,7 +425,7 @@ impl<A: Clone + 'static> Binding for Bound<A> {
         fill_body(&d, &new_page);
         load_art(&self.app, &d, &self.cur);
         // The cursor stays in the box, and the list below starts from the top again.
-        select(&d, &new_page, &self.focus, page::input_number(&new_page).max(0) as usize);
+        self.pick(&d, &new_page, page::input_number(&new_page).max(0) as usize);
     }
 
     fn back(&self) {
@@ -425,7 +438,9 @@ impl<A: Clone + 'static> Binding for Bound<A> {
 
     fn place(&self) -> (String, Option<Place>) {
         let page = page_now(&self.cur);
-        (page_key(&page), page::place_at(&page, self.focus.get()))
+        // Where the user wanted it, even while it waits on Back.
+        let place = self.wanted.borrow().clone().or_else(|| page::place_at(&page, self.focus.get()));
+        (page_key(&page), place)
     }
 
     fn show_app(&self) {
@@ -477,11 +492,47 @@ fn recalled(key: &str) -> Option<Place> {
 
 /// Where the cursor starts on `page`: where it was when the page was shown before in these guided pages (B, a footer
 /// Back button, a page drawn again after a hand-off), when that place still exists; else the page's own start.
+#[cfg(test)]
 fn starting_focus<A>(page: &Page<A>) -> usize {
-    if page.fresh_focus {
-        return page::initial_focus(page);
+    start(page).0
+}
+
+/// [`starting_focus`], with the place the cursor is wanted on (kept while it waits on Back, see [`resolve`]).
+fn start<A>(page: &Page<A>) -> (usize, Option<Place>) {
+    let wanted = if page.fresh_focus { None } else { recalled(&page_key(page)) };
+    settle(wanted, page)
+}
+
+/// Where the cursor goes for the `wanted` place on `page`, and the place still wanted afterwards.
+fn settle<A>(wanted: Option<Place>, page: &Page<A>) -> (usize, Option<Place>) {
+    let (n, keep) = resolve(wanted.as_ref(), page);
+    (n, if keep { wanted } else { page::place_at(page, n) })
+}
+
+/// Where the cursor goes for the wanted place, and whether that place is still wanted: the same item when it is there
+/// (an option found by its title); on Back while that option is there but disabled (a check running), so no other
+/// option that moved into its slot ("Update now") takes the cursor and it can come back once enabled; else the page's
+/// own start.
+fn resolve<A>(wanted: Option<&Place>, page: &Page<A>) -> (usize, bool) {
+    let Some(place) = wanted else { return (page::initial_focus(page), false) };
+    if let Some(n) = page::find_place(page, place) {
+        return (n, true);
     }
-    recalled(&page_key(page)).and_then(|p| page::find_place(page, &p)).unwrap_or_else(|| page::initial_focus(page))
+    let disabled = matches!((place.focus, &place.title), (Focus::Option(_), Some(t)) if page.options.iter().any(|o| !o.enabled && o.title == *t));
+    if disabled {
+        if let Some(n) = waiting_spot(page) {
+            return (n, true);
+        }
+    }
+    (page::initial_focus(page), false)
+}
+
+/// Where the cursor waits while the option it is wanted on is disabled: Back (the left button), else another footer
+/// button, never an option.
+fn waiting_spot<A>(page: &Page<A>) -> Option<usize> {
+    let items = page::focusables(page);
+    let back = items.iter().position(|f| *f == Focus::Button(page::LEFT));
+    back.or_else(|| items.iter().position(|f| matches!(f, Focus::Button(_))))
 }
 
 /// Wires a newly built window's callbacks once: each reaches whatever page is on it now.
@@ -513,7 +564,7 @@ fn wire(dialog: &SetupWizardDialog, serial: u64) {
     });
     // A and Return, B and Escape: one physical press acts once (`press_echo`; the pad's own press passes).
     dialog.on_activate_requested(move || {
-        if let Some(b) = bound(serial).filter(|_| press_echo::key(Press::Choose)) {
+        if let Some(b) = bound(serial).filter(|_| press_echo::key_on_page(Press::Choose)) {
             b.activate();
         }
     });
@@ -523,7 +574,7 @@ fn wire(dialog: &SetupWizardDialog, serial: u64) {
         }
     });
     dialog.on_close_requested(move || {
-        if let Some(b) = bound(serial).filter(|_| press_echo::key(Press::Back)) {
+        if let Some(b) = bound(serial).filter(|_| press_echo::key_on_page(Press::Back)) {
             b.back();
         }
     });
@@ -560,6 +611,8 @@ fn wire_window_close(dialog: &SetupWizardDialog, serial: u64) {
 /// as a normal close gives it. False when the window is not the page window (the caller closes it normally).
 pub(crate) fn park(app: &Rc<AppState>, dialog: &SetupWizardDialog) -> bool {
     let Some(serial) = WIN.with(|w| w.borrow().as_ref().filter(|(_, d)| same_window(d, dialog)).map(|(s, _)| *s)) else { return false };
+    // A held Return or Escape must not act on what is under the page now (press_echo::CLOSE_GUARD).
+    press_echo::note_closed();
     remember_current();
     let Some(token) = HOST.with(|h| h.borrow_mut().park(serial)) else { return false };
     let app = app.clone();
@@ -670,6 +723,7 @@ pub(crate) struct PageHandle<A> {
     weak: slint::Weak<SetupWizardDialog>,
     cur: Current<A>,
     focus: Rc<Cell<usize>>,
+    wanted: Wanted,
     generation: u64,
 }
 
@@ -679,20 +733,22 @@ impl<A: Clone + 'static> PageHandle<A> {
         HOST.with(|h| h.borrow().is_current(self.generation)) && self.weak.upgrade().is_some_and(|d| d.window().is_visible())
     }
 
-    /// Draws `page` in its place; the cursor stays on the same item (an option by its title) when it is still
-    /// there, else it starts where the page says. False when the page is gone (something else replaced it), so the
-    /// owner can stop updating.
+    /// Draws `page` in its place; the cursor stays on the item the user put it on (an option by its title), waits
+    /// on Back while that option is disabled, else starts where the page says ([`settle`]). False when the page is
+    /// gone (something else replaced it), so the owner can stop updating.
     pub(crate) fn update(&self, page: Page<A>) -> bool {
         if !self.is_open() {
             return false;
         }
         let Some(d) = self.weak.upgrade() else { return false };
-        let old = page::place_at(&page_now(&self.cur), self.focus.get());
+        let wanted = self.wanted.borrow().clone().or_else(|| page::place_at(&page_now(&self.cur), self.focus.get()));
         let page = Rc::new(prepare(&self.app, page));
         *self.cur.borrow_mut() = page.clone();
         fill(&d, &page);
         load_art(&self.app, &d, &self.cur);
-        select(&d, &page, &self.focus, focus_after_update(old.as_ref(), &page));
+        let (n, wanted) = settle(wanted, &page);
+        *self.wanted.borrow_mut() = wanted;
+        select(&d, &page, &self.focus, n);
         super::dialog_layer::sync(&self.app);
         true
     }
@@ -701,12 +757,6 @@ impl<A: Clone + 'static> PageHandle<A> {
 /// Up or Down left the cursor where it was (an edge, or one thing to choose): the body scrolls instead, when it can.
 fn scrolls_instead(before: usize, after: usize, dy: i32) -> bool {
     dy != 0 && before == after
-}
-
-/// Where the cursor goes when a page on screen is drawn again: the same item, found by [`page::find_place`] (so "Update
-/// now" added in front after a check never takes the cursor that was on "Look for an update now"), else the page's start.
-fn focus_after_update<A>(old: Option<&Place>, page: &Page<A>) -> usize {
-    old.and_then(|p| page::find_place(page, p)).unwrap_or_else(|| page::initial_focus(page))
 }
 
 /// Shows the page: in the page window when it is open (or parked), otherwise in a new one, replacing whatever
@@ -727,12 +777,14 @@ pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &
     dialog.set_input_text(first.input.as_ref().map(|i| i.text.clone()).unwrap_or_default().into());
     dialog.set_input_password(first.input.as_ref().is_some_and(|i| i.password));
     load_art(app, &dialog, &cur);
-    select(&dialog, &first, &focus, starting_focus(&first));
+    let (n, wanted) = start(&first);
+    let wanted: Wanted = Rc::new(RefCell::new(wanted));
+    select(&dialog, &first, &focus, n);
     // A new page: the body scrolls back to the top, a resting pointer cannot take the highlight, and the
     // keyboard goes to the page (or its text box when that is where the cursor starts).
     dialog.invoke_page_shown();
 
-    let binding: Rc<dyn Binding> = Rc::new(Bound { app: app.clone(), router: router.clone(), weak: dialog.as_weak(), cur: cur.clone(), focus: focus.clone(), handlers });
+    let binding: Rc<dyn Binding> = Rc::new(Bound { app: app.clone(), router: router.clone(), weak: dialog.as_weak(), cur: cur.clone(), focus: focus.clone(), wanted: wanted.clone(), handlers });
     let generation = HOST.with(|h| h.borrow_mut().show(serial, binding));
 
     if !on_screen {
@@ -742,7 +794,7 @@ pub(crate) fn show_page_handle<A: Clone + 'static>(app: &Rc<AppState>, router: &
     }
     // The main window's layer names the page now on screen.
     super::dialog_layer::sync(app);
-    Some(PageHandle { app: app.clone(), weak: dialog.as_weak(), cur, focus, generation })
+    Some(PageHandle { app: app.clone(), weak: dialog.as_weak(), cur, focus, wanted, generation })
 }
 
 #[cfg(test)]
@@ -775,21 +827,55 @@ mod tests {
             p.options.push(opt("Update now", 1));
         }
         p.options.extend([opt("Look for an update now", 2), opt("Check for updates", 3), opt("Select version", 4)]);
+        // As the port page draws it: one Back button on the left, the cursor starting on the first option.
+        p.buttons = [Some(PageButton { label: "Back".into(), action: 9 }), None, None, None];
         p.initial = Focus::Option(0);
         p
     }
 
+    /// The Updates page while it checks: "Look for an update now" is disabled.
+    fn checking(ready: bool) -> Page<u8> {
+        let mut p = updates(ready);
+        let look = p.options.iter().position(|o| o.action == 2).unwrap();
+        p.options[look].enabled = false;
+        p
+    }
+
+    /// Draws the pages one after another as `PageHandle::update` does, starting with the cursor on `on` of the first;
+    /// what the cursor is on after each.
+    fn redraws(pages: &[Page<u8>], on: u8) -> Vec<Option<u8>> {
+        let first = &pages[0];
+        let n = (0..page::focusables(first).len()).find(|n| page::action_at(first, *n) == Some(on)).unwrap();
+        let mut wanted = page::place_at(first, n);
+        pages[1..]
+            .iter()
+            .map(|p| {
+                let (n, still) = settle(wanted.clone(), p);
+                wanted = still;
+                page::action_at(p, n)
+            })
+            .collect()
+    }
+
     #[test]
     fn a_check_that_finds_an_update_keeps_the_cursor_off_update_now() {
-        let before = updates(false);
-        let after = updates(true);
-        let n = focus_after_update(page::place_at(&before, 0).as_ref(), &after);
-        assert_eq!(page::action_at(&after, n), Some(2), "still on Look for an update now; one more A must not install");
-        // While it checks, "Look for an update now" is disabled: the cursor goes to where the page says it starts.
-        let mut checking = updates(false);
-        checking.options[0].enabled = false;
-        let n = focus_after_update(page::place_at(&before, 0).as_ref(), &checking);
-        assert_eq!(n, page::initial_focus(&checking));
+        // Update now already shown, check again: while it checks the cursor waits on Back, then comes back to the check.
+        assert_eq!(redraws(&[updates(true), checking(true), updates(true)], 2), [Some(9), Some(2)], "never Update now (1) or the switch (3)");
+        // No update shown: the check finds one and puts Update now in front.
+        assert_eq!(redraws(&[updates(false), checking(false), updates(true)], 2), [Some(9), Some(2)]);
+        // The check answers without anything new: the same.
+        assert_eq!(redraws(&[updates(false), checking(false), updates(false)], 2), [Some(9), Some(2)]);
+        // Straight from one drawing to the next (no checking page in between).
+        assert_eq!(redraws(&[updates(false), updates(true)], 2), [Some(2)], "one more A must not install");
+    }
+
+    #[test]
+    fn a_place_that_is_gone_starts_where_the_page_says_and_is_not_kept() {
+        let mut gone = updates(false);
+        gone.options.retain(|o| o.action != 2);
+        let (n, wanted) = settle(page::place_at(&updates(false), 0), &gone);
+        assert_eq!(n, page::initial_focus(&gone));
+        assert_eq!(wanted, page::place_at(&gone, n), "the new place is what is wanted from now on");
     }
 
     #[test]
@@ -815,6 +901,11 @@ mod tests {
         assert!(tiles.contains("x: Math.mod(i, root.tiles-per-row)"), "columns by that count");
         assert!(tiles.contains("y: Math.floor(i / root.tiles-per-row)"), "rows by that count");
         assert_eq!(slint.matches("per-row: max(").count(), 1, "one row count, not a second one");
+        // And the D-pad reads that count (the other end of the tie).
+        let rust = include_str!("page_dialog.rs");
+        let move_by = &rust[rust.find("fn move_by(&self, dx: i32, dy: i32) {").unwrap()..];
+        let move_by = &move_by[..move_by.find("\n    }").unwrap()];
+        assert!(move_by.contains("get_tiles_per_row()") && move_by.contains("move_focus_in_rows("), "move_by moves by the window's row count");
     }
 
     #[test]

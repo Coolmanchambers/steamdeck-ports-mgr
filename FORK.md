@@ -356,6 +356,8 @@ Files added by this fork:
 | 2026-11-04 | `src/ui/gamepad_router.rs` | Navigation safety: `NAV_REPEAT_INTERVAL` (75 ms); once a held direction repeats, `decide_moves` waits that long between repeats instead of moving on every 20 ms poll (about 12 moves a second, was 50). Upstream test `decide_moves_repete_apres_le_delai_puis_a_chaque_scrutation`: its second poll is `NAV_REPEAT_INTERVAL + 1 ms` later (was 1 ms); 1 new test |
 | 2026-11-04 | `ui/app-window.slint` | Navigation safety: the dim layer's keys and click come apart (`dialog-layer-chosen` for Return / Space, `dialog-layer-backed` for Escape, `dialog-layer-pressed` stays the click) and its hint is `dialog-layer-hint`; Ctrl+I (`info-requested`, Port options / Info, as X on the pad) and Ctrl+P (`settings-requested`, Settings) on the search box |
 | 2026-11-04 | `src/main.rs` | Navigation safety: `on_info_requested` (Ctrl+I) calls `show_info_for_current_selection`, as X on the pad does (2 lines) |
+| 2026-11-04 | `src/app/dialogs.rs` | Navigation safety review: `close_current_dialog` calls `press_echo::note_closed` after hiding a dialog, so a held Return or Escape cannot act on the main window or the next dialog within `CLOSE_GUARD` (2 lines) |
+| 2026-11-04 | `ui/app-window.slint` | Navigation safety review: the search box ignores a repeated Escape and a repeated Return (`if (!event.repeat)` around `escape-pressed` and `activate-requested`) |
 | 2026-11-04 | `README.md`, `STEAM_DECK.md` | Navigation safety: the keyboard table and the Home help name Ctrl+I (Info) and Ctrl+P (Settings) |
 | 2026-11-04 | `src/app/page_dialog.rs`, `src/fork/page.rs` | Navigation safety: the cursor is remembered and kept by item, an option by its title (`page::Place`, `place_at`, `find_place`); `PageHandle::update` and `starting_focus` find it again by title or start where the page says, never on another option that took its number |
 
@@ -404,13 +406,23 @@ answer is first starts on it every time (`Page::fresh_focus`).
 - **A held key acts once (N7).** On a guided page (the page and its text box) a repeated Return, Escape or Y does
   nothing; held arrows still repeat. Same on the dim layer.
 - **The cursor stays on the same option (N5, F-N1).** The cursor is kept as an item, an option with its title
-  (`page::Place`). A page drawn again in place (`PageHandle::update`) or shown again (B, a hand-off) finds that option
-  by its title; if it is gone or disabled, the cursor starts where the page says. So after "Look for an update now"
-  finds an update, "Update now" put in front no longer takes the cursor, and coming back to Updates after a check does
-  not land on the "Check for updates" switch where "Select version" was.
+  (`page::Place`), and the page window keeps the place the user last put it on (a move, a hover, the text box) across
+  every redraw. A page drawn again in place (`PageHandle::update`) or shown again (B, a hand-off) finds that option by
+  its title. While that option is there but disabled (a check running) the cursor waits on Back and the place is kept,
+  so it goes back to the option once it is enabled again; an option that is gone sends the cursor where the page says
+  it starts (`page_dialog::settle`). So "Look for an update now" never hands the cursor to "Update now" or the "Check for
+  updates" switch, whether an update was shown before the check or not, and coming back to Updates finds "Select
+  version" where it was.
 - **Deck-ready keeps its selection in view (N8).** A rebuild (the background download, a search) that moves the
   selected row scrolls to it; one that leaves it where it was does not touch the scroll. A filter change scrolls once
-  (two toggles of the shared trigger in one go would cancel out).
+  (two toggles of the shared trigger in one go would cancel out). The unit test covers the "did it move" rule
+  (`selection_moved`) only; the scroll itself is a Deck check.
+- **A held key cannot act on what is under a page that closed (S2).** For `press_echo::CLOSE_GUARD` (120 ms) after a
+  page or dialog closes (`close_current_dialog`, `page_dialog::park`), a Return or Escape on the main window or an
+  upstream dialog is dropped (`press_echo::key`). `event.repeat` alone cannot stop it: the first key a newly focused
+  window gets may not be flagged as a repeat (X11). The guided page window asks `press_echo::key_on_page`, which has no
+  close guard (pages hand over through a close and ignore repeats themselves). The main window's search box also
+  ignores repeated Return and Escape. The pad is never held back. 120 ms stays under the smoke test's 150 ms key spacing.
 - **A held direction repeats about 12 times a second (N9),** not 50: see the `gamepad_router.rs` row above.
 - **Keyboard for X and Y (N6).** Ctrl+I opens Port options / Info for the selection, Ctrl+P opens Settings, beside
   Ctrl+L and Ctrl+Y.

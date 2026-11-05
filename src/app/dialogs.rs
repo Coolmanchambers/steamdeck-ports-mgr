@@ -259,6 +259,8 @@ pub(crate) fn close_current_dialog(app: &Rc<AppState>, router: &Router) {
         return;
     }
     let _ = window.hide();
+    // Fork (navigation safety): a held Return or Escape must not act on the main window right after (press_echo::CLOSE_GUARD).
+    crate::fork::press_echo::note_closed();
     // Fork (one window): the main window's "... is open" layer goes with the dialog.
     super::dialog_layer::sync(app);
     if let Some(native) = chrome::native_window(app.window().window()) {

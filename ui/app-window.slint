@@ -390,8 +390,10 @@ export component AppWindow inherits Window {
                                             accept
                                         } else if (event.text == Key.Escape) {
                                             // Fork: the app decides (leave big mode, or Close after a short hold a controller B
-                                            // can cancel): src/fork/press_echo.rs.
-                                            root.escape-pressed();
+                                            // can cancel): src/fork/press_echo.rs. Fork (navigation safety): a held key's repeats do nothing.
+                                            if (!event.repeat) {
+                                                root.escape-pressed();
+                                            }
                                             accept
                                         } else if (event.modifiers.alt && event.text == Key.Return) {
                                             root.fullscreen-toggle-requested();
@@ -437,7 +439,10 @@ export component AppWindow inherits Window {
                                             root.move-requested(1, 0);
                                             accept
                                         } else if (event.text == Key.Return) {
-                                            root.activate-requested();
+                                            // Fork (navigation safety): a held Return's repeats do nothing.
+                                            if (!event.repeat) {
+                                                root.activate-requested();
+                                            }
                                             accept
                                         } else {
                                             reject
